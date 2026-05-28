@@ -1,5 +1,6 @@
 'use client';
 
+import ChatBubble from '../components/ChatBubble';
 import React, { useState, useEffect } from 'react';
 
 interface Message {
@@ -40,35 +41,33 @@ export default function ChatPage() {
   };
 
   return (
-    <div style={{ maxWidth: '960px', margin: '0 auto', padding: '2rem' }}>
-      <h1>FuelTech AI Chat</h1>
-      <div
-        style={{
-          border: '1px solid #ddd',
-          padding: '1rem',
-          minHeight: '500px',
-          marginBottom: '1rem',
-          overflowY: 'auto',
-        }}
+<div className="min-h-screen flex flex-col bg-gray-50">
+  <header className="bg-white shadow p-4 flex items-center">
+    <img src="/logo.png" alt="FuelT /ech" className="h-8 w-8 mr-2" />
+    <h1 className="text-lg font-semibold">FuelTech AI Pro</h1>
+    <span className="ml-auto text-sm text-gray-500">Your fueling systems assistant</span>
+  </header>
+  <main className="flex-1 overflow-y-auto p-4 space-y-2">
+    {messages.map((msg, idx) => (
+   ChatBubblele key={idx} message={msg} />
+    ))}
+  </main>
+  <footer className="p-4 bg-white shadow">
+    <form onSubmit={handleSubmit} className="flex">
+      <input
+        className="flex-1 border border-gray-300 rounded-l px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        placeholder="Type your question…"
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+      />
+      <button
+        type="submit"
+        className="bg-blue-600 text-white px-4 py-2 rounded-r hover:bg-blue-700"
       >
-        {messages.map((msg, index) => (
-          <div key={index} style={{ marginBottom: '0.5rem' }}>
-            <strong>{msg.role === 'user' ? 'You' : 'AI'}:</strong> {msg.content}
-          </div>
-        ))}
-      </div>
-      <form onSubmit={handleSubmit} style={{ display: 'flex' }}>
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Type your message..."
-          style={{ flexGrow: 1, padding: '0.5rem' }}
-        />
-        <button type="submit" style={{ padding: '0.5rem 1rem' }}>
-          Send
-        </button>
-      </form>
-    </div>
+        Send
+      </button>
+    </form>
+  </footer>
+</div>   </div>
   );
 }
