@@ -3,25 +3,41 @@ import OpenAI from "openai";
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
- export async function POST(req: Request) {
-  const body = await req.json();
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are an expert fueling facility AI assistant specializing in Veeder-Root, Gilbarco, Wayne, UST systems, startup procedures, ATG troubleshooting, fueling facility maintenance, annual certifications, wiring diagrams, alarm troubleshooting, and dispenser diagnostics. You will be able to access any manuals online as well..",
-      },
-      {
-        role: "user",
-        content: body.message,
-      },
-    ],
+export async function POST(req: Request) {
+  const body = await req.json();
+  const message = body.message;
+
+  // Create thread
+  const thread = await openai.beta.threads.create();
+
+  // Add user message
+  await openai.beta.threads.messages.create(thread.id, {
+    role: "user",
+    content: message,
   });
 
+  // Run assistant
+  const run = await openai.beta.threads.runs.create(thread.id, {
+    assistant_id: process.env.OPENAI_ASSISTANT_ID!,
+  });
+
+  // Wait for completion
+  let runStatus = await openai.beta.threads.runs.retrieve(thread.id, run.id);
+  while (runStatus.status !== "completed") {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    runStatus = await openai.beta.threads.runs.retrieve(thread.id, run.id);
+  }
+
+  // Get messages
+  const messages = await openai.beta.threads.messages.list(thread.id);
+
+  const latestMessage = messages.data[0];
+
   return Response.json({
-    reply: completion.choices[0].message.content,
+    reply:
+      latestMessage.content[0].type === "text"
+        ? latestMessage.content[0].text.value
+        : "No response",
   });
 }
