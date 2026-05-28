@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -10,6 +10,13 @@ interface Message {
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+      useEffect(() => {
+        const isAuth = localStorage.getItem('authenticated');
+        if (!isAuth) {
+            window.location.href = '/login';
+        }
+    }, []);
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
