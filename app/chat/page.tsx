@@ -40,13 +40,13 @@ export default function ChatPage() {
   };
 
   return (
-    <div style={{ maxWidth: '640px', margin: '0 auto', padding: '1rem' }}>
+    <div style={{ maxWidth: '960px', margin: '0 auto', padding: '2rem' }}>
       <h1>FuelTech AI Chat</h1>
       <div
         style={{
           border: '1px solid #ddd',
           padding: '1rem',
-          minHeight: '300px',
+          minHeight: '500px',
           marginBottom: '1rem',
           overflowY: 'auto',
         }}
