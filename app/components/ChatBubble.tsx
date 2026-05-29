@@ -15,12 +15,13 @@ export default function ChatBubble({ message }: ChatBubbleProps) {
       )}
       {!isUser && (
         <div className="flex-shrink-0">
-          <Image
-            src="/ChatGPT%20Image%20May%2029,%202026,%2012_04%2037%20PM.png"
-            alt="Assistant"
-            width={24}
-            height={24}
-            className="rounded-full"
+         <Image
+  src="/assistant-avatar.png"
+  alt="Assistant"
+  width={24}
+  height={24}
+  className="rounded-full"
+/>
           />
         </div>
       )}
