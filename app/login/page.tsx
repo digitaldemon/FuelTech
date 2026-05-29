@@ -5,6 +5,9 @@ import { useState } from 'react';
 const ALLOWED_USERS: { [key: string]: string } = {
   tech1: 'password123',
   tech2: 'password456',
+  bill: 'hercules',
+  tauny: 'wsk',
+  jesse: 'wsk',
 };
 
 export default function LoginPage() {
