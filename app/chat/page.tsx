@@ -43,14 +43,14 @@ export default function ChatPage() {
   return (
 <div className="min-h-screen flex flex-col bg-gray-50">
   <header className="bg-white shadow p-4 flex items-center">
-    <img src="/logo.png" alt="FuelT /ech" className="h-8 w-8 mr-2" />
+ <img src="/logo.png" alt="FuelTech" className="h-8 w-8 mr-2" />-2" />
     <h1 className="text-lg font-semibold">FuelTech AI Pro</h1>
     <span className="ml-auto text-sm text-gray-500">Your fueling systems assistant</span>
   </header>
   <main className="flex-1 overflow-y-auto p-4 space-y-2">
     {messages.map((msg, idx) => (
-   ChatBubblele key={idx} message={msg} />
-    ))}
+        <ChatBubble key={idx} message={msg} />
+   ))}<
   </main>
   <footer className="p-4 bg-white shadow">
     <form onSubmit={handleSubmit} className="flex">
@@ -68,6 +68,6 @@ export default function ChatPage() {
       </button>
     </form>
   </footer>
-</div>   </div>
+</div> 
   );
 }
