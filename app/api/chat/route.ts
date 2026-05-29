@@ -19,7 +19,9 @@ export async function POST(req: Request) {
 
   // Run assistant
   const run = await openai.beta.threads.runs.create(thread.id, {
-    assistant_id: process.env.OPENAI_ASSISTANT_ID!,
+    // @ts-ignore
+    
+      assistant_id: process.env.OPENAI_ASSISTANT_ID!,
       tool_resources: {
     file_search: {
       vector_store_ids: [process.env.OPENAI_VECTOR_STORE_ID],
