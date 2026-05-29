@@ -46,7 +46,7 @@ export default function ChatPage() {
     <div className="min-h-screen flex flex-col bg-gray-50">
       <header className="bg-gradient-to-r from-blue-600 to-teal-500 text-white shadow-md p-6 flex items-center rounded-b-md">
         <img
-          src="/ChatGPT%20Image%20May%2029%2C%202026%2C%2012_04_37%20PM.png"
+src="/logo.png"
           alt="FuelTech Logo"
           className="h-12 w-12 mr-4 rounded-full"
         />
