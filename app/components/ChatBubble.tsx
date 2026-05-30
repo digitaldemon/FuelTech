@@ -1,4 +1,5 @@
 import Image from 'next/image';
+
 import userAvatar from '../../public/user-avatar.png';
 import assistantAvatar from '../../public/assistant-avatar.png';
 
@@ -12,14 +13,15 @@ export default function ChatBubble({ message }: ChatBubbleProps) {
     <div className={`flex items-start ${isUser ? 'justify-end' : 'justify-start'} space-x-4 my-3`}>
       {/* Avatar on the left for assistant */}
       {!isUser && (
-<
-                     <Image
+
+
+      <Image
               src={assistantAvatar}
               alt="Assistant"
               width={100}
               height={100}
               className="rounded-full"
-            />    />
+          />    />
       )}
       {/* Chat bubble */}
       <div
