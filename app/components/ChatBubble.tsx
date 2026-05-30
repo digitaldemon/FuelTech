@@ -1,4 +1,6 @@
 import Image from 'next/image';
+import userAvatar from '../../public/user-avatar.png';
+import assistantAvatar from '../../public/assistant-avatar.png';
 
 interface ChatBubbleProps {
   message: { role: 'user' | 'assistant'; content: string };
