@@ -2,6 +2,18 @@
 
 import ChatBubble from '../components/ChatBubble';
 import React, { useState, useEffect } from 'react';
+import Image from 'next/image';
+import logoImg from '../../public/logo.png'; // adjust relative path
+
+// …
+
+<Image
+  src={logoImg}
+  alt="FuelTech Logo"
+  width={48}
+  height={48}
+  className="h-12 w-12 mr-4 rounded-full"
+/>
 
 interface Message {
   role: 'user' | 'assistant';
