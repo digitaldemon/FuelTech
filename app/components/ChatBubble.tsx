@@ -12,13 +12,14 @@ export default function ChatBubble({ message }: ChatBubbleProps) {
     <div className={`flex items-start ${isUser ? 'justify-end' : 'justify-start'} space-x-4 my-3`}>
       {/* Avatar on the left for assistant */}
       {!isUser && (
-        <Image
-          src={assistantAvatar}
-          alt="Assistant"
-          width={80}
-          height={80}
-          className="rounded-full"
-        />
+<
+                     <Image
+              src={assistantAvatar}
+              alt="Assistant"
+              width={100}
+              height={100}
+              className="rounded-full"
+            />    />
       )}
       {/* Chat bubble */}
       <div
@@ -33,8 +34,8 @@ export default function ChatBubble({ message }: ChatBubbleProps) {
         <Image
           src={userAvatar}
           alt="User"
-          width={80}
-          height={80}
+        width={100}
+        height={100}
           className="rounded-full"
         />
       )}
