@@ -12,24 +12,31 @@ export default function ChatBubble({ message }: ChatBubbleProps) {
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} space-x-2`}>
       {isUser && (
         <div className="flex-shrink-0">
-          <Image src="/user-avatar.png" alt="User" width={24} height={24} className="rounded-full" />
+          <Image
+            src={userAvatar}
+            alt="User"
+            width={24}
+            height={24}
+            className="rounded-full"
+          />
         </div>
       )}
       {!isUser && (
         <div className="flex-shrink-0">
-         <Image
-  src="/assistant-avatar.png"
-  alt="Assistant"
-  width={24}
-  height={24}
-  className="rounded-full"
-/>
+          <Image
+            src={assistantAvatar}
+            alt="Assistant"
+            width={24}
+            height={24}
+            className="rounded-full"
           />
         </div>
       )}
       <div
         className={`px-4 py-2 rounded-lg max-w-xs whitespace-pre-wrap ${
-          isUser ? 'bg-blue-600 text-white rounded-br-none' : 'bg-gray-200 text-gray-900 rounded-bl-none'
+          isUser
+            ? 'bg-blue-600 text-white rounded-br-none'
+            : 'bg-gray-200 text-gray-900 rounded-bl-none'
         }`}
       >
         {message.content}
