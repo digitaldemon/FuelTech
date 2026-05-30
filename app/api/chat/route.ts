@@ -22,7 +22,8 @@ export async function POST(req: Request) {
     // @ts-ignore
     
       assistant_id: process.env.OPENAI_ASSISTANT_ID!,
-      tool_resources: {
+    // @ts-ignore
+    tool_resources: {
     file_search: {
       vector_store_ids: [process.env.OPENAI_VECTOR_STORE_ID],
     },
