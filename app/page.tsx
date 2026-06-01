@@ -1,5 +1,4 @@
-'use client';
-import { Gauge, ShieldCheck, Wrench, FileText, MessageSquare, ArrowRight, Zap, Building2, Menu } from 'lucide-react';
+import { Gauge, ShieldCheck, Wrench, FileText, MessageSquare, ArrowRight, Zap, Building2, Menu, Bot, Fuel } from 'lucide-react';
 import { useState } from 'react';
 
 /**
@@ -62,10 +61,14 @@ export default function Home() {
       <header className="header">
         <div className="container nav">
           <div className="brand">
-            <div className="logo">
-              {/* Use a simple icon instead of a static logo image */}
-              <Gauge size={32} />
-            </div>
+          <div className="logo">
+            {/* Composite logo built from Lucide icons. The robot icon represents the AI
+               assistant and the fuel icon represents the fueling industry. The fuel
+               icon is positioned in the bottom‑right corner of the robot to evoke
+               the original robot‑with‑pump logo. */}
+            <Bot className="robot-icon" />
+            <Fuel className="pump-icon" />
+          </div>
             <div>
               <div className="brand-title">FuelTech AI Pro</div>
               <div className="brand-sub">AI for fueling technicians</div>

@@ -57,16 +57,46 @@ body {
   align-items: center;
 }
 
+/*
+ * Logo container
+ *
+ * We removed the colored background and flex alignment from the logo container so that
+ * the uploaded company logo can display naturally within the header. The container
+ * still defines a fixed width/height and rounded corners. The actual image is styled
+ * separately via the `.logo img` rule below.
+ */
 .logo {
   width: 44px;
   height: 44px;
   border-radius: 16px;
-  background: var(--color-primary);
-  color: var(--color-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 900;
+  overflow: hidden;
+  position: relative;
+  /* Set a color on the logo container so that child icons inherit it via
+     currentColor. The color uses the primary accent defined in CSS variables. */
+  color: var(--color-primary);
+}
+
+/* Ensure the logo image fills its container without distortion */
+.logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* Ensure Lucide icons used inside the logo fill their container */
+.logo .robot-icon {
+  width: 100%;
+  height: 100%;
+}
+
+/* Position the fuel pump icon in the bottom‑right corner of the logo */
+.logo .pump-icon {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  width: 16px;
+  height: 16px;
 }
 
 .brand-title {
@@ -679,8 +709,22 @@ body {
 
 /* Mobile adjustments for chat */
 @media (max-width: 600px) {
+  /* Reduce chat wrapper margins/radius on very small screens */
   .chat-wrapper {
     border-radius: 0;
     margin: 0;
+  }
+  /* Shrink the logo on small screens to improve spacing */
+  .logo {
+    width: 36px;
+    height: 36px;
+  }
+
+  /* Reduce the pump icon size and adjust its position on small screens */
+  .logo .pump-icon {
+    width: 12px;
+    height: 12px;
+    bottom: -3px;
+    right: -3px;
   }
 }
