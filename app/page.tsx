@@ -1,5 +1,5 @@
-i'use client';
-mport { Gauge, ShieldCheck, Wrench, FileText, MessageSquare, ArrowRight, Zap, Building2, Menu } from 'lucide-react';
+'use client';
+import { Gauge, ShieldCheck, Wrench, FileText, MessageSquare, ArrowRight, Zap, Building2, Menu } from 'lucide-react';
 import { useState } from 'react';
 
 /**
