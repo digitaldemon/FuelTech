@@ -89,6 +89,38 @@ body {
   text-decoration: none;
 }
 
+/* Hide the mobile toggle button and mobile menu by default */
+.mobile-toggle {
+  display: none;
+  background: transparent;
+  border: none;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+/* The container for the mobile dropdown menu */
+.mobile-menu {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 24px;
+  background: var(--color-surface);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Links inside the mobile menu */
+.mobile-menu a {
+  color: var(--color-text);
+  text-decoration: none;
+  padding: 8px 0;
+}
+
+/* Use full width for CTA button inside mobile menu */
+.mobile-menu .button {
+  width: 100%;
+  justify-content: center;
+}
+
 .button {
   display: inline-flex;
   align-items: center;
@@ -402,6 +434,18 @@ body {
 @media (max-width: 900px) {
   .navlinks {
     display: none;
+  }
+  /* Hide the join button on small screens; we will show it in the mobile menu instead */
+  .join-button {
+    display: none;
+  }
+  /* Show the mobile toggle button */
+  .mobile-toggle {
+    display: block;
+  }
+  /* When open, the mobile menu becomes flex */
+  .mobile-menu.open {
+    display: flex;
   }
   .hero-grid,
   .two-col {
