@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 
+// Simple in‑memory user credentials. In a real application this should be
+// replaced by a proper authentication mechanism.
 const ALLOWED_USERS: { [key: string]: string } = {
   tech1: 'password123',
   tech2: 'password456',
@@ -15,7 +17,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
-  const handleSubmit = (e: any) => {
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (ALLOWED_USERS[username] && ALLOWED_USERS[username] === password) {
       if (typeof window !== 'undefined') {
@@ -28,32 +30,26 @@ export default function LoginPage() {
   };
 
   return (
-    <div style={{ padding: '2rem' }}>
-      <h1>Login</h1>
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '1rem' }}>
+    <div className="login-wrapper">
+      <div className="login-card">
+        <h1>Sign in</h1>
+        {error && <p className="error">{error}</p>}
+        <form onSubmit={handleSubmit}>
           <input
             type="text"
             placeholder="Username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            style={{ padding: '0.5rem', width: '100%' }}
           />
-        </div>
-        <div style={{ marginBottom: '1rem' }}>
           <input
             type="password"
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={{ padding: '0.5rem', width: '100%' }}
           />
-        </div>
-        {error && <p style={{ color: 'red' }}>{error}</p>}
-        <button type="submit" style={{ padding: '0.5rem 1rem' }}>
-          Login
-        </button>
-      </form>
+          <button type="submit">Login</button>
+        </form>
+      </div>
     </div>
   );
 }
