@@ -1,25 +1,39 @@
-'use client';
+"use client";
 
 import ChatBubble from '../components/ChatBubble';
-import React, { useState, useEffect } from 'react';
-import Image from 'next/image';
-import logoImg from '../../public/logo.png';
+import React, { useState, useEffect, useRef } from 'react';
+// Use a gauge icon to represent FuelTech in the chat header instead of a static logo image.
+import { Gauge } from 'lucide-react';
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
 }
 
+/**
+ * ChatPage renders the full‑screen chat experience. It includes a header with
+ * branding, a scrollable body that displays messages and a fixed footer with
+ * an input form. Messages scroll automatically to the bottom as new content
+ * arrives. The API interaction mirrors the original implementation: user
+ * messages are appended immediately and the assistant reply is fetched from
+ * `/api/chat`. Errors are gracefully handled by showing an error message.
+ */
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const isAuth = localStorage.getItem('authenticated');
+    const isAuth = typeof window !== 'undefined' && localStorage.getItem('authenticated');
     if (!isAuth) {
       window.location.href = '/login';
     }
   }, []);
+
+  // Auto‑scroll to the bottom whenever messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -45,37 +59,31 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-3xl mx-auto flex flex-col min-h-screen">
-        <header className="bg-gradient-to-r from-blue-600 to-teal-500 text-white p-6 flex items-center rounded-b-md">
-          <Image src={logoImg} alt="FuelTech Logo" width={64} height={64} className="h-16 w-16 mr-4" />
-          <div>
-            <h1 className="text-3xl font-bold">FuelTech AI Pro</h1>
-            <p className="text-sm">Your fueling systems assistant</p>
-          </div>
-        </header>
-        <main className="flex-1 overflow-y-auto p-6 space-y-4">
-          {messages.map((msg, idx) => (
-            <ChatBubble key={idx} message={msg} />
-          ))}
-        </main>
-        <footer className="bg-white shadow-md p-4">
-          <form onSubmit={handleSubmit} className="flex gap-2">
-            <input
-              className="flex-1 border border-gray-300 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Type your question…"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-            />
-            <button
-              type="submit"
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-            >
-              Send
-            </button>
-          </form>
-        </footer>
-      </div>
+    <div className="chat-wrapper">
+      <header className="chat-header">
+        <Gauge size={40} />
+        <div>
+          <h1>FuelTech AI Pro</h1>
+          <p>Your fueling systems assistant</p>
+        </div>
+      </header>
+      <main className="chat-body">
+        {messages.map((msg, idx) => (
+          <ChatBubble key={idx} message={msg} />
+        ))}
+        <div ref={messagesEndRef} />
+      </main>
+      <footer className="chat-footer">
+        <form onSubmit={handleSubmit} className="chat-input-container">
+          <input
+            type="text"
+            placeholder="Type your question…"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+          />
+          <button type="submit">Send</button>
+        </form>
+      </footer>
     </div>
   );
 }
