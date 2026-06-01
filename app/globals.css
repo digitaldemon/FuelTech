@@ -23,3 +23,61 @@ header .logo img {
   padding: 32px;
 }
 
+/* Landing page redesign */
+.hero {
+  align-items: center;
+  gap: 2rem;
+  padding: 4rem 2rem;
+}
+.card.chat {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  box-shadow: 0 4px 30px rgba(0,0,0,0.2);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 2rem;
+}
+.chat-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.bubble-user {
+  align-self: flex-end;
+  background: rgba(59, 130, 246, 0.25);
+  color: #dbeafe;
+  border-radius: 12px;
+  padding: 0.5rem 1rem;
+  max-width: 75%;
+}
+.bubble-bot {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f3f4f6;
+  border-radius: 12px;
+  padding: 0.5rem 1rem;
+  max-width: 75%;
+}
+.quick-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.quick {
+  background: rgba(255, 255, 255, 0.1);
+  color: #dbeafe;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.875rem;
+  cursor: default;
+}
