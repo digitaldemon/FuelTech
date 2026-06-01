@@ -1,4 +1,5 @@
-import { Gauge, ShieldCheck, Wrench, FileText, MessageSquare, ArrowRight, Zap, Building2 } from 'lucide-react';
+import { Gauge, ShieldCheck, Wrench, FileText, MessageSquare, ArrowRight, Zap, Building2, Menu } from 'lucide-react';
+import { useState } from 'react';
 
 /**
  * The landing page showcases the FuelTech AI Pro product and its key benefits.  
@@ -52,6 +53,8 @@ const steps = [
 ];
 
 export default function Home() {
+  // Track whether the mobile navigation menu is open on small screens
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
     <main>
       {/* Primary navigation header */}
@@ -67,14 +70,44 @@ export default function Home() {
               <div className="brand-sub">AI for fueling technicians</div>
             </div>
           </div>
+          {/* Standard navigation links for larger screens */}
           <nav className="navlinks">
             <a href="#features">Features</a>
             <a href="#how">How it works</a>
             <a href="#demo">Demo</a>
             <a href="/login">Login</a>
           </nav>
-          <a className="button" href="#demo">Join Waitlist</a>
+          {/* CTA button visible on larger screens */}
+          <a className="button join-button" href="#demo">
+            Join Waitlist
+          </a>
+          {/* Mobile menu toggle button visible on small screens */}
+          <button
+            className="mobile-toggle"
+            aria-label="Toggle navigation menu"
+            onClick={() => setMenuOpen(!menuOpen)}
+          >
+            <Menu size={28} />
+          </button>
         </div>
+        {/* Mobile navigation menu appears when toggled */}
+        <nav className={`mobile-menu${menuOpen ? ' open' : ''}`}>
+          <a href="#features" onClick={() => setMenuOpen(false)}>
+            Features
+          </a>
+          <a href="#how" onClick={() => setMenuOpen(false)}>
+            How it works
+          </a>
+          <a href="#demo" onClick={() => setMenuOpen(false)}>
+            Demo
+          </a>
+          <a href="/login" onClick={() => setMenuOpen(false)}>
+            Login
+          </a>
+          <a className="button" href="#demo" onClick={() => setMenuOpen(false)}>
+            Join Waitlist
+          </a>
+        </nav>
       </header>
 
       {/* Hero section with chat preview */}
