@@ -593,11 +593,18 @@ body {
 }
 
 .chat-bubble {
-  max-width: 70%;
-  padding: 12px 16px;
-  border-radius: 18px;
-  line-height: 1.5;
-  font-size: 16px;
+  /*
+   * Increase the size and spacing of chat bubbles for better readability.
+   * A wider max‑width allows messages to occupy more horizontal space on larger screens,
+   * while larger padding and line height improve legibility. A slightly larger font size
+   * creates better contrast between lines of text. These tweaks make conversations feel
+   * less cramped without overwhelming small screens.
+   */
+  max-width: 85%;
+  padding: 14px 20px;
+  border-radius: 20px;
+  line-height: 1.6;
+  font-size: 17px;
   word-break: break-word;
 }
 
