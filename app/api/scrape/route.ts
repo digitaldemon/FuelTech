@@ -11,12 +11,13 @@ const GILBARCO_SEED = `${GILBARCO_BASE}/gold/`;
 const CHUNK_WORDS = 500;
 const OVERLAP_WORDS = 50;
 
-// PEI Forum thread-list pages — these are public read-only sections
+// PEI public resources (forum moved; these pages have scrappable content)
 const PEI_URLS = [
-  "https://www.pei.org/forum/?f=2",
-  "https://www.pei.org/forum/?f=4",
-  "https://www.pei.org/forum/?f=6",
-  "https://www.pei.org/forum/?f=7",
+  "https://pei.org/resources/petroleum-equipment-forum/",
+  "https://pei.org/resources/wiki-pei/",
+  "https://pei.org/resources/safety/",
+  "https://pei.org/resources/ust-component-compatibility-library/",
+  "https://pei.org/resources/white-papers/",
 ];
 
 function stripHtml(html: string): string {
