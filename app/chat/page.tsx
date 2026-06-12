@@ -8,12 +8,12 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   citations?: string[];
+  streaming?: boolean;
 }
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [threadId, setThreadId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -26,7 +26,14 @@ export default function ChatPage() {
     const question = input.trim();
     if (!question || loading) return;
 
-    setMessages((prev) => [...prev, { role: 'user', content: question }]);
+    // Snapshot history before mutating state
+    const history = messages.map(({ role, content }) => ({ role, content }));
+
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', content: question },
+      { role: 'assistant', content: '', streaming: true },
+    ]);
     setInput('');
     setLoading(true);
 
@@ -34,29 +41,81 @@ export default function ChatPage() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Pass the thread ID so the assistant retains conversation context.
-        body: JSON.stringify({ message: question, threadId }),
+        body: JSON.stringify({ message: question, history }),
       });
-      const data = await res.json();
 
-      if (!res.ok) {
-        throw new Error(data.error || 'Request failed');
+      if (!res.ok || !res.body) {
+        throw new Error('Request failed');
       }
 
-      // Persist the thread ID for the remainder of this conversation.
-      if (data.threadId) setThreadId(data.threadId);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: data.reply || 'No response',
-          citations: data.citations,
-        },
-      ]);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = JSON.parse(line.slice(6));
+
+          if (payload.type === 'sources') {
+            setMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === 'assistant') {
+                next[next.length - 1] = { ...last, citations: payload.urls };
+              }
+              return next;
+            });
+          } else if (payload.type === 'text') {
+            setMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === 'assistant') {
+                next[next.length - 1] = {
+                  ...last,
+                  content: last.content + payload.text,
+                };
+              }
+              return next;
+            });
+          } else if (payload.type === 'done') {
+            setMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === 'assistant') {
+                next[next.length - 1] = { ...last, streaming: false };
+              }
+              return next;
+            });
+          } else if (payload.type === 'error') {
+            throw new Error(payload.message);
+          }
+        }
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Error fetching response';
-      setMessages((prev) => [...prev, { role: 'assistant', content: message }]);
+      const errorText =
+        err instanceof Error ? err.message : 'Error fetching response';
+      setMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === 'assistant') {
+          next[next.length - 1] = {
+            role: 'assistant',
+            content: errorText,
+            streaming: false,
+          };
+        } else {
+          next.push({ role: 'assistant', content: errorText });
+        }
+        return next;
+      });
     } finally {
       setLoading(false);
     }
@@ -64,7 +123,6 @@ export default function ChatPage() {
 
   const handleNewConversation = () => {
     setMessages([]);
-    setThreadId(null);
   };
 
   return (
@@ -87,11 +145,6 @@ export default function ChatPage() {
         {messages.map((msg, idx) => (
           <ChatBubble key={idx} message={msg} />
         ))}
-        {loading && (
-          <div className="chat-bubble-container">
-            <div className="chat-bubble assistant thinking">Thinking…</div>
-          </div>
-        )}
         <div ref={messagesEndRef} />
       </main>
       <footer className="chat-footer">

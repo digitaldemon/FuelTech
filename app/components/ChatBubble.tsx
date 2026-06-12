@@ -5,11 +5,14 @@ interface ChatBubbleProps {
     role: 'user' | 'assistant';
     content: string;
     citations?: string[];
+    streaming?: boolean;
   };
 }
 
 export default function ChatBubble({ message }: ChatBubbleProps) {
   const isUser = message.role === 'user';
+  const isThinking = !isUser && message.streaming && message.content === '';
+
   return (
     <div className={`chat-bubble-container${isUser ? ' user' : ''}`}>
       <div className="chat-avatar">
@@ -20,12 +23,14 @@ export default function ChatBubble({ message }: ChatBubbleProps) {
         )}
       </div>
       <div>
-        <div className={`chat-bubble ${isUser ? 'user' : 'assistant'}`}>
-          {message.content}
+        <div className={`chat-bubble ${isUser ? 'user' : 'assistant'}${isThinking ? ' thinking' : ''}`}>
+          {isThinking ? 'Thinking…' : message.content}
         </div>
         {!isUser && message.citations && message.citations.length > 0 && (
           <div className="chat-citations">
-            {message.citations.length === 1 ? '1 source referenced' : `${message.citations.length} sources referenced`}
+            {message.citations.length === 1
+              ? '1 source referenced'
+              : `${message.citations.length} sources referenced`}
           </div>
         )}
       </div>

@@ -1,97 +1,103 @@
 import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
+import { sql } from "@vercel/postgres";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const TERMINAL_STATES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "expired",
-  "incomplete",
-]);
+const SYSTEM_PROMPT = `You are FuelTech AI Pro — an expert field assistant for gas station fuel systems, including dispensers, pumps, POS systems, EMV/payment compliance, underground storage tanks (UST), environmental monitoring, and maintenance procedures.
 
-const MAX_POLL_MS = 120_000;
+Answer questions clearly and directly. Cite source documents when relevant. If you don't know the answer, say so rather than guessing. Keep responses concise and actionable for field technicians.`;
 
 export async function POST(req: Request) {
-  const body = await req.json();
-  const { message, threadId: existingThreadId } = body;
+  const { message, history = [] } = (await req.json()) as {
+    message: string;
+    history?: Array<{ role: "user" | "assistant"; content: string }>;
+  };
 
-  // Reuse the thread across turns so the assistant retains conversation context.
-  // If no threadId is provided this is the start of a new conversation.
-  let threadId: string = existingThreadId;
-  if (!threadId) {
-    const thread = await openai.beta.threads.create({
-      tool_resources: {
-        file_search: {
-          vector_store_ids: [process.env.OPENAI_VECTOR_STORE_ID!],
-        },
-      },
-    });
-    threadId = thread.id;
-  }
-
-  await openai.beta.threads.messages.create(threadId, {
-    role: "user",
-    content: message,
+  // Embed the query
+  const embRes = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: message,
   });
+  const embStr = JSON.stringify(embRes.data[0].embedding);
 
-  const run = await openai.beta.threads.runs.create(threadId, {
-    assistant_id: process.env.OPENAI_ASSISTANT_ID!,
-  });
+  // Semantic search via pgvector
+  const rows = await sql`
+    SELECT url, title, chunk_text
+    FROM fuel_tech_docs
+    ORDER BY embedding <=> ${embStr}::vector
+    LIMIT 6
+  `;
 
-  // Poll with a hard timeout and handle all terminal states.
-  const deadline = Date.now() + MAX_POLL_MS;
-  let runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
+  const sourceUrls = [...new Set(rows.rows.map((r) => r.url as string))];
 
-  while (!TERMINAL_STATES.has(runStatus.status)) {
-    if (Date.now() > deadline) {
-      await openai.beta.threads.runs.cancel(threadId, run.id).catch(() => {});
-      return Response.json(
-        { error: "Request timed out. Please try again.", threadId },
-        { status: 504 }
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    runStatus = await openai.beta.threads.runs.retrieve(threadId, run.id);
-  }
+  const context = rows.rows
+    .map((r, i) => `[${i + 1}]${r.title ? ` ${r.title}\n` : " "}${r.chunk_text}`)
+    .join("\n\n---\n\n");
 
-  if (runStatus.status !== "completed") {
-    return Response.json(
-      { error: `Assistant run ended with status: ${runStatus.status}`, threadId },
-      { status: 500 }
-    );
-  }
-
-  const messages = await openai.beta.threads.messages.list(threadId, {
-    limit: 1,
-    order: "desc",
-  });
-
-  const latest = messages.data[0];
-
-  if (!latest || latest.content[0]?.type !== "text") {
-    return Response.json({ reply: "No response", threadId });
-  }
-
-  const textContent = latest.content[0].text;
-
-  // Collect unique file citations so the UI can show which documents were used.
-  const citations = [
-    ...new Set(
-      textContent.annotations
-        .filter(
-          (a): a is OpenAI.Beta.Threads.FileCitationAnnotation =>
-            a.type === "file_citation"
-        )
-        .map((a) => a.file_citation?.file_id ?? "")
-        .filter(Boolean)
-    ),
+  const messages: Anthropic.MessageParam[] = [
+    ...(history as Anthropic.MessageParam[]),
+    {
+      role: "user",
+      content: context
+        ? `Context from documentation:\n\n${context}\n\n---\n\nQuestion: ${message}`
+        : message,
+    },
   ];
 
-  // Strip the inline citation markers (e.g. 【4:0†source】) from the reply text.
-  const reply = textContent.value.replace(/【\d+:\d+†[^】]+】/g, "").trim();
+  const encoder = new TextEncoder();
 
-  return Response.json({ reply, threadId, citations });
+  const stream = new ReadableStream({
+    async start(controller) {
+      controller.enqueue(
+        encoder.encode(
+          `data: ${JSON.stringify({ type: "sources", urls: sourceUrls })}\n\n`
+        )
+      );
+
+      try {
+        const aiStream = anthropic.messages.stream({
+          model: "claude-opus-4-8",
+          max_tokens: 16000,
+          thinking: { type: "adaptive" },
+          system: SYSTEM_PROMPT,
+          messages,
+        });
+
+        for await (const event of aiStream) {
+          if (
+            event.type === "content_block_delta" &&
+            event.delta.type === "text_delta"
+          ) {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: "text", text: event.delta.text })}\n\n`
+              )
+            );
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Streaming error";
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ type: "error", message: msg })}\n\n`
+          )
+        );
+      }
+
+      controller.enqueue(
+        encoder.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`)
+      );
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 }
