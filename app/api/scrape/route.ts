@@ -6,10 +6,18 @@ export const maxDuration = 300;
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const PEI_SECTIONS = [2, 4, 6, 7];
-const GILBARCO_SEED = "https://docs.gilbarco.com/gold/";
+const GILBARCO_BASE = "https://docs.gilbarco.com";
+const GILBARCO_SEED = `${GILBARCO_BASE}/gold/`;
 const CHUNK_WORDS = 500;
 const OVERLAP_WORDS = 50;
+
+// PEI Forum thread-list pages — these are public read-only sections
+const PEI_URLS = [
+  "https://www.pei.org/forum/?f=2",
+  "https://www.pei.org/forum/?f=4",
+  "https://www.pei.org/forum/?f=6",
+  "https://www.pei.org/forum/?f=7",
+];
 
 function stripHtml(html: string): string {
   return html
@@ -50,8 +58,12 @@ async function fetchPage(
 ): Promise<{ html: string; finalUrl: string } | null> {
   try {
     const res = await fetch(url, {
-      headers: { "User-Agent": "FuelTechBot/1.0 (fuel tech knowledge base)" },
-      signal: AbortSignal.timeout(15000),
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (compatible; FuelTechBot/1.0; +https://fueltechaipro.com)",
+        Accept: "text/html,application/xhtml+xml",
+      },
+      signal: AbortSignal.timeout(20000),
     });
     if (!res.ok) return null;
     const html = await res.text();
@@ -71,7 +83,7 @@ async function upsertChunks(
   let count = 0;
   for (let i = 0; i < chunks.length && count < limit; i++) {
     const chunk = chunks[i];
-    if (chunk.split(/\s+/).length < 20) continue;
+    if (chunk.split(/\s+/).length < 30) continue;
 
     const embRes = await openai.embeddings.create({
       model: "text-embedding-3-small",
@@ -93,27 +105,35 @@ async function upsertChunks(
   return count;
 }
 
+function extractGilbarcoLinks(html: string): string[] {
+  const urls: string[] = [];
+  // Match both relative /gold/... and absolute https://docs.gilbarco.com/gold/... links
+  const linkRe = /href="((?:https:\/\/docs\.gilbarco\.com)?\/gold\/[^"]+)"/gi;
+  let m;
+  while ((m = linkRe.exec(html)) !== null) {
+    const href = m[1].startsWith("http")
+      ? m[1]
+      : `${GILBARCO_BASE}${m[1]}`;
+    // Normalise — strip fragment
+    const clean = href.split("#")[0];
+    if (clean) urls.push(clean);
+  }
+  return urls;
+}
+
 async function scrapePei(limit: number): Promise<number> {
   let total = 0;
-  const perSection = Math.ceil(limit / PEI_SECTIONS.length);
+  const perPage = Math.ceil(limit / PEI_URLS.length);
 
-  for (const section of PEI_SECTIONS) {
+  for (const url of PEI_URLS) {
     if (total >= limit) break;
-    const page = await fetchPage(
-      `https://www.pei.org/forum/?f=${section}`
-    );
+    const page = await fetchPage(url);
     if (!page) continue;
 
     const title = extractTitle(page.html);
     const text = stripHtml(page.html);
     const chunks = chunkText(text);
-    total += await upsertChunks(
-      page.finalUrl,
-      title,
-      chunks,
-      "pei",
-      perSection
-    );
+    total += await upsertChunks(page.finalUrl, title, chunks, "pei", perPage);
   }
   return total;
 }
@@ -125,10 +145,11 @@ async function scrapeGilbarco(limit: number): Promise<number> {
 
   while (queue.length > 0 && total < limit) {
     const url = queue.shift()!;
-    if (visited.has(url)) continue;
-    visited.add(url);
+    const normalised = url.split("#")[0];
+    if (visited.has(normalised)) continue;
+    visited.add(normalised);
 
-    const page = await fetchPage(url);
+    const page = await fetchPage(normalised);
     if (!page) continue;
 
     const title = extractTitle(page.html);
@@ -143,13 +164,9 @@ async function scrapeGilbarco(limit: number): Promise<number> {
       remaining
     );
 
-    // Discover sub-pages within the Gilbarco docs domain
+    // Discover sub-pages — handles relative /gold/... links
     if (total < limit) {
-      const linkRe =
-        /href="(https:\/\/docs\.gilbarco\.com\/gold\/[^"#?]+)"/gi;
-      let m;
-      while ((m = linkRe.exec(page.html)) !== null) {
-        const href = m[1];
+      for (const href of extractGilbarcoLinks(page.html)) {
         if (!visited.has(href) && !queue.includes(href)) {
           queue.push(href);
         }
@@ -161,12 +178,12 @@ async function scrapeGilbarco(limit: number): Promise<number> {
 }
 
 export async function POST(req: Request) {
-  const body = await req.json().catch(() => ({})) as {
+  const body = (await req.json().catch(() => ({}))) as {
     source?: string;
     limit?: number;
   };
   const source = body.source ?? "both";
-  const limit = Number(body.limit ?? 20);
+  const limit = Number(body.limit ?? 40);
 
   let total = 0;
 
