@@ -30,7 +30,7 @@ export async function POST(req: Request) {
     LIMIT 6
   `;
 
-  const sourceUrls = [...new Set(rows.rows.map((r) => r.url as string))];
+  const sourceUrls = Array.from(new Set(rows.rows.map((r) => r.url as string)));
 
   const context = rows.rows
     .map((r, i) => `[${i + 1}]${r.title ? ` ${r.title}\n` : " "}${r.chunk_text}`)

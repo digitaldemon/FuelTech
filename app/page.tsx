@@ -1,3 +1,5 @@
+"use client";
+
 import { Gauge, ShieldCheck, Wrench, FileText, MessageSquare, ArrowRight, Zap, Building2, Menu, Bot, Fuel } from 'lucide-react';
 import { useState } from 'react';
 

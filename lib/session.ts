@@ -10,15 +10,16 @@ function secret(): string {
 async function getKey(): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     "raw",
-    new TextEncoder().encode(secret()),
+    new TextEncoder().encode(secret()) as unknown as ArrayBuffer,
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign", "verify"]
   );
 }
 
-function encodeBase64Url(buf: ArrayBuffer): string {
-  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+function encodeBase64Url(buf: ArrayBuffer | Uint8Array): string {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  return btoa(String.fromCharCode(...bytes))
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=/g, "");
@@ -37,7 +38,7 @@ export async function signSession(username: string): Promise<string> {
   const sig = await crypto.subtle.sign(
     "HMAC",
     key,
-    new TextEncoder().encode(payload)
+    new TextEncoder().encode(payload) as unknown as ArrayBuffer
   );
   const payloadB64 = encodeBase64Url(new TextEncoder().encode(payload));
   return `${payloadB64}.${encodeBase64Url(sig)}`;
@@ -51,7 +52,12 @@ export async function verifySession(token: string): Promise<boolean> {
     const sig = decodeBase64Url(token.slice(dot + 1));
     const payloadBytes = decodeBase64Url(payloadB64);
     const key = await getKey();
-    const valid = await crypto.subtle.verify("HMAC", key, sig, payloadBytes);
+    const valid = await crypto.subtle.verify(
+      "HMAC",
+      key,
+      sig as unknown as ArrayBuffer,
+      payloadBytes as unknown as ArrayBuffer
+    );
     if (!valid) return false;
     const payload = new TextDecoder().decode(payloadBytes);
     const colon = payload.lastIndexOf(":");
