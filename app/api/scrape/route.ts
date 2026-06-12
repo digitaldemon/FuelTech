@@ -10,7 +10,19 @@ export const maxDuration = 300;
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const GILBARCO_BASE = "https://docs.gilbarco.com";
-const GILBARCO_SEED = `${GILBARCO_BASE}/gold/`;
+
+// Target sections most relevant to field techs — Encore, dispensers, service manuals
+const GILBARCO_SEED_SECTIONS = [
+  9,   // Encore and Eclipse
+  157, // Encore
+  50,  // Encore and Eclipse Installers
+  69,  // Service Manual
+  70,  // Pump & Dispenser Start-Up & Service Manual
+  288, // Fuel Dispensers
+  282, // Dispensers
+  368, // Dispenser Pan Monitoring
+  327, // Application Guides
+];
 const CHUNK_WORDS = 500;
 const OVERLAP_WORDS = 50;
 
@@ -92,7 +104,7 @@ async function upsertChunks(
 // ── Gilbarco ──────────────────────────────────────────────────────────────────
 
 async function getGilbarcoSession(): Promise<string> {
-  const res = await fetch(GILBARCO_SEED, {
+  const res = await fetch(`${GILBARCO_BASE}/gold/`, {
     headers: { "User-Agent": "Mozilla/5.0 (compatible; FuelTechBot/1.0)" },
     signal: AbortSignal.timeout(15000),
   });
@@ -173,7 +185,10 @@ async function scrapeGilbarco(limit: number): Promise<number> {
   const cookie = await getGilbarcoSession();
   const visitedSections = new Set<string>();
   const processedDocs = new Set<string>();
-  const sectionQueue: string[] = [GILBARCO_SEED];
+  // Start from targeted sections rather than the index page
+  const sectionQueue: string[] = GILBARCO_SEED_SECTIONS.map(
+    (id) => `${GILBARCO_BASE}/gold/gold_public_access.cfm?section_id=${id}`
+  );
   let total = 0;
 
   while (sectionQueue.length > 0 && total < limit) {
