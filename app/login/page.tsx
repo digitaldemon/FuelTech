@@ -2,30 +2,32 @@
 
 import { useState } from 'react';
 
-// Simple in‑memory user credentials. In a real application this should be
-// replaced by a proper authentication mechanism.
-const ALLOWED_USERS: { [key: string]: string } = {
-  tech1: 'password123',
-  tech2: 'password456',
-  bill: 'hercules',
-  tauny: 'wsk',
-  jesse: 'wsk',
-};
-
 export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (ALLOWED_USERS[username] && ALLOWED_USERS[username] === password) {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('authenticated', 'true');
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      if (res.ok) {
         window.location.href = '/chat';
+      } else {
+        const data = await res.json();
+        setError(data.error || 'Invalid username or password.');
       }
-    } else {
-      setError('Invalid username or password.');
+    } catch {
+      setError('Unable to reach the server. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -40,14 +42,18 @@ export default function LoginPage() {
             placeholder="Username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
+            disabled={loading}
           />
           <input
             type="password"
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            disabled={loading}
           />
-          <button type="submit">Login</button>
+          <button type="submit" disabled={loading}>
+            {loading ? 'Signing in…' : 'Login'}
+          </button>
         </form>
       </div>
     </div>

@@ -2,35 +2,21 @@
 
 import ChatBubble from '../components/ChatBubble';
 import React, { useState, useEffect, useRef } from 'react';
-// Use a gauge icon to represent FuelTech in the chat header instead of a static logo image.
 import { Gauge } from 'lucide-react';
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  citations?: string[];
 }
 
-/**
- * ChatPage renders the full‑screen chat experience. It includes a header with
- * branding, a scrollable body that displays messages and a fixed footer with
- * an input form. Messages scroll automatically to the bottom as new content
- * arrives. The API interaction mirrors the original implementation: user
- * messages are appended immediately and the assistant reply is fetched from
- * `/api/chat`. Errors are gracefully handled by showing an error message.
- */
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const isAuth = typeof window !== 'undefined' && localStorage.getItem('authenticated');
-    if (!isAuth) {
-      window.location.href = '/login';
-    }
-  }, []);
-
-  // Auto‑scroll to the bottom whenever messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -38,24 +24,47 @@ export default function ChatPage() {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const question = input.trim();
-    if (!question) return;
+    if (!question || loading) return;
+
     setMessages((prev) => [...prev, { role: 'user', content: question }]);
     setInput('');
+    setLoading(true);
+
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: question }),
+        // Pass the thread ID so the assistant retains conversation context.
+        body: JSON.stringify({ message: question, threadId }),
       });
       const data = await res.json();
-      const reply = data.reply || 'No response';
-      setMessages((prev) => [...prev, { role: 'assistant', content: reply }]);
-    } catch (err) {
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Request failed');
+      }
+
+      // Persist the thread ID for the remainder of this conversation.
+      if (data.threadId) setThreadId(data.threadId);
+
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: 'Error fetching response' },
+        {
+          role: 'assistant',
+          content: data.reply || 'No response',
+          citations: data.citations,
+        },
       ]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error fetching response';
+      setMessages((prev) => [...prev, { role: 'assistant', content: message }]);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const handleNewConversation = () => {
+    setMessages([]);
+    setThreadId(null);
   };
 
   return (
@@ -66,11 +75,23 @@ export default function ChatPage() {
           <h1>FuelTech AI Pro</h1>
           <p>Your fueling systems assistant</p>
         </div>
+        <button
+          onClick={handleNewConversation}
+          className="new-chat-btn"
+          title="Start a new conversation"
+        >
+          New chat
+        </button>
       </header>
       <main className="chat-body">
         {messages.map((msg, idx) => (
           <ChatBubble key={idx} message={msg} />
         ))}
+        {loading && (
+          <div className="chat-bubble-container">
+            <div className="chat-bubble assistant thinking">Thinking…</div>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </main>
       <footer className="chat-footer">
@@ -80,8 +101,11 @@ export default function ChatPage() {
             placeholder="Type your question…"
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            disabled={loading}
           />
-          <button type="submit">Send</button>
+          <button type="submit" disabled={loading}>
+            {loading ? '…' : 'Send'}
+          </button>
         </form>
       </footer>
     </div>
