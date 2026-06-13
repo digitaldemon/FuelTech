@@ -251,7 +251,7 @@ export default function Home() {
                 <span className="pricing-amount">${ACCESS_PRICE}</span>
                 <span className="pricing-period">/year</span>
               </div>
-              <p className="pricing-tagline">Full access for an entire year</p>
+              <p className="pricing-tagline">Per user &mdash; full access for an entire year</p>
             </div>
 
             <ul className="pricing-features">
