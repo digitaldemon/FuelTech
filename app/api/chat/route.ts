@@ -36,7 +36,9 @@ const SYSTEM_PROMPT = `You are FuelTech AI Pro — a field service assistant for
 - If [WEB SEARCH RESULTS] are present, use them and note the technician should verify against their official manual.
 - **Never ask for clarification.** If the question is vague, state your assumption ("Assuming this is an Encore 700 with a standard CRIND configuration…") and answer for the most common scenario. A technician in the field needs an answer now, not a follow-up question.
 - **Interpret field language.** "Won't turn on" = power/startup failure. "Keeps beeping" = active alarm. "Not reading" = sensor/communication fault. "Stuck on screen X" = UI/software issue. Match the intent to the technical topic.
-- **Read every provided chunk before answering.** Documentation is split into chunks and the exact answer may be in any of them. Scan ALL [DOC N] sections — do not stop at the first partial match. If a procedure spans multiple consecutive chunks, assemble the full step sequence before presenting it.`;
+- **Read every provided chunk before answering.** Documentation is split into chunks and the exact answer may be in any of them. Scan ALL [DOC N] sections — do not stop at the first partial match. If a procedure spans multiple consecutive chunks, assemble the full step sequence before presenting it.
+- **Quote exact procedures verbatim.** Do not summarize, compress, or paraphrase numbered steps. Copy each step exactly as it appears in the source, including sub-steps, menu paths, and exact values. A missing step can cause a real equipment failure in the field.
+- **Never truncate a procedure.** If a procedure has 15 steps, include all 15. Never write "continue following the procedure" or "repeat for remaining steps" — write every step out in full.`;
 
 // ── Equipment model detection ──────────────────────────────────────────────────
 // Ordered most-specific → least-specific. Shared with the scraper's MODEL_PATTERNS.
@@ -76,16 +78,16 @@ function detectEquipmentModel(query: string): string | null {
 async function generateHypotheticalDoc(query: string): Promise<string> {
   try {
     const res = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4o",
       messages: [
         {
           role: "system",
           content:
-            "You are a fuel system service manual. Write 2–3 sentences of technical documentation that directly answers the question, as if from an official manufacturer manual. Be specific and technical.",
+            "You are a fuel system service manual. Write 3–4 sentences of technical documentation that directly answers the question, as if from an official Gilbarco or Veeder-Root manufacturer manual. Use exact technical terminology, part names, and procedure language found in service manuals.",
         },
         { role: "user", content: query },
       ],
-      max_tokens: 150,
+      max_tokens: 200,
       temperature: 0.1,
     });
     return res.choices[0].message.content ?? query;
@@ -100,20 +102,20 @@ async function generateHypotheticalDoc(query: string): Promise<string> {
 async function expandQuery(query: string): Promise<string[]> {
   try {
     const res = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4o",
       messages: [
         {
           role: "system",
           content:
-            `You are a fuel system technical expert. Rewrite the user's question into exactly 3 alternative phrasings that use the vocabulary found in manufacturer service manuals and technical bulletins. Each phrasing should use different technical terms for the same problem. Return only the 3 phrasings separated by newlines, no numbering or extra text.`,
+            `You are a fuel system technical expert. Rewrite the user's question into exactly 5 alternative phrasings that use the vocabulary found in Gilbarco, Veeder-Root, and Franklin Fueling manufacturer service manuals and technical bulletins. Cover different angles: (1) exact manual terminology, (2) procedure/step phrasing, (3) symptom/diagnostic phrasing, (4) component/part name phrasing, (5) alarm/fault code phrasing. Return only the 5 phrasings separated by newlines, no numbering or extra text.`,
         },
         { role: "user", content: query },
       ],
-      max_tokens: 120,
+      max_tokens: 250,
       temperature: 0.3,
     });
     const text = res.choices[0].message.content ?? "";
-    return text.split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 3);
+    return text.split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 5);
   } catch {
     return [];
   }
@@ -132,7 +134,7 @@ type ChunkRow = {
 
 async function rerankWithCohere(query: string, candidates: ChunkRow[]): Promise<ChunkRow[]> {
   const key = process.env.COHERE_API_KEY;
-  if (!key || candidates.length <= 12) return candidates.slice(0, 12);
+  if (!key || candidates.length <= 20) return candidates.slice(0, 20);
 
   try {
     const res = await fetch("https://api.cohere.com/v2/rerank", {
@@ -145,20 +147,19 @@ async function rerankWithCohere(query: string, candidates: ChunkRow[]): Promise<
       body: JSON.stringify({
         model: "rerank-v3.5",
         query,
-        documents: candidates.map((c) =>
-          `${c.title as string}\n${(c.chunk_text as string).substring(0, 600)}`
-        ),
-        top_n: 12,
+        // Send full chunk text — no truncation so Cohere sees the complete passage
+        documents: candidates.map((c) => `${c.title as string}\n${c.chunk_text as string}`),
+        top_n: 20,
         return_documents: false,
       }),
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(20000),
     });
 
-    if (!res.ok) return candidates.slice(0, 12);
+    if (!res.ok) return candidates.slice(0, 20);
     const data = (await res.json()) as { results: { index: number }[] };
     return data.results.map((r) => candidates[r.index]);
   } catch {
-    return candidates.slice(0, 12);
+    return candidates.slice(0, 20);
   }
 }
 
@@ -248,15 +249,17 @@ export async function POST(req: Request) {
   const errorCode = extractErrorCode(message);
   const codePattern = errorCode ? `%${errorCode}%` : null;
 
-  const [semanticRows, modelRows, keywordRows, ...expandedRows] = await Promise.all([
+  const [semanticRows, modelRows, keywordRows, fulltextRows, ...expandedRows] = await Promise.all([
+    // Broad semantic search — large pool for Cohere to re-rank
     sql`
       SELECT url, title, chunk_text, chunk_index, source, page_number,
              (embedding <=> ${searchEmbStr}::vector) AS distance
       FROM fuel_tech_docs
       ORDER BY distance
-      LIMIT 40
+      LIMIT 80
     ` as Promise<{ rows: ChunkRow[] }>,
 
+    // Model-specific boost — prioritise exact equipment match
     detectedModel
       ? (sql`
           SELECT url, title, chunk_text, chunk_index, source, page_number,
@@ -264,36 +267,47 @@ export async function POST(req: Request) {
           FROM fuel_tech_docs
           WHERE model ILIKE ${`%${detectedModel}%`}
           ORDER BY distance
-          LIMIT 20
+          LIMIT 40
         ` as Promise<{ rows: ChunkRow[] }>)
       : Promise.resolve({ rows: [] as ChunkRow[] }),
 
+    // Exact error/alarm code keyword match
     codePattern
       ? (sql`
           SELECT url, title, chunk_text, chunk_index, source, page_number, 0 AS distance
           FROM fuel_tech_docs
           WHERE chunk_text ILIKE ${codePattern}
-          LIMIT 15
+          LIMIT 30
         ` as Promise<{ rows: ChunkRow[] }>)
       : Promise.resolve({ rows: [] as ChunkRow[] }),
 
-    // Expanded query searches — 15 results each, run in parallel
+    // Full-text search — catches multi-word phrases vector search misses
+    (sql`
+      SELECT url, title, chunk_text, chunk_index, source, page_number, 0 AS distance
+      FROM fuel_tech_docs
+      WHERE to_tsvector('english', coalesce(title,'') || ' ' || chunk_text)
+            @@ plainto_tsquery('english', ${message})
+      LIMIT 30
+    ` as Promise<{ rows: ChunkRow[] }>).catch(() => ({ rows: [] as ChunkRow[] })),
+
+    // Expanded query searches — 25 results each, run in parallel
     ...expandedEmbStrs.map((embStr) =>
       sql`
         SELECT url, title, chunk_text, chunk_index, source, page_number,
                (embedding <=> ${embStr}::vector) AS distance
         FROM fuel_tech_docs
         ORDER BY distance
-        LIMIT 15
+        LIMIT 25
       ` as Promise<{ rows: ChunkRow[] }>
     ),
   ]);
 
-  // Step 6: Merge — keyword hits first (exact code match), then model-specific (boosted),
-  // then broad semantic + expanded query results. Dedup so Cohere sees each passage once.
+  // Step 6: Merge — priority order: exact code hits → model-specific → full-text → semantic → expansions.
+  // Dedup so Cohere sees each passage exactly once.
   const seenKeys = new Set<string>();
   const candidates: ChunkRow[] = [
     ...keywordRows.rows,
+    ...fulltextRows.rows,
     ...modelRows.rows,
     ...semanticRows.rows,
     ...expandedRows.flatMap((r) => r.rows),
@@ -318,7 +332,7 @@ export async function POST(req: Request) {
   for (const r of topRows) {
     const url = r.url as string;
     const ci = Number(r.chunk_index);
-    for (const offset of [-1, 1]) {
+    for (const offset of [-2, -1, 1, 2]) {
       const neighborIdx = ci + offset;
       if (neighborIdx < 0) continue;
       const key = `${url}::${neighborIdx}`;
@@ -480,8 +494,8 @@ export async function POST(req: Request) {
       try {
         const aiStream = anthropic.messages.stream({
           model: "claude-opus-4-8",
-          max_tokens: 16000,
-          thinking: { type: "adaptive" },
+          max_tokens: 20000,
+          thinking: { type: "enabled", budget_tokens: 10000 },
           system: SYSTEM_PROMPT,
           messages,
         });
