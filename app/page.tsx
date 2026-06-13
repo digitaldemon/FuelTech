@@ -103,6 +103,14 @@ export default function Home() {
 
       {/* Hero */}
       <section className="hero">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/icon-192.png" alt="" className="hero-bg-logo" aria-hidden="true" />
+        <div className="container">
+          <div className="lp-hero-brandmark">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/icon-192.png" alt="FuelTech AI Pro" className="lp-hero-brandmark-img" />
+          </div>
+        </div>
         <div className="container hero-grid">
           <div>
             <span className="badge">Built for the gasoline station industry</span>
