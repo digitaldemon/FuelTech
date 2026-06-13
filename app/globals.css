@@ -515,6 +515,36 @@ body {
   line-height: 1.4;
 }
 
+/* ── Library update note ─────────────────────────────────────────────────────── */
+.lp-update-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  background: rgba(34,211,238,0.05);
+  border: 1px solid rgba(34,211,238,0.18);
+  border-radius: 14px;
+  padding: 18px 20px;
+  margin-top: 28px;
+  font-size: 14px;
+  color: #cbd5e1;
+  line-height: 1.65;
+}
+.lp-update-note strong { color: var(--color-primary); }
+.lp-update-dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  box-shadow: 0 0 8px var(--color-primary);
+  animation: pulse-dot 2.4s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--color-primary); }
+  50%       { opacity: 0.45; box-shadow: 0 0 14px var(--color-primary); }
+}
+
 /* ── Disclaimer ─────────────────────────────────────────────────────────────── */
 
 .lp-disclaimer {

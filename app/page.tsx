@@ -230,6 +230,17 @@ export default function Home() {
             Gilbarco and Veeder-Root documentation — giving the AI the same reference material a certified
             technician relies on, but accessible in seconds from any job site.
           </p>
+          <div className="lp-update-note">
+            <span className="lp-update-dot" />
+            <div>
+              <strong>Live in production &mdash; and always growing.</strong>{' '}
+              FuelTech AI Pro is an active production system, not a demo. As new Gilbarco and Veeder-Root
+              documentation is released, as Extranet service bulletins are published, and as additional
+              industry resources are discovered, they are automatically ingested and indexed into the knowledge
+              base. The AI you use today is more capable than it was last month, and it will continue to
+              evolve as the industry does.
+            </div>
+          </div>
           <div className="lp-brands" style={{ marginTop: 48 }}>
             {brands.map((b) => (
               <div className="lp-brand-card" key={b.name}>
