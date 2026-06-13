@@ -145,38 +145,29 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="chat-model-row">
+              <div className="chat-model-row" style={{ marginBottom: 18 }}>
                 <span className="chat-model-chip active">TLS-450PLUS</span>
                 <span className="chat-model-chip chat-model-chip--dim">Encore 700</span>
                 <span className="chat-model-chip chat-model-chip--dim">Eclipse</span>
+                <span className="chat-model-chip chat-model-chip--dim">CRIND</span>
               </div>
 
               <div className="bubble-user">
-                Show me the installation diagram for a mag probe on the TLS‑450PLUS.
+                Show me the wiring diagram for a mag probe on the TLS‑450PLUS.
               </div>
 
               <div className="bubble-bot">
-                <p style={{ margin: '0 0 8px' }}>
-                  The mag probe connects to the <strong>Universal Sensor Module (USM)</strong>. Observe polarity:
+                <p style={{ margin: '0 0 10px', fontSize: 15 }}>
+                  The mag probe connects to the <strong>Universal Sensor Module (USM)</strong>.
+                  Wire <strong>BLACK → (–) Negative</strong> and <strong>WHITE → (+) Plus</strong> — reversed polarity will cause a probe fault on startup.
                 </p>
-                <ul style={{ margin: '0 0 8px 16px', padding: 0 }}>
-                  <li><strong>BLACK → (–) Negative terminal</strong></li>
-                  <li><strong>WHITE → (+) Plus terminal</strong></li>
-                </ul>
-                <p style={{ margin: '0 0 10px', fontSize: 13, color: '#94a3b8' }}>
-                  See Figure 43 — Manual 577014-073, p. 47
+                <p style={{ margin: '0 0 12px', fontSize: 12, color: '#64748b' }}>
+                  Source: Manual 577014-073, Figure 43, p. 47
                 </p>
                 <div className="lp-figure-pill">
                   <span className="lp-figure-icon">🗺</span>
-                  <span>Diagram retrieved from documentation</span>
+                  <span>Wiring diagram retrieved from documentation</span>
                 </div>
-              </div>
-
-              <div className="quick-grid">
-                <div className="quick">Error code lookup</div>
-                <div className="quick">Show a diagram</div>
-                <div className="quick">Troubleshoot an issue</div>
-                <div className="quick">Startup procedure</div>
               </div>
             </div>
           </div>
