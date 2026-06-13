@@ -1,6 +1,6 @@
 "use client";
 
-import { Gauge, ShieldCheck, FileText, MessageSquare, ArrowRight, Zap, Menu, BookOpen, Image } from 'lucide-react';
+import { Gauge, ShieldCheck, FileText, MessageSquare, ArrowRight, Zap, Menu, BookOpen, Image, ClipboardList } from 'lucide-react';
 import { useState } from 'react';
 
 const ACCESS_PRICE = 49.99;
@@ -35,6 +35,11 @@ const features = [
     icon: <FileText size={22} />,
     title: 'Cross-Brand ATG & Dispenser Knowledge',
     text: 'Trained across Veeder-Root TLS consoles, Gilbarco dispensers, probes, sensors, CRIND, FlexPay, and Extranet service bulletins — the AI reasons across equipment families, not just one brand at a time.',
+  },
+  {
+    icon: <ClipboardList size={22} />,
+    title: 'Field Testing & Compliance Protocols',
+    text: 'Get step-by-step guidance on line leak detection testing, precision line testing, tank tightness tests, and field tester operation — including test frequency requirements, pass/fail criteria, and manufacturer-specified compliance procedures.',
   },
 ];
 
@@ -120,6 +125,7 @@ export default function Home() {
               <span>✓ Diagrams &amp; schematics</span>
               <span>✓ Step-by-step troubleshooting</span>
               <span>✓ Startup &amp; programming</span>
+              <span>✓ Testing &amp; compliance protocols</span>
               <span>✓ Source citations</span>
               <span>✓ Works on any device</span>
             </div>
@@ -290,6 +296,7 @@ export default function Home() {
               <li>✓ Diagrams, schematics &amp; installation figures</li>
               <li>✓ Step-by-step troubleshooting in conversation</li>
               <li>✓ ATG startup, programming &amp; configuration guidance</li>
+              <li>✓ Field testing procedures &amp; compliance protocols</li>
               <li>✓ Dispenser, CRIND &amp; EMV support</li>
               <li>✓ Source citations on every answer</li>
               <li>✓ Works on phone, tablet &amp; desktop (PWA)</li>
