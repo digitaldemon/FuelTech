@@ -24,7 +24,7 @@ const features = [
   {
     icon: <ShieldCheck size={22} />,
     title: 'Startup & Programming Guidance',
-    text: 'Get step-by-step ATG startup procedures, probe configuration, tank setup, and programming sequences for Veeder-Root and Gilbarco equipment — pulled from the correct manual for your model.',
+    text: 'Get step-by-step ATG startup procedures, probe configuration, tank setup, and programming sequences for Veeder-Root, Gilbarco, Red Jacket, and Franklin Fueling equipment — pulled from the correct manual for your model.',
   },
   {
     icon: <BookOpen size={22} />,
@@ -34,7 +34,7 @@ const features = [
   {
     icon: <FileText size={22} />,
     title: 'Cross-Brand ATG & Dispenser Knowledge',
-    text: 'Trained across Veeder-Root TLS consoles, Gilbarco dispensers, probes, sensors, CRIND, FlexPay, and Extranet service bulletins — the AI reasons across equipment families, not just one brand at a time.',
+    text: 'Trained across Veeder-Root TLS consoles, Gilbarco dispensers, Wayne/Tokheim/Dover dispensers, Red Jacket and FE Petro submersible systems, Franklin Fueling equipment, and PEI industry resources — the AI reasons across equipment families, not just one brand at a time.',
   },
   {
     icon: <ClipboardList size={22} />,
@@ -53,8 +53,8 @@ const brands = [
     items: ['Encore 700 / 700S', 'Eclipse Dispenser', 'CRIND', 'FlexPay IV', 'Passport POS', 'Tech Bulletins (Extranet)'],
   },
   {
-    name: 'Additional Sources',
-    items: ['Franklin Fueling Systems', 'Dover / Wayne / Tokheim', 'PEI Technical Resources', 'Installation & Service Manuals'],
+    name: 'Wayne · Red Jacket · Franklin',
+    items: ['Wayne / Tokheim / Dover Dispensers', 'Red Jacket Submersible Pumps', 'FE Petro Products', 'Franklin Fueling Systems', 'PEI Recommended Practices', 'Industry Service Manuals'],
   },
 ];
 
@@ -195,9 +195,9 @@ export default function Home() {
           <h2>AI that reasons like a senior tech — backed by real manufacturer knowledge.</h2>
           <p>
             FuelTech AI Pro uses Anthropic Claude and OpenAI to understand the intent behind your question,
-            draw on a curated knowledge base of Gilbarco and Veeder-Root documentation, and reason through
-            the right answer — combining AI intelligence with industry-specific expertise so you get
-            a professional-grade response, not a keyword match.
+            draw on a curated knowledge base of Gilbarco, Veeder-Root, Wayne, Red Jacket, Franklin Fueling,
+            and industry documentation, and reason through the right answer — combining AI intelligence
+            with industry-specific expertise so you get a professional-grade response, not a keyword match.
           </p>
           <div className="features" style={{ marginTop: 48 }}>
             {features.map((f) => (
@@ -217,17 +217,18 @@ export default function Home() {
           <span className="badge">Built-in expertise</span>
           <h2>The knowledge that makes the AI a specialist.</h2>
           <p>
-            Every answer FuelTech AI Pro gives is informed by a continuously updated knowledge base of official
-            Gilbarco and Veeder-Root documentation — giving the AI the same reference material a certified
-            technician relies on, but accessible in seconds from any job site.
+            Every answer FuelTech AI Pro gives is informed by a continuously updated knowledge base built from
+            official Gilbarco, Veeder-Root, Wayne, Red Jacket, Franklin Fueling, and industry documentation —
+            giving the AI the same reference material a certified technician relies on, but accessible in
+            seconds from any job site.
           </p>
           <div className="lp-update-note">
             <span className="lp-update-dot" />
             <div>
               <strong>Live in production &mdash; and always growing.</strong>{' '}
-              FuelTech AI Pro is an active production system, not a demo. As new Gilbarco and Veeder-Root
-              documentation is released, as Extranet service bulletins are published, and as additional
-              industry resources are discovered, they are automatically ingested and indexed into the knowledge
+              FuelTech AI Pro is an active production system, not a demo. As new Gilbarco, Veeder-Root,
+              Wayne, Red Jacket, Franklin Fueling, and industry documentation is released — including Extranet
+              service bulletins and PEI resources — it is automatically ingested and indexed into the knowledge
               base. The AI you use today is more capable than it was last month, and it will continue to
               evolve as the industry does.
             </div>
@@ -263,7 +264,7 @@ export default function Home() {
             <div className="audience">✓ ATG startup technicians</div>
             <div className="audience">✓ Fueling equipment service companies</div>
             <div className="audience">✓ Gas station maintenance teams</div>
-            <div className="audience">✓ New hires learning Gilbarco &amp; Veeder-Root</div>
+            <div className="audience">✓ New hires learning ATG &amp; dispenser equipment</div>
             <div className="audience">✓ Gilbarco authorized contractors</div>
             <div className="audience">✓ Operations managers and dispatchers</div>
           </div>
@@ -293,7 +294,7 @@ export default function Home() {
 
             <ul className="pricing-features">
               <li>✓ Unlimited questions from any device</li>
-              <li>✓ Gilbarco &amp; Veeder-Root documentation library</li>
+              <li>✓ Multi-brand documentation library (Gilbarco, Veeder-Root, Wayne, Red Jacket &amp; more)</li>
               <li>✓ Error code lookups &amp; alarm diagnosis</li>
               <li>✓ Diagrams, schematics &amp; installation figures</li>
               <li>✓ Step-by-step troubleshooting in conversation</li>
