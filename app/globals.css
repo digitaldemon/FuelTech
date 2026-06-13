@@ -350,11 +350,6 @@ body {
   gap: 18px;
   margin-top: 38px;
 }
-/* If 7 cards: last card in row 3 spans all 3 columns so it fills the row */
-.features .feature:last-child:nth-child(3n + 1) {
-  grid-column: 1 / -1;
-  max-width: calc(33.333% - 9px);
-}
 
 .feature {
   border: 1px solid rgba(255, 255, 255, 0.1);
