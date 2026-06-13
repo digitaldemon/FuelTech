@@ -6,14 +6,21 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
+    "@types/bcryptjs": "^2.4.6",
     "@types/pdf-parse": "^1.1.5",
+    "@vercel/blob": "^2.4.0",
     "@vercel/postgres": "^0.10.0",
+    "bcryptjs": "^3.0.3",
+    "canvas": "^3.2.3",
+    "jose": "^6.2.3",
     "lucide-react": "^0.339.0",
     "next": "14.2.10",
     "openai": "^4.0.0",
     "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^2.16.105",
     "react": "18.2.0",
-    "react-dom": "18.2.0"
+    "react-dom": "18.2.0",
+    "react-markdown": "^10.1.0"
   },
   "devDependencies": {
     "@types/node": "^20.8.0",

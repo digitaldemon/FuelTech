@@ -34,7 +34,10 @@ export default function LoginPage() {
   return (
     <div className="login-wrapper">
       <div className="login-card">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/icon-192.png" alt="FuelTech AI Pro" className="login-logo" />
         <h1>Sign in</h1>
+        <p className="login-sub">FuelTech AI Pro</p>
         {error && <p className="error">{error}</p>}
         <form onSubmit={handleSubmit}>
           <input
@@ -52,9 +55,13 @@ export default function LoginPage() {
             disabled={loading}
           />
           <button type="submit" disabled={loading}>
-            {loading ? 'Signing in…' : 'Login'}
+            {loading ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
+        <p className="login-signup">
+          Don&apos;t have an account?{' '}
+          <a href="/#pricing">Get access →</a>
+        </p>
       </div>
     </div>
   );

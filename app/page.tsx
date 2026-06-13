@@ -1,7 +1,10 @@
 "use client";
 
-import { Gauge, ShieldCheck, Wrench, FileText, MessageSquare, ArrowRight, Zap, Building2, Menu, Bot, Fuel } from 'lucide-react';
+import { Gauge, ShieldCheck, FileText, MessageSquare, ArrowRight, Zap, Menu } from 'lucide-react';
 import { useState } from 'react';
+
+// ── Set your access fee here ──────────────────────────────────────────────────
+const ACCESS_PRICE = 49.99; // USD per year (limited time)
 
 /**
  * The landing page showcases the FuelTech AI Pro product and its key benefits.  
@@ -63,14 +66,10 @@ export default function Home() {
       <header className="header">
         <div className="container nav">
           <div className="brand">
-          <div className="logo">
-            {/* Composite logo built from Lucide icons. The robot icon represents the AI
-               assistant and the fuel icon represents the fueling industry. The fuel
-               icon is positioned in the bottom‑right corner of the robot to evoke
-               the original robot‑with‑pump logo. */}
-            <Bot className="robot-icon" />
-            <Fuel className="pump-icon" />
-          </div>
+            <div className="logo">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/icon-192.png" alt="FuelTech AI Pro" className="brand-logo-img" />
+            </div>
             <div>
               <div className="brand-title">FuelTech AI Pro</div>
               <div className="brand-sub">AI for fueling technicians</div>
@@ -80,12 +79,12 @@ export default function Home() {
           <nav className="navlinks">
             <a href="#features">Features</a>
             <a href="#how">How it works</a>
-            <a href="#demo">Demo</a>
+            <a href="#pricing">Pricing</a>
             <a href="/login">Login</a>
           </nav>
           {/* CTA button visible on larger screens */}
-          <a className="button join-button" href="#demo">
-            Join Waitlist
+          <a className="button join-button" href="#pricing">
+            Get Access
           </a>
           {/* Mobile menu toggle button visible on small screens */}
           <button
@@ -104,14 +103,14 @@ export default function Home() {
           <a href="#how" onClick={() => setMenuOpen(false)}>
             How it works
           </a>
-          <a href="#demo" onClick={() => setMenuOpen(false)}>
-            Demo
+          <a href="#pricing" onClick={() => setMenuOpen(false)}>
+            Pricing
           </a>
           <a href="/login" onClick={() => setMenuOpen(false)}>
             Login
           </a>
-          <a className="button" href="#demo" onClick={() => setMenuOpen(false)}>
-            Join Waitlist
+          <a className="button" href="#pricing" onClick={() => setMenuOpen(false)}>
+            Get Access
           </a>
         </nav>
       </header>
@@ -127,11 +126,11 @@ export default function Home() {
               job site.
             </p>
             <div className="cta-row">
-              <a href="#demo" className="button">
-                Request Early Access <ArrowRight size={24} />
+              <a href="#pricing" className="button">
+                Get Access — ${ACCESS_PRICE}/yr <ArrowRight size={24} />
               </a>
               <a href="#features" className="button secondary">
-                See Use Cases
+                See Features
               </a>
             </div>
             <div className="ai-note">
@@ -149,8 +148,8 @@ export default function Home() {
             <div className="chat-inner">
               <div className="chat-head">
                 <div className="logo">
-                  {/* Icon representing FuelTech AI Pro */}
-                  <Gauge size={24} />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/icon-192.png" alt="FuelTech AI Pro" className="brand-logo-img" />
                 </div>
                 <div>
                   <strong>FuelTech AI Pro Assistant</strong>
@@ -234,26 +233,54 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Demo / CTA section */}
-      <section id="demo" className="section">
+      {/* Pricing / payment section */}
+      <section id="pricing" className="section">
         <div className="container">
-          <div className="cta-box">
-            <Zap size={44} />
-            <h2>Be one of the first fueling companies to test FuelTech AI Pro.</h2>
-            <p>
-              Join the early access list and help shape the AI assistant built specifically for gas station technicians, ATG testers, startup techs and fueling
-              service teams.
-            </p>
-            <div className="email-row">
-              <input placeholder="Enter your email" />
-              <a
-                className="button"
-                href="mailto:digitaldemon@wskandsons.com?subject=FuelTech%20AI%20Pro%20Early%20Access"
-              >
-                Get Early Access
-              </a>
+          <span className="badge">Simple pricing</span>
+          <h2 style={{ textAlign: 'center', marginBottom: 8 }}>One plan. Full access.</h2>
+          <p style={{ textAlign: 'center', color: 'var(--color-subtext)', marginBottom: 48 }}>
+            Everything you need to put AI-powered documentation in every tech&apos;s pocket.
+          </p>
+
+          <div className="pricing-card">
+            <div className="pricing-limited-badge">Limited Time Offer</div>
+            <div className="pricing-header">
+              <Zap size={32} style={{ color: 'var(--color-primary)' }} />
+              <h3>FuelTech AI Pro</h3>
+              <div className="pricing-price">
+                <span className="pricing-amount">${ACCESS_PRICE}</span>
+                <span className="pricing-period">/year</span>
+              </div>
+              <p className="pricing-tagline">Full access for an entire year</p>
             </div>
-            <p style={{ fontSize: 14, color: '#94a3b8' }}>No spam. Just product updates, beta invites and launch details.</p>
+
+            <ul className="pricing-features">
+              <li>✓ Unlimited questions from any device</li>
+              <li>✓ Gilbarco &amp; Veeder-Root documentation library</li>
+              <li>✓ Error code lookups, wiring diagrams &amp; procedures</li>
+              <li>✓ ATG startup, programming &amp; alarm guidance</li>
+              <li>✓ Dispenser troubleshooting &amp; EMV support</li>
+              <li>✓ Works on phone, tablet &amp; desktop</li>
+            </ul>
+
+            <a
+              className="paypal-btn"
+              href={`https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=digitaldemon%40wskandsons.com&item_name=FuelTech+AI+Pro+Annual+Access&amount=49.99&currency_code=USD&no_shipping=1&return=https%3A%2F%2Fwww.fueltechaipro.com%2Fpayment-success&cancel_return=https%3A%2F%2Fwww.fueltechaipro.com%2F%23pricing`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <img
+                src="https://www.paypalobjects.com/webstatic/en_US/i/buttons/PP_logo_h_100x26.png"
+                alt="PayPal"
+                style={{ height: 20, verticalAlign: 'middle', marginRight: 8 }}
+              />
+              Pay with PayPal — $49.99/year
+            </a>
+
+            <p className="pricing-note">
+              After payment you&apos;ll receive your login credentials within one business day.
+              Questions? Email <a href="mailto:digitaldemon@wskandsons.com" style={{ color: 'var(--color-primary)' }}>digitaldemon@wskandsons.com</a>
+            </p>
           </div>
         </div>
       </section>
@@ -263,7 +290,8 @@ export default function Home() {
         <div className="container footer-flex">
           <div className="brand">
             <div className="logo">
-              <Building2 size={24} />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/icon-192.png" alt="FuelTech AI Pro" className="brand-logo-img" />
             </div>
             <div>
               <strong>FuelTechAIPro.com</strong>

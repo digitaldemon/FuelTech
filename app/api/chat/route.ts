@@ -5,56 +5,477 @@ import { sql } from "@vercel/postgres";
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const SYSTEM_PROMPT = `You are FuelTech AI Pro — an expert field assistant for gas station fuel systems, including dispensers, pumps, POS systems, EMV/payment compliance, underground storage tanks (UST), environmental monitoring, and maintenance procedures.
+const SYSTEM_PROMPT = `You are FuelTech AI Pro — a field service assistant for gas station fuel system technicians. You specialise in Gilbarco and Wayne dispensers (Encore, Eclipse, CRIND, FlexPay), Veeder-Root ATGs (TLS-300/350/450/450PLUS), Franklin Fueling and Red Jacket submersible pumps, EMV/payment compliance, UST monitoring, and site startup/commissioning.
 
-Answer questions clearly and directly. Cite source documents when relevant. If you don't know the answer, say so rather than guessing. Keep responses concise and actionable for field technicians.`;
+## Response format rules — follow these exactly
 
+**For troubleshooting or "why is X happening" questions:**
+- Start with the most likely cause in one sentence.
+- List diagnostic steps as a numbered list.
+- End with the fix or escalation path.
+
+**For procedures ("how do I..." / "steps to..."):**
+- Use a numbered list for every step, in order.
+- Quote exact button names, menu paths, settings, and values from the documentation.
+- Do not paraphrase procedure steps — copy the exact sequence.
+
+**For error/alarm/fault codes:**
+- State the equipment model the code belongs to first.
+- Give the exact fault description from the manual.
+- List the recommended corrective action as numbered steps.
+- Never apply one model's codes to a different model.
+
+**For specification lookups (voltages, pressures, part numbers, settings):**
+- Give the exact value with units.
+- State which model/revision it applies to.
+
+**Always:**
+- No inline citations — source documents are shown separately in the UI.
+- If multiple documents cover the same topic for different models, address each model separately with a clear heading.
+- If the provided documentation does not contain the answer, say exactly: "I don't have documentation covering that. Based on general knowledge: [answer] — verify against your official manual before proceeding."
+- If [WEB SEARCH RESULTS] are present, use them and note the technician should verify against their official manual.
+- **Never ask for clarification.** If the question is vague, state your assumption ("Assuming this is an Encore 700 with a standard CRIND configuration…") and answer for the most common scenario. A technician in the field needs an answer now, not a follow-up question.
+- **Interpret field language.** "Won't turn on" = power/startup failure. "Keeps beeping" = active alarm. "Not reading" = sensor/communication fault. "Stuck on screen X" = UI/software issue. Match the intent to the technical topic.
+- **Read every provided chunk before answering.** Documentation is split into chunks and the exact answer may be in any of them. Scan ALL [DOC N] sections — do not stop at the first partial match. If a procedure spans multiple consecutive chunks, assemble the full step sequence before presenting it.`;
+
+// ── Equipment model detection ──────────────────────────────────────────────────
+// Ordered most-specific → least-specific. Shared with the scraper's MODEL_PATTERNS.
+const MODEL_PATTERNS: [RegExp, string][] = [
+  [/TLS[-\s]?450\s*PLUS/i,   "TLS-450PLUS"],
+  [/TLS[-\s]?450[Ii][Ss]/i,  "TLS-450iS"],
+  [/TLS[-\s]?450[Ii]/i,      "TLS-450i"],
+  [/TLS[-\s]?450/i,          "TLS-450"],
+  [/TLS[-\s]?350R/i,         "TLS-350R"],
+  [/TLS[-\s]?350/i,          "TLS-350"],
+  [/TLS[-\s]?300/i,          "TLS-300"],
+  [/TLS[-\s]?4B/i,           "TLS-4B"],
+  [/\bTLS[-\s]?4\b/i,        "TLS-4"],
+  [/Encore\s*700S/i,         "Encore 700S"],
+  [/Encore\s*700/i,          "Encore 700"],
+  [/Encore\s*S\b/i,          "Encore S"],
+  [/\bEncore\b/i,            "Encore"],
+  [/\bEclipse\b/i,           "Eclipse"],
+  [/\bCRIND\b/i,             "CRIND"],
+  [/FlexPay\s*IV/i,          "FlexPay IV"],
+  [/\bFlexPay\b/i,           "FlexPay"],
+  [/\bPassport\b/i,          "Passport"],
+  [/\bTS[-\s]?750\b/i,       "TS-750"],
+  [/\bTS[-\s]?550\b/i,       "TS-550"],
+  [/\bFE.?Petro\b/i,         "FE Petro"],
+  [/\bRed\s*Jacket\b/i,      "Red Jacket"],
+];
+
+function detectEquipmentModel(query: string): string | null {
+  for (const [re, model] of MODEL_PATTERNS) {
+    if (re.test(query)) return model;
+  }
+  return null;
+}
+
+// ── HyDE — generate a hypothetical document excerpt to improve retrieval ───────
+async function generateHypotheticalDoc(query: string): Promise<string> {
+  try {
+    const res = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a fuel system service manual. Write 2–3 sentences of technical documentation that directly answers the question, as if from an official manufacturer manual. Be specific and technical.",
+        },
+        { role: "user", content: query },
+      ],
+      max_tokens: 150,
+      temperature: 0.1,
+    });
+    return res.choices[0].message.content ?? query;
+  } catch {
+    return query;
+  }
+}
+
+// ── Query expansion — rephrase the question in documentation vocabulary ────────
+// Techs describe problems in field language; manuals use technical terms.
+// Three alternate phrasings increase the chance of a vocabulary match.
+async function expandQuery(query: string): Promise<string[]> {
+  try {
+    const res = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            `You are a fuel system technical expert. Rewrite the user's question into exactly 3 alternative phrasings that use the vocabulary found in manufacturer service manuals and technical bulletins. Each phrasing should use different technical terms for the same problem. Return only the 3 phrasings separated by newlines, no numbering or extra text.`,
+        },
+        { role: "user", content: query },
+      ],
+      max_tokens: 120,
+      temperature: 0.3,
+    });
+    const text = res.choices[0].message.content ?? "";
+    return text.split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 3);
+  } catch {
+    return [];
+  }
+}
+
+// ── Cohere re-ranking (optional — gracefully skipped if no API key) ────────────
+type ChunkRow = {
+  url: unknown;
+  title: unknown;
+  chunk_text: unknown;
+  chunk_index: unknown;
+  source: unknown;
+  page_number: unknown;
+  distance: unknown;
+};
+
+async function rerankWithCohere(query: string, candidates: ChunkRow[]): Promise<ChunkRow[]> {
+  const key = process.env.COHERE_API_KEY;
+  if (!key || candidates.length <= 12) return candidates.slice(0, 12);
+
+  try {
+    const res = await fetch("https://api.cohere.com/v2/rerank", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        model: "rerank-v3.5",
+        query,
+        documents: candidates.map((c) =>
+          `${c.title as string}\n${(c.chunk_text as string).substring(0, 600)}`
+        ),
+        top_n: 12,
+        return_documents: false,
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+
+    if (!res.ok) return candidates.slice(0, 12);
+    const data = (await res.json()) as { results: { index: number }[] };
+    return data.results.map((r) => candidates[r.index]);
+  } catch {
+    return candidates.slice(0, 12);
+  }
+}
+
+// ── Web search fallback ────────────────────────────────────────────────────────
+async function openAiWebSearch(query: string): Promise<{ summary: string; urls: string[] }> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await (openai as any).responses.create({
+      model: "gpt-4o-mini",
+      tools: [{ type: "web_search_preview" }],
+      input: `Fuel system field technician question: ${query}`,
+    });
+
+    const summary: string = response.output_text ?? "";
+    const urls: string[] = [];
+    for (const block of response.output ?? []) {
+      for (const content of block.content ?? []) {
+        for (const ann of content.annotations ?? []) {
+          if (ann.url) urls.push(ann.url as string);
+        }
+      }
+    }
+    return { summary, urls: [...new Set(urls)] };
+  } catch {
+    return { summary: "", urls: [] };
+  }
+}
+
+// ── Error code detection ───────────────────────────────────────────────────────
+function extractErrorCode(text: string): string | null {
+  const patterns = [
+    /\berr(?:or)?\s*[#:]?\s*([A-Z0-9]{2,8})\b/i,
+    /\bfault\s*[#:]?\s*([A-Z0-9]{2,8})\b/i,
+    /\balarm\s*[#:]?\s*([A-Z0-9]{2,8})\b/i,
+    /\bcode\s*[#:]?\s*([A-Z0-9]{2,8})\b/i,
+    /\b([A-Z]{1,4}[-_]\d{2,5})\b/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) return m[1].toUpperCase();
+  }
+  return null;
+}
+
+// ── Main route ────────────────────────────────────────────────────────────────
 export async function POST(req: Request) {
   const { message, history = [] } = (await req.json()) as {
     message: string;
     history?: Array<{ role: "user" | "assistant"; content: string }>;
   };
 
-  // Embed the query
-  const embRes = await openai.embeddings.create({
-    model: "text-embedding-3-small",
-    input: message,
+  // Step 1: Generate HyDE + query expansions + embed original, all in parallel
+  const [origEmbRes, hydeText, expandedQueries] = await Promise.all([
+    openai.embeddings.create({ model: "text-embedding-3-small", input: message }),
+    generateHypotheticalDoc(message),
+    expandQuery(message),
+  ]);
+
+  // Step 2: Embed HyDE doc + all expanded queries in parallel
+  const [hydeEmbRes, ...expandedEmbResults] = await Promise.all([
+    openai.embeddings.create({ model: "text-embedding-3-small", input: hydeText }),
+    ...expandedQueries.map((q) =>
+      openai.embeddings.create({ model: "text-embedding-3-small", input: q })
+    ),
+  ]);
+
+  // Step 3: Fuse original + HyDE embeddings, then re-normalize (improves recall)
+  const origEmb = origEmbRes.data[0].embedding as number[];
+  const hydeEmb = hydeEmbRes.data[0].embedding as number[];
+  const fused = origEmb.map((v, i) => (v + hydeEmb[i]) / 2);
+  const norm = Math.sqrt(fused.reduce((s, v) => s + v * v, 0));
+  const searchEmbStr = JSON.stringify(fused.map((v) => v / norm));
+
+  // Build search strings for each expanded query
+  const expandedEmbStrs = expandedEmbResults.map((r) => {
+    const emb = r.data[0].embedding as number[];
+    const n = Math.sqrt(emb.reduce((s, v) => s + v * v, 0));
+    return JSON.stringify(emb.map((v) => v / n));
   });
-  const embStr = JSON.stringify(embRes.data[0].embedding);
 
-  // Semantic search via pgvector
-  const rows = await sql`
-    SELECT url, title, chunk_text
-    FROM fuel_tech_docs
-    ORDER BY embedding <=> ${embStr}::vector
-    LIMIT 6
-  `;
+  // Step 4: Detect equipment model — used to run a parallel model-boosted search
+  const detectedModel = detectEquipmentModel(message);
 
-  const sourceUrls = Array.from(new Set(rows.rows.map((r) => r.url as string)));
+  // Step 5: Semantic search — always run unfiltered (40), plus model-specific (20) if
+  // a model is detected. Merging gives Cohere more diverse candidates while still
+  // amplifying signal from model-specific chunks.
+  const errorCode = extractErrorCode(message);
+  const codePattern = errorCode ? `%${errorCode}%` : null;
 
-  const context = rows.rows
-    .map((r, i) => `[${i + 1}]${r.title ? ` ${r.title}\n` : " "}${r.chunk_text}`)
-    .join("\n\n---\n\n");
+  const [semanticRows, modelRows, keywordRows, ...expandedRows] = await Promise.all([
+    sql`
+      SELECT url, title, chunk_text, chunk_index, source, page_number,
+             (embedding <=> ${searchEmbStr}::vector) AS distance
+      FROM fuel_tech_docs
+      ORDER BY distance
+      LIMIT 40
+    ` as Promise<{ rows: ChunkRow[] }>,
+
+    detectedModel
+      ? (sql`
+          SELECT url, title, chunk_text, chunk_index, source, page_number,
+                 (embedding <=> ${searchEmbStr}::vector) AS distance
+          FROM fuel_tech_docs
+          WHERE model ILIKE ${`%${detectedModel}%`}
+          ORDER BY distance
+          LIMIT 20
+        ` as Promise<{ rows: ChunkRow[] }>)
+      : Promise.resolve({ rows: [] as ChunkRow[] }),
+
+    codePattern
+      ? (sql`
+          SELECT url, title, chunk_text, chunk_index, source, page_number, 0 AS distance
+          FROM fuel_tech_docs
+          WHERE chunk_text ILIKE ${codePattern}
+          LIMIT 15
+        ` as Promise<{ rows: ChunkRow[] }>)
+      : Promise.resolve({ rows: [] as ChunkRow[] }),
+
+    // Expanded query searches — 15 results each, run in parallel
+    ...expandedEmbStrs.map((embStr) =>
+      sql`
+        SELECT url, title, chunk_text, chunk_index, source, page_number,
+               (embedding <=> ${embStr}::vector) AS distance
+        FROM fuel_tech_docs
+        ORDER BY distance
+        LIMIT 15
+      ` as Promise<{ rows: ChunkRow[] }>
+    ),
+  ]);
+
+  // Step 6: Merge — keyword hits first (exact code match), then model-specific (boosted),
+  // then broad semantic + expanded query results. Dedup so Cohere sees each passage once.
+  const seenKeys = new Set<string>();
+  const candidates: ChunkRow[] = [
+    ...keywordRows.rows,
+    ...modelRows.rows,
+    ...semanticRows.rows,
+    ...expandedRows.flatMap((r) => r.rows),
+  ].filter((r) => {
+    const key = `${r.url as string}::${r.chunk_text as string}`;
+    if (seenKeys.has(key)) return false;
+    seenKeys.add(key);
+    return true;
+  });
+
+  // Step 7: Re-rank with Cohere (falls back to top-12 by distance if no key)
+  const topRows = await rerankWithCohere(message, candidates);
+
+  // Step 8: Fetch neighboring chunks — captures answers split across chunk boundaries.
+  // For each of the top-ranked chunks, pull the chunk immediately before and after it
+  // in the same document so Claude gets the full surrounding context.
+  const alreadyFetched = new Set(
+    topRows.map((r) => `${r.url as string}::${r.chunk_index as number}`)
+  );
+  const neighborPromises: Promise<{ rows: ChunkRow[] }>[] = [];
+
+  for (const r of topRows) {
+    const url = r.url as string;
+    const ci = Number(r.chunk_index);
+    for (const offset of [-1, 1]) {
+      const neighborIdx = ci + offset;
+      if (neighborIdx < 0) continue;
+      const key = `${url}::${neighborIdx}`;
+      if (alreadyFetched.has(key)) continue;
+      alreadyFetched.add(key);
+      neighborPromises.push(
+        sql`
+          SELECT url, title, chunk_text, chunk_index, source, page_number, 0 AS distance
+          FROM fuel_tech_docs
+          WHERE url = ${url} AND chunk_index = ${neighborIdx}
+          LIMIT 1
+        ` as Promise<{ rows: ChunkRow[] }>
+      );
+    }
+  }
+
+  const neighborResults = neighborPromises.length > 0 ? await Promise.all(neighborPromises) : [];
+  const neighborRows: ChunkRow[] = neighborResults.flatMap((r) => r.rows);
+
+  // Step 9: Web search — only when there are truly no good local results
+  const topDistance = Number(semanticRows.rows[0]?.distance ?? 1);
+  const hasAnyResults = candidates.length > 0;
+  const shouldWebSearch = !hasAnyResults || topDistance > 0.8;
+
+  let webResult: { summary: string; urls: string[] } = { summary: "", urls: [] };
+  if (shouldWebSearch) {
+    webResult = await openAiWebSearch(message);
+  }
+
+  // Step 10: Source URLs for citation panel
+  const sourceUrls = Array.from(
+    new Set([...topRows.map((r) => r.url as string), ...webResult.urls])
+  );
+
+  // Step 11: Figure lookup — only for visual questions, matched to exact retrieved pages
+  const visualKeywords =
+    /\b(diagram|wiring|schematic|illustration|figure|layout|photo|picture|install|location|where is|how to install|connect|cable|harness|drawing)\b/i;
+  const wantsVisuals =
+    visualKeywords.test(message) ||
+    topRows.some((r) => visualKeywords.test(r.chunk_text as string));
+
+  let figureUrls: string[] = [];
+  if (wantsVisuals) {
+    const pagePairs = topRows
+      .filter((r) => Number(r.page_number) > 0)
+      .map((r) => ({ url: r.url as string, page: Number(r.page_number) }));
+
+    const pairsSeen = new Set<string>();
+    for (const { url, page } of pagePairs) {
+      if (figureUrls.length >= 4) break;
+      const k = `${url}::${page}`;
+      if (pairsSeen.has(k)) continue;
+      pairsSeen.add(k);
+      try {
+        const figRows = await sql`
+          SELECT image_url FROM fuel_tech_figures
+          WHERE doc_url = ${url} AND page_number = ${page}
+          LIMIT 1
+        `;
+        if (figRows.rows.length > 0) figureUrls.push(figRows.rows[0].image_url as string);
+      } catch { /* skip */ }
+    }
+  }
+
+  // Step 12: Build context — group top chunks + their neighbors by document.
+  // Chunks are ordered by chunk_index within each document so Claude reads
+  // them in sequence and can assemble multi-chunk procedures correctly.
+  const docMap = new Map<
+    string,
+    { title: string; source: string; chunkMap: Map<number, string>; fromKeyword: boolean }
+  >();
+
+  const addToDocMap = (r: ChunkRow, fromKeyword: boolean) => {
+    const url = r.url as string;
+    const ci = Number(r.chunk_index);
+    const text = r.chunk_text as string;
+    if (!docMap.has(url)) {
+      docMap.set(url, {
+        title: r.title as string,
+        source: r.source as string,
+        chunkMap: new Map([[ci, text]]),
+        fromKeyword,
+      });
+    } else {
+      const doc = docMap.get(url)!;
+      if (!doc.chunkMap.has(ci)) doc.chunkMap.set(ci, text);
+    }
+  };
+
+  for (const r of keywordRows.rows) {
+    if (!topRows.find((tr) => tr.url === r.url)) continue;
+    addToDocMap(r, true);
+  }
+  for (const r of topRows) addToDocMap(r, false);
+  for (const r of neighborRows) addToDocMap(r, false);
+
+  const dbContext = Array.from(docMap.entries())
+    .map(([url, doc], i) => {
+      const matchNote = doc.fromKeyword && errorCode ? ` [CONTAINS "${errorCode}"]` : "";
+      const label = `[DOC ${i + 1}]${matchNote} ${(doc.source ?? "").toUpperCase()} — ${doc.title || "Untitled"}\nURL: ${url}`;
+      const sortedChunks = Array.from(doc.chunkMap.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([, text]) => text);
+      return `${label}\n\n${sortedChunks.join("\n\n")}`;
+    })
+    .join("\n\n===\n\n");
+
+  const contextParts: string[] = [];
+  if (dbContext) contextParts.push(dbContext);
+  if (webResult.summary) {
+    const webLabel = hasAnyResults
+      ? `[WEB SEARCH — supplemental, verify against your equipment manual]\n\n${webResult.summary}`
+      : `[WEB SEARCH RESULTS — no local documentation found for this query]\n\n${webResult.summary}`;
+    contextParts.push(webLabel);
+  }
+  const context = contextParts.join("\n\n===\n\n");
 
   const messages: Anthropic.MessageParam[] = [
     ...(history as Anthropic.MessageParam[]),
     {
       role: "user",
       content: context
-        ? `Context from documentation:\n\n${context}\n\n---\n\nQuestion: ${message}`
+        ? `${detectedModel ? `Equipment model in question: **${detectedModel}**\n` : ""}${errorCode ? `Error/fault code in question: **${errorCode}**\n` : ""}${detectedModel || errorCode ? "\n" : ""}Context from documentation:\n\n${context}\n\n---\n\nQuestion: ${message}`
         : message,
     },
   ];
 
+  // Step 13: Build source doc list with titles for the citation panel
+  const sourceDocs = Array.from(docMap.entries()).map(([url, doc]) => ({
+    url,
+    title: (doc.title as string) || "Document",
+    source: doc.source as string,
+  }));
+  for (const wu of webResult.urls) {
+    if (!sourceDocs.find((d) => d.url === wu)) {
+      sourceDocs.push({ url: wu, title: wu, source: "web" });
+    }
+  }
+
+  // Step 14: Stream Claude response
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     async start(controller) {
       controller.enqueue(
         encoder.encode(
-          `data: ${JSON.stringify({ type: "sources", urls: sourceUrls })}\n\n`
+          `data: ${JSON.stringify({ type: "sources", urls: sourceUrls, docs: sourceDocs })}\n\n`
         )
       );
+
+      if (figureUrls.length > 0) {
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ type: "figures", urls: figureUrls })}\n\n`
+          )
+        );
+      }
 
       try {
         const aiStream = anthropic.messages.stream({
