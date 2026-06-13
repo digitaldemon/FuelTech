@@ -44,3 +44,20 @@ export async function POST(req: Request) {
     return Response.json({ error: msg }, { status: 500 });
   }
 }
+
+// DELETE /api/auth/create-user  — remove a user by username
+export async function DELETE(req: Request) {
+  const adminSecret = req.headers.get("x-admin-secret");
+  if (!adminSecret || adminSecret !== process.env.ADMIN_SECRET) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { username } = (await req.json()) as { username: string };
+  if (!username) {
+    return Response.json({ error: "username is required" }, { status: 400 });
+  }
+
+  const result = await sql`DELETE FROM users WHERE username = ${username}`;
+  const deleted = result.rowCount ?? 0;
+  return Response.json({ ok: true, deleted });
+}
