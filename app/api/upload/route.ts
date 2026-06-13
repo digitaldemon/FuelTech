@@ -1,4 +1,4 @@
-import { handleUpload, type HandleUploadBody } from "@vercel/blob";
+import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 
 export const maxDuration = 60;
 
