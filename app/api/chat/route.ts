@@ -495,7 +495,10 @@ export async function POST(req: Request) {
         const aiStream = anthropic.messages.stream({
           model: "claude-opus-4-8",
           max_tokens: 20000,
-          thinking: { type: "enabled", budget_tokens: 10000 },
+          thinking: { type: "adaptive" },
+          // @ts-expect-error — output_config is the correct way to maximize
+          // reasoning depth on claude-opus-4-8 (budget_tokens not supported)
+          output_config: { effort: "high" },
           system: SYSTEM_PROMPT,
           messages,
         });
