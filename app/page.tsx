@@ -1,68 +1,63 @@
 "use client";
 
-import { Gauge, ShieldCheck, FileText, MessageSquare, ArrowRight, Zap, Menu } from 'lucide-react';
+import { Gauge, ShieldCheck, FileText, MessageSquare, ArrowRight, Zap, Menu, BookOpen, Image } from 'lucide-react';
 import { useState } from 'react';
 
-// ── Set your access fee here ──────────────────────────────────────────────────
-const ACCESS_PRICE = 49.99; // USD per year (limited time)
-
-/**
- * The landing page showcases the FuelTech AI Pro product and its key benefits.  
- * It reuses many of the styles defined in `globals.css` for consistency and
- * responsiveness. Icons from the Lucide library illustrate the different
- * features and steps. Feel free to adjust the text to better suit your
- * marketing copy.
- */
+const ACCESS_PRICE = 49.99;
 
 const features = [
   {
-    icon: <MessageSquare />, // Real-time Q&A support
-    title: 'Ask Field Questions Instantly',
-    text:
-      'Technicians can ask practical troubleshooting questions about alarms, startup checks, dispenser issues, tank monitoring and service workflow.',
+    icon: <MessageSquare size={22} />,
+    title: 'Alarm & Error Code Diagnosis',
+    text: 'Describe an alarm or error condition and the AI interprets it in context — explaining the cause and walking you through the correct resolution the way an experienced tech would.',
   },
   {
-    icon: <Gauge />, // Equipment and ATG support
-    title: 'ATG & Fueling Equipment Support',
-    text:
-      'Designed around real fueling-site work: tank monitoring, leak detection, sensors, pumps, dispensers, compliance checks and startup support.',
+    icon: <Image size={22} />,
+    title: 'Diagrams & Schematics On Demand',
+    text: 'Ask about any diagram — wiring, installation, component layout, flow, or schematic — and the AI identifies the right figure from the manufacturer documentation and displays it directly alongside the explanation.',
   },
   {
-    icon: <FileText />, // Documentation management
-    title: 'SOPs, Checklists & Job Notes',
-    text:
-      'Turn tribal knowledge into repeatable checklists for new hires, annual certifications, PM visits, inspections and service calls.',
+    icon: <Gauge size={22} />,
+    title: 'Step-by-Step Troubleshooting',
+    text: 'Walk through a problem in conversation. The AI asks the right follow-up questions, narrows down the root cause, and gives you a structured path to resolution — without leaving the job site.',
   },
   {
-    icon: <ShieldCheck />, // Safety first
-    title: 'Safety‑First Guidance',
-    text:
-      'Built to reinforce safe, compliant workflows and elevate technicians back to manuals, supervisors or certified procedures when needed.',
+    icon: <ShieldCheck size={22} />,
+    title: 'Startup & Programming Guidance',
+    text: 'Get step-by-step ATG startup procedures, probe configuration, tank setup, and programming sequences for Veeder-Root and Gilbarco equipment — pulled from the correct manual for your model.',
+  },
+  {
+    icon: <BookOpen size={22} />,
+    title: 'Expert Answers with Source Citations',
+    text: 'The AI reasons through your question using deep manufacturer knowledge — then cites the exact manual and page it drew from, so you can verify and trust every answer.',
+  },
+  {
+    icon: <FileText size={22} />,
+    title: 'Cross-Brand ATG & Dispenser Knowledge',
+    text: 'Trained across Veeder-Root TLS consoles, Gilbarco dispensers, probes, sensors, CRIND, FlexPay, and Extranet service bulletins — the AI reasons across equipment families, not just one brand at a time.',
   },
 ];
 
-const audiences = [
-  'Fueling service companies',
-  'Gas station maintenance teams',
-  'ATG testers and startup techs',
-  'New technicians learning the trade',
-  'Operations managers and dispatchers',
-  'Compliance and inspection teams',
-];
-
-const steps = [
-  'Upload your manuals, SOPs, forms and field notes',
-  'Train FuelTech AI Pro on your company workflow',
-  'Let technicians ask questions from the field',
-  'Capture knowledge, reduce callbacks and speed up training',
+const brands = [
+  {
+    name: 'Veeder-Root',
+    items: ['TLS-450PLUS', 'TLS-450i / 450iS', 'TLS-350 / 350R', 'TLS-300', 'Mag Plus Probes', 'Leak Detection Sensors'],
+  },
+  {
+    name: 'Gilbarco',
+    items: ['Encore 700 / 700S', 'Eclipse Dispenser', 'CRIND', 'FlexPay IV', 'Passport POS', 'Tech Bulletins (Extranet)'],
+  },
+  {
+    name: 'Additional Sources',
+    items: ['Franklin Fueling Systems', 'Dover / Wayne / Tokheim', 'PEI Technical Resources', 'Installation & Service Manuals'],
+  },
 ];
 
 export default function Home() {
-  // Track whether the mobile navigation menu is open on small screens
   const [menuOpen, setMenuOpen] = useState(false);
+
   return (
     <main>
-      {/* Primary navigation header */}
       <header className="header">
         <div className="container nav">
           <div className="brand">
@@ -75,18 +70,15 @@ export default function Home() {
               <div className="brand-sub">AI for fueling technicians</div>
             </div>
           </div>
-          {/* Standard navigation links for larger screens */}
           <nav className="navlinks">
             <a href="#features">Features</a>
-            <a href="#how">How it works</a>
+            <a href="#library">Documentation</a>
             <a href="#pricing">Pricing</a>
             <a href="/login">Login</a>
           </nav>
-          {/* CTA button visible on larger screens */}
           <a className="button join-button" href="#pricing">
             Get Access
           </a>
-          {/* Mobile menu toggle button visible on small screens */}
           <button
             className="mobile-toggle"
             aria-label="Toggle navigation menu"
@@ -95,35 +87,25 @@ export default function Home() {
             <Menu size={28} />
           </button>
         </div>
-        {/* Mobile navigation menu appears when toggled */}
         <nav className={`mobile-menu${menuOpen ? ' open' : ''}`}>
-          <a href="#features" onClick={() => setMenuOpen(false)}>
-            Features
-          </a>
-          <a href="#how" onClick={() => setMenuOpen(false)}>
-            How it works
-          </a>
-          <a href="#pricing" onClick={() => setMenuOpen(false)}>
-            Pricing
-          </a>
-          <a href="/login" onClick={() => setMenuOpen(false)}>
-            Login
-          </a>
-          <a className="button" href="#pricing" onClick={() => setMenuOpen(false)}>
-            Get Access
-          </a>
+          <a href="#features" onClick={() => setMenuOpen(false)}>Features</a>
+          <a href="#library" onClick={() => setMenuOpen(false)}>Documentation</a>
+          <a href="#pricing" onClick={() => setMenuOpen(false)}>Pricing</a>
+          <a href="/login" onClick={() => setMenuOpen(false)}>Login</a>
+          <a className="button" href="#pricing" onClick={() => setMenuOpen(false)}>Get Access</a>
         </nav>
       </header>
 
-      {/* Hero section with chat preview */}
+      {/* Hero */}
       <section className="hero">
         <div className="container hero-grid">
           <div>
             <span className="badge">Built for the gasoline station industry</span>
             <h1 className="h1">The AI field assistant for fueling technicians.</h1>
             <p className="lead">
-              FuelTech AI Pro helps technicians troubleshoot faster, follow company procedures, train new hires and access critical fueling‑site knowledge from any
-              job site.
+              FuelTech AI Pro combines the reasoning power of Anthropic Claude with a deep knowledge base
+              built from official manufacturer documentation — so it thinks like an experienced technician,
+              understands your specific equipment, and gives you a real answer, not a search result.
             </p>
             <div className="cta-row">
               <a href="#pricing" className="button">
@@ -133,17 +115,17 @@ export default function Home() {
                 See Features
               </a>
             </div>
-            <div className="ai-note">
-              Powered by advanced OpenAI models and customized specifically for fueling service companies, ATG technicians, startup specialists and petroleum
-              maintenance teams. This allows FuelTech AI Pro to provide intelligent troubleshooting assistance, training support, document interpretation and
-              real‑time field guidance far beyond a traditional chatbot.
-            </div>
             <div className="checks">
-              <span>✓ ATG support</span>
-              <span>✓ Field checklists</span>
-              <span>✓ Training assistant</span>
+              <span>✓ Error code lookup</span>
+              <span>✓ Diagrams &amp; schematics</span>
+              <span>✓ Step-by-step troubleshooting</span>
+              <span>✓ Startup &amp; programming</span>
+              <span>✓ Source citations</span>
+              <span>✓ Works on any device</span>
             </div>
           </div>
+
+          {/* Chat preview */}
           <div className="card chat">
             <div className="chat-inner">
               <div className="chat-head">
@@ -152,39 +134,75 @@ export default function Home() {
                   <img src="/icon-192.png" alt="FuelTech AI Pro" className="brand-logo-img" />
                 </div>
                 <div>
-                  <strong>FuelTech AI Pro Assistant</strong>
-                  <div className="brand-sub">Online · Technician support mode</div>
+                  <strong>FuelTech AI Pro</strong>
+                  <div className="brand-sub">● Online &nbsp;·&nbsp; ATG &amp; Fueling Support</div>
                 </div>
               </div>
-              {/* Example conversation preview */}
+
+              <div className="chat-model-row">
+                <span className="chat-model-chip active">TLS-450PLUS</span>
+                <span className="chat-model-chip chat-model-chip--dim">Encore 700</span>
+                <span className="chat-model-chip chat-model-chip--dim">Eclipse</span>
+              </div>
+
               <div className="bubble-user">
-                My Veeder‑Root TLS450 Plus is showing a sudden loss alarm after a delivery. What should I verify before clearing it?
+                Show me the installation diagram for a mag probe on the TLS‑450PLUS.
               </div>
+
               <div className="bubble-bot">
-                Verify the tank product level has stabilized after delivery, confirm no active leaks or line test failures exist, review delivery data for possible
-                overfill or reconciliation issues and inspect probes and sensors for communication errors before acknowledging the alarm.
+                <p style={{ margin: '0 0 8px' }}>
+                  The mag probe connects to the <strong>Universal Sensor Module (USM)</strong>. Observe polarity:
+                </p>
+                <ul style={{ margin: '0 0 8px 16px', padding: 0 }}>
+                  <li><strong>BLACK → (–) Negative terminal</strong></li>
+                  <li><strong>WHITE → (+) Plus terminal</strong></li>
+                </ul>
+                <p style={{ margin: '0 0 10px', fontSize: 13, color: '#94a3b8' }}>
+                  See Figure 43 — Manual 577014-073, p. 47
+                </p>
+                <div className="lp-figure-pill">
+                  <span className="lp-figure-icon">🗺</span>
+                  <span>Diagram retrieved from documentation</span>
+                </div>
               </div>
+
               <div className="quick-grid">
-                <div className="quick">Review delivery report</div>
-                <div className="quick">Check probe status</div>
-                <div className="quick">Verify tank reconciliation</div>
-                <div className="quick">Inspect alarm history</div>
+                <div className="quick">Error code lookup</div>
+                <div className="quick">Show a diagram</div>
+                <div className="quick">Troubleshoot an issue</div>
+                <div className="quick">Startup procedure</div>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Features section */}
+      {/* Power note */}
+      <div className="lp-power-bar">
+        <div className="container lp-power-inner">
+          <span>Powered by</span>
+          <strong>Anthropic Claude</strong>
+          <span>+</span>
+          <strong>OpenAI</strong>
+          <span>·</span>
+          <span>Reasons through your question using manufacturer expertise</span>
+          <span>·</span>
+          <span>Acts like a senior tech who has read every manual</span>
+        </div>
+      </div>
+
+      {/* Features */}
       <section id="features" className="section">
         <div className="container">
-          <span className="badge">Core features</span>
-          <h2>Built for real field work, not generic chatbot answers.</h2>
+          <span className="badge">What it can do</span>
+          <h2>AI that reasons like a senior tech — backed by real manufacturer knowledge.</h2>
           <p>
-            FuelTech AI Pro is powered by advanced AI technology from OpenAI, combined with your own manuals, procedures, technician notes and company workflows
-            to create a specialized field assistant for the fueling industry.
+            FuelTech AI Pro uses Anthropic Claude and OpenAI to understand the intent behind your question,
+            draw on a curated knowledge base of Gilbarco and Veeder-Root documentation, and reason through
+            the right answer — combining AI intelligence with industry-specific expertise so you get
+            a professional-grade response, not a keyword match.
           </p>
-          <div className="features">
+          <div className="features" style={{ marginTop: 48 }}>
             {features.map((f) => (
               <div className="feature" key={f.title}>
                 <div className="icon">{f.icon}</div>
@@ -196,45 +214,56 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Audiences section */}
-      <section className="section alt">
+      {/* Library */}
+      <section id="library" className="section alt">
+        <div className="container">
+          <span className="badge">Built-in expertise</span>
+          <h2>The knowledge that makes the AI a specialist.</h2>
+          <p>
+            Every answer FuelTech AI Pro gives is informed by a continuously updated knowledge base of official
+            Gilbarco and Veeder-Root documentation — giving the AI the same reference material a certified
+            technician relies on, but accessible in seconds from any job site.
+          </p>
+          <div className="lp-brands" style={{ marginTop: 48 }}>
+            {brands.map((b) => (
+              <div className="lp-brand-card" key={b.name}>
+                <div className="lp-brand-name">{b.name}</div>
+                <ul className="lp-brand-list">
+                  {b.items.map((item) => (
+                    <li key={item}>✓ {item}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Who it's for */}
+      <section className="section">
         <div className="container two-col">
           <div>
             <span className="badge">Who it helps</span>
-            <h2>A smarter support system for every fueling team.</h2>
+            <h2>Built for field techs, service companies and ATG specialists.</h2>
             <p>
-              Whether you run a service company, manage technicians or train new hires, FuelTech AI Pro helps standardize knowledge and reduce time wasted
-              searching for answers.
+              Whether you&apos;re on a startup, running a service call, or training a new hire, FuelTech AI Pro
+              acts as the senior technician in your pocket — one who understands your equipment, knows
+              the procedures, and can explain them clearly on the spot.
             </p>
           </div>
           <div className="audiences">
-            {audiences.map((a) => (
-              <div className="audience" key={a}>
-                ✓ {a}
-              </div>
-            ))}
+            <div className="audience">✓ ATG startup technicians</div>
+            <div className="audience">✓ Fueling equipment service companies</div>
+            <div className="audience">✓ Gas station maintenance teams</div>
+            <div className="audience">✓ New hires learning Gilbarco &amp; Veeder-Root</div>
+            <div className="audience">✓ Gilbarco authorized contractors</div>
+            <div className="audience">✓ Operations managers and dispatchers</div>
           </div>
         </div>
       </section>
 
-      {/* How it works section */}
-      <section id="how" className="section">
-        <div className="container">
-          <span className="badge">How it works</span>
-          <h2>Launch your company knowledge bot in four steps.</h2>
-          <div className="steps">
-            {steps.map((s, i) => (
-              <div className="feature" key={s}>
-                <div className="num">{i + 1}</div>
-                <h3>{s}</h3>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Pricing / payment section */}
-      <section id="pricing" className="section">
+      {/* Pricing */}
+      <section id="pricing" className="section alt">
         <div className="container">
           <span className="badge">Simple pricing</span>
           <h2 style={{ textAlign: 'center', marginBottom: 8 }}>One plan. Full access.</h2>
@@ -257,10 +286,13 @@ export default function Home() {
             <ul className="pricing-features">
               <li>✓ Unlimited questions from any device</li>
               <li>✓ Gilbarco &amp; Veeder-Root documentation library</li>
-              <li>✓ Error code lookups, wiring diagrams &amp; procedures</li>
-              <li>✓ ATG startup, programming &amp; alarm guidance</li>
-              <li>✓ Dispenser troubleshooting &amp; EMV support</li>
-              <li>✓ Works on phone, tablet &amp; desktop</li>
+              <li>✓ Error code lookups &amp; alarm diagnosis</li>
+              <li>✓ Diagrams, schematics &amp; installation figures</li>
+              <li>✓ Step-by-step troubleshooting in conversation</li>
+              <li>✓ ATG startup, programming &amp; configuration guidance</li>
+              <li>✓ Dispenser, CRIND &amp; EMV support</li>
+              <li>✓ Source citations on every answer</li>
+              <li>✓ Works on phone, tablet &amp; desktop (PWA)</li>
             </ul>
 
             <a
@@ -278,10 +310,39 @@ export default function Home() {
             </a>
 
             <p className="pricing-note">
-              After payment you&apos;ll receive your login credentials within one business day.
-              Questions? Email <a href="mailto:digitaldemon@wskandsons.com" style={{ color: 'var(--color-primary)' }}>digitaldemon@wskandsons.com</a>
+              After payment you&apos;ll receive login credentials automatically.
+              Questions? Email{' '}
+              <a href="mailto:digitaldemon@wskandsons.com" style={{ color: 'var(--color-primary)' }}>
+                digitaldemon@wskandsons.com
+              </a>
             </p>
           </div>
+        </div>
+      </section>
+
+      {/* Disclaimer */}
+      <section className="lp-disclaimer">
+        <div className="container">
+          <p className="lp-disclaimer-title">Disclaimer &amp; Limitations of Use</p>
+          <p>
+            FuelTech AI Pro is an AI-assisted reference tool intended for use by qualified fueling equipment
+            technicians. It is not a substitute for professional training, manufacturer-approved procedures,
+            or official certification. AI-generated responses may occasionally be incomplete, outdated, or
+            inaccurate — always verify critical procedures against the applicable Gilbarco, Veeder-Root, or
+            manufacturer service manual before performing any work.
+          </p>
+          <p>
+            For safety-critical decisions, regulatory compliance questions, or operations involving
+            hazardous materials, defer to manufacturer guidance, local codes, and certified professionals.
+            FuelTech AI Pro and Gen X Data Acquisitions LLC assume no liability for damages, injuries,
+            or losses arising from reliance on information provided by this service.
+          </p>
+          <p>
+            FuelTech AI Pro is not affiliated with, endorsed by, or sponsored by Gilbarco Veeder-Root,
+            Dover Fueling Solutions, or their parent companies. All manufacturer names and trademarks are
+            the property of their respective owners and are referenced solely to identify the equipment
+            this service supports.
+          </p>
         </div>
       </section>
 
@@ -294,11 +355,14 @@ export default function Home() {
               <img src="/icon-192.png" alt="FuelTech AI Pro" className="brand-logo-img" />
             </div>
             <div>
-              <strong>FuelTechAIPro.com</strong>
-              <div className="brand-sub">AI‑powered support for the fueling industry.</div>
+              <strong>FuelTech AI Pro™</strong>
+              <div className="brand-sub">AI-powered support for the fueling industry.</div>
             </div>
           </div>
-          <div>© 2026 FuelTech AI Pro. All rights reserved.</div>
+          <div style={{ textAlign: 'right', color: 'var(--color-subtext)', fontSize: 13 }}>
+            <div>© 2026 Gen X Data Acquisitions LLC. All rights reserved.</div>
+            <div style={{ marginTop: 4 }}>FuelTech AI Pro™ is a trademark of Gen X Data Acquisitions LLC.</div>
+          </div>
         </div>
       </footer>
     </main>

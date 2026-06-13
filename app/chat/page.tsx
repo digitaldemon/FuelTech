@@ -176,13 +176,14 @@ export default function ChatPage() {
     }
     const text = prompt.build(selectedModel);
     if (prompt.partial) {
-      // Pre-fill the template and position cursor where the code goes
+      // Pre-fill the template and position cursor where the code goes.
+      // iOS Safari requires focus() synchronously inside the click handler;
+      // setSelectionRange can follow in a microtask after state updates settle.
       setInput(text);
+      inputRef.current?.focus();
       setTimeout(() => {
         if (inputRef.current) {
-          // Place cursor after "error code " so the tech types the code right there
-          const pos = text.indexOf('  mean') + 1; // one space after "code"
-          inputRef.current.focus();
+          const pos = text.indexOf('  mean') + 1;
           inputRef.current.setSelectionRange(pos, pos);
         }
       }, 0);
@@ -297,6 +298,9 @@ export default function ChatPage() {
             {loading ? '…' : 'Send'}
           </button>
         </form>
+        <p className="chat-disclaimer">
+          AI responses are for reference only. Always verify procedures against official manufacturer documentation before performing any work. Not a substitute for professional judgment or certified technician guidance.
+        </p>
       </footer>
     </div>
   );
