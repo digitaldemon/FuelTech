@@ -1,4 +1,6 @@
 // Stateless HMAC-SHA256 session tokens — works in both Node.js and Edge runtimes.
+// Payload format: `username:sessionExpiresAt:membershipExpiresAt`
+// membershipExpiresAt = 0 means no expiry (legacy/hardcoded accounts)
 
 export const COOKIE_NAME = "ft_session";
 export const MAX_AGE_SECONDS = 8 * 60 * 60; // 8 hours
@@ -31,9 +33,10 @@ function decodeBase64Url(s: string): Uint8Array {
   );
 }
 
-export async function signSession(username: string): Promise<string> {
-  const expiresAt = Date.now() + MAX_AGE_SECONDS * 1000;
-  const payload = `${username}:${expiresAt}`;
+// membershipExpiresAt: Unix timestamp ms, 0 = no expiry (legacy accounts)
+export async function signSession(username: string, membershipExpiresAt = 0): Promise<string> {
+  const sessionExpiresAt = Date.now() + MAX_AGE_SECONDS * 1000;
+  const payload = `${username}:${sessionExpiresAt}:${membershipExpiresAt}`;
   const key = await getKey();
   const sig = await crypto.subtle.sign(
     "HMAC",
@@ -60,9 +63,30 @@ export async function verifySession(token: string): Promise<boolean> {
     );
     if (!valid) return false;
     const payload = new TextDecoder().decode(payloadBytes);
-    const colon = payload.lastIndexOf(":");
-    return Date.now() < parseInt(payload.slice(colon + 1), 10);
+    const parts = payload.split(":");
+    // parts[0]=username, parts[1]=sessionExpiresAt, parts[2]=membershipExpiresAt
+    const sessionExpiry = parseInt(parts[1] ?? "0", 10);
+    return Date.now() < sessionExpiry;
   } catch {
     return false;
+  }
+}
+
+// Decode membership status from a verified token — no HMAC re-check, call after verifySession.
+// Returns null if token is malformed.
+export function getMembershipStatus(token: string): { username: string; membershipExpired: boolean } | null {
+  try {
+    const dot = token.lastIndexOf(".");
+    if (dot === -1) return null;
+    const payloadBytes = decodeBase64Url(token.slice(0, dot));
+    const payload = new TextDecoder().decode(payloadBytes);
+    const parts = payload.split(":");
+    const username = parts[0];
+    const membershipExpiresAt = parts.length >= 3 ? parseInt(parts[2], 10) : 0;
+    // 0 = no expiry (legacy account)
+    const membershipExpired = membershipExpiresAt > 0 && Date.now() > membershipExpiresAt;
+    return { username, membershipExpired };
+  } catch {
+    return null;
   }
 }

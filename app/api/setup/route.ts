@@ -88,9 +88,12 @@ export async function POST() {
       password_hash TEXT NOT NULL,
       email TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW(),
-      active BOOLEAN DEFAULT TRUE
+      active BOOLEAN DEFAULT TRUE,
+      expires_at TIMESTAMPTZ
     )
   `;
+
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`;
 
   return Response.json({ ok: true, message: "Database initialized" });
 }

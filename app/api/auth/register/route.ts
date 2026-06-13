@@ -30,8 +30,8 @@ export async function POST(req: Request) {
     const username = attempt === 0 ? baseUsername : `${baseUsername}${attempt}`;
     try {
       await sql`
-        INSERT INTO users (id, username, password_hash, email)
-        VALUES (${id}, ${username}, ${hash}, ${email})
+        INSERT INTO users (id, username, password_hash, email, expires_at)
+        VALUES (${id}, ${username}, ${hash}, ${email}, NOW() + INTERVAL '1 year')
       `;
       return Response.json({ ok: true, username, password });
     } catch (e: unknown) {

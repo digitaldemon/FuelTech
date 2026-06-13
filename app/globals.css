@@ -1420,6 +1420,36 @@ body {
   text-decoration: none;
 }
 
+/* ── Expired subscription page ───────────────────────────────────────────────── */
+.expired-icon {
+  font-size: 52px;
+  margin-bottom: 8px;
+}
+
+.expired-note {
+  font-size: 13px;
+  color: var(--color-subtext);
+  margin-top: 16px;
+  line-height: 1.5;
+}
+
+.expired-note a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.expired-back {
+  display: inline-block;
+  margin-top: 16px;
+  font-size: 14px;
+  color: var(--color-subtext);
+  text-decoration: none;
+}
+
+.expired-back:hover {
+  color: var(--color-text);
+}
+
 /* ── Chat logout button ───────────────────────────────────────────────────────── */
 .logout-btn {
   margin-left: auto;

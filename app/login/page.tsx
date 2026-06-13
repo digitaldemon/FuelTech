@@ -22,7 +22,11 @@ export default function LoginPage() {
         window.location.href = '/chat';
       } else {
         const data = await res.json();
-        setError(data.error || 'Invalid username or password.');
+        if (data.expired) {
+          window.location.href = '/expired';
+        } else {
+          setError(data.error || 'Invalid username or password.');
+        }
       }
     } catch {
       setError('Unable to reach the server. Please try again.');
