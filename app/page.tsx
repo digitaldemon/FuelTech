@@ -3,7 +3,8 @@
 import { Gauge, ShieldCheck, FileText, MessageSquare, ArrowRight, Zap, Menu, BookOpen, Image, ClipboardList, Cable } from 'lucide-react';
 import { useState } from 'react';
 
-const ACCESS_PRICE = 49.99;
+const ANNUAL_PRICE = 99;
+const MONTHLY_PRICE = 9.99;
 
 const features = [
   {
@@ -127,7 +128,7 @@ export default function Home() {
             </p>
             <div className="cta-row">
               <a href="#pricing" className="button">
-                Get Access — ${ACCESS_PRICE}/yr <ArrowRight size={24} />
+                Get Access — from ${MONTHLY_PRICE}/mo <ArrowRight size={24} />
               </a>
               <a href="#features" className="button secondary">
                 See Features
@@ -294,53 +295,105 @@ export default function Home() {
             Everything you need to put AI-powered documentation in every tech&apos;s pocket.
           </p>
 
-          <div className="pricing-card">
-            <div className="pricing-limited-badge">Limited Time Offer</div>
-            <div className="pricing-header">
-              <Zap size={32} style={{ color: 'var(--color-primary)' }} />
-              <h3>FuelTech AI Pro</h3>
-              <div className="pricing-price">
-                <span className="pricing-amount">${ACCESS_PRICE}</span>
-                <span className="pricing-period">/year</span>
+          <div className="pricing-cards-row">
+
+            {/* Monthly */}
+            <div className="pricing-card">
+              <div className="pricing-header">
+                <Zap size={32} style={{ color: 'var(--color-primary)' }} />
+                <h3>FuelTech AI Pro</h3>
+                <div className="pricing-price">
+                  <span className="pricing-amount">${MONTHLY_PRICE}</span>
+                  <span className="pricing-period">/month</span>
+                </div>
+                <p className="pricing-tagline">Per user &mdash; billed monthly, cancel any time</p>
               </div>
-              <p className="pricing-tagline">Per user &mdash; full access for an entire year</p>
+
+              <ul className="pricing-features">
+                <li>✓ Unlimited questions from any device</li>
+                <li>✓ Multi-brand documentation library (Gilbarco, Veeder-Root, Wayne, Red Jacket &amp; more)</li>
+                <li>✓ Error code lookups &amp; alarm diagnosis</li>
+                <li>✓ Diagrams, schematics &amp; installation figures</li>
+                <li>✓ Step-by-step troubleshooting in conversation</li>
+                <li>✓ ATG startup, programming &amp; configuration guidance</li>
+                <li>✓ Field testing procedures &amp; compliance protocols</li>
+                <li>✓ ATG Direct Connect — pull alarm history &amp; setup reports via RS-232 or Ethernet</li>
+                <li>✓ Dispenser, CRIND &amp; EMV support</li>
+                <li>✓ Source citations on every answer</li>
+                <li>✓ Works on phone, tablet &amp; desktop (PWA)</li>
+              </ul>
+
+              <a
+                className="paypal-btn"
+                href="https://www.paypal.com/cgi-bin/webscr?cmd=_xclick-subscriptions&business=digitaldemon%40wskandsons.com&item_name=FuelTech+AI+Pro+Monthly&a3=9.99&p3=1&t3=M&src=1&currency_code=USD&no_shipping=1&return=https%3A%2F%2Fwww.fueltechaipro.com%2Fpayment-success%3Fplan%3Dmonthly&cancel_return=https%3A%2F%2Fwww.fueltechaipro.com%2F%23pricing"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="https://www.paypalobjects.com/webstatic/en_US/i/buttons/PP_logo_h_100x26.png"
+                  alt="PayPal"
+                  style={{ height: 20, verticalAlign: 'middle', marginRight: 8 }}
+                />
+                Subscribe — $9.99/month
+              </a>
+
+              <p className="pricing-note">
+                After payment you&apos;ll receive login credentials automatically.
+              </p>
             </div>
 
-            <ul className="pricing-features">
-              <li>✓ Unlimited questions from any device</li>
-              <li>✓ Multi-brand documentation library (Gilbarco, Veeder-Root, Wayne, Red Jacket &amp; more)</li>
-              <li>✓ Error code lookups &amp; alarm diagnosis</li>
-              <li>✓ Diagrams, schematics &amp; installation figures</li>
-              <li>✓ Step-by-step troubleshooting in conversation</li>
-              <li>✓ ATG startup, programming &amp; configuration guidance</li>
-              <li>✓ Field testing procedures &amp; compliance protocols</li>
-              <li>✓ ATG Direct Connect — pull alarm history &amp; setup reports via RS-232 or Ethernet</li>
-              <li>✓ Dispenser, CRIND &amp; EMV support</li>
-              <li>✓ Source citations on every answer</li>
-              <li>✓ Works on phone, tablet &amp; desktop (PWA)</li>
-            </ul>
+            {/* Annual — recommended */}
+            <div className="pricing-card pricing-card-featured">
+              <div className="pricing-limited-badge">Best Value — Save 17%</div>
+              <div className="pricing-header">
+                <Zap size={32} style={{ color: 'var(--color-primary)' }} />
+                <h3>FuelTech AI Pro</h3>
+                <div className="pricing-price">
+                  <span className="pricing-amount">${ANNUAL_PRICE}</span>
+                  <span className="pricing-period">/year</span>
+                </div>
+                <p className="pricing-tagline">Per user &mdash; full access for an entire year</p>
+              </div>
 
-            <a
-              className="paypal-btn"
-              href={`https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=digitaldemon%40wskandsons.com&item_name=FuelTech+AI+Pro+Annual+Access&amount=49.99&currency_code=USD&no_shipping=1&return=https%3A%2F%2Fwww.fueltechaipro.com%2Fpayment-success&cancel_return=https%3A%2F%2Fwww.fueltechaipro.com%2F%23pricing`}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <img
-                src="https://www.paypalobjects.com/webstatic/en_US/i/buttons/PP_logo_h_100x26.png"
-                alt="PayPal"
-                style={{ height: 20, verticalAlign: 'middle', marginRight: 8 }}
-              />
-              Pay with PayPal — $49.99/year
-            </a>
+              <ul className="pricing-features">
+                <li>✓ Unlimited questions from any device</li>
+                <li>✓ Multi-brand documentation library (Gilbarco, Veeder-Root, Wayne, Red Jacket &amp; more)</li>
+                <li>✓ Error code lookups &amp; alarm diagnosis</li>
+                <li>✓ Diagrams, schematics &amp; installation figures</li>
+                <li>✓ Step-by-step troubleshooting in conversation</li>
+                <li>✓ ATG startup, programming &amp; configuration guidance</li>
+                <li>✓ Field testing procedures &amp; compliance protocols</li>
+                <li>✓ ATG Direct Connect — pull alarm history &amp; setup reports via RS-232 or Ethernet</li>
+                <li>✓ Dispenser, CRIND &amp; EMV support</li>
+                <li>✓ Source citations on every answer</li>
+                <li>✓ Works on phone, tablet &amp; desktop (PWA)</li>
+              </ul>
 
-            <p className="pricing-note">
-              After payment you&apos;ll receive login credentials automatically.
-              Questions? Email{' '}
-              <a href="mailto:digitaldemon@wskandsons.com" style={{ color: 'var(--color-primary)' }}>
-                digitaldemon@wskandsons.com
+              <a
+                className="paypal-btn"
+                href="https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=digitaldemon%40wskandsons.com&item_name=FuelTech+AI+Pro+Annual+Access&amount=99.00&currency_code=USD&no_shipping=1&return=https%3A%2F%2Fwww.fueltechaipro.com%2Fpayment-success%3Fplan%3Dannual&cancel_return=https%3A%2F%2Fwww.fueltechaipro.com%2F%23pricing"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="https://www.paypalobjects.com/webstatic/en_US/i/buttons/PP_logo_h_100x26.png"
+                  alt="PayPal"
+                  style={{ height: 20, verticalAlign: 'middle', marginRight: 8 }}
+                />
+                Pay with PayPal — $99/year
               </a>
-            </p>
+
+              <p className="pricing-note">
+                After payment you&apos;ll receive login credentials automatically.
+                Questions? Email{' '}
+                <a href="mailto:digitaldemon@wskandsons.com" style={{ color: 'var(--color-primary)' }}>
+                  digitaldemon@wskandsons.com
+                </a>
+              </p>
+            </div>
+
           </div>
         </div>
       </section>

@@ -15,7 +15,8 @@ function generatePassword(): string {
 }
 
 export async function registerAccount(
-  email: string
+  email: string,
+  durationDays: number = 365
 ): Promise<{ ok: true; username: string; password: string } | { ok: false; error: string }> {
   if (!email || !email.includes("@")) {
     return { ok: false, error: "A valid email address is required." };
@@ -31,7 +32,7 @@ export async function registerAccount(
     try {
       await sql`
         INSERT INTO users (id, username, password_hash, email, expires_at)
-        VALUES (${id}, ${username}, ${hash}, ${email}, NOW() + INTERVAL '1 year')
+        VALUES (${id}, ${username}, ${hash}, ${email}, NOW() + (${durationDays} || ' days')::interval)
       `;
       return { ok: true, username, password };
     } catch (e: unknown) {

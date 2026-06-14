@@ -82,7 +82,11 @@ function buildAlarmHistoryCmd(): { cmd: Uint8Array; dateRange: string } {
 }
 
 // I10100 — full console / system setup report
-const CONSOLE_SETUP_CMD = buildCmd('I10100');
+const CONSOLE_SETUP_CMD  = buildCmd('I10100');
+// I30100 — brief system status (active alarms, health)
+const SYSTEM_STATUS_CMD  = buildCmd('I30100');
+// I20100 — tank inventory (levels, water, temp, ullage)
+const INVENTORY_CMD      = buildCmd('I20100');
 
 // VR raw function code pattern — if the user types one directly, skip AI
 const VR_CODE_RE = /^[Ii][0-9]{5}$/;
@@ -202,6 +206,8 @@ export default function TlsPage() {
   const [reportType,   setReportType]  = useState<ReportType>(null);
   const [alarmRange,   setAlarmRange]  = useState('');
   const [saving,       setSaving]      = useState(false);
+  const [analyzing,    setAnalyzing]   = useState(false);
+  const [aiAnalysis,   setAiAnalysis]  = useState('');
   const [cmdInput,     setCmdInput]    = useState('');
   const [cmdBusy,      setCmdBusy]     = useState(false);
   const [cmdFeedback,  setCmdFeedback] = useState<{ ok: boolean; text: string } | null>(null);
@@ -380,6 +386,39 @@ export default function TlsPage() {
     runCommand(CONSOLE_SETUP_CMD, 'Console Setup Report  (I10100)', 'console-setup');
   }, [runCommand]);
 
+  const handleSystemStatus = useCallback(() => {
+    runCommand(SYSTEM_STATUS_CMD, 'System Status  (I30100)', 'custom');
+  }, [runCommand]);
+
+  const handleInventory = useCallback(() => {
+    runCommand(INVENTORY_CMD, 'Tank Inventory — All Tanks  (I20100)', 'custom');
+  }, [runCommand]);
+
+  const handleAnalyze = useCallback(async () => {
+    if (!output || analyzing) return;
+    setAnalyzing(true);
+    setAiAnalysis('');
+    try {
+      const res = await fetch('/api/tls/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ output }),
+      });
+      if (!res.ok || !res.body) throw new Error('failed');
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        setAiAnalysis(prev => prev + dec.decode(value, { stream: true }));
+      }
+    } catch {
+      setAiAnalysis('Analysis failed — check your connection and try again.');
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [output, analyzing]);
+
   const handleSavePdf = useCallback(async () => {
     if (!output || saving) return;
     setSaving(true);
@@ -434,6 +473,7 @@ export default function TlsPage() {
     setOutput('');
     setReportType(null);
     setAlarmRange('');
+    setAiAnalysis('');
   };
 
   const handleCmdSend = useCallback(async (e: FormEvent) => {
@@ -735,6 +775,36 @@ export default function TlsPage() {
             <button
               className="tls-action"
               disabled={!isConn || isBusy}
+              onClick={handleSystemStatus}
+            >
+              <div className="tls-action-icon">📊</div>
+              <div>
+                <div className="tls-action-name">System Status</div>
+                <div className="tls-action-desc">
+                  Current ATG health and active alarms via I30100. Shows real-time fault
+                  conditions and system alerts — fastest way to see what&apos;s wrong right now.
+                </div>
+              </div>
+            </button>
+
+            <button
+              className="tls-action"
+              disabled={!isConn || isBusy}
+              onClick={handleInventory}
+            >
+              <div className="tls-action-icon">🛢️</div>
+              <div>
+                <div className="tls-action-name">Tank Inventory</div>
+                <div className="tls-action-desc">
+                  Current fuel levels, water levels, temperature, and ullage for all tanks
+                  via I20100. Instant snapshot of what&apos;s in the ground right now.
+                </div>
+              </div>
+            </button>
+
+            <button
+              className="tls-action"
+              disabled={!isConn || isBusy}
               onClick={handleConsoleSetup}
             >
               <div className="tls-action-icon">⚙️</div>
@@ -783,6 +853,46 @@ export default function TlsPage() {
             </div>
           )}
         </div>
+
+        {/* ── AI Diagnosis ──────────────────────────────────────────────────── */}
+        {output && (
+          <div className="tls-card tls-ai-card">
+            <div className="tls-card-header">
+              <div className="tls-card-title" style={{ margin: 0 }}>AI Diagnosis</div>
+              <button
+                className="tls-btn tls-btn-connect tls-cmd-send"
+                onClick={handleAnalyze}
+                disabled={analyzing || !isOnline}
+                style={{ minWidth: 140 }}
+              >
+                {analyzing ? 'Analyzing…' : 'Analyze with AI'}
+              </button>
+            </div>
+            {!isOnline && (
+              <div className="tls-cmd-feedback tls-cmd-feedback-err">
+                ⚠ Internet connection required for AI diagnosis.
+              </div>
+            )}
+            {analyzing && !aiAnalysis && (
+              <div className="tls-cmd-feedback">
+                ↳ Searching documentation and generating diagnosis…
+              </div>
+            )}
+            {aiAnalysis && (
+              <pre className="tls-terminal tls-ai-result">{aiAnalysis}</pre>
+            )}
+            {!aiAnalysis && !analyzing && (
+              <p className="tls-cmd-desc">
+                Click <strong>Analyze with AI</strong> to search the Veeder-Root documentation
+                database and get a detailed breakdown of any alarms, faults, and readings in the
+                terminal output above.
+              </p>
+            )}
+            <div className="tls-cmd-desc" style={{ marginTop: 8, opacity: 0.6, fontSize: '0.75rem' }}>
+              Requires internet — AI uses your terminal output and Veeder-Root documentation to generate the diagnosis.
+            </div>
+          </div>
+        )}
 
         {/* ── AI Command Prompt ─────────────────────────────────────────────── */}
         <div className="tls-card tls-cmd-card">

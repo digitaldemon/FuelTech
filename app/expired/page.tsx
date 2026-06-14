@@ -8,18 +8,27 @@ export default function ExpiredPage() {
         <div className="expired-icon">⏰</div>
         <h1>Subscription expired</h1>
         <p className="success-sub">
-          Your annual access has ended. Renew for another year to get back into FuelTech AI Pro.
+          Your access has ended. Renew below to get back into FuelTech AI Pro.
         </p>
 
-        <a
-          className="paypal-btn"
-          href="https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=digitaldemon%40wskandsons.com&item_name=FuelTech+AI+Pro+Annual+Access+Renewal&amount=49.99&currency_code=USD&no_shipping=1&return=https%3A%2F%2Fwww.fueltechaipro.com%2Fpayment-success&cancel_return=https%3A%2F%2Fwww.fueltechaipro.com%2F%23pricing"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ marginTop: 24 }}
-        >
-          Renew — $49.99/year
-        </a>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', marginTop: 24 }}>
+          <a
+            className="paypal-btn"
+            href="https://www.paypal.com/cgi-bin/webscr?cmd=_xclick-subscriptions&business=digitaldemon%40wskandsons.com&item_name=FuelTech+AI+Pro+Monthly+Renewal&a3=9.99&p3=1&t3=M&src=1&currency_code=USD&no_shipping=1&return=https%3A%2F%2Fwww.fueltechaipro.com%2Fpayment-success%3Fplan%3Dmonthly&cancel_return=https%3A%2F%2Fwww.fueltechaipro.com%2F%23pricing"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Renew — $9.99/month
+          </a>
+          <a
+            className="paypal-btn"
+            href="https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=digitaldemon%40wskandsons.com&item_name=FuelTech+AI+Pro+Annual+Access+Renewal&amount=99.00&currency_code=USD&no_shipping=1&return=https%3A%2F%2Fwww.fueltechaipro.com%2Fpayment-success%3Fplan%3Dannual&cancel_return=https%3A%2F%2Fwww.fueltechaipro.com%2F%23pricing"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Renew — $99/year (best value)
+          </a>
+        </div>
 
         <p className="expired-note">
           After renewing, email <a href="mailto:digitaldemon@wskandsons.com">digitaldemon@wskandsons.com</a> with your PayPal receipt and your username to reactivate your account.

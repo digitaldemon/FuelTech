@@ -1,11 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { registerAccount } from "./actions";
 
 type Credentials = { username: string; password: string };
 
-export default function PaymentSuccessPage() {
+function PaymentSuccessContent() {
+  const searchParams = useSearchParams();
+  const plan = searchParams.get("plan");
+  const durationDays = plan === "monthly" ? 31 : 365;
+  const planLabel = plan === "monthly" ? "monthly" : "annual";
+
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -17,7 +23,7 @@ export default function PaymentSuccessPage() {
     setLoading(true);
     setError("");
     try {
-      const result = await registerAccount(email);
+      const result = await registerAccount(email, durationDays);
       if (!result.ok) throw new Error(result.error);
       setCredentials({ username: result.username, password: result.password });
     } catch (err) {
@@ -39,11 +45,13 @@ export default function PaymentSuccessPage() {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/icon-192.png" alt="FuelTech AI Pro" className="success-logo" />
 
+
         {!credentials ? (
           <>
             <div className="success-checkmark">✓</div>
             <h1>Payment received!</h1>
             <p className="success-sub">
+              {planLabel === "monthly" ? "Monthly" : "Annual"} access confirmed.{" "}
               Enter your email below and your login credentials will be created instantly.
             </p>
 
@@ -104,5 +112,13 @@ export default function PaymentSuccessPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function PaymentSuccessPage() {
+  return (
+    <Suspense>
+      <PaymentSuccessContent />
+    </Suspense>
   );
 }
