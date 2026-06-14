@@ -2,27 +2,6 @@ import { NextResponse } from "next/server";
 import { signSession, COOKIE_NAME, MAX_AGE_SECONDS } from "../../../../lib/session";
 import { sql } from "@vercel/postgres";
 import bcrypt from "bcryptjs";
-import { timingSafeEqual } from "crypto";
-
-// Legacy accounts — remove this block after running /api/admin/migrate-legacy
-// to move these into the database with bcrypt hashes.
-const LEGACY_USERS: Record<string, string> = {
-  tech1: "password123",
-  tech2: "password456",
-  bill: "hercules",
-  tauny: "wsk",
-  jesse: "wsk",
-};
-
-function legacyPasswordMatch(a: string, b: string): boolean {
-  try {
-    const ba = Buffer.from(a.padEnd(64));
-    const bb = Buffer.from(b.padEnd(64));
-    return timingSafeEqual(ba, bb) && a.length === b.length;
-  } catch {
-    return false;
-  }
-}
 
 function setSessionCookie(res: NextResponse, token: string) {
   res.cookies.set(COOKIE_NAME, token, {
@@ -75,17 +54,8 @@ export async function POST(req: Request) {
       return res;
     }
   } catch {
-    // DB unavailable — fall through to legacy check
-  }
-
-  // Legacy hardcoded accounts (no expiry) — remove after running /api/admin/migrate-legacy
-  const legacyPw = LEGACY_USERS[username];
-  if (!legacyPw || !legacyPasswordMatch(legacyPw, password)) {
     return NextResponse.json({ error: "Invalid username or password." }, { status: 401 });
   }
 
-  const token = await signSession(username, 0); // 0 = no expiry
-  const res = NextResponse.json({ ok: true });
-  setSessionCookie(res, token);
-  return res;
+  return NextResponse.json({ error: "Invalid username or password." }, { status: 401 });
 }
