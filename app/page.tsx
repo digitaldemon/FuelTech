@@ -4,7 +4,7 @@ import { Gauge, ShieldCheck, FileText, MessageSquare, ArrowRight, Zap, Menu, Boo
 import { useState } from 'react';
 
 const ANNUAL_PRICE = 99;
-const MONTHLY_PRICE = 9.99;
+const MONTHLY_PRICE = 14.99;
 
 const features = [
   {
@@ -289,16 +289,20 @@ export default function Home() {
       {/* Pricing */}
       <section id="pricing" className="section alt">
         <div className="container">
-          <span className="badge">Simple pricing</span>
-          <h2 style={{ textAlign: 'center', marginBottom: 8 }}>One plan. Full access.</h2>
-          <p style={{ textAlign: 'center', color: 'var(--color-subtext)', marginBottom: 48 }}>
+          <span className="badge">Introductory Beta Pricing</span>
+          <h2 style={{ textAlign: 'center', marginBottom: 8 }}>Simple, transparent pricing.</h2>
+          <p style={{ textAlign: 'center', color: 'var(--color-subtext)', marginBottom: 4 }}>
             Everything you need to put AI-powered documentation in every tech&apos;s pocket.
+          </p>
+          <p className="pricing-beta-note">
+            🔒 Beta phase pricing — these rates are locked in for early adopters and will increase when we exit beta.
           </p>
 
           <div className="pricing-cards-row">
 
             {/* Monthly */}
             <div className="pricing-card">
+              <div className="pricing-limited-badge pricing-beta-badge">Beta Introductory Rate</div>
               <div className="pricing-header">
                 <Zap size={32} style={{ color: 'var(--color-primary)' }} />
                 <h3>FuelTech AI Pro</h3>
@@ -325,7 +329,7 @@ export default function Home() {
 
               <a
                 className="paypal-btn"
-                href="https://www.paypal.com/cgi-bin/webscr?cmd=_xclick-subscriptions&business=digitaldemon%40wskandsons.com&item_name=FuelTech+AI+Pro+Monthly&a3=9.99&p3=1&t3=M&src=1&currency_code=USD&no_shipping=1&return=https%3A%2F%2Fwww.fueltechaipro.com%2Fpayment-success%3Fplan%3Dmonthly&cancel_return=https%3A%2F%2Fwww.fueltechaipro.com%2F%23pricing"
+                href="https://www.paypal.com/cgi-bin/webscr?cmd=_xclick-subscriptions&business=digitaldemon%40wskandsons.com&item_name=FuelTech+AI+Pro+Monthly&a3=14.99&p3=1&t3=M&src=1&currency_code=USD&no_shipping=1&return=https%3A%2F%2Fwww.fueltechaipro.com%2Fpayment-success%3Fplan%3Dmonthly&cancel_return=https%3A%2F%2Fwww.fueltechaipro.com%2F%23pricing"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -335,7 +339,7 @@ export default function Home() {
                   alt="PayPal"
                   style={{ height: 20, verticalAlign: 'middle', marginRight: 8 }}
                 />
-                Subscribe — $9.99/month
+                Subscribe — $14.99/month
               </a>
 
               <p className="pricing-note">
@@ -345,7 +349,7 @@ export default function Home() {
 
             {/* Annual — recommended */}
             <div className="pricing-card pricing-card-featured">
-              <div className="pricing-limited-badge">Best Value — Save 17%</div>
+              <div className="pricing-limited-badge">Best Value — Save $81/year</div>
               <div className="pricing-header">
                 <Zap size={32} style={{ color: 'var(--color-primary)' }} />
                 <h3>FuelTech AI Pro</h3>
@@ -391,6 +395,42 @@ export default function Home() {
                 <a href="mailto:digitaldemon@wskandsons.com" style={{ color: 'var(--color-primary)' }}>
                   digitaldemon@wskandsons.com
                 </a>
+              </p>
+            </div>
+
+            {/* Enterprise — coming soon */}
+            <div className="pricing-card pricing-card-enterprise">
+              <div className="pricing-coming-soon-badge">Coming Soon</div>
+              <div className="pricing-header">
+                <Zap size={32} style={{ color: '#a78bfa' }} />
+                <h3>FuelTech AI Enterprise</h3>
+                <div className="pricing-price">
+                  <span className="pricing-amount pricing-amount-enterprise">Custom</span>
+                </div>
+                <p className="pricing-tagline">Per organization &mdash; contact us for pricing</p>
+              </div>
+
+              <ul className="pricing-features pricing-features-enterprise">
+                <li>⬡ Everything in Pro, for your whole team</li>
+                <li>⬡ Multi-user accounts with admin dashboard</li>
+                <li>⬡ Upload your own proprietary documentation</li>
+                <li>⬡ Usage analytics &amp; activity reporting</li>
+                <li>⬡ Priority support &amp; dedicated onboarding</li>
+                <li>⬡ API access for integrations</li>
+                <li>⬡ Custom branding options</li>
+                <li>⬡ Volume licensing for service fleets</li>
+              </ul>
+
+              <button className="paypal-btn pricing-enterprise-btn" disabled>
+                Notify Me When Available
+              </button>
+
+              <p className="pricing-note">
+                Interested in enterprise access? Email{' '}
+                <a href="mailto:digitaldemon@wskandsons.com" style={{ color: '#a78bfa' }}>
+                  digitaldemon@wskandsons.com
+                </a>{' '}
+                to get on the early access list.
               </p>
             </div>
 
