@@ -1,6 +1,6 @@
 // Stateless HMAC-SHA256 session tokens — works in both Node.js and Edge runtimes.
 // Payload format: `username:sessionExpiresAt:membershipExpiresAt`
-// membershipExpiresAt = 0 means no expiry (legacy/hardcoded accounts)
+// membershipExpiresAt = 0 means no expiry (accounts with expires_at = NULL in DB)
 
 export const COOKIE_NAME = "ft_session";
 export const MAX_AGE_SECONDS = 8 * 60 * 60; // 8 hours
@@ -33,7 +33,7 @@ function decodeBase64Url(s: string): Uint8Array {
   );
 }
 
-// membershipExpiresAt: Unix timestamp ms, 0 = no expiry (legacy accounts)
+// membershipExpiresAt: Unix timestamp ms, 0 = no expiry
 export async function signSession(username: string, membershipExpiresAt = 0): Promise<string> {
   const sessionExpiresAt = Date.now() + MAX_AGE_SECONDS * 1000;
   const payload = `${username}:${sessionExpiresAt}:${membershipExpiresAt}`;
@@ -83,7 +83,7 @@ export function getMembershipStatus(token: string): { username: string; membersh
     const parts = payload.split(":");
     const username = parts[0];
     const membershipExpiresAt = parts.length >= 3 ? parseInt(parts[2], 10) : 0;
-    // 0 = no expiry (legacy account)
+    // 0 = no expiry
     const membershipExpired = membershipExpiresAt > 0 && Date.now() > membershipExpiresAt;
     return { username, membershipExpired };
   } catch {
