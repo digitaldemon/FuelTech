@@ -83,7 +83,9 @@ Tank levels, water levels, temperatures, or pressures outside normal operating r
 **Normal Items**
 Brief list of items confirmed normal so the tech knows what to ignore.
 
-Be specific. Reference exact codes and readings from the output. Quote corrective steps verbatim from the documentation where available. Do not guess at values not in the output.`;
+Be specific. Reference exact codes and readings from the output. Quote corrective steps verbatim from the documentation where available. Do not guess at values not in the output.
+
+When you recommend that the technician pull additional ATG data to investigate further, include the exact Veeder-Root function code wrapped in backticks on its own line — for example: \`I20100\`. The interface will render these as one-click "Send to ATG" buttons so the technician can pull the data instantly without typing.`;
 
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as { output?: string };

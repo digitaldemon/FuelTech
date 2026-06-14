@@ -211,10 +211,11 @@ export default function TlsPage() {
   const [cmdInput,     setCmdInput]    = useState('');
   const [cmdBusy,      setCmdBusy]     = useState(false);
   const [cmdFeedback,  setCmdFeedback] = useState<{ ok: boolean; text: string } | null>(null);
-  const portRef     = useRef<AppSerialPort | null>(null);
-  const cmdInputRef = useRef<HTMLInputElement>(null);
-  const readerRef   = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
-  const termRef     = useRef<HTMLPreElement>(null);
+  const portRef           = useRef<AppSerialPort | null>(null);
+  const cmdInputRef       = useRef<HTMLInputElement>(null);
+  const readerRef         = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+  const termRef           = useRef<HTMLPreElement>(null);
+  const pendingAnalyzeRef = useRef(false);
 
   // ── Ethernet state ─────────────────────────────────────────────────────────
   const [ethIp,        setEthIp]       = useState('');
@@ -258,6 +259,14 @@ export default function TlsPage() {
   useEffect(() => {
     if (termRef.current) termRef.current.scrollTop = termRef.current.scrollHeight;
   }, [output]);
+
+  // Trigger AI analysis automatically after auto-diagnose command finishes
+  useEffect(() => {
+    if (pendingAnalyzeRef.current && status === 'connected') {
+      pendingAnalyzeRef.current = false;
+      handleAnalyze();
+    }
+  }, [status, handleAnalyze]);
 
   // Populate previously-granted ports on mount
   useEffect(() => {
@@ -393,6 +402,17 @@ export default function TlsPage() {
   const handleInventory = useCallback(() => {
     runCommand(INVENTORY_CMD, 'Tank Inventory — All Tanks  (I20100)', 'custom');
   }, [runCommand]);
+
+  const handleAutoDiagnose = useCallback(() => {
+    if (!isConn || isBusy || analyzing) return;
+    // Clear terminal so Claude sees only the fresh system status
+    setOutput('');
+    setReportType(null);
+    setAlarmRange('');
+    setAiAnalysis('');
+    pendingAnalyzeRef.current = true;
+    runCommand(SYSTEM_STATUS_CMD, 'System Status — Auto-Diagnose  (I30100)', 'custom');
+  }, [isConn, isBusy, analyzing, runCommand]);
 
   const handleAnalyze = useCallback(async () => {
     if (!output || analyzing) return;
@@ -818,6 +838,22 @@ export default function TlsPage() {
               </div>
             </button>
 
+            <button
+              className="tls-action tls-action-ai"
+              disabled={!isConn || isBusy || analyzing}
+              onClick={handleAutoDiagnose}
+            >
+              <div className="tls-action-icon">🤖</div>
+              <div>
+                <div className="tls-action-name">Auto-Diagnose Active Alarms</div>
+                <div className="tls-action-desc">
+                  Pulls live system status from the ATG and immediately sends it to Claude for AI
+                  diagnosis — one click to read active alarms and get numbered corrective action
+                  steps with documentation references.
+                </div>
+              </div>
+            </button>
+
           </div>
           {!isConn && (
             <div className="tls-actions-lock">Connect to the ATG first to enable quick actions</div>
@@ -878,9 +914,37 @@ export default function TlsPage() {
                 ↳ Searching documentation and generating diagnosis…
               </div>
             )}
-            {aiAnalysis && (
-              <pre className="tls-terminal tls-ai-result">{aiAnalysis}</pre>
-            )}
+            {aiAnalysis && (() => {
+              const suggestedCodes = [...new Set(
+                [...aiAnalysis.matchAll(/`([Ii]\d{5}[^`]*)`/g)].map(m => m[1].trim())
+              )];
+              return (
+                <>
+                  <pre className="tls-terminal tls-ai-result">{aiAnalysis}</pre>
+                  {suggestedCodes.length > 0 && (
+                    <div className="tls-suggested-cmds">
+                      <div className="tls-suggested-label">Suggested commands — click to send to ATG:</div>
+                      <div className="tls-suggested-chips">
+                        {suggestedCodes.map(code => (
+                          <button
+                            key={code}
+                            className="tls-cmd-ex-chip tls-cmd-ex-chip-send"
+                            disabled={!isConn || isBusy}
+                            onClick={() => runCommand(
+                              buildCmd(code.split(/\s+/)[0].toUpperCase()),
+                              `${code} (suggested)`,
+                              'custom'
+                            )}
+                          >
+                            {code} ↗
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
             {!aiAnalysis && !analyzing && (
               <p className="tls-cmd-desc">
                 Click <strong>Analyze with AI</strong> to search the Veeder-Root documentation
