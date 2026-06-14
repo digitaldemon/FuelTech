@@ -36,6 +36,12 @@ export async function POST(req: Request) {
   `;
 
   await sql`
+    CREATE INDEX IF NOT EXISTS fuel_tech_docs_fts_idx
+    ON fuel_tech_docs
+    USING gin (to_tsvector('english', coalesce(title,'') || ' ' || chunk_text))
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS fuel_tech_figures (
       id TEXT PRIMARY KEY,
       doc_url TEXT NOT NULL,
@@ -113,6 +119,14 @@ export async function POST(req: Request) {
   `;
 
   await sql`CREATE INDEX IF NOT EXISTS console_licenses_key_idx ON console_licenses (license_key)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS enterprise_waitlist (
+      email    TEXT PRIMARY KEY,
+      company  TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
 
   return Response.json({ ok: true, message: "Database initialized" });
 }

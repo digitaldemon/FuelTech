@@ -1,5 +1,6 @@
 import { sql } from "@vercel/postgres";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 
 // POST /api/auth/create-user
 // Protected with x-admin-secret header (set ADMIN_SECRET env var on Vercel).

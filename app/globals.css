@@ -1832,12 +1832,63 @@ body {
   background: rgba(167, 139, 250, 0.1) !important;
   color: #a78bfa !important;
   border: 1px solid rgba(167, 139, 250, 0.3) !important;
-  cursor: not-allowed !important;
+  cursor: pointer !important;
   width: 100%;
   font-size: 17px;
   font-weight: 600;
   padding: 16px 32px;
   border-radius: 12px;
+  margin-bottom: 20px;
+  transition: background 0.2s;
+}
+.pricing-enterprise-btn:hover:not(:disabled) {
+  background: rgba(167, 139, 250, 0.18) !important;
+}
+.pricing-enterprise-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed !important;
+}
+
+.pricing-enterprise-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.pricing-enterprise-input {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(167,139,250,0.25);
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 15px;
+  color: #e2e8f0;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.pricing-enterprise-input:focus {
+  border-color: rgba(167,139,250,0.6);
+}
+.pricing-enterprise-input::placeholder {
+  color: #475569;
+}
+
+.pricing-enterprise-error {
+  font-size: 13px;
+  color: #f87171;
+  margin: 0;
+}
+
+.pricing-enterprise-success {
+  background: rgba(167,139,250,0.1);
+  border: 1px solid rgba(167,139,250,0.3);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  color: #a78bfa;
   margin-bottom: 20px;
 }
 

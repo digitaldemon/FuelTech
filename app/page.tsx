@@ -6,6 +6,8 @@ import { useState } from 'react';
 const ANNUAL_PRICE = 99;
 const MONTHLY_PRICE = 14.99;
 
+type EnterpriseStatus = 'idle' | 'form' | 'loading' | 'done' | 'error';
+
 const features = [
   {
     icon: <MessageSquare size={22} />,
@@ -66,6 +68,29 @@ const brands = [
 
 export default function Home() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [enterpriseStatus, setEnterpriseStatus] = useState<EnterpriseStatus>('idle');
+  const [enterpriseEmail, setEnterpriseEmail] = useState('');
+  const [enterpriseCompany, setEnterpriseCompany] = useState('');
+  const [enterpriseError, setEnterpriseError] = useState('');
+
+  const handleEnterpriseSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEnterpriseStatus('loading');
+    setEnterpriseError('');
+    try {
+      const res = await fetch('/api/waitlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: enterpriseEmail, company: enterpriseCompany }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Something went wrong.');
+      setEnterpriseStatus('done');
+    } catch (err) {
+      setEnterpriseError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
+      setEnterpriseStatus('error');
+    }
+  };
 
   return (
     <main>
@@ -421,9 +446,48 @@ export default function Home() {
                 <li>⬡ Volume licensing for service fleets</li>
               </ul>
 
-              <button className="paypal-btn pricing-enterprise-btn" disabled>
-                Notify Me When Available
-              </button>
+              {enterpriseStatus === 'done' ? (
+                <div className="pricing-enterprise-success">
+                  ✓ You&apos;re on the list! We&apos;ll email you when Enterprise launches.
+                </div>
+              ) : enterpriseStatus === 'form' || enterpriseStatus === 'loading' || enterpriseStatus === 'error' ? (
+                <form className="pricing-enterprise-form" onSubmit={handleEnterpriseSubmit}>
+                  <input
+                    type="email"
+                    placeholder="Your email address"
+                    value={enterpriseEmail}
+                    onChange={e => setEnterpriseEmail(e.target.value)}
+                    required
+                    disabled={enterpriseStatus === 'loading'}
+                    className="pricing-enterprise-input"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Company name (optional)"
+                    value={enterpriseCompany}
+                    onChange={e => setEnterpriseCompany(e.target.value)}
+                    disabled={enterpriseStatus === 'loading'}
+                    className="pricing-enterprise-input"
+                  />
+                  {enterpriseError && (
+                    <p className="pricing-enterprise-error">{enterpriseError}</p>
+                  )}
+                  <button
+                    type="submit"
+                    className="paypal-btn pricing-enterprise-btn"
+                    disabled={enterpriseStatus === 'loading'}
+                  >
+                    {enterpriseStatus === 'loading' ? 'Saving…' : 'Notify Me When Available'}
+                  </button>
+                </form>
+              ) : (
+                <button
+                  className="paypal-btn pricing-enterprise-btn"
+                  onClick={() => setEnterpriseStatus('form')}
+                >
+                  Notify Me When Available
+                </button>
+              )}
 
               <p className="pricing-note">
                 Interested in enterprise access? Email{' '}
