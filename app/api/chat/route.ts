@@ -3,6 +3,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { sql } from "@vercel/postgres";
 import { verifySession, COOKIE_NAME } from "../../../lib/session";
 
+export const maxDuration = 300;
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
