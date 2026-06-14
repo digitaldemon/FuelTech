@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { sql } from "@vercel/postgres";
 
 // POST /api/console/issue  (admin only — x-admin-secret header required)
@@ -13,7 +14,7 @@ import { sql } from "@vercel/postgres";
 
 function generateKey(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous chars (0,O,1,I)
-  const seg = () => Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  const seg = () => Array.from(crypto.randomBytes(4)).map(b => chars[b % chars.length]).join("");
   return `FTAI-${seg()}-${seg()}-${seg()}`;
 }
 
