@@ -120,7 +120,7 @@ export default function Home() {
         <div className="container hero-grid">
           <div>
             <span className="badge">Built for the gasoline station industry</span>
-            <h1 className="h1">The AI field assistant for fueling technicians.</h1>
+            <h1 className="h1">Stop searching. Start fixing.</h1>
             <p className="lead">
               FuelTech AI Pro combines the reasoning power of Anthropic Claude with a deep knowledge base
               built from official manufacturer documentation — so it thinks like an experienced technician,
