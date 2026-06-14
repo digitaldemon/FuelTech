@@ -260,14 +260,6 @@ export default function TlsPage() {
     if (termRef.current) termRef.current.scrollTop = termRef.current.scrollHeight;
   }, [output]);
 
-  // Trigger AI analysis automatically after auto-diagnose command finishes
-  useEffect(() => {
-    if (pendingAnalyzeRef.current && status === 'connected') {
-      pendingAnalyzeRef.current = false;
-      handleAnalyze();
-    }
-  }, [status, handleAnalyze]);
-
   // Populate previously-granted ports on mount
   useEffect(() => {
     const serial = getSerial();
@@ -404,7 +396,7 @@ export default function TlsPage() {
   }, [runCommand]);
 
   const handleAutoDiagnose = useCallback(() => {
-    if (!isConn || isBusy || analyzing) return;
+    if (status !== 'connected' || analyzing) return;
     // Clear terminal so Claude sees only the fresh system status
     setOutput('');
     setReportType(null);
@@ -412,7 +404,7 @@ export default function TlsPage() {
     setAiAnalysis('');
     pendingAnalyzeRef.current = true;
     runCommand(SYSTEM_STATUS_CMD, 'System Status — Auto-Diagnose  (I30100)', 'custom');
-  }, [isConn, isBusy, analyzing, runCommand]);
+  }, [status, analyzing, runCommand]);
 
   const handleAnalyze = useCallback(async () => {
     if (!output || analyzing) return;
@@ -438,6 +430,14 @@ export default function TlsPage() {
       setAnalyzing(false);
     }
   }, [output, analyzing]);
+
+  // Trigger AI analysis automatically after auto-diagnose command finishes
+  useEffect(() => {
+    if (pendingAnalyzeRef.current && status === 'connected') {
+      pendingAnalyzeRef.current = false;
+      handleAnalyze();
+    }
+  }, [status, handleAnalyze]);
 
   const handleSavePdf = useCallback(async () => {
     if (!output || saving) return;
