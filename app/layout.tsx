@@ -32,6 +32,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <head>
         <link rel="manifest" href="/manifest.webmanifest" />
+        {/* Apply saved theme before first paint to prevent flash */}
+        <script dangerouslySetInnerHTML={{ __html: `try{var t=localStorage.getItem('ft_theme');if(t==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}` }} />
       </head>
       <body>
         <ServiceWorkerRegistrar />

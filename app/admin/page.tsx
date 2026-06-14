@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { upload } from "@vercel/blob/client";
 
 type FileResult = {
@@ -28,19 +28,87 @@ const SOURCES = [
   { value: "manual",            label: "Other / Manual" },
 ];
 
-function getSecret(): string {
+function getSavedSecret(): string {
   if (typeof window === "undefined") return "";
   return localStorage.getItem("ft_admin_secret") ?? "";
 }
 
+// ── Lock screen ───────────────────────────────────────────────────────────────
+
+function LockScreen({ onUnlock }: { onUnlock: (secret: string) => void }) {
+  const [input, setInput]     = useState("");
+  const [error, setError]     = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim()) { setError("Enter the admin password."); return; }
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/admin/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret: input.trim() }),
+      });
+      if (res.ok) {
+        localStorage.setItem("ft_admin_secret", input.trim());
+        onUnlock(input.trim());
+      } else {
+        setError("Incorrect password.");
+      }
+    } catch {
+      setError("Network error. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={s.page}>
+      <form style={s.lockCard} onSubmit={submit}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/icon-192.png" alt="" style={s.lockLogo} />
+        <div style={s.lockTitle}>Admin Access</div>
+        <div style={s.lockSub}>FuelTech AI Pro</div>
+        <input
+          type="password"
+          style={{ ...s.input, marginTop: 28 }}
+          value={input}
+          onChange={(e) => { setInput(e.target.value); setError(""); }}
+          placeholder="Admin password"
+          autoComplete="current-password"
+          autoFocus
+        />
+        {error && <p style={s.errMsg}>{error}</p>}
+        <button type="submit" style={{ ...s.btn, marginTop: 16 }} disabled={loading}>
+          {loading ? "Checking…" : "Unlock"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// ── Main upload UI ────────────────────────────────────────────────────────────
+
 export default function AdminUpload() {
-  const [secret, setSecret] = useState(getSecret);
-  const [source, setSource] = useState("pei");
+  const saved = getSavedSecret();
+  const [secret, setSecret]   = useState(saved);
+  const [unlocked, setUnlocked] = useState(!!saved);
+  const [source, setSource]   = useState("pei");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [running, setRunning] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [authError, setAuthError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleUnlock = (s: string) => { setSecret(s); setUnlocked(true); };
+
+  const logout = () => {
+    localStorage.removeItem("ft_admin_secret");
+    setSecret("");
+    setUnlocked(false);
+    setEntries([]);
+  };
 
   const updateEntry = (name: string, patch: Partial<FileEntry>) =>
     setEntries((prev) =>
@@ -71,18 +139,13 @@ export default function AdminUpload() {
     setEntries((prev) => prev.filter((e) => e.file.name !== name));
 
   const processAll = async () => {
-    if (!secret.trim()) { setAuthError("Enter the admin secret."); return; }
     const idle = entries.filter((e) => e.phase === "idle");
     if (!idle.length) return;
-
-    localStorage.setItem("ft_admin_secret", secret);
-    setAuthError("");
     setRunning(true);
 
     for (const entry of idle) {
       const { file } = entry;
 
-      // ── Phase 1: upload directly to Vercel Blob CDN ──
       updateEntry(file.name, { phase: "uploading", progress: 0 });
       let blobUrl = "";
       try {
@@ -102,7 +165,6 @@ export default function AdminUpload() {
         continue;
       }
 
-      // ── Phase 2: extract text, chunk, embed ──
       updateEntry(file.name, { phase: "processing", progress: 100 });
       try {
         const res = await fetch("/api/upload/process", {
@@ -137,29 +199,97 @@ export default function AdminUpload() {
   const allDone =
     entries.length > 0 && entries.every((e) => e.phase === "done" || e.phase === "error");
 
+  // ── License key management ───────────────────────────────────────────────
+  type LicenseRow = {
+    license_key: string; tech_name: string; machine_id: string | null;
+    activated_at: string | null; expires_at: string; active: boolean; created_at: string;
+  };
+  const [licenses,     setLicenses]     = useState<LicenseRow[]>([]);
+  const [licLoading,   setLicLoading]   = useState(false);
+  const [newTechName,  setNewTechName]  = useState("");
+  const [newDuration,  setNewDuration]  = useState("365");
+  const [issuing,      setIssuing]      = useState(false);
+  const [issueResult,  setIssueResult]  = useState<{ key: string; expires: string } | null>(null);
+  const [issueError,   setIssueError]   = useState("");
+  const [copied,       setCopied]       = useState("");
+
+  const loadLicenses = useCallback(async () => {
+    if (!secret) return;
+    setLicLoading(true);
+    try {
+      const res = await fetch("/api/console/licenses", { headers: { "x-admin-secret": secret } });
+      const json = await res.json();
+      if (res.ok) setLicenses(json.licenses ?? []);
+      else setIssueError(`Failed to load licenses: ${json.error ?? res.status}`);
+    } catch {
+      setIssueError("Network error loading licenses.");
+    } finally {
+      setLicLoading(false);
+    }
+  }, [secret]);
+
+  useEffect(() => { if (unlocked) loadLicenses(); }, [unlocked, loadLicenses]);
+
+  const issueKey = async () => {
+    if (!newTechName.trim()) return;
+    setIssuing(true);
+    setIssueError("");
+    setIssueResult(null);
+    try {
+      const res = await fetch("/api/console/issue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-secret": secret },
+        body: JSON.stringify({ techName: newTechName.trim(), durationDays: Number(newDuration) || 365 }),
+      });
+      const json = await res.json();
+      if (res.ok && json.ok) {
+        setIssueResult({ key: json.licenseKey, expires: json.expiresAt });
+        setNewTechName("");
+        loadLicenses();
+      } else {
+        setIssueError(json.error ?? "Failed to issue key.");
+      }
+    } catch {
+      setIssueError("Network error. Try again.");
+    } finally {
+      setIssuing(false);
+    }
+  };
+
+  const revokeKey = async (licenseKey: string) => {
+    if (!confirm(`Revoke ${licenseKey}? This cannot be undone.`)) return;
+    await fetch("/api/console/issue", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", "x-admin-secret": secret },
+      body: JSON.stringify({ licenseKey }),
+    });
+    loadLicenses();
+  };
+
+  const copyKey = (key: string) => {
+    navigator.clipboard.writeText(key).catch(() => {});
+    setCopied(key);
+    setTimeout(() => setCopied(""), 2000);
+  };
+
+  if (!unlocked) return <LockScreen onUnlock={handleUnlock} />;
+
   return (
-    <div style={s.page}>
+    <div style={{ ...s.page, alignItems: "flex-start", gap: 24, flexDirection: "column" }}>
+      {/* Upload card */}
+      <div style={{ width: "100%", maxWidth: 580, margin: "0 auto" }}>
       <div style={s.card}>
         <div style={s.logoRow}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icon-192.png" alt="" style={s.logo} />
-          <div>
+          <div style={{ flex: 1 }}>
             <div style={s.h1}>FuelTech Admin</div>
             <div style={s.sub}>PDF Knowledge Base Upload</div>
           </div>
+          <button style={s.logoutBtn} onClick={logout} title="Sign out">
+            Sign out
+          </button>
         </div>
-
-        {/* Auth */}
-        <label style={s.label}>Admin Secret</label>
-        <input
-          type="password"
-          style={s.input}
-          value={secret}
-          onChange={(e) => { setSecret(e.target.value); setAuthError(""); }}
-          placeholder="Paste admin secret key"
-          autoComplete="current-password"
-        />
-        {authError && <p style={s.errMsg}>{authError}</p>}
 
         {/* Source */}
         <label style={s.label}>Document Source</label>
@@ -224,7 +354,7 @@ export default function AdminUpload() {
                     <span style={s.badge("#ef4444")}>Error</span>
                   )}
                 </div>
-                {(e.phase === "uploading") && (
+                {e.phase === "uploading" && (
                   <div style={s.barTrack}>
                     <div style={{ ...s.barFill, width: `${e.progress}%` }} />
                   </div>
@@ -267,11 +397,127 @@ export default function AdminUpload() {
           </div>
         )}
       </div>
+      </div>
+
+      {/* License key manager */}
+      <div style={{ width: "100%", maxWidth: 700, margin: "0 auto" }}>
+      <div style={{ ...s.card, maxWidth: "100%" }}>
+        <div style={s.logoRow}>
+          <div style={{ flex: 1 }}>
+            <div style={s.h1}>Console License Keys</div>
+            <div style={s.sub}>FuelTech AI Console Connect — issue &amp; manage tech licenses</div>
+          </div>
+          <button style={s.logoutBtn} onClick={loadLicenses} disabled={licLoading}>
+            {licLoading ? "Loading…" : "⟳ Refresh"}
+          </button>
+        </div>
+
+        {/* Issue new key */}
+        <label style={s.label}>Issue New Key</label>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, color: "#475569", marginBottom: 5 }}>Tech Name</div>
+            <input
+              style={s.input}
+              value={newTechName}
+              onChange={(e) => { setNewTechName(e.target.value); setIssueError(""); setIssueResult(null); }}
+              placeholder="e.g. John Smith"
+              onKeyDown={(e) => e.key === "Enter" && issueKey()}
+            />
+          </div>
+          <div style={{ width: 110 }}>
+            <div style={{ fontSize: 11, color: "#475569", marginBottom: 5 }}>Duration (days)</div>
+            <input
+              style={s.input}
+              value={newDuration}
+              onChange={(e) => setNewDuration(e.target.value)}
+              type="number"
+              min="1"
+              max="3650"
+            />
+          </div>
+          <button
+            style={{ ...s.btn, marginTop: 0, width: "auto", padding: "10px 22px", flexShrink: 0 }}
+            onClick={issueKey}
+            disabled={issuing || !newTechName.trim()}
+          >
+            {issuing ? "Issuing…" : "Issue Key"}
+          </button>
+        </div>
+
+        {issueResult && (
+          <div style={{ marginTop: 12, background: "rgba(34,211,238,0.06)", border: "1px solid rgba(34,211,238,0.2)", borderRadius: 10, padding: "12px 16px" }}>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>New license key — copy and send to the tech:</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <code style={{ flex: 1, fontSize: 16, fontWeight: 700, color: "#22d3ee", letterSpacing: "0.1em", fontFamily: "monospace" }}>
+                {issueResult.key}
+              </code>
+              <button
+                style={{ ...s.logoutBtn, color: copied === issueResult.key ? "#4ade80" : "#22d3ee", borderColor: "rgba(34,211,238,0.3)" }}
+                onClick={() => copyKey(issueResult.key)}
+              >
+                {copied === issueResult.key ? "Copied ✓" : "Copy"}
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: "#475569", marginTop: 6 }}>
+              Expires: {new Date(issueResult.expires).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+            </div>
+          </div>
+        )}
+
+        {issueError && <p style={{ ...s.errMsg, marginTop: 8 }}>{issueError}</p>}
+
+        {/* License list */}
+        <label style={{ ...s.label, marginTop: 28 }}>
+          All Keys ({licenses.length})
+        </label>
+
+        {licenses.length === 0 && !licLoading && (
+          <div style={{ fontSize: 13, color: "#334155", padding: "12px 0" }}>No license keys yet.</div>
+        )}
+
+        {licenses.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {licenses.map((lic) => {
+              const expired = new Date(lic.expires_at) < new Date();
+              const status  = !lic.active ? "Revoked" : expired ? "Expired" : lic.machine_id ? "Active" : "Unactivated";
+              const statusColor = !lic.active ? "#ef4444" : expired ? "#f59e0b" : lic.machine_id ? "#4ade80" : "#64748b";
+              return (
+                <div key={lic.license_key} style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 14 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                      <code style={{ fontSize: 13, fontWeight: 700, color: "#22d3ee", fontFamily: "monospace", letterSpacing: "0.06em" }}>{lic.license_key}</code>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: statusColor, background: `${statusColor}18`, border: `1px solid ${statusColor}30`, borderRadius: 5, padding: "1px 7px" }}>{status}</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                      <strong style={{ color: "#cbd5e1" }}>{lic.tech_name}</strong>
+                      {" · "}Expires {new Date(lic.expires_at).toLocaleDateString()}
+                      {lic.activated_at && ` · Activated ${new Date(lic.activated_at).toLocaleDateString()}`}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                    <button style={{ ...s.logoutBtn, color: copied === lic.license_key ? "#4ade80" : "#64748b" }} onClick={() => copyKey(lic.license_key)}>
+                      {copied === lic.license_key ? "✓" : "Copy"}
+                    </button>
+                    {lic.active && (
+                      <button style={{ ...s.logoutBtn, color: "#ef4444", borderColor: "rgba(239,68,68,0.2)" }} onClick={() => revokeKey(lic.license_key)}>
+                        Revoke
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      </div>
+
     </div>
   );
 }
 
-// Inline styles (no class name collisions with main app)
+// Inline styles
 const s = {
   page: {
     minHeight: "100vh",
@@ -280,6 +526,35 @@ const s = {
     alignItems: "flex-start",
     justifyContent: "center",
     padding: "48px 16px",
+  } as React.CSSProperties,
+  lockCard: {
+    background: "#0f172a",
+    border: "1px solid rgba(255,255,255,0.09)",
+    borderRadius: 20,
+    padding: "48px 40px 40px",
+    width: "100%",
+    maxWidth: 380,
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    textAlign: "center" as const,
+  } as React.CSSProperties,
+  lockLogo: {
+    width: 64,
+    height: 64,
+    borderRadius: 16,
+    boxShadow: "0 0 0 1px rgba(34,211,238,0.2), 0 0 32px rgba(34,211,238,0.2)",
+    marginBottom: 18,
+  } as React.CSSProperties,
+  lockTitle: {
+    fontSize: 22,
+    fontWeight: 700,
+    color: "#e2e8f0",
+  } as React.CSSProperties,
+  lockSub: {
+    fontSize: 13,
+    color: "#475569",
+    marginTop: 4,
   } as React.CSSProperties,
   card: {
     background: "#0f172a",
@@ -298,6 +573,15 @@ const s = {
   logo: { width: 44, height: 44, borderRadius: 10 } as React.CSSProperties,
   h1: { fontSize: 20, fontWeight: 700, color: "#e2e8f0" } as React.CSSProperties,
   sub: { fontSize: 13, color: "#64748b", marginTop: 2 } as React.CSSProperties,
+  logoutBtn: {
+    background: "none",
+    border: "1px solid rgba(255,255,255,0.1)",
+    borderRadius: 8,
+    color: "#475569",
+    fontSize: 12,
+    padding: "5px 12px",
+    cursor: "pointer",
+  } as React.CSSProperties,
   label: {
     display: "block",
     fontSize: 11,
@@ -423,6 +707,9 @@ const s = {
     background: "rgba(239,68,68,0.07)",
     borderRadius: 6,
     padding: "5px 10px",
+    width: "100%",
+    boxSizing: "border-box",
+    textAlign: "left",
   } as React.CSSProperties,
   btn: {
     display: "block",

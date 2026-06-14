@@ -1,6 +1,6 @@
 "use client";
 
-import { Gauge, ShieldCheck, FileText, MessageSquare, ArrowRight, Zap, Menu, BookOpen, Image, ClipboardList } from 'lucide-react';
+import { Gauge, ShieldCheck, FileText, MessageSquare, ArrowRight, Zap, Menu, BookOpen, Image, ClipboardList, Cable } from 'lucide-react';
 import { useState } from 'react';
 
 const ACCESS_PRICE = 49.99;
@@ -40,6 +40,11 @@ const features = [
     icon: <ClipboardList size={22} />,
     title: 'Field Testing & Compliance Protocols',
     text: 'Get step-by-step guidance on line leak detection testing, precision line testing, tank tightness tests, and field tester operation — including test frequency requirements, pass/fail criteria, and manufacturer-specified compliance procedures.',
+  },
+  {
+    icon: <Cable size={22} />,
+    title: 'ATG Direct Connect & Serial Dashboard',
+    text: 'Connect directly to a TLS-450PLUS from your browser via RS-232 serial or Ethernet — no additional software required. Pull a full year of alarm history and the complete console setup report with one click, then save them as a PDF for environmental compliance documentation.',
   },
 ];
 
@@ -134,6 +139,7 @@ export default function Home() {
               <span>✓ Step-by-step troubleshooting</span>
               <span>✓ Startup &amp; programming</span>
               <span>✓ Testing &amp; compliance protocols</span>
+              <span>✓ ATG direct connect (RS-232 &amp; Ethernet)</span>
               <span>✓ Source citations</span>
               <span>✓ Works on any device</span>
             </div>
@@ -308,6 +314,7 @@ export default function Home() {
               <li>✓ Step-by-step troubleshooting in conversation</li>
               <li>✓ ATG startup, programming &amp; configuration guidance</li>
               <li>✓ Field testing procedures &amp; compliance protocols</li>
+              <li>✓ ATG Direct Connect — pull alarm history &amp; setup reports via RS-232 or Ethernet</li>
               <li>✓ Dispenser, CRIND &amp; EMV support</li>
               <li>✓ Source citations on every answer</li>
               <li>✓ Works on phone, tablet &amp; desktop (PWA)</li>
@@ -380,6 +387,9 @@ export default function Home() {
           <div style={{ textAlign: 'right', color: 'var(--color-subtext)', fontSize: 13 }}>
             <div>© 2026 Gen X Data Acquisitions LLC. All rights reserved.</div>
             <div style={{ marginTop: 4 }}>FuelTech AI Pro™ is a trademark of Gen X Data Acquisitions LLC.</div>
+            <div style={{ marginTop: 12 }}>
+              <a href="/admin" style={{ color: '#22d3ee', textDecoration: 'none', fontSize: 12, fontWeight: 600, border: '1px solid rgba(34,211,238,0.3)', borderRadius: 6, padding: '4px 12px' }}>Admin Portal</a>
+            </div>
           </div>
         </div>
       </footer>

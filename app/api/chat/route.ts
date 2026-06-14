@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { sql } from "@vercel/postgres";
+import { verifySession, COOKIE_NAME } from "../../../lib/session";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -204,11 +205,40 @@ function extractErrorCode(text: string): string | null {
   return null;
 }
 
+const GUIDED_MODE_ADDENDUM = `
+
+## GUIDED MODE — ACTIVE
+The technician has enabled step-by-step guided mode. Rules you MUST follow:
+- Present ONLY ONE step at a time per response.
+- After each step, ask the technician to confirm completion or describe what they observe (e.g. "What does the display show?" or "Let me know when that's done and I'll continue.").
+- Wait for their response before presenting the next step.
+- If they report an unexpected result or error, stop and diagnose before proceeding.
+- Number steps sequentially across the entire conversation (Step 1, Step 2, Step 3…).
+- On your FIRST response: briefly confirm what procedure you are beginning, then present Step 1 only.
+- NEVER dump the full procedure at once — one step per response, always.`;
+
+const SPANISH_ADDENDUM = `
+
+## IDIOMA — ESPAÑOL
+El técnico ha seleccionado respuestas en español. Responde SIEMPRE en español, sin importar el idioma de la pregunta. Mantén todos los términos técnicos (nombres de equipos, códigos de error, rutas de menú) exactamente como aparecen en los manuales de fábrica —en inglés—. Traduce todas las explicaciones, instrucciones y comentarios al español.`;
+
 // ── Main route ────────────────────────────────────────────────────────────────
 export async function POST(req: Request) {
-  const { message, history = [] } = (await req.json()) as {
+  // Session auth — only logged-in subscribers may consume API tokens
+  const rawCookie = req.headers.get("cookie") ?? "";
+  const tokenMatch = rawCookie.match(new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]+)`));
+  const token = tokenMatch ? tokenMatch[1] : null;
+  if (!token || !(await verifySession(token))) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { message, history = [], guidedMode = false, imageBase64, imageMediaType, lang = "en" } = (await req.json()) as {
     message: string;
     history?: Array<{ role: "user" | "assistant"; content: string }>;
+    guidedMode?: boolean;
+    imageBase64?: string;
+    imageMediaType?: string;
+    lang?: "en" | "es";
   };
 
   // Step 1: Generate HyDE + query expansions + embed original, all in parallel
@@ -450,13 +480,29 @@ export async function POST(req: Request) {
   }
   const context = contextParts.join("\n\n===\n\n");
 
+  const textContent = context
+    ? `${detectedModel ? `Equipment model in question: **${detectedModel}**\n` : ""}${errorCode ? `Error/fault code in question: **${errorCode}**\n` : ""}${detectedModel || errorCode ? "\n" : ""}Context from documentation:\n\n${context}\n\n---\n\nQuestion: ${message}`
+    : message;
+
+  const userContent: Anthropic.MessageParam["content"] = imageBase64
+    ? [
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: (imageMediaType ?? "image/jpeg") as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+            data: imageBase64,
+          },
+        },
+        { type: "text", text: textContent },
+      ]
+    : textContent;
+
   const messages: Anthropic.MessageParam[] = [
     ...(history as Anthropic.MessageParam[]),
     {
       role: "user",
-      content: context
-        ? `${detectedModel ? `Equipment model in question: **${detectedModel}**\n` : ""}${errorCode ? `Error/fault code in question: **${errorCode}**\n` : ""}${detectedModel || errorCode ? "\n" : ""}Context from documentation:\n\n${context}\n\n---\n\nQuestion: ${message}`
-        : message,
+      content: userContent,
     },
   ];
 
@@ -492,11 +538,14 @@ export async function POST(req: Request) {
       }
 
       try {
+        let sysPrompt = guidedMode ? SYSTEM_PROMPT + GUIDED_MODE_ADDENDUM : SYSTEM_PROMPT;
+        if (lang === "es") sysPrompt += SPANISH_ADDENDUM;
+
         const aiStream = anthropic.messages.stream({
           model: "claude-opus-4-8",
           max_tokens: 20000,
           thinking: { type: "adaptive" },
-          system: SYSTEM_PROMPT,
+          system: sysPrompt,
           messages,
         });
 

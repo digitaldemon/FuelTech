@@ -1,4 +1,23 @@
+import { verifySession, COOKIE_NAME } from "../../../lib/session";
+
 export const maxDuration = 60;
+
+// Only allow proxying from known document portals — prevents SSRF
+const ALLOWED_HOSTS = new Set([
+  "docs.gilbarco.com",
+  "interactive.gilbarco.com",
+  "docs.veeder.com",
+  "www.veeder.com",
+]);
+
+function isAllowedUrl(raw: string): boolean {
+  try {
+    const { hostname, protocol } = new URL(raw);
+    return protocol === "https:" && ALLOWED_HOSTS.has(hostname);
+  } catch {
+    return false;
+  }
+}
 
 async function getCfSession(baseUrl: string): Promise<string> {
   try {
@@ -71,12 +90,24 @@ async function getExtranetSession(): Promise<string> {
 }
 
 export async function GET(req: Request) {
+  // Session auth — logged-in users only
+  const rawCookie = req.headers.get("cookie") ?? "";
+  const tokenMatch = rawCookie.match(new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]+)`));
+  const token = tokenMatch ? tokenMatch[1] : null;
+  if (!token || !(await verifySession(token))) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const { searchParams } = new URL(req.url);
   const docUrl = searchParams.get("url");
   const source = searchParams.get("source") ?? "";
 
   if (!docUrl) {
     return new Response("Missing url parameter", { status: 400 });
+  }
+
+  if (!isAllowedUrl(docUrl)) {
+    return new Response("URL not permitted", { status: 403 });
   }
 
   let fetchUrl = docUrl;

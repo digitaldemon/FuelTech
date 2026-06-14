@@ -69,9 +69,8 @@ function extractModel(text: string): string {
 }
 
 export async function POST(req: Request) {
-  // Simple auth — require the same pattern as the scrape/setup routes
-  const secret = req.headers.get("x-upload-secret");
-  if (secret !== process.env.UPLOAD_SECRET && process.env.UPLOAD_SECRET) {
+  const secret = req.headers.get("x-admin-secret");
+  if (!secret || secret !== process.env.ADMIN_SECRET) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 

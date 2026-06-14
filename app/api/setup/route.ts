@@ -1,6 +1,10 @@
 import { sql } from "@vercel/postgres";
 
-export async function POST() {
+export async function POST(req: Request) {
+  const secret = req.headers.get("x-admin-secret");
+  if (!secret || secret !== process.env.ADMIN_SECRET) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
   await sql`CREATE EXTENSION IF NOT EXISTS vector`;
 
   await sql`
@@ -95,10 +99,29 @@ export async function POST() {
 
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS console_licenses (
+      id           TEXT PRIMARY KEY,
+      license_key  TEXT UNIQUE NOT NULL,
+      tech_name    TEXT NOT NULL,
+      machine_id   TEXT,
+      activated_at TIMESTAMPTZ,
+      expires_at   TIMESTAMPTZ NOT NULL,
+      active       BOOLEAN DEFAULT TRUE,
+      created_at   TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+
+  await sql`CREATE INDEX IF NOT EXISTS console_licenses_key_idx ON console_licenses (license_key)`;
+
   return Response.json({ ok: true, message: "Database initialized" });
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const secret = req.headers.get("x-admin-secret");
+  if (!secret || secret !== process.env.ADMIN_SECRET) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const result = await sql`
     SELECT source, COUNT(*) AS count
     FROM fuel_tech_docs

@@ -1,3 +1,5 @@
+'use server';
+
 import { sql } from "@vercel/postgres";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -7,22 +9,16 @@ function generateUsername(email: string): string {
 }
 
 function generatePassword(): string {
-  // Readable format: Fuel + 8 mixed alphanumeric chars (no ambiguous 0/O/1/l/I)
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
   const bytes = crypto.randomBytes(8);
   return "Fuel" + Array.from(bytes).map((b) => chars[b % chars.length]).join("");
 }
 
-export async function POST(req: Request) {
-  const adminSecret = req.headers.get("x-admin-secret");
-  if (!adminSecret || adminSecret !== process.env.ADMIN_SECRET) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { email } = (await req.json()) as { email: string };
-
+export async function registerAccount(
+  email: string
+): Promise<{ ok: true; username: string; password: string } | { ok: false; error: string }> {
   if (!email || !email.includes("@")) {
-    return Response.json({ error: "A valid email address is required." }, { status: 400 });
+    return { ok: false, error: "A valid email address is required." };
   }
 
   const baseUsername = generateUsername(email);
@@ -30,7 +26,6 @@ export async function POST(req: Request) {
   const hash = await bcrypt.hash(password, 12);
   const id = crypto.randomUUID();
 
-  // Try base username, then base+1, base+2, … if it's already taken
   for (let attempt = 0; attempt <= 9; attempt++) {
     const username = attempt === 0 ? baseUsername : `${baseUsername}${attempt}`;
     try {
@@ -38,15 +33,13 @@ export async function POST(req: Request) {
         INSERT INTO users (id, username, password_hash, email, expires_at)
         VALUES (${id}, ${username}, ${hash}, ${email}, NOW() + INTERVAL '1 year')
       `;
-      return Response.json({ ok: true, username, password });
+      return { ok: true, username, password };
     } catch (e: unknown) {
       const msg = (e instanceof Error ? e.message : "").toLowerCase();
-      if (msg.includes("unique") || msg.includes("duplicate")) {
-        continue; // username taken — try next suffix
-      }
-      return Response.json({ error: "Could not create account. Please try again." }, { status: 500 });
+      if (msg.includes("unique") || msg.includes("duplicate")) continue;
+      return { ok: false, error: "Could not create account. Please try again." };
     }
   }
 
-  return Response.json({ error: "Username unavailable. Contact digitaldemon@wskandsons.com." }, { status: 409 });
+  return { ok: false, error: "Username unavailable. Contact digitaldemon@wskandsons.com." };
 }

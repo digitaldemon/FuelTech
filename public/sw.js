@@ -1,7 +1,7 @@
 // Minimal service worker — satisfies PWA installability criteria.
 // Caches the shell on install so the app loads offline too.
-const CACHE = 'fueltechai-v1';
-const SHELL = ['/', '/chat', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
+const CACHE = 'fueltechai-v2';
+const SHELL = ['/', '/chat', '/tls', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(

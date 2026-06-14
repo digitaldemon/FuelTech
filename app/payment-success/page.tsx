@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { registerAccount } from "./actions";
 
 type Credentials = { username: string; password: string };
 
@@ -16,14 +17,9 @@ export default function PaymentSuccessPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Something went wrong.");
-      setCredentials(data);
+      const result = await registerAccount(email);
+      if (!result.ok) throw new Error(result.error);
+      setCredentials({ username: result.username, password: result.password });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
     } finally {

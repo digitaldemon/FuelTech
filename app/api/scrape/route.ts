@@ -16,7 +16,13 @@ let createCanvas: ((...args: any[]) => any) | null = null;
 
 function loadPdfjs(): boolean {
   try {
-    if (!pdfjsLib) pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
+    if (!pdfjsLib) {
+      pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
+      // In Node.js serverless environments, explicitly require the worker module
+      // so pdfjs can run it inline (fake-worker mode with MessageChannel).
+      try { require("pdfjs-dist/legacy/build/pdf.worker.js"); } catch { /* ignore */ }
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "";
+    }
     return true;
   } catch {
     return false;
@@ -271,6 +277,9 @@ async function upsertChunks(
 
 // ── Figure extraction ─────────────────────────────────────────────────────────
 
+const FIGURE_KEYWORDS =
+  /\b(figure|fig\.|diagram|wiring|schematic|illustration|drawing|circuit|harness|connector|pinout)\b/i;
+
 class NodeCanvasFactory {
   create(width: number, height: number) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -296,25 +305,38 @@ async function extractAndStoreFigures(pdfBuf: Buffer, docUrl: string): Promise<v
     const pdfDoc = await pdfjsLib.getDocument({ data, useSystemFonts: true }).promise;
     const canvasFactory = new NodeCanvasFactory();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const OPS = (pdfjsLib as any).OPS as Record<string, number>;
+    const OPS = (pdfjsLib as any).OPS as Record<string, number> | undefined;
 
     for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
       const page = await pdfDoc.getPage(pageNum);
-      const ops = await page.getOperatorList();
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const hasRaster = ops.fnArray.some(
-        (fn: any) => fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject
-      );
-      // Diagrams and schematics in technical PDFs are usually vector graphics.
-      // Count stroke/fill operations — a high number indicates a complex diagram page.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const drawOpCount = ops.fnArray.filter(
-        (fn: any) => fn === OPS.stroke || fn === OPS.fill || fn === OPS.fillStroke || fn === OPS.eoFill || fn === OPS.eoFillStroke
-      ).length;
-      const hasVectorDiagram = drawOpCount > 25;
+      // Try to detect visual content via operator list (may not be available in all envs).
+      let hasRaster = false;
+      let hasVectorDiagram = false;
+      if (OPS) {
+        try {
+          const ops = await page.getOperatorList();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          hasRaster = ops.fnArray.some(
+            (fn: any) => fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject
+          );
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const drawOpCount = ops.fnArray.filter(
+            (fn: any) => fn === OPS.stroke || fn === OPS.fill || fn === OPS.fillStroke || fn === OPS.eoFill || fn === OPS.eoFillStroke
+          ).length;
+          hasVectorDiagram = drawOpCount > 15;
+        } catch { /* operator list unavailable — fall through to keyword check */ }
+      }
 
-      if (!hasRaster && !hasVectorDiagram) continue;
+      // Wiring diagrams often appear on pages whose text references figures/diagrams even
+      // when the vector-op count is low (simple line art).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const textContent = await page.getTextContent();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pageText = (textContent.items as any[]).map((it: any) => ("str" in it ? it.str : "")).join(" ");
+      const hasVisualKeyword = FIGURE_KEYWORDS.test(pageText);
+
+      if (!hasRaster && !hasVectorDiagram && !hasVisualKeyword) continue;
 
       const viewport = page.getViewport({ scale: 1.5 });
       const { canvas, context } = canvasFactory.create(
@@ -337,7 +359,8 @@ async function extractAndStoreFigures(pdfBuf: Buffer, docUrl: string): Promise<v
           contentType: "image/png",
         });
         url = blob.url;
-      } catch {
+      } catch (blobErr) {
+        console.error("[figures] blob put failed:", blobErr);
         // Dev fallback: write to public/figures/ and serve as static asset
         const figuresDir = path.join(process.cwd(), "public", "figures");
         if (!fs.existsSync(figuresDir)) fs.mkdirSync(figuresDir, { recursive: true });
@@ -354,6 +377,62 @@ async function extractAndStoreFigures(pdfBuf: Buffer, docUrl: string): Promise<v
   } catch (err) {
     console.error("[figures] error:", err);
   }
+}
+
+// Backfill: re-download PDFs and (re-)extract figures.
+// recheck=false → only docs with no figures yet
+// recheck=true  → all docs, incl. those with existing figures (to pick up newly-detectable pages)
+async function scrapeFiguresOnly(limit: number, recheck = false): Promise<number> {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return 0;
+  if (!loadNativeDeps()) return 0;
+
+  const rows = recheck
+    ? await sql`
+        SELECT url FROM (
+          SELECT DISTINCT url
+          FROM fuel_tech_docs
+          WHERE url LIKE 'http%'
+            AND url NOT LIKE '%interactive.gilbarco.com%'
+        ) t
+        ORDER BY RANDOM()
+        LIMIT ${limit}
+      `
+    : await sql`
+        SELECT DISTINCT url
+        FROM fuel_tech_docs
+        WHERE url LIKE 'http%'
+          AND url NOT LIKE '%interactive.gilbarco.com%'
+          AND NOT EXISTS (
+            SELECT 1 FROM fuel_tech_figures f WHERE f.doc_url = url
+          )
+        LIMIT ${limit}
+      `;
+  if (rows.rows.length === 0) return 0;
+  const missing = rows;
+
+  const gilbarcoSession = await getGilbarcoSession().catch(() => "");
+  const veederSession = await getVeederSession().catch(() => "");
+
+  let count = 0;
+  for (const { url } of missing.rows as { url: string }[]) {
+    let pdfBuf: Buffer | null = null;
+    try {
+      if (url.includes("docs.gilbarco.com")) {
+        const docId = new URL(url).searchParams.get("doc_id") ?? "";
+        pdfBuf = docId ? await fetchGilbarcoPdf(docId, gilbarcoSession) : null;
+      } else if (url.includes("docs.veeder.com")) {
+        const docId = new URL(url).searchParams.get("doc_id") ?? "";
+        pdfBuf = docId ? await fetchVeederPdf(docId, veederSession) : null;
+      } else {
+        pdfBuf = await fetchDirectPdf(url);
+      }
+    } catch { pdfBuf = null; }
+
+    if (!pdfBuf) continue;
+    await extractAndStoreFigures(pdfBuf, url);
+    count++;
+  }
+  return count;
 }
 
 // ── Gilbarco ──────────────────────────────────────────────────────────────────
@@ -1092,15 +1171,29 @@ async function scrapeGilbarcoExtranet(limit: number): Promise<number> {
 // ── Route ─────────────────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
+  const adminSecret = req.headers.get("x-admin-secret");
+  if (!adminSecret || adminSecret !== process.env.ADMIN_SECRET) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = (await req.json().catch(() => ({}))) as {
     source?: string;
     limit?: number;
     reset?: boolean;
+    recheck?: boolean;
   };
   const source = body.source ?? "both";
   const limit = Number(body.limit ?? 40);
+  const recheck = body.recheck ?? false;
 
   const ALL_SOURCES = ["veeder-root", "gilbarco", "pei", "franklin", "dover", "gilbarco-extranet"];
+
+  // Figure-only backfill: re-extract images for docs already in DB that are missing figures.
+  // Pass recheck:true to also re-process docs that already have some figures (picks up newly-detectable pages).
+  if (source === "figures") {
+    const count = await scrapeFiguresOnly(limit, recheck);
+    return Response.json({ ok: true, figures_backfilled: count });
+  }
 
   if (body.reset) {
     const toReset = source === "both" ? ALL_SOURCES : [source];
