@@ -130,8 +130,8 @@ async function savePdf(opts: {
   const rawLines = opts.content.split('\n');
 
   for (const rawLine of rawLines) {
-    // Split long lines to fit page width (splitTextToSize handles wrapping)
-    const wrapped: string[] = doc.splitTextToSize(rawLine || ' ', contentW);
+    const line = rawLine.replace(/\r/g, '');
+    const wrapped: string[] = doc.splitTextToSize(line || ' ', contentW);
     for (const wl of wrapped) {
       if (y + lineH > pageH - mb) {
         doc.addPage();
@@ -417,6 +417,9 @@ export default function TlsPage() {
   }, [output, saving, reportType, alarmRange]);
 
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => { if (copyTimerRef.current) clearTimeout(copyTimerRef.current); };
+  }, []);
   const handleCopy = () => {
     navigator.clipboard.writeText(output)
       .then(() => {
