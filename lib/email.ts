@@ -10,8 +10,12 @@ export async function sendCredentialsEmail(opts: {
 }): Promise<{ ok: boolean; error?: string }> {
   const { to, username, password, expiresAt } = opts;
 
+  if (!process.env.RESEND_API_KEY) {
+    return { ok: false, error: "RESEND_API_KEY env var not set" };
+  }
+
   try {
-    const { error } = await resend.emails.send({
+    const { data, error } = await resend.emails.send({
       from: "FuelTech AI Pro <info@fueltechaipro.com>",
       to,
       subject: "Your FuelTech AI Pro Login Credentials",
@@ -136,7 +140,11 @@ export async function sendCredentialsEmail(opts: {
       `.trim(),
     });
 
-    if (error) return { ok: false, error: error.message };
+    if (error) {
+      console.error("[email] Resend error:", error);
+      return { ok: false, error: error.message };
+    }
+    console.log("[email] Sent OK, id:", (data as { id?: string })?.id);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Email send failed" };
