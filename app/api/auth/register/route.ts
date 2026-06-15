@@ -1,6 +1,7 @@
 import { sql } from "@vercel/postgres";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import { sendCredentialsEmail } from "../../../../lib/email";
 
 function generateUsername(email: string): string {
   return email.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20) || "user";
@@ -42,7 +43,13 @@ export async function POST(req: Request) {
         INSERT INTO users (id, username, password_hash, email, expires_at)
         VALUES (${id}, ${username}, ${hash}, ${email}, NOW() + (${durationDays} * INTERVAL '1 day'))
       `;
-      return Response.json({ ok: true, username, password });
+
+      // Send credentials email — non-fatal: account is created regardless
+      const expiresAt = new Date(Date.now() + durationDays * 86_400_000).toLocaleDateString(
+        "en-US", { year: "numeric", month: "long", day: "numeric" }
+      );
+      const emailResult = await sendCredentialsEmail({ to: email, username, password, expiresAt });
+      return Response.json({ ok: true, username, password, emailSent: emailResult.ok, emailError: emailResult.error });
     } catch (e: unknown) {
       const msg = (e instanceof Error ? e.message : "").toLowerCase();
       if (msg.includes("unique") || msg.includes("duplicate")) continue;

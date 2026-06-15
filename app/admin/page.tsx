@@ -203,7 +203,7 @@ export default function AdminUpload() {
   const [newUserEmail,    setNewUserEmail]    = useState("");
   const [newUserDuration, setNewUserDuration] = useState("365");
   const [creatingUser,    setCreatingUser]    = useState(false);
-  const [userResult,      setUserResult]      = useState<{ username: string; password: string; expires: string } | null>(null);
+  const [userResult,      setUserResult]      = useState<{ username: string; password: string; expires: string; emailSent: boolean; emailError?: string } | null>(null);
   const [userError,       setUserError]       = useState("");
   const [copiedUser,      setCopiedUser]      = useState<"username" | "password" | "">("");
 
@@ -222,7 +222,7 @@ export default function AdminUpload() {
       if (res.ok && json.ok) {
         const days = Number(newUserDuration) || 365;
         const exp  = new Date(Date.now() + days * 86_400_000).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-        setUserResult({ username: json.username, password: json.password, expires: exp });
+        setUserResult({ username: json.username, password: json.password, expires: exp, emailSent: json.emailSent, emailError: json.emailError });
         setNewUserEmail("");
       } else {
         setUserError(json.error ?? "Failed to create user.");
@@ -551,6 +551,11 @@ export default function AdminUpload() {
             ))}
             <div style={{ fontSize: 11, color: "#475569", marginTop: 6 }}>
               Expires: {userResult.expires} &nbsp;·&nbsp; Login at fueltechaipro.com/login
+            </div>
+            <div style={{ marginTop: 10, fontSize: 12, padding: "6px 10px", borderRadius: 7, background: userResult.emailSent ? "rgba(34,197,94,0.07)" : "rgba(239,68,68,0.07)", border: `1px solid ${userResult.emailSent ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)"}`, color: userResult.emailSent ? "#4ade80" : "#f87171" }}>
+              {userResult.emailSent
+                ? "✓ Credentials emailed to customer"
+                : `⚠ Email not sent${userResult.emailError ? ` — ${userResult.emailError}` : " — check RESEND_API_KEY"}`}
             </div>
           </div>
         )}
