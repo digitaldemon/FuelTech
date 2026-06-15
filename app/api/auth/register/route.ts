@@ -19,10 +19,15 @@ export async function POST(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { email } = (await req.json()) as { email: string };
+  const body = (await req.json()) as { email?: string; durationDays?: number };
+  const { email } = body;
+  const durationDays = Math.round(Number(body.durationDays ?? 365));
 
   if (!email || !email.includes("@")) {
     return Response.json({ error: "A valid email address is required." }, { status: 400 });
+  }
+  if (!Number.isFinite(durationDays) || durationDays < 1 || durationDays > 3650) {
+    return Response.json({ error: "durationDays must be between 1 and 3650." }, { status: 400 });
   }
 
   const baseUsername = generateUsername(email);
@@ -30,20 +35,17 @@ export async function POST(req: Request) {
   const hash = await bcrypt.hash(password, 12);
   const id = crypto.randomUUID();
 
-  // Try base username, then base+1, base+2, … if it's already taken
   for (let attempt = 0; attempt <= 9; attempt++) {
     const username = attempt === 0 ? baseUsername : `${baseUsername}${attempt}`;
     try {
       await sql`
         INSERT INTO users (id, username, password_hash, email, expires_at)
-        VALUES (${id}, ${username}, ${hash}, ${email}, NOW() + INTERVAL '1 year')
+        VALUES (${id}, ${username}, ${hash}, ${email}, NOW() + (${durationDays} * INTERVAL '1 day'))
       `;
       return Response.json({ ok: true, username, password });
     } catch (e: unknown) {
       const msg = (e instanceof Error ? e.message : "").toLowerCase();
-      if (msg.includes("unique") || msg.includes("duplicate")) {
-        continue; // username taken — try next suffix
-      }
+      if (msg.includes("unique") || msg.includes("duplicate")) continue;
       return Response.json({ error: "Could not create account. Please try again." }, { status: 500 });
     }
   }

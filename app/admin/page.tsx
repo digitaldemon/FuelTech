@@ -199,6 +199,47 @@ export default function AdminUpload() {
   const allDone =
     entries.length > 0 && entries.every((e) => e.phase === "done" || e.phase === "error");
 
+  // ── Web user creation ────────────────────────────────────────────────────
+  const [newUserEmail,    setNewUserEmail]    = useState("");
+  const [newUserDuration, setNewUserDuration] = useState("365");
+  const [creatingUser,    setCreatingUser]    = useState(false);
+  const [userResult,      setUserResult]      = useState<{ username: string; password: string; expires: string } | null>(null);
+  const [userError,       setUserError]       = useState("");
+  const [copiedUser,      setCopiedUser]      = useState<"username" | "password" | "">("");
+
+  const createWebUser = async () => {
+    if (!newUserEmail.trim() || creatingUser) return;
+    setCreatingUser(true);
+    setUserError("");
+    setUserResult(null);
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-secret": secret },
+        body: JSON.stringify({ email: newUserEmail.trim(), durationDays: Number(newUserDuration) || 365 }),
+      });
+      const json = await res.json();
+      if (res.ok && json.ok) {
+        const days = Number(newUserDuration) || 365;
+        const exp  = new Date(Date.now() + days * 86_400_000).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+        setUserResult({ username: json.username, password: json.password, expires: exp });
+        setNewUserEmail("");
+      } else {
+        setUserError(json.error ?? "Failed to create user.");
+      }
+    } catch {
+      setUserError("Network error. Try again.");
+    } finally {
+      setCreatingUser(false);
+    }
+  };
+
+  const copyUserField = (field: "username" | "password", value: string) => {
+    navigator.clipboard.writeText(value).catch(() => {});
+    setCopiedUser(field);
+    setTimeout(() => setCopiedUser(""), 2000);
+  };
+
   // ── Reviews moderation ───────────────────────────────────────────────────
   type ReviewRow = {
     id: string; name: string; company: string | null;
@@ -432,6 +473,95 @@ export default function AdminUpload() {
             </p>
           </div>
         )}
+      </div>
+      </div>
+
+      {/* Web user creation */}
+      <div style={{ width: "100%", maxWidth: 580, margin: "0 auto" }}>
+      <div style={s.card}>
+        <div style={s.logoRow}>
+          <div style={{ flex: 1 }}>
+            <div style={s.h1}>Create Web User</div>
+            <div style={s.sub}>Generate login credentials for a paying customer</div>
+          </div>
+        </div>
+
+        <label style={s.label}>Customer Email</label>
+        <input
+          style={s.input}
+          type="email"
+          placeholder="customer@example.com"
+          value={newUserEmail}
+          onChange={(e) => { setNewUserEmail(e.target.value); setUserError(""); setUserResult(null); }}
+          onKeyDown={(e) => e.key === "Enter" && createWebUser()}
+          disabled={creatingUser}
+        />
+
+        <label style={{ ...s.label, marginTop: 16 }}>Access Plan</label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+          {[
+            { label: "Monthly (31 days)", value: "31" },
+            { label: "Annual (365 days)", value: "365" },
+            { label: "Trial (7 days)", value: "7" },
+          ].map(opt => (
+            <button
+              key={opt.value}
+              style={{
+                ...s.logoutBtn,
+                padding: "7px 16px",
+                color: newUserDuration === opt.value ? "#22d3ee" : "#475569",
+                borderColor: newUserDuration === opt.value ? "rgba(34,211,238,0.5)" : "rgba(255,255,255,0.1)",
+                background: newUserDuration === opt.value ? "rgba(34,211,238,0.07)" : "none",
+                fontWeight: newUserDuration === opt.value ? 700 : 400,
+              }}
+              onClick={() => setNewUserDuration(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+          <input
+            style={{ ...s.input, width: 110, marginTop: 0 }}
+            type="number"
+            min="1"
+            max="3650"
+            value={newUserDuration}
+            onChange={(e) => setNewUserDuration(e.target.value)}
+            title="Custom number of days"
+          />
+        </div>
+
+        {userError && <p style={{ ...s.errMsg, marginTop: 10 }}>{userError}</p>}
+
+        {userResult && (
+          <div style={{ marginTop: 14, background: "rgba(34,211,238,0.06)", border: "1px solid rgba(34,211,238,0.2)", borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Account created — copy and send to the customer:</div>
+            {(["username", "password"] as const).map(field => (
+              <div key={field} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <span style={{ fontSize: 11, color: "#475569", width: 64, flexShrink: 0, textTransform: "uppercase" as const, letterSpacing: "0.06em" }}>{field}</span>
+                <code style={{ flex: 1, fontSize: 15, fontWeight: 700, color: "#e2e8f0", fontFamily: "monospace" }}>
+                  {userResult[field]}
+                </code>
+                <button
+                  style={{ ...s.logoutBtn, color: copiedUser === field ? "#4ade80" : "#22d3ee", borderColor: "rgba(34,211,238,0.3)" }}
+                  onClick={() => copyUserField(field, userResult[field])}
+                >
+                  {copiedUser === field ? "Copied ✓" : "Copy"}
+                </button>
+              </div>
+            ))}
+            <div style={{ fontSize: 11, color: "#475569", marginTop: 6 }}>
+              Expires: {userResult.expires} &nbsp;·&nbsp; Login at fueltechaipro.com/login
+            </div>
+          </div>
+        )}
+
+        <button
+          style={{ ...s.btn, ...(creatingUser ? s.btnDisabled : {}), marginTop: 20 }}
+          onClick={createWebUser}
+          disabled={creatingUser || !newUserEmail.trim()}
+        >
+          {creatingUser ? "Creating account…" : "Create Account & Generate Credentials"}
+        </button>
       </div>
       </div>
 
