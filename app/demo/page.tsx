@@ -136,84 +136,105 @@ function makeSounds(muted: boolean) {
 function makeMusic(muted: boolean) {
   if (typeof window === 'undefined') return null;
   const ctx = new AudioContext();
+
+  // Dynamics compressor gives it a polished, "mastered" feel
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -16;
+  comp.knee.value = 6;
+  comp.ratio.value = 4;
+  comp.attack.value = 0.003;
+  comp.release.value = 0.2;
+  comp.connect(ctx.destination);
+
   const master = ctx.createGain();
   master.gain.value = 0;
-  master.connect(ctx.destination);
+  master.connect(comp);
+  master.gain.linearRampToValueAtTime(muted ? 0 : 0.65, ctx.currentTime + 3.5);
 
-  const targetVol = muted ? 0 : 0.22;
-  // Gentle fade-in over 4 seconds
-  master.gain.linearRampToValueAtTime(targetVol, ctx.currentTime + 4);
-
-  // Sub-bass: A1 = 55 Hz sine, very low-passed for warmth
+  // Sub-bass: A1 = 55 Hz triangle, low-passed for warmth
   const bass = ctx.createOscillator();
   const bassF = ctx.createBiquadFilter();
   const bassG = ctx.createGain();
-  bass.type = 'sine';
+  bass.type = 'triangle';
   bass.frequency.value = 55;
-  bassF.type = 'lowpass';
-  bassF.frequency.value = 95;
-  bassG.gain.value = 0.45;
+  bassF.type = 'lowpass'; bassF.frequency.value = 110;
+  bassG.gain.value = 0.38;
   bass.connect(bassF); bassF.connect(bassG); bassG.connect(master);
   bass.start();
 
-  // Pad: Am → F → C → G progression, 15s per chord with 3s crossfades
-  // Each chord = 3 slightly detuned sine oscillators per note (chorus effect)
-  const chords = [
-    [220.00, 261.63, 329.63],  // Am: A3 C4 E4
-    [174.61, 220.00, 261.63],  // F:  F3 A3 C4
-    [130.81, 164.81, 196.00],  // C:  C3 E3 G3
-    [196.00, 246.94, 293.66],  // G:  G3 B3 D4
-  ];
-  const CDUR = 15, CFADE = 3;
-  const totalChords = Math.ceil(125 / CDUR) + 1;
-
-  for (let ci = 0; ci < totalChords; ci++) {
-    const chord = chords[ci % chords.length];
-    const startT = ctx.currentTime + ci * CDUR;
-    const endT = startT + CDUR + CFADE;
-    chord.forEach(freq => {
-      [-5, 0, 5].forEach(detuneC => {
-        const osc = ctx.createOscillator();
-        const lp = ctx.createBiquadFilter();
-        const g = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.value = freq * Math.pow(2, detuneC / 1200);
-        lp.type = 'lowpass'; lp.frequency.value = 1800; lp.Q.value = 0.5;
-        g.gain.setValueAtTime(0, startT);
-        g.gain.linearRampToValueAtTime(0.014, startT + CFADE);
-        g.gain.setValueAtTime(0.014, endT - CFADE);
-        g.gain.linearRampToValueAtTime(0, endT);
-        osc.connect(lp); lp.connect(g); g.connect(master);
-        osc.start(startT);
-        osc.stop(endT + 0.1);
-      });
-    });
-  }
-
-  // High shimmer: E5 + B5 sine, very subtle with slow tremolo
-  [659.25, 987.77].forEach((freq, i) => {
+  // Soft background pad: Am chord, triangle waves, very quiet
+  [110, 130.81, 164.81, 220].forEach((freq, i) => {
     const osc = ctx.createOscillator();
-    const trem = ctx.createOscillator();
-    const tremG = ctx.createGain();
+    const lp = ctx.createBiquadFilter();
     const g = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = freq;
-    trem.frequency.value = 0.11 + i * 0.07;
-    tremG.gain.value = 0.003;
-    g.gain.value = 0.007;
-    trem.connect(tremG); tremG.connect(g.gain);
-    osc.connect(g); g.connect(master);
-    osc.start(); trem.start();
+    osc.type = 'triangle';
+    osc.frequency.value = freq * Math.pow(2, (i % 2 === 0 ? -2 : 2) / 1200);
+    lp.type = 'lowpass'; lp.frequency.value = 700;
+    g.gain.value = 0.028;
+    osc.connect(lp); lp.connect(g); g.connect(master);
+    osc.start();
   });
+
+  // Synth arpeggio: chord-aware pattern, Am → F → C → G, 8 bars each (~10s)
+  // Sawtooth through resonant lowpass = classic lead synth pluck sound
+  const BPM = 88;
+  const sixteenth = 60 / BPM / 4; // ~0.17s
+
+  // Each chord: root, then arpeggio notes cycling up and down
+  const chordArps = [
+    [220.00, 261.63, 329.63, 440.00, 329.63, 261.63, 220.00, 164.81], // Am
+    [174.61, 220.00, 261.63, 349.23, 261.63, 220.00, 174.61, 130.81], // F
+    [261.63, 329.63, 392.00, 523.25, 392.00, 329.63, 261.63, 196.00], // C
+    [196.00, 246.94, 293.66, 392.00, 293.66, 246.94, 196.00, 146.83], // G
+  ];
+  const BARS_PER_CHORD = 8;
+  const NOTES_PER_BAR = 8; // 8 sixteenth notes per bar
+  const CHORD_DUR = BARS_PER_CHORD * NOTES_PER_BAR * sixteenth; // ~10.9s
+
+  const schedArp = (freq: number, when: number) => {
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.value = freq;
+    // Resonant lowpass sweep for pluck character
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(2800, when);
+    filter.frequency.exponentialRampToValueAtTime(600, when + sixteenth * 0.9);
+    filter.Q.value = 3.5;
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(0.12, when + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.001, when + sixteenth * 0.88);
+    osc.connect(filter); filter.connect(g); g.connect(master);
+    osc.start(when);
+    osc.stop(when + sixteenth);
+  };
+
+  // Pre-schedule the full 120s run
+  const startT = ctx.currentTime + 1.2;
+  const totalChords = Math.ceil(125 / CHORD_DUR) + 1;
+  for (let ci = 0; ci < totalChords; ci++) {
+    const chord = chordArps[ci % chordArps.length];
+    const chordStart = startT + ci * CHORD_DUR;
+    for (let bar = 0; bar < BARS_PER_CHORD; bar++) {
+      for (let note = 0; note < NOTES_PER_BAR; note++) {
+        // Skip every 4th note for a syncopated feel (rest on note 4 of each bar)
+        if (note === 3) continue;
+        const noteFreq = chord[note % chord.length];
+        const when = chordStart + (bar * NOTES_PER_BAR + note) * sixteenth;
+        schedArp(noteFreq, when);
+      }
+    }
+  }
 
   return {
     setMuted: (m: boolean) => {
       master.gain.cancelScheduledValues(ctx.currentTime);
-      master.gain.linearRampToValueAtTime(m ? 0 : 0.22, ctx.currentTime + 0.8);
+      master.gain.linearRampToValueAtTime(m ? 0 : 0.65, ctx.currentTime + 0.6);
     },
     stop: () => {
       master.gain.cancelScheduledValues(ctx.currentTime);
-      master.gain.linearRampToValueAtTime(0, ctx.currentTime + 2);
+      master.gain.linearRampToValueAtTime(0, ctx.currentTime + 1.8);
     },
     resume: () => ctx.resume(),
   };
@@ -910,6 +931,7 @@ export default function DemoPage() {
   const [muted, setMuted]       = useState(false);
   const [clicks, setClicks]     = useState<{ id: number; x: number; y: number }[]>([]);
   const [hoveredChapter, setHoveredChapter] = useState<number | null>(null);
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
 
   const elapsedRef   = useRef(0);
   const playingRef   = useRef(false);
@@ -928,6 +950,8 @@ export default function DemoPage() {
   const captions = CAPTIONS[scene.id];
   const captionText = [...captions].reverse().find(([t]) => sceneProgress >= t)?.[1] ?? '';
   const [cx, cy] = cursorAt(Math.min(elapsed, TOTAL - 0.01));
+  const cursorX = mousePos?.x ?? cx;
+  const cursorY = mousePos?.y ?? cy;
   const ended = elapsed >= TOTAL;
 
   // Sound + music init on first play
@@ -1065,10 +1089,14 @@ export default function DemoPage() {
           <div style={{ width: '100%', maxWidth: 960 }}>
 
             {/* Screen */}
-            <div ref={screenRef} onClick={togglePlay} style={{ width: '100%', paddingTop: '56.25%', position: 'relative', background: '#050c1a', borderRadius: '14px 14px 0 0', overflow: 'hidden', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.08)', borderBottom: 'none', boxShadow: '0 28px 80px rgba(0,0,0,0.6)' }}>
+            <div ref={screenRef} onClick={togglePlay}
+              onMouseMove={e => { const r = screenRef.current?.getBoundingClientRect(); if (!r) return; setMousePos({ x: (e.clientX - r.left) / r.width * 100, y: (e.clientY - r.top) / r.height * 100 }); }}
+              onMouseLeave={() => setMousePos(null)}
+              style={{ width: '100%', paddingTop: '56.25%', position: 'relative', background: '#050c1a', borderRadius: '14px 14px 0 0', overflow: 'hidden', cursor: 'none', border: '1px solid rgba(255,255,255,0.08)', borderBottom: 'none', boxShadow: '0 28px 80px rgba(0,0,0,0.6)' }}>
               <div style={{ position: 'absolute', inset: 0 }}>{renderScene(scene.id, sceneProgress)}</div>
 
-              {started && !ended && <div className="demo-cursor" style={{ left: `${cx}%`, top: `${cy}%` }} />}
+              {started && !ended && <div className="demo-cursor" style={{ left: `${cursorX}%`, top: `${cursorY}%`, transition: mousePos ? 'none' : 'left 0.55s cubic-bezier(0.25,0.1,0.25,1), top 0.55s cubic-bezier(0.25,0.1,0.25,1)' }} />}
+              {!started && mousePos && <div className="demo-cursor" style={{ left: `${cursorX}%`, top: `${cursorY}%`, transition: 'none' }} />}
               {clicks.map(c => <div key={c.id} className="demo-click" style={{ left: `${c.x}%`, top: `${c.y}%` }} />)}
 
               {/* Scene label */}
