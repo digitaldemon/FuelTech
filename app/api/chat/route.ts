@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { sql } from "@vercel/postgres";
-import { verifySession, COOKIE_NAME } from "../../../lib/session";
+import { verifySession, getMembershipStatus, COOKIE_NAME } from "../../../lib/session";
 
 export const maxDuration = 300;
 
@@ -232,6 +232,10 @@ export async function POST(req: Request) {
   const token = tokenMatch ? tokenMatch[1] : null;
   if (!token || !(await verifySession(token))) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const memberInfo = getMembershipStatus(token);
+  if (!memberInfo || memberInfo.membershipExpired) {
+    return Response.json({ error: "Subscription expired", expired: true }, { status: 403 });
   }
 
   const { message, history = [], guidedMode = false, imageBase64, imageMediaType, lang = "en" } = (await req.json()) as {

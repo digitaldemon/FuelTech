@@ -1,8 +1,23 @@
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { sql } from "@vercel/postgres";
+import { verifySession, getMembershipStatus, COOKIE_NAME } from "../../../../lib/session";
 
 export const maxDuration = 120;
+
+function extractToken(req: Request): string | null {
+  const raw = req.headers.get("cookie") ?? "";
+  const m = raw.match(new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]+)`));
+  return m ? m[1] : null;
+}
+
+async function authGuard(req: Request): Promise<Response | null> {
+  const token = extractToken(req);
+  if (!token || !(await verifySession(token))) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const info = getMembershipStatus(token);
+  if (!info || info.membershipExpired) return Response.json({ error: "Subscription expired" }, { status: 403 });
+  return null;
+}
 
 const openai  = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const anthropic = new Anthropic();
@@ -88,6 +103,9 @@ Be specific. Reference exact codes and readings from the output. Quote correctiv
 When you recommend that the technician pull additional ATG data to investigate further, include the exact Veeder-Root function code wrapped in backticks on its own line — for example: \`I20100\`. The interface will render these as one-click "Send to ATG" buttons so the technician can pull the data instantly without typing.`;
 
 export async function POST(req: Request) {
+  const denied = await authGuard(req);
+  if (denied) return denied;
+
   const body = (await req.json().catch(() => ({}))) as { output?: string };
   const output = (body.output ?? "").trim();
 

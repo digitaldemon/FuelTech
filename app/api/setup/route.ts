@@ -128,6 +128,20 @@ export async function POST(req: Request) {
     )
   `;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS reviews (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name        TEXT NOT NULL,
+      company     TEXT,
+      rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+      review_text TEXT NOT NULL,
+      approved    BOOLEAN DEFAULT FALSE,
+      created_at  TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+
+  await sql`CREATE INDEX IF NOT EXISTS reviews_approved_idx ON reviews (approved, created_at DESC)`;
+
   return Response.json({ ok: true, message: "Database initialized" });
 }
 

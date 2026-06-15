@@ -2,6 +2,7 @@
 
 import { Gauge, ShieldCheck, FileText, MessageSquare, ArrowRight, Zap, Menu, BookOpen, Image, ClipboardList, Cable } from 'lucide-react';
 import { useState } from 'react';
+import ReviewsSection from './components/ReviewsSection';
 
 const ANNUAL_PRICE = 99;
 const MONTHLY_PRICE = 14.99;
@@ -109,6 +110,7 @@ export default function Home() {
           <nav className="navlinks">
             <a href="#features">Features</a>
             <a href="#library">Documentation</a>
+            <a href="#reviews">Reviews</a>
             <a href="#pricing">Pricing</a>
             <a href="/login">Login</a>
           </nav>
@@ -126,6 +128,7 @@ export default function Home() {
         <nav className={`mobile-menu${menuOpen ? ' open' : ''}`}>
           <a href="#features" onClick={() => setMenuOpen(false)}>Features</a>
           <a href="#library" onClick={() => setMenuOpen(false)}>Documentation</a>
+          <a href="#reviews" onClick={() => setMenuOpen(false)}>Reviews</a>
           <a href="#pricing" onClick={() => setMenuOpen(false)}>Pricing</a>
           <a href="/login" onClick={() => setMenuOpen(false)}>Login</a>
           <a className="button" href="#pricing" onClick={() => setMenuOpen(false)}>Get Access</a>
@@ -310,6 +313,9 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {/* Reviews */}
+      <ReviewsSection />
 
       {/* Pricing */}
       <section id="pricing" className="section alt">
