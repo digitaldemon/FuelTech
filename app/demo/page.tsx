@@ -133,108 +133,172 @@ function makeSounds(muted: boolean) {
 }
 
 // ── Background music engine ───────────────────────────────────────────────────
+// Zero sustained oscillators — every sound is a discrete note with ADSR.
+// Uses the Web Audio lookahead scheduler pattern (schedules 350ms ahead).
 function makeMusic(muted: boolean) {
   if (typeof window === 'undefined') return null;
   const ctx = new AudioContext();
 
-  // Dynamics compressor gives it a polished, "mastered" feel
+  // Master compressor gives polished, glued sound
   const comp = ctx.createDynamicsCompressor();
-  comp.threshold.value = -16;
-  comp.knee.value = 6;
-  comp.ratio.value = 4;
-  comp.attack.value = 0.003;
-  comp.release.value = 0.2;
+  comp.threshold.value = -14; comp.knee.value = 5;
+  comp.ratio.value = 5; comp.attack.value = 0.003; comp.release.value = 0.18;
   comp.connect(ctx.destination);
 
   const master = ctx.createGain();
   master.gain.value = 0;
   master.connect(comp);
-  master.gain.linearRampToValueAtTime(muted ? 0 : 0.65, ctx.currentTime + 3.5);
+  let targetVol = muted ? 0 : 0.72;
+  master.gain.linearRampToValueAtTime(targetVol, ctx.currentTime + 2.5);
 
-  // Sub-bass: A1 = 55 Hz triangle, low-passed for warmth
-  const bass = ctx.createOscillator();
-  const bassF = ctx.createBiquadFilter();
-  const bassG = ctx.createGain();
-  bass.type = 'triangle';
-  bass.frequency.value = 55;
-  bassF.type = 'lowpass'; bassF.frequency.value = 110;
-  bassG.gain.value = 0.38;
-  bass.connect(bassF); bassF.connect(bassG); bassG.connect(master);
-  bass.start();
+  const BPM = 95, beat = 60 / BPM;
+  const eighth = beat / 2, sixteenth = beat / 4, bar = beat * 4;
 
-  // Soft background pad: Am chord, triangle waves, very quiet
-  [110, 130.81, 164.81, 220].forEach((freq, i) => {
-    const osc = ctx.createOscillator();
-    const lp = ctx.createBiquadFilter();
-    const g = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.value = freq * Math.pow(2, (i % 2 === 0 ? -2 : 2) / 1200);
-    lp.type = 'lowpass'; lp.frequency.value = 700;
-    g.gain.value = 0.028;
-    osc.connect(lp); lp.connect(g); g.connect(master);
-    osc.start();
-  });
+  // ── Sound primitives (all percussive — attack + decay, NO sustain) ──────────
 
-  // Synth arpeggio: chord-aware pattern, Am → F → C → G, 8 bars each (~10s)
-  // Sawtooth through resonant lowpass = classic lead synth pluck sound
-  const BPM = 88;
-  const sixteenth = 60 / BPM / 4; // ~0.17s
-
-  // Each chord: root, then arpeggio notes cycling up and down
-  const chordArps = [
-    [220.00, 261.63, 329.63, 440.00, 329.63, 261.63, 220.00, 164.81], // Am
-    [174.61, 220.00, 261.63, 349.23, 261.63, 220.00, 174.61, 130.81], // F
-    [261.63, 329.63, 392.00, 523.25, 392.00, 329.63, 261.63, 196.00], // C
-    [196.00, 246.94, 293.66, 392.00, 293.66, 246.94, 196.00, 146.83], // G
-  ];
-  const BARS_PER_CHORD = 8;
-  const NOTES_PER_BAR = 8; // 8 sixteenth notes per bar
-  const CHORD_DUR = BARS_PER_CHORD * NOTES_PER_BAR * sixteenth; // ~10.9s
-
-  const schedArp = (freq: number, when: number) => {
-    const osc = ctx.createOscillator();
-    const filter = ctx.createBiquadFilter();
-    const g = ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.value = freq;
-    // Resonant lowpass sweep for pluck character
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(2800, when);
-    filter.frequency.exponentialRampToValueAtTime(600, when + sixteenth * 0.9);
-    filter.Q.value = 3.5;
-    g.gain.setValueAtTime(0, when);
-    g.gain.linearRampToValueAtTime(0.12, when + 0.008);
-    g.gain.exponentialRampToValueAtTime(0.001, when + sixteenth * 0.88);
-    osc.connect(filter); filter.connect(g); g.connect(master);
-    osc.start(when);
-    osc.stop(when + sixteenth);
+  // Kick: deep sine sweep 180→25 Hz
+  const kick = (t: number, vol = 1) => {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.connect(g); g.connect(master);
+    o.frequency.setValueAtTime(180, t);
+    o.frequency.exponentialRampToValueAtTime(25, t + 0.13);
+    g.gain.setValueAtTime(vol * 0.85, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+    o.start(t); o.stop(t + 0.3);
   };
 
-  // Pre-schedule the full 120s run
-  const startT = ctx.currentTime + 1.2;
-  const totalChords = Math.ceil(125 / CHORD_DUR) + 1;
-  for (let ci = 0; ci < totalChords; ci++) {
-    const chord = chordArps[ci % chordArps.length];
-    const chordStart = startT + ci * CHORD_DUR;
-    for (let bar = 0; bar < BARS_PER_CHORD; bar++) {
-      for (let note = 0; note < NOTES_PER_BAR; note++) {
-        // Skip every 4th note for a syncopated feel (rest on note 4 of each bar)
-        if (note === 3) continue;
-        const noteFreq = chord[note % chord.length];
-        const when = chordStart + (bar * NOTES_PER_BAR + note) * sixteenth;
-        schedArp(noteFreq, when);
-      }
+  // Bass pluck: triangle, tight low-pass, quick decay
+  const bassPluck = (freq: number, t: number, dur = 0.38) => {
+    const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    o.type = 'triangle'; o.frequency.value = freq;
+    f.type = 'lowpass'; f.frequency.value = 210;
+    g.gain.setValueAtTime(0.52, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(f); f.connect(g); g.connect(master);
+    o.start(t); o.stop(t + dur + 0.05);
+  };
+
+  // Synth arp pluck: two detuned sawtooths, resonant lowpass sweep = classic pluck
+  const arpNote = (freq: number, t: number) => {
+    const o1 = ctx.createOscillator(), o2 = ctx.createOscillator();
+    const f = ctx.createBiquadFilter(), g = ctx.createGain();
+    o1.type = 'sawtooth'; o1.frequency.value = freq;
+    o2.type = 'sawtooth'; o2.frequency.value = freq * 1.0045;
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(3400, t);
+    f.frequency.exponentialRampToValueAtTime(620, t + eighth * 0.82);
+    f.Q.value = 4.2;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.12, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.001, t + eighth * 0.86);
+    o1.connect(f); o2.connect(f); f.connect(g); g.connect(master);
+    o1.start(t); o2.start(t);
+    o1.stop(t + eighth); o2.stop(t + eighth);
+  };
+
+  // Chord stab: multi-voice sawtooth, very short
+  const stab = (freqs: number[], t: number) => {
+    freqs.forEach(freq => {
+      const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+      o.type = 'sawtooth'; o.frequency.value = freq;
+      f.type = 'lowpass';
+      f.frequency.setValueAtTime(2000, t); f.frequency.exponentialRampToValueAtTime(650, t + 0.09);
+      f.Q.value = 2.2;
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.052, t + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+      o.connect(f); f.connect(g); g.connect(master);
+      o.start(t); o.stop(t + 0.16);
+    });
+  };
+
+  // Hi-hat: high-pass filtered noise burst
+  const hat = (t: number, vol: number) => {
+    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.044), ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    src.buffer = buf; f.type = 'highpass'; f.frequency.value = 9800;
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.038);
+    src.connect(f); f.connect(g); g.connect(master);
+    src.start(t);
+  };
+
+  // Melody note: soft sine, moderate decay (sits above the arp)
+  const melNote = (freq: number, t: number) => {
+    const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    f.type = 'lowpass'; f.frequency.value = 1800;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.11, t + 0.035);
+    g.gain.setValueAtTime(0.11, t + beat * 0.55);
+    g.gain.exponentialRampToValueAtTime(0.001, t + beat * 1.05);
+    o.connect(f); f.connect(g); g.connect(master);
+    o.start(t); o.stop(t + beat * 1.1);
+  };
+
+  // ── Chord progression: Am Am F F C C G G ────────────────────────────────────
+  const CHORDS = [
+    { bass: 55,    arp: [220.00, 261.63, 329.63, 440.00, 329.63, 261.63, 220.00, 164.81], stab: [110.00, 130.81, 164.81], mel: 440.00 },
+    { bass: 55,    arp: [220.00, 329.63, 440.00, 329.63, 261.63, 329.63, 220.00, 261.63], stab: [110.00, 130.81, 164.81], mel: 493.88 },
+    { bass: 43.65, arp: [174.61, 220.00, 261.63, 349.23, 261.63, 220.00, 174.61, 130.81], stab: [87.31,  110.00, 130.81], mel: 523.25 },
+    { bass: 43.65, arp: [174.61, 261.63, 349.23, 261.63, 220.00, 261.63, 174.61, 220.00], stab: [87.31,  110.00, 130.81], mel: 523.25 },
+    { bass: 65.41, arp: [261.63, 329.63, 392.00, 523.25, 392.00, 329.63, 261.63, 196.00], stab: [130.81, 164.81, 196.00], mel: 587.33 },
+    { bass: 65.41, arp: [261.63, 392.00, 523.25, 392.00, 329.63, 392.00, 261.63, 329.63], stab: [130.81, 164.81, 196.00], mel: 523.25 },
+    { bass: 49,    arp: [196.00, 246.94, 293.66, 392.00, 293.66, 246.94, 196.00, 146.83], stab: [98.00,  123.47, 146.83], mel: 440.00 },
+    { bass: 49,    arp: [196.00, 293.66, 392.00, 293.66, 246.94, 293.66, 196.00, 246.94], stab: [98.00,  123.47, 146.83], mel: 392.00 },
+  ];
+
+  const scheduleBar = (chord: typeof CHORDS[0], t: number, barNum: number) => {
+    const full = barNum >= 2;
+
+    for (let b = 0; b < 4; b++) {
+      const bt = t + b * beat;
+      // Kick on 1 and 3
+      if (b === 0) kick(bt, 1.0);
+      if (b === 2) kick(bt, 0.78);
+      // Bass: root on 1+3, fifth on 2+4
+      if (b === 0 || b === 2) bassPluck(chord.bass, bt);
+      if (full && (b === 1 || b === 3)) bassPluck(chord.bass * 1.5, bt, 0.2);
+      // Hi-hat every beat; offbeat from bar 2 on
+      hat(bt, b === 0 ? 0.068 : 0.040);
+      if (full) hat(bt + eighth, 0.024);
+      // Chord stab on offbeats (beat 2+4 shifted by half a sixteenth)
+      if (full && (b === 1 || b === 3)) stab(chord.stab, bt + sixteenth * 0.5);
     }
-  }
+
+    // Arpeggio: 8 eighth-note steps, skip step 3 for breathing room
+    const arpSteps = full ? [0,1,2,4,5,6,7] : [0,2,4,6];
+    arpSteps.forEach(n => arpNote(chord.arp[n], t + n * eighth));
+
+    // Melody note on beat 2 (from bar 4 onward)
+    if (barNum >= 4) melNote(chord.mel, t + beat);
+  };
+
+  // Lookahead scheduler
+  let nextBar = ctx.currentTime + 0.25;
+  let barIdx = 0;
+  let stopped = false;
+
+  const timerId = setInterval(() => {
+    if (stopped) return;
+    while (nextBar < ctx.currentTime + 0.35) {
+      scheduleBar(CHORDS[barIdx % CHORDS.length], nextBar, barIdx);
+      nextBar += bar;
+      barIdx++;
+    }
+  }, 25);
 
   return {
     setMuted: (m: boolean) => {
+      targetVol = m ? 0 : 0.72;
       master.gain.cancelScheduledValues(ctx.currentTime);
-      master.gain.linearRampToValueAtTime(m ? 0 : 0.65, ctx.currentTime + 0.6);
+      master.gain.linearRampToValueAtTime(targetVol, ctx.currentTime + (m ? 0.25 : 0.5));
     },
     stop: () => {
+      stopped = true;
+      clearInterval(timerId);
       master.gain.cancelScheduledValues(ctx.currentTime);
-      master.gain.linearRampToValueAtTime(0, ctx.currentTime + 1.8);
+      master.gain.linearRampToValueAtTime(0, ctx.currentTime + 1.5);
     },
     resume: () => ctx.resume(),
   };
@@ -993,12 +1057,14 @@ export default function DemoPage() {
     ensureSound();
     if (!started) setStarted(true);
     if (elapsedRef.current >= TOTAL) {
-      // Restart: stop old music, create new one on next ensureSound
       musicRef.current?.stop(); musicRef.current = null;
       elapsedRef.current = 0; setElapsed(0); firedRef.current.clear();
     }
-    playingRef.current = !playingRef.current;
-    setPlaying(p => !p);
+    const nowPlaying = !playingRef.current;
+    playingRef.current = nowPlaying;
+    setPlaying(nowPlaying);
+    // Silence music when paused, restore when playing (respects mute toggle)
+    musicRef.current?.setMuted(!nowPlaying || mutedRef.current);
   }, [started, ensureSound]);
 
   useEffect(() => {
