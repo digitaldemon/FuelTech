@@ -38,7 +38,7 @@ const features = [
   {
     icon: <FileText size={22} />,
     title: 'Cross-Brand ATG & Dispenser Knowledge',
-    text: 'Trained across Veeder-Root TLS consoles, Gilbarco dispensers, Wayne/Tokheim/Dover dispensers, Red Jacket and FE Petro submersible systems, Franklin Fueling equipment, and PEI industry resources — the AI reasons across equipment families, not just one brand at a time.',
+    text: 'Trained across Veeder-Root TLS consoles, Gilbarco dispensers, Wayne/Tokheim/Dover dispensers, Red Jacket and FE Petro submersible systems, and Franklin Fueling equipment — the AI reasons across equipment families, not just one brand at a time.',
   },
   {
     icon: <ClipboardList size={22} />,
@@ -48,7 +48,7 @@ const features = [
   {
     icon: <Cable size={22} />,
     title: 'ATG Direct Connect & Serial Dashboard',
-    text: 'Connect directly to a TLS-450PLUS from your browser via RS-232 serial or Ethernet — no additional software required. Pull a full year of alarm history and the complete console setup report with one click, then save them as a PDF for environmental compliance documentation.',
+    text: 'Connect directly to a TLS-350 or TLS-450 console from your browser via RS-232 serial — no additional software required. Pull current active alarms, a full year of alarm history, and the complete console setup report with one click, then save them as a PDF for environmental compliance documentation.',
   },
 ];
 
@@ -59,11 +59,11 @@ const brands = [
   },
   {
     name: 'Gilbarco',
-    items: ['Encore 700 / 700S', 'Eclipse Dispenser', 'CRIND', 'FlexPay IV', 'Passport POS', 'Tech Bulletins (Extranet)'],
+    items: ['Encore 700 / 700S', 'Eclipse Dispenser', 'CRIND', 'FlexPay IV', 'Passport POS', 'Tech Bulletins'],
   },
   {
     name: 'Wayne · Red Jacket · Franklin',
-    items: ['Wayne / Tokheim / Dover Dispensers', 'Red Jacket Submersible Pumps', 'FE Petro Products', 'Franklin Fueling Systems', 'PEI Recommended Practices', 'Industry Service Manuals'],
+    items: ['Wayne / Tokheim / Dover Dispensers', 'Red Jacket Submersible Pumps', 'FE Petro Products', 'Franklin Fueling Systems', 'Industry Service Manuals'],
   },
 ];
 
@@ -108,6 +108,7 @@ export default function Home() {
             </div>
           </div>
           <nav className="navlinks">
+            <a href="/demo">Demo</a>
             <a href="#features">Features</a>
             <a href="#library">Documentation</a>
             <a href="#reviews">Reviews</a>
@@ -126,6 +127,7 @@ export default function Home() {
           </button>
         </div>
         <nav className={`mobile-menu${menuOpen ? ' open' : ''}`}>
+          <a href="/demo" onClick={() => setMenuOpen(false)}>Demo</a>
           <a href="#features" onClick={() => setMenuOpen(false)}>Features</a>
           <a href="#library" onClick={() => setMenuOpen(false)}>Documentation</a>
           <a href="#reviews" onClick={() => setMenuOpen(false)}>Reviews</a>
@@ -150,9 +152,10 @@ export default function Home() {
             <span className="badge">Built for the gasoline station industry</span>
             <h1 className="h1">Stop searching. Start fixing.</h1>
             <p className="lead">
-              FuelTech AI Pro combines the reasoning power of Anthropic Claude with a deep knowledge base
-              built from official manufacturer documentation — so it thinks like an experienced technician,
-              understands your specific equipment, and gives you a real answer, not a search result.
+              FuelTech AI Pro turns the average technician into a super tech. Every alarm code, wiring diagram, startup procedure, and compliance protocol — answered in plain English, right from the job site. No hold queues. No guesswork.
+            </p>
+            <p className="lead" style={{ marginTop: '0.75em', fontSize: '0.95em' }}>
+              And you&rsquo;re not just getting answers — you&rsquo;re getting the hands-on training that no classroom can replicate. Every response explains the why, walks you through the reasoning, and builds the kind of deep equipment knowledge that takes years to develop on your own.
             </p>
             <div className="cta-row">
               <a href="#pricing" className="button">
@@ -270,8 +273,8 @@ export default function Home() {
             <div>
               <strong>Live in production &mdash; and always growing.</strong>{' '}
               FuelTech AI Pro is an active production system, not a demo. As new Gilbarco, Veeder-Root,
-              Wayne, Red Jacket, Franklin Fueling, and industry documentation is released — including Extranet
-              service bulletins and PEI resources — it is automatically ingested and indexed into the knowledge
+              Wayne, Red Jacket, and Franklin Fueling documentation is released — including
+              service bulletins — it is automatically ingested and indexed into the knowledge
               base. The AI you use today is more capable than it was last month, and it will continue to
               evolve as the industry does.
             </div>

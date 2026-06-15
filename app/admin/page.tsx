@@ -240,6 +240,52 @@ export default function AdminUpload() {
     setTimeout(() => setCopiedUser(""), 2000);
   };
 
+  // ── Web users list ───────────────────────────────────────────────────────
+  type WebUserRow = {
+    id: string; username: string; email: string | null;
+    active: boolean; expires_at: string | null; created_at: string;
+  };
+  const [webUsers,     setWebUsers]     = useState<WebUserRow[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError,   setUsersError]   = useState("");
+
+  const loadWebUsers = useCallback(async () => {
+    if (!secret) return;
+    setUsersLoading(true);
+    setUsersError("");
+    try {
+      const res = await fetch("/api/auth/create-user", { headers: { "x-admin-secret": secret } });
+      const json = await res.json();
+      if (res.ok) setWebUsers(json.users ?? []);
+      else setUsersError(`Failed to load users: ${json.error ?? res.status}`);
+    } catch {
+      setUsersError("Network error loading users.");
+    } finally {
+      setUsersLoading(false);
+    }
+  }, [secret]);
+
+  useEffect(() => { if (unlocked) loadWebUsers(); }, [unlocked, loadWebUsers]);
+
+  const toggleUserActive = async (username: string, active: boolean) => {
+    await fetch("/api/auth/create-user", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "x-admin-secret": secret },
+      body: JSON.stringify({ username, active }),
+    });
+    setWebUsers(prev => prev.map(u => u.username === username ? { ...u, active } : u));
+  };
+
+  const deleteUser = async (username: string) => {
+    if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+    await fetch("/api/auth/create-user", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", "x-admin-secret": secret },
+      body: JSON.stringify({ username }),
+    });
+    setWebUsers(prev => prev.filter(u => u.username !== username));
+  };
+
   // ── Reviews moderation ───────────────────────────────────────────────────
   type ReviewRow = {
     id: string; name: string; company: string | null;
@@ -567,6 +613,81 @@ export default function AdminUpload() {
         >
           {creatingUser ? "Creating account…" : "Create Account & Generate Credentials"}
         </button>
+      </div>
+      </div>
+
+      {/* Web Users list */}
+      <div style={{ width: "100%", maxWidth: 820, margin: "0 auto" }}>
+      <div style={{ ...s.card, maxWidth: "100%" }}>
+        <div style={s.logoRow}>
+          <div style={{ flex: 1 }}>
+            <div style={s.h1}>Web Users ({webUsers.length})</div>
+            <div style={s.sub}>All FuelTech AI Pro web accounts — activate, deactivate, or delete</div>
+          </div>
+          <button style={s.logoutBtn} onClick={loadWebUsers} disabled={usersLoading}>
+            {usersLoading ? "Loading…" : "⟳ Refresh"}
+          </button>
+        </div>
+
+        {usersError && <p style={{ ...s.errMsg, marginTop: 0, marginBottom: 12 }}>{usersError}</p>}
+
+        {webUsers.length === 0 && !usersLoading ? (
+          <div style={{ fontSize: 13, color: "#334155", padding: "12px 0" }}>No web users yet.</div>
+        ) : (
+          <div style={{ overflowX: "auto" as const }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" as const, fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                  {["Username","Email","Status","Expires","Created","Actions"].map(h => (
+                    <th key={h} style={{ textAlign: "left" as const, padding: "6px 10px", fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: "#475569" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {webUsers.map(u => {
+                  const expired  = u.expires_at ? new Date(u.expires_at) < new Date() : false;
+                  const statusLabel = !u.active ? "Disabled" : expired ? "Expired" : "Active";
+                  const statusColor = !u.active ? "#ef4444" : expired ? "#f59e0b" : "#4ade80";
+                  return (
+                    <tr key={u.username} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                      <td style={{ padding: "9px 10px" }}>
+                        <code style={{ color: "#22d3ee", fontFamily: "monospace", fontWeight: 700 }}>{u.username}</code>
+                      </td>
+                      <td style={{ padding: "9px 10px", color: "#94a3b8" }}>{u.email ?? "—"}</td>
+                      <td style={{ padding: "9px 10px" }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: statusColor, background: `${statusColor}18`, border: `1px solid ${statusColor}30`, borderRadius: 5, padding: "2px 8px" }}>
+                          {statusLabel}
+                        </span>
+                      </td>
+                      <td style={{ padding: "9px 10px", color: "#64748b" }}>
+                        {u.expires_at ? new Date(u.expires_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Never"}
+                      </td>
+                      <td style={{ padding: "9px 10px", color: "#64748b" }}>
+                        {new Date(u.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      </td>
+                      <td style={{ padding: "9px 10px" }}>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button
+                            style={{ ...s.logoutBtn, fontSize: 11, color: u.active ? "#f59e0b" : "#4ade80", borderColor: u.active ? "rgba(245,158,11,0.3)" : "rgba(74,222,128,0.3)" }}
+                            onClick={() => toggleUserActive(u.username, !u.active)}
+                          >
+                            {u.active ? "Disable" : "Enable"}
+                          </button>
+                          <button
+                            style={{ ...s.logoutBtn, fontSize: 11, color: "#ef4444", borderColor: "rgba(239,68,68,0.2)" }}
+                            onClick={() => deleteUser(u.username)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
       </div>
 

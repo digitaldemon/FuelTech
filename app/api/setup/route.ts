@@ -142,6 +142,20 @@ export async function POST(req: Request) {
 
   await sql`CREATE INDEX IF NOT EXISTS reviews_approved_idx ON reviews (approved, created_at DESC)`;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS suggestions (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      username    TEXT NOT NULL,
+      title       TEXT NOT NULL,
+      body        TEXT NOT NULL,
+      category    TEXT NOT NULL DEFAULT 'feature',
+      status      TEXT NOT NULL DEFAULT 'open',
+      created_at  TIMESTAMPTZ DEFAULT NOW()
+    )
+  `;
+
+  await sql`CREATE INDEX IF NOT EXISTS suggestions_created_idx ON suggestions (created_at DESC)`;
+
   return Response.json({ ok: true, message: "Database initialized" });
 }
 

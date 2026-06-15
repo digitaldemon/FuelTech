@@ -46,6 +46,35 @@ export async function POST(req: Request) {
   }
 }
 
+// GET /api/auth/create-user  — list all web users (admin only)
+export async function GET(req: Request) {
+  const adminSecret = req.headers.get("x-admin-secret");
+  if (!adminSecret || adminSecret !== process.env.ADMIN_SECRET) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const result = await sql`
+    SELECT id, username, email, active, expires_at, created_at
+    FROM users
+    ORDER BY created_at DESC
+  `;
+  return Response.json({ ok: true, users: result.rows });
+}
+
+// PATCH /api/auth/create-user  — activate or deactivate a user
+export async function PATCH(req: Request) {
+  const adminSecret = req.headers.get("x-admin-secret");
+  if (!adminSecret || adminSecret !== process.env.ADMIN_SECRET) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { username, active } = (await req.json()) as { username: string; active: boolean };
+  if (!username) return Response.json({ error: "username is required" }, { status: 400 });
+
+  await sql`UPDATE users SET active = ${active} WHERE username = ${username}`;
+  return Response.json({ ok: true });
+}
+
 // DELETE /api/auth/create-user  — remove a user by username
 export async function DELETE(req: Request) {
   const adminSecret = req.headers.get("x-admin-secret");

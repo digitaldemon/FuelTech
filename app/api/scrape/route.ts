@@ -128,6 +128,7 @@ const MODEL_PATTERNS: [RegExp, string][] = [
   [/Encore\s*700S/i,         "Encore 700S"],
   [/Encore\s*700/i,          "Encore 700"],
   [/Encore\s*S\b/i,          "Encore S"],
+  [/\bEncore\s*500\b/i,      "Encore 500"],
   [/\bEncore\b/i,            "Encore"],
   [/\bEclipse\b/i,           "Eclipse"],
   [/\bCRIND\b/i,             "CRIND"],

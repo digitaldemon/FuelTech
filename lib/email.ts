@@ -1,21 +1,29 @@
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const transporter = nodemailer.createTransport({
+  host: "mail.privateemail.com",
+  port: 465,
+  secure: true,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
 
 export async function sendCredentialsEmail(opts: {
   to: string;
   username: string;
   password: string;
-  expiresAt: string; // human-readable date string
+  expiresAt: string;
 }): Promise<{ ok: boolean; error?: string }> {
   const { to, username, password, expiresAt } = opts;
 
-  if (!process.env.RESEND_API_KEY) {
-    return { ok: false, error: "RESEND_API_KEY env var not set" };
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    return { ok: false, error: "SMTP_USER or SMTP_PASS env var not set" };
   }
 
   try {
-    const { data, error } = await resend.emails.send({
+    await transporter.sendMail({
       from: "FuelTech AI Pro <info@fueltechaipro.com>",
       to,
       subject: "Your FuelTech AI Pro Login Credentials",
@@ -39,7 +47,7 @@ export async function sendCredentialsEmail(opts: {
               <table cellpadding="0" cellspacing="0">
                 <tr>
                   <td style="padding-right:14px;vertical-align:middle;">
-                    <div style="width:48px;height:48px;background:#0f172a;border-radius:12px;border:1px solid rgba(34,211,238,0.25);display:flex;align-items:center;justify-content:center;">
+                    <div style="width:48px;height:48px;background:#0f172a;border-radius:12px;border:1px solid rgba(34,211,238,0.25);">
                       <img src="https://www.fueltechaipro.com/icon-192.png" alt="FuelTech AI Pro" width="44" height="44" style="border-radius:10px;display:block;" />
                     </div>
                   </td>
@@ -115,7 +123,7 @@ export async function sendCredentialsEmail(opts: {
               </table>
 
               <p style="margin:0;font-size:12px;color:#475569;line-height:1.6;">
-                Questions or issues? Reply to this email or contact us at
+                Questions? Reply to this email or contact us at
                 <a href="mailto:info@fueltechaipro.com" style="color:#22d3ee;text-decoration:none;">info@fueltechaipro.com</a>.
               </p>
             </td>
@@ -136,17 +144,13 @@ export async function sendCredentialsEmail(opts: {
     </tr>
   </table>
 </body>
-</html>
-      `.trim(),
+</html>`.trim(),
     });
 
-    if (error) {
-      console.error("[email] Resend error:", error);
-      return { ok: false, error: error.message };
-    }
-    console.log("[email] Sent OK, id:", (data as { id?: string })?.id);
+    console.log("[email] Sent OK to:", to);
     return { ok: true };
   } catch (e) {
+    console.error("[email] SMTP error:", e);
     return { ok: false, error: e instanceof Error ? e.message : "Email send failed" };
   }
 }

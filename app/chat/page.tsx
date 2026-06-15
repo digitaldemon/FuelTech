@@ -108,7 +108,7 @@ function compressImage(file: File): Promise<PendingImage> {
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       resolve({ base64: dataUrl.split(',')[1], mediaType: 'image/jpeg', preview: dataUrl });
     };
-    img.onerror = reject;
+    img.onerror = (e) => { URL.revokeObjectURL(objectUrl); reject(e); };
     img.src = objectUrl;
   });
 }
@@ -460,6 +460,13 @@ export default function ChatPage() {
             title="Platform updates & release notes"
           >
             What&apos;s New
+          </Link>
+          <Link
+            href="/suggestions"
+            className="chat-tls-btn"
+            title="Request features or report issues"
+          >
+            💡 Suggest
           </Link>
           <button
             type="button"
