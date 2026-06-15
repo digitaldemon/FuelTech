@@ -89,7 +89,8 @@ const SYSTEM_STATUS_CMD  = buildCmd('I30100');
 const INVENTORY_CMD      = buildCmd('I20100');
 
 // VR raw function code pattern — if the user types one directly, skip AI
-const VR_CODE_RE = /^[Ii][0-9]{5}$/;
+// Matches I20100, I2010001 (tank suffix), I20600MMDDYYYYMMDDYYYY (date range suffix), etc.
+const VR_CODE_RE = /^[Ii]\d{5}\d*$/;
 
 // ── PDF generation (lazy-loaded so jsPDF doesn't bloat initial bundle) ────────
 async function savePdf(opts: {
@@ -236,11 +237,13 @@ export default function TlsPage() {
   // Auth check on mount — offline fallback uses localStorage flag set on last successful login
   useEffect(() => {
     fetch('/api/auth/me')
-      .then(r => r.json())
-      .then(d => {
+      .then(r => r.json().then(d => ({ d, status: r.status })))
+      .then(({ d, status }) => {
         if (d.username) {
           localStorage.setItem('ft_tls_authed', '1');
           setAuthed(true);
+        } else if (status === 403 || d.expired) {
+          window.location.href = '/expired';
         } else {
           window.location.href = '/login';
         }
@@ -416,7 +419,9 @@ export default function TlsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ output }),
       });
-      if (!res.ok || !res.body) throw new Error('failed');
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      if (res.status === 403) { window.location.href = '/expired'; return; }
+      if (!res.ok || !res.body) throw new Error('Analysis request failed.');
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       while (true) {

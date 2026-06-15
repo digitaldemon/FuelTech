@@ -1,6 +1,28 @@
 import { sql } from "@vercel/postgres";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const adminSecret = req.headers.get("x-admin-secret");
+  const isPendingReq = new URL(req.url).searchParams.get("pending") === "1";
+
+  // Admin can list pending (unapproved) reviews for moderation
+  if (isPendingReq) {
+    if (!adminSecret || adminSecret !== process.env.ADMIN_SECRET) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    try {
+      const result = await sql`
+        SELECT id, name, company, rating, review_text, created_at
+        FROM reviews
+        WHERE approved = false
+        ORDER BY created_at ASC
+      `;
+      return Response.json({ reviews: result.rows });
+    } catch {
+      return Response.json({ reviews: [] });
+    }
+  }
+
+  // Public — approved reviews only
   try {
     const result = await sql`
       SELECT id, name, company, rating, review_text, created_at

@@ -199,6 +199,42 @@ export default function AdminUpload() {
   const allDone =
     entries.length > 0 && entries.every((e) => e.phase === "done" || e.phase === "error");
 
+  // ── Reviews moderation ───────────────────────────────────────────────────
+  type ReviewRow = {
+    id: string; name: string; company: string | null;
+    rating: number; review_text: string; created_at: string;
+  };
+  const [pendingReviews,  setPendingReviews]  = useState<ReviewRow[]>([]);
+  const [revLoading,      setRevLoading]      = useState(false);
+  const [revError,        setRevError]        = useState("");
+
+  const loadPendingReviews = useCallback(async () => {
+    if (!secret) return;
+    setRevLoading(true);
+    setRevError("");
+    try {
+      const res = await fetch("/api/reviews?pending=1", { headers: { "x-admin-secret": secret } });
+      const json = await res.json();
+      if (res.ok) setPendingReviews(json.reviews ?? []);
+      else setRevError(`Failed to load reviews: ${json.error ?? res.status}`);
+    } catch {
+      setRevError("Network error loading reviews.");
+    } finally {
+      setRevLoading(false);
+    }
+  }, [secret]);
+
+  const moderateReview = async (id: string, approved: boolean) => {
+    await fetch("/api/reviews", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "x-admin-secret": secret },
+      body: JSON.stringify({ id, approved }),
+    });
+    setPendingReviews(prev => prev.filter(r => r.id !== id));
+  };
+
+  useEffect(() => { if (unlocked) loadPendingReviews(); }, [unlocked, loadPendingReviews]);
+
   // ── License key management ───────────────────────────────────────────────
   type LicenseRow = {
     license_key: string; tech_name: string; machine_id: string | null;
@@ -508,6 +544,57 @@ export default function AdminUpload() {
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+      </div>
+
+      {/* Pending reviews moderation */}
+      <div style={{ width: "100%", maxWidth: 700, margin: "0 auto" }}>
+      <div style={{ ...s.card, maxWidth: "100%" }}>
+        <div style={s.logoRow}>
+          <div style={{ flex: 1 }}>
+            <div style={s.h1}>Review Moderation</div>
+            <div style={s.sub}>Approve or reject submitted reviews before they appear on the landing page</div>
+          </div>
+          <button style={s.logoutBtn} onClick={loadPendingReviews} disabled={revLoading}>
+            {revLoading ? "Loading…" : "⟳ Refresh"}
+          </button>
+        </div>
+
+        {revError && <p style={{ ...s.errMsg, marginTop: 0, marginBottom: 12 }}>{revError}</p>}
+
+        {pendingReviews.length === 0 && !revLoading ? (
+          <div style={{ fontSize: 13, color: "#334155", padding: "12px 0" }}>No pending reviews. 🎉</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {pendingReviews.map(r => (
+              <div key={r.id} style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 10, padding: "14px 16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 16, color: "#facc15", letterSpacing: 2 }}>{"★".repeat(r.rating)}{"☆".repeat(5 - r.rating)}</span>
+                  <strong style={{ color: "#e2e8f0", fontSize: 14 }}>{r.name}</strong>
+                  {r.company && <span style={{ fontSize: 12, color: "#64748b" }}>— {r.company}</span>}
+                  <span style={{ fontSize: 11, color: "#475569", marginLeft: "auto" }}>
+                    {new Date(r.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                  </span>
+                </div>
+                <p style={{ margin: "0 0 12px", fontSize: 13, color: "#cbd5e1", lineHeight: 1.6 }}>&ldquo;{r.review_text}&rdquo;</p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    style={{ ...s.logoutBtn, color: "#4ade80", borderColor: "rgba(74,222,128,0.3)", padding: "6px 16px" }}
+                    onClick={() => moderateReview(r.id, true)}
+                  >
+                    ✓ Approve
+                  </button>
+                  <button
+                    style={{ ...s.logoutBtn, color: "#f87171", borderColor: "rgba(248,113,113,0.3)", padding: "6px 16px" }}
+                    onClick={() => moderateReview(r.id, false)}
+                  >
+                    ✗ Reject
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

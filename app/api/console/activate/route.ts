@@ -7,7 +7,8 @@ import { createHmac } from "crypto";
 // Returns signed license payload the app stores locally for offline verification.
 
 function sign(machineId: string, licenseKey: string, expiresAt: string): string {
-  const secret = process.env.CONSOLE_LICENSE_SECRET!;
+  const secret = process.env.CONSOLE_LICENSE_SECRET;
+  if (!secret) throw new Error("CONSOLE_LICENSE_SECRET env var is not set");
   return createHmac("sha256", secret)
     .update(`${machineId}|${licenseKey}|${expiresAt}`)
     .digest("hex");
@@ -66,7 +67,12 @@ export async function POST(req: Request) {
   `;
 
   const expiresAt = new Date(row.expires_at).toISOString();
-  const signature = sign(mid, key, expiresAt);
+  let signature: string;
+  try {
+    signature = sign(mid, key, expiresAt);
+  } catch {
+    return Response.json({ error: "Server configuration error — contact support" }, { status: 500 });
+  }
 
   return Response.json({
     ok:        true,

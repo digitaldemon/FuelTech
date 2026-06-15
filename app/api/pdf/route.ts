@@ -1,4 +1,4 @@
-import { verifySession, COOKIE_NAME } from "../../../lib/session";
+import { verifySession, getMembershipStatus, COOKIE_NAME } from "../../../lib/session";
 
 export const maxDuration = 60;
 
@@ -96,6 +96,10 @@ export async function GET(req: Request) {
   const token = tokenMatch ? tokenMatch[1] : null;
   if (!token || !(await verifySession(token))) {
     return new Response("Unauthorized", { status: 401 });
+  }
+  const memberInfo = getMembershipStatus(token);
+  if (!memberInfo || memberInfo.membershipExpired) {
+    return new Response("Subscription expired", { status: 403 });
   }
 
   const { searchParams } = new URL(req.url);
