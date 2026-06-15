@@ -208,7 +208,18 @@ export default function ChatPage() {
     if (saved.length > 0) setMessages(saved);
     const savedGuided = localStorage.getItem(GUIDED_KEY);
     if (savedGuided === 'true') setGuidedMode(true);
-    fetch('/api/auth/me').then(r => r.json()).then(d => { if (d.username) setUsername(d.username); }).catch(() => {});
+    fetch('/api/auth/me')
+      .then(r => r.json())
+      .then(d => {
+        if (d.username) {
+          setUsername(d.username);
+        } else if (d.expired) {
+          window.location.href = '/expired';
+        } else {
+          window.location.href = '/login';
+        }
+      })
+      .catch(() => { window.location.href = '/login'; });
     const savedTheme = localStorage.getItem('ft_theme') as 'dark' | 'light' | null;
     if (savedTheme) setTheme(savedTheme);
     const savedLang = localStorage.getItem(LANG_KEY) as 'en' | 'es' | null;
@@ -267,6 +278,7 @@ export default function ChatPage() {
       });
 
       if (res.status === 401) { window.location.href = '/login'; return; }
+      if (res.status === 403) { window.location.href = '/expired'; return; }
       if (!res.ok || !res.body) throw new Error('Request failed');
 
       const reader  = res.body.getReader();

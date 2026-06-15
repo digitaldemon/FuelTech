@@ -32,7 +32,7 @@ export async function registerAccount(
     try {
       await sql`
         INSERT INTO users (id, username, password_hash, email, expires_at)
-        VALUES (${id}, ${username}, ${hash}, ${email}, NOW() + (${durationDays} || ' days')::interval)
+        VALUES (${id}, ${username}, ${hash}, ${email}, NOW() + (${durationDays} * INTERVAL '1 day'))
       `;
       return { ok: true, username, password };
     } catch (e: unknown) {

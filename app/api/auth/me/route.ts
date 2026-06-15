@@ -7,5 +7,9 @@ export async function GET() {
     return Response.json({ username: null }, { status: 401 });
   }
   const info = getMembershipStatus(token);
-  return Response.json({ username: info?.username ?? null });
+  if (!info) return Response.json({ username: null }, { status: 401 });
+  if (info.membershipExpired) {
+    return Response.json({ username: null, expired: true }, { status: 403 });
+  }
+  return Response.json({ username: info.username });
 }
