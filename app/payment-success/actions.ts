@@ -42,5 +42,5 @@ export async function registerAccount(
     }
   }
 
-  return { ok: false, error: "Username unavailable. Contact digitaldemon@wskandsons.com." };
+  return { ok: false, error: "Username unavailable. Contact info@fueltechaipro.com." };
 }

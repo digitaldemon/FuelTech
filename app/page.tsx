@@ -354,7 +354,7 @@ export default function Home() {
 
               <a
                 className="paypal-btn"
-                href="https://www.paypal.com/cgi-bin/webscr?cmd=_xclick-subscriptions&business=digitaldemon%40wskandsons.com&item_name=FuelTech+AI+Pro+Monthly&a3=14.99&p3=1&t3=M&src=1&currency_code=USD&no_shipping=1&return=https%3A%2F%2Fwww.fueltechaipro.com%2Fpayment-success%3Fplan%3Dmonthly&cancel_return=https%3A%2F%2Fwww.fueltechaipro.com%2F%23pricing"
+                href="https://www.paypal.com/cgi-bin/webscr?cmd=_xclick-subscriptions&business=info%40fueltechaipro.com&item_name=FuelTech+AI+Pro+Monthly&a3=14.99&p3=1&t3=M&src=1&currency_code=USD&no_shipping=1&return=https%3A%2F%2Fwww.fueltechaipro.com%2Fpayment-success%3Fplan%3Dmonthly&cancel_return=https%3A%2F%2Fwww.fueltechaipro.com%2F%23pricing"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -401,7 +401,7 @@ export default function Home() {
 
               <a
                 className="paypal-btn"
-                href="https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=digitaldemon%40wskandsons.com&item_name=FuelTech+AI+Pro+Annual+Access&amount=99.00&currency_code=USD&no_shipping=1&return=https%3A%2F%2Fwww.fueltechaipro.com%2Fpayment-success%3Fplan%3Dannual&cancel_return=https%3A%2F%2Fwww.fueltechaipro.com%2F%23pricing"
+                href="https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=info%40fueltechaipro.com&item_name=FuelTech+AI+Pro+Annual+Access&amount=99.00&currency_code=USD&no_shipping=1&return=https%3A%2F%2Fwww.fueltechaipro.com%2Fpayment-success%3Fplan%3Dannual&cancel_return=https%3A%2F%2Fwww.fueltechaipro.com%2F%23pricing"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -417,8 +417,8 @@ export default function Home() {
               <p className="pricing-note">
                 After payment you&apos;ll receive login credentials automatically.
                 Questions? Email{' '}
-                <a href="mailto:digitaldemon@wskandsons.com" style={{ color: 'var(--color-primary)' }}>
-                  digitaldemon@wskandsons.com
+                <a href="mailto:info@fueltechaipro.com" style={{ color: 'var(--color-primary)' }}>
+                  info@fueltechaipro.com
                 </a>
               </p>
             </div>
@@ -491,8 +491,8 @@ export default function Home() {
 
               <p className="pricing-note">
                 Interested in enterprise access? Email{' '}
-                <a href="mailto:digitaldemon@wskandsons.com" style={{ color: '#a78bfa' }}>
-                  digitaldemon@wskandsons.com
+                <a href="mailto:info@fueltechaipro.com" style={{ color: '#a78bfa' }}>
+                  info@fueltechaipro.com
                 </a>{' '}
                 to get on the early access list.
               </p>

@@ -48,5 +48,5 @@ export async function POST(req: Request) {
     }
   }
 
-  return Response.json({ error: "Username unavailable. Contact digitaldemon@wskandsons.com." }, { status: 409 });
+  return Response.json({ error: "Username unavailable. Contact info@fueltechaipro.com." }, { status: 409 });
 }
