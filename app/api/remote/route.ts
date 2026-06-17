@@ -31,24 +31,28 @@ export async function POST(req: Request) {
   const output = (body.output ?? "").slice(-30_000);
   const connStatus = body.connStatus ?? "connected";
 
-  await sql`
-    INSERT INTO remote_sessions (username, output, conn_status, updated_at)
-    VALUES (${username}, ${output}, ${connStatus}, NOW())
-    ON CONFLICT (username) DO UPDATE
-      SET output      = EXCLUDED.output,
-          conn_status = EXCLUDED.conn_status,
-          updated_at  = NOW()
-  `;
+  try {
+    await sql`
+      INSERT INTO remote_sessions (username, output, conn_status, updated_at)
+      VALUES (${username}, ${output}, ${connStatus}, NOW())
+      ON CONFLICT (username) DO UPDATE
+        SET output      = EXCLUDED.output,
+            conn_status = EXCLUDED.conn_status,
+            updated_at  = NOW()
+    `;
 
-  const pending = await sql`
-    SELECT id, command, label
-    FROM remote_commands
-    WHERE username = ${username} AND sent_at IS NULL
-    ORDER BY created_at ASC
-    LIMIT 10
-  `;
+    const pending = await sql`
+      SELECT id, command, label
+      FROM remote_commands
+      WHERE username = ${username} AND sent_at IS NULL
+      ORDER BY created_at ASC
+      LIMIT 10
+    `;
 
-  return Response.json({ ok: true, commands: pending.rows });
+    return Response.json({ ok: true, commands: pending.rows });
+  } catch {
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
 }
 
 // GET — Phone polls for latest ATG snapshot
@@ -62,19 +66,23 @@ export async function GET() {
     return Response.json({ error: "Subscription expired" }, { status: 403 });
   }
 
-  const result = await sql`
-    SELECT output, conn_status, updated_at
-    FROM remote_sessions
-    WHERE username = ${info.username}
-    LIMIT 1
-  `;
+  try {
+    const result = await sql`
+      SELECT output, conn_status, updated_at
+      FROM remote_sessions
+      WHERE username = ${info.username}
+      LIMIT 1
+    `;
 
-  if (result.rows.length === 0) return Response.json({ noSession: true });
+    if (result.rows.length === 0) return Response.json({ noSession: true });
 
-  const row = result.rows[0];
-  return Response.json({
-    output:     row.output as string,
-    connStatus: row.conn_status as string,
-    updatedAt:  row.updated_at as string,
-  });
+    const row = result.rows[0];
+    return Response.json({
+      output:     row.output as string,
+      connStatus: row.conn_status as string,
+      updatedAt:  row.updated_at as string,
+    });
+  } catch {
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
 }

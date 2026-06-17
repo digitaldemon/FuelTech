@@ -53,7 +53,7 @@ export async function registerAccount(
   const hash = await bcrypt.hash(password, 12);
   const id = crypto.randomUUID();
   const expiresIso = new Date(Date.now() + durationDays * 86_400_000).toISOString();
-  const expiresAt  = new Date(expiresIso).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const expiresAt  = new Date(expiresIso).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
 
   let consoleKey = "";
   try {

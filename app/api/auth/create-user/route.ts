@@ -51,7 +51,8 @@ export async function POST(req: Request) {
     techName?: string;
   };
 
-  if (!username || !password) {
+  const safeUsername = (username ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 50);
+  if (!safeUsername || !password) {
     return Response.json({ error: "username and password are required" }, { status: 400 });
   }
 
@@ -65,9 +66,9 @@ export async function POST(req: Request) {
 
     await sql`
       INSERT INTO users (id, username, password_hash, email, expires_at, console_license_key)
-      VALUES (${id}, ${username}, ${hash}, ${email ?? null}, ${expiresAt}, ${consoleKey})
+      VALUES (${id}, ${safeUsername}, ${hash}, ${email ?? null}, ${expiresAt}, ${consoleKey})
     `;
-    return Response.json({ ok: true, id, username, consoleKey });
+    return Response.json({ ok: true, id, username: safeUsername, consoleKey });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "DB error";
     if (msg.toLowerCase().includes("unique") || msg.toLowerCase().includes("duplicate")) {
@@ -99,7 +100,7 @@ export async function PATCH(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { username, active } = (await req.json()) as { username: string; active: boolean };
+  const { username, active } = (await req.json().catch(() => ({}))) as { username?: string; active?: boolean };
   if (!username) return Response.json({ error: "username is required" }, { status: 400 });
 
   await sql`UPDATE users SET active = ${active} WHERE username = ${username}`;

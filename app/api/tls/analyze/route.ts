@@ -150,10 +150,10 @@ export async function POST(req: Request) {
   const query = await extractDiagnosticQuery(output);
 
   // Step 2: Embed the query
-  const embRes = await openai.embeddings.create({
-    model: "text-embedding-3-small",
-    input: query,
-  });
+  const embRes = await openai.embeddings.create(
+    { model: "text-embedding-3-small", input: query },
+    { signal: AbortSignal.timeout(15_000) }
+  );
   const emb = embRes.data[0].embedding as number[];
   const norm = Math.sqrt(emb.reduce((s, v) => s + v * v, 0));
   const embStr = JSON.stringify(emb.map((v) => v / norm));

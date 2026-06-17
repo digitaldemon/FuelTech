@@ -13,22 +13,26 @@ export async function GET() {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const result = await sql`
-    SELECT username, email, expires_at, console_license_key
-    FROM users
-    WHERE username = ${info.username} AND active = true
-    LIMIT 1
-  `;
+  try {
+    const result = await sql`
+      SELECT username, email, expires_at, console_license_key
+      FROM users
+      WHERE username = ${info.username} AND active = true
+      LIMIT 1
+    `;
 
-  if (result.rows.length === 0) {
-    return Response.json({ error: "User not found" }, { status: 404 });
+    if (result.rows.length === 0) {
+      return Response.json({ error: "User not found" }, { status: 404 });
+    }
+
+    const row = result.rows[0];
+    return Response.json({
+      username:          row.username as string,
+      email:             row.email as string | null,
+      expiresAt:         row.expires_at as string | null,
+      consoleLicenseKey: row.console_license_key as string | null,
+    });
+  } catch {
+    return Response.json({ error: "Database error" }, { status: 500 });
   }
-
-  const row = result.rows[0];
-  return Response.json({
-    username:          row.username as string,
-    email:             row.email as string | null,
-    expiresAt:         row.expires_at as string | null,
-    consoleLicenseKey: row.console_license_key as string | null,
-  });
 }

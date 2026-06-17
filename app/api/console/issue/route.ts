@@ -24,8 +24,8 @@ export async function POST(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { techName, durationDays = 365 } = (await req.json()) as {
-    techName: string;
+  const { techName, durationDays = 365 } = (await req.json().catch(() => ({}))) as {
+    techName?: string;
     durationDays?: number;
   };
 
@@ -67,7 +67,7 @@ export async function DELETE(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { licenseKey } = (await req.json()) as { licenseKey: string };
+  const { licenseKey } = (await req.json().catch(() => ({}))) as { licenseKey?: string };
   if (!licenseKey) {
     return Response.json({ error: "licenseKey is required" }, { status: 400 });
   }
