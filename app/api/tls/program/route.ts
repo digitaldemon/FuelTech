@@ -208,6 +208,15 @@ export async function POST(req: Request) {
   if (!pdfs.length) {
     return Response.json({ error: 'No PDF data provided.' }, { status: 400 });
   }
+  if (pdfs.length > 5) {
+    return Response.json({ error: 'Too many PDFs — maximum 5 allowed per request.' }, { status: 400 });
+  }
+  const MAX_BASE64_CHARS = 4_700_000; // ~3.5 MB decoded
+  for (const pdf of pdfs) {
+    if (typeof pdf.data === 'string' && pdf.data.length > MAX_BASE64_CHARS) {
+      return Response.json({ error: `PDF "${pdf.name}" is too large (max ~3.5 MB).` }, { status: 400 });
+    }
+  }
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -171,7 +171,7 @@ async function rerankWithCohere(query: string, candidates: ChunkRow[]): Promise<
       signal: AbortSignal.timeout(20000),
     });
 
-    if (!res.ok) return candidates.slice(0, 20);
+    if (!res.ok) { await res.body?.cancel(); return candidates.slice(0, 20); }
     const data = (await res.json()) as { results: { index: number }[] };
     return data.results.map((r) => candidates[r.index]);
   } catch {

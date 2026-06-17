@@ -54,7 +54,7 @@ export async function POST(req: Request) {
       return res;
     }
   } catch {
-    return NextResponse.json({ error: "Invalid username or password." }, { status: 401 });
+    return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 
   return NextResponse.json({ error: "Invalid username or password." }, { status: 401 });

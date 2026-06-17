@@ -78,5 +78,9 @@ export async function registerAccount(
     }
   }
 
+  // All username slots taken — clean up the orphaned console key so it's not wasted
+  if (consoleKey) {
+    await sql`DELETE FROM console_licenses WHERE license_key = ${consoleKey}`.catch(() => {});
+  }
   return { ok: false, error: "Username unavailable. Contact info@fueltechaipro.com." };
 }

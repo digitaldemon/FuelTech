@@ -19,6 +19,9 @@ export async function GET() {
     if (!match) throw new Error('No path field in latest.yml');
 
     const url = match[1].trim();
+    if (!url.startsWith('https://') || !url.includes('vercel-storage.com')) {
+      throw new Error('Untrusted redirect URL in latest.yml');
+    }
     return Response.redirect(url, 302);
   } catch {
     return Response.redirect(FALLBACK_URL, 302);
