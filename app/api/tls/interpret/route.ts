@@ -2,9 +2,9 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const client = new Anthropic();
 
-// Known TLS-450PLUS function codes the AI can map to.
+// Known Veeder-Root TLS function codes the AI can map to.
 // Raw codes typed directly by the user bypass this and are sent as-is.
-const SYSTEM = `You are a Veeder-Root TLS-450PLUS ATG serial command interpreter used by fuel system field technicians.
+const SYSTEM = `You are a Veeder-Root TLS ATG serial command interpreter used by fuel system field technicians (supports TLS-350, TLS-350R, and TLS-450PLUS).
 
 Given the user's natural-language request, identify the correct VR TLS function code to send over RS-232.
 

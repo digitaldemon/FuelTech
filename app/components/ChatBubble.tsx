@@ -32,14 +32,15 @@ function sourceLabel(source: string): string {
     case 'dover': return 'Dover Fueling';
     case 'pei': return 'PEI';
     case 'web': return 'Web';
-    default: return source;
+    case 'manual': return 'Manual';
+    default: return source.charAt(0).toUpperCase() + source.slice(1);
   }
 }
 
 function pdfUrl(doc: SourceDoc): string {
   // Route through the server-side proxy for sources that need session auth.
-  // Web / PEI pages are plain HTTPS — link directly.
-  if (doc.source === 'web' || doc.source === 'pei') return doc.url;
+  // Web, PEI, and manually-uploaded (Vercel Blob) docs are plain HTTPS — link directly.
+  if (doc.source === 'web' || doc.source === 'pei' || doc.source === 'manual') return doc.url;
   return `/api/pdf?url=${encodeURIComponent(doc.url)}&source=${encodeURIComponent(doc.source)}`;
 }
 
@@ -61,9 +62,12 @@ export default function ChatBubble({ message, figures, username }: ChatBubblePro
             {username && <span className="chat-avatar-name">{username}</span>}
           </div>
         ) : (
-          <div className="chat-avatar bot-avatar">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/icon-192.png" alt="FuelTech AI" />
+          <div className="chat-avatar-wrap">
+            <div className="chat-avatar bot-avatar">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/icon-192.png" alt="Atlas" />
+            </div>
+            <span className="chat-avatar-name">Atlas</span>
           </div>
         )}
         <div>

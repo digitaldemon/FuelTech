@@ -15,8 +15,9 @@ export async function sendCredentialsEmail(opts: {
   username: string;
   password: string;
   expiresAt: string;
+  consoleKey?: string;
 }): Promise<{ ok: boolean; error?: string }> {
-  const { to, username, password, expiresAt } = opts;
+  const { to, username, password, expiresAt, consoleKey } = opts;
 
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
     return { ok: false, error: "SMTP_USER or SMTP_PASS env var not set" };
@@ -80,18 +81,25 @@ export async function sendCredentialsEmail(opts: {
                         </td>
                       </tr>
                       <tr>
-                        <td style="padding-top:14px;">
+                        <td style="padding-top:14px;${consoleKey ? 'padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,0.06);' : ''}">
                           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#475569;margin-bottom:4px;">Password</div>
                           <div style="font-size:18px;font-weight:700;color:#22d3ee;font-family:'Courier New',Courier,monospace;letter-spacing:0.04em;">${password}</div>
                         </td>
                       </tr>
+                      ${consoleKey ? `<tr>
+                        <td style="padding-top:14px;">
+                          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#475569;margin-bottom:4px;">Console App License Key</div>
+                          <div style="font-size:16px;font-weight:700;color:#22d3ee;font-family:'Courier New',Courier,monospace;letter-spacing:0.08em;">${consoleKey}</div>
+                          <div style="font-size:11px;color:#475569;margin-top:6px;">Enter this in the FuelTech AI Console Connect desktop app on first launch.</div>
+                        </td>
+                      </tr>` : ''}
                     </table>
                   </td>
                 </tr>
               </table>
 
-              <!-- CTA button -->
-              <table cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+              <!-- CTA buttons -->
+              <table cellpadding="0" cellspacing="0" style="margin-bottom:${consoleKey ? '16px' : '28px'};">
                 <tr>
                   <td style="background:#22d3ee;border-radius:10px;">
                     <a href="https://www.fueltechaipro.com/login" style="display:inline-block;padding:13px 32px;font-size:15px;font-weight:700;color:#020617;text-decoration:none;border-radius:10px;">
@@ -100,6 +108,15 @@ export async function sendCredentialsEmail(opts: {
                   </td>
                 </tr>
               </table>
+              ${consoleKey ? `<table cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                <tr>
+                  <td style="background:rgba(34,211,238,0.1);border:1px solid rgba(34,211,238,0.3);border-radius:10px;">
+                    <a href="https://www.fueltechaipro.com/api/download" style="display:inline-block;padding:11px 28px;font-size:14px;font-weight:700;color:#22d3ee;text-decoration:none;border-radius:10px;">
+                      ↓ Download Console Connect (Windows)
+                    </a>
+                  </td>
+                </tr>
+              </table>` : ''}
 
               <!-- Details -->
               <table width="100%" cellpadding="0" cellspacing="0" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:10px;margin-bottom:24px;">

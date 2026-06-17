@@ -4,7 +4,7 @@ import { useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { registerAccount } from "./actions";
 
-type Credentials = { username: string; password: string };
+type Credentials = { username: string; password: string; consoleKey: string };
 
 function PaymentSuccessContent() {
   const searchParams = useSearchParams();
@@ -16,7 +16,7 @@ function PaymentSuccessContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [credentials, setCredentials] = useState<Credentials | null>(null);
-  const [copied, setCopied] = useState<"username" | "password" | null>(null);
+  const [copied, setCopied] = useState<"username" | "password" | "appkey" | null>(null);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -25,7 +25,7 @@ function PaymentSuccessContent() {
     try {
       const result = await registerAccount(email, durationDays);
       if (!result.ok) throw new Error(result.error);
-      setCredentials({ username: result.username, password: result.password });
+      setCredentials({ username: result.username, password: result.password, consoleKey: result.consoleKey });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
     } finally {
@@ -33,7 +33,7 @@ function PaymentSuccessContent() {
     }
   };
 
-  const copy = async (field: "username" | "password", value: string) => {
+  const copy = async (field: "username" | "password" | "appkey", value: string) => {
     await navigator.clipboard.writeText(value);
     setCopied(field);
     setTimeout(() => setCopied(null), 2000);
@@ -82,27 +82,33 @@ function PaymentSuccessContent() {
               <div className="cred-row">
                 <span className="cred-label">Username</span>
                 <span className="cred-value">{credentials.username}</span>
-                <button
-                  type="button"
-                  className="cred-copy"
-                  onClick={() => copy("username", credentials.username)}
-                >
+                <button type="button" className="cred-copy" onClick={() => copy("username", credentials.username)}>
                   {copied === "username" ? "Copied!" : "Copy"}
                 </button>
               </div>
               <div className="cred-row">
                 <span className="cred-label">Password</span>
                 <span className="cred-value">{credentials.password}</span>
-                <button
-                  type="button"
-                  className="cred-copy"
-                  onClick={() => copy("password", credentials.password)}
-                >
+                <button type="button" className="cred-copy" onClick={() => copy("password", credentials.password)}>
                   {copied === "password" ? "Copied!" : "Copy"}
                 </button>
               </div>
+              {credentials.consoleKey && (
+                <div className="cred-row">
+                  <span className="cred-label">App Key</span>
+                  <span className="cred-value" style={{ fontSize: 13, letterSpacing: '0.06em' }}>{credentials.consoleKey}</span>
+                  <button type="button" className="cred-copy" onClick={() => copy("appkey", credentials.consoleKey)}>
+                    {copied === "appkey" ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+              )}
             </div>
 
+            {credentials.consoleKey && (
+              <p className="success-note" style={{ marginBottom: 8 }}>
+                The <strong>App Key</strong> activates the free <a href="/api/download" style={{ color: 'var(--color-primary)' }}>Console Connect</a> desktop app on Windows.
+              </p>
+            )}
             <p className="success-note">
               Screenshot or write these down — this page won&apos;t show them again.
             </p>

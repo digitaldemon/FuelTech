@@ -9,6 +9,38 @@ interface Update {
 const UPDATES: Update[] = [
   {
     date: 'June 2026',
+    title: 'Remote Monitor, ATG Direct Connect Expansion & Print to ATG Printer',
+    items: [
+      { type: 'new', text: 'Remote Monitor — leave the laptop connected to the ATG and watch live data from your phone. Open the 📡 Remote Monitor link in the chat menu, start a session in Console Connect on the laptop, and commands you send from your phone run on the laptop and appear on screen within ~10 seconds.' },
+      { type: 'improvement', text: 'ATG Direct Connect now supports TLS-350 and TLS-350R in addition to TLS-450PLUS — same RS-232 serial and Ethernet workflow for all three consoles. The page header and docs have been updated to reflect this.' },
+      { type: 'new', text: 'Print to ATG Printer — two new buttons send P-code commands directly to the ATG\'s built-in thermal printer: Print Alarm History (P20600, 1-year date range) and Print Console Setup Report (P10100).' },
+      { type: 'improvement', text: 'Command input on the ATG Direct Connect page now recognizes S-codes (SET commands) and P-codes (print commands) as raw VR codes, so they are sent directly to the ATG instead of being routed through the AI interpreter.' },
+    ],
+  },
+  {
+    date: 'June 2026',
+    title: 'Console Connect Desktop App, Atlas AI & Account Portal',
+    items: [
+      { type: 'new', text: 'FuelTech AI Console Connect — free Windows desktop app included with any subscription. Connects directly to a TLS console via RS-232 serial (USB adapter), pulls alarm history and console setup, and saves compliance-ready PDFs. Download from the landing page or your Account page.' },
+      { type: 'new', text: 'Atlas — the AI assistant inside FuelTech AI Pro now has a name. Atlas appears in the chat interface alongside every response.' },
+      { type: 'new', text: 'Account page — sign in and visit My Account (··· menu) to see your subscription expiry and copy your Console App License Key at any time.' },
+      { type: 'new', text: 'Console license keys are now automatically generated and included in the welcome email when you subscribe. Enter the key on first launch of the Console Connect app to activate it on your machine.' },
+      { type: 'improvement', text: 'Step-by-step troubleshooting restructured: every guided response now follows a Root Cause → Diagnostics (pass/fail branching) → Fix → Verify → Escalate format for clearer field use.' },
+      { type: 'improvement', text: 'Chat header decluttered — secondary options (theme, language, What\'s New, Suggest, FAQ, Account) moved into a ··· overflow menu so primary actions are always visible.' },
+      { type: 'new', text: 'Add to Home Screen — install FuelTech AI Pro as a PWA on iPhone or Android and open straight to your session without logging in each time. Setup instructions in the Help & FAQ.' },
+    ],
+  },
+  {
+    date: 'June 2026',
+    title: 'AI Alarm Diagnosis & Auto-Fix',
+    items: [
+      { type: 'new', text: 'AI Diagnose now includes a Fix Steps section — for each active alarm Atlas provides the specific corrective action the TLS "Action" button recommends, plus the exact ATG SET command to apply the fix where possible (e.g. S80200 03 PROBETYPE ISPI for probe type mismatches). Physical repairs are described step by step when hardware work is required.' },
+      { type: 'new', text: 'Fix command chips now appear alongside diagnostic chips in amber — one click sends the SET command directly to the ATG to apply the configuration correction without typing.' },
+      { type: 'improvement', text: 'AI analysis prompt updated to include all ATG commands — both query (I-code) and SET (S-code) commands are rendered as clickable "Send to ATG" buttons so technicians can act on findings immediately.' },
+    ],
+  },
+  {
+    date: 'June 2026',
     title: 'ATG Direct Connect & Serial Dashboard',
     items: [
       { type: 'new', text: 'RS-232 serial connection to TLS-450PLUS directly from the browser — no software install required. Supports Chrome and Edge on Windows and Mac.' },

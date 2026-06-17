@@ -48,7 +48,7 @@ const features = [
   {
     icon: <Cable size={22} />,
     title: 'ATG Direct Connect & Serial Dashboard',
-    text: 'Connect directly to a TLS-350 or TLS-450 console from your browser via RS-232 serial — no additional software required. Pull current active alarms, a full year of alarm history, and the complete console setup report with one click, then save them as a PDF for environmental compliance documentation.',
+    text: 'Connect directly to a TLS-350 or TLS-450 console via RS-232 serial — from Chrome or Edge with no install required, or using the free Windows desktop app for full features including PDF export, remote session, and AI analysis. Pull current active alarms, a full year of alarm history, and the complete console setup report with one click.',
   },
 ];
 
@@ -203,12 +203,18 @@ export default function Home() {
               </div>
 
               <div className="bubble-bot">
-                <p style={{ margin: '0 0 10px', fontSize: 15 }}>
-                  The mag probe connects to the <strong>Universal Sensor Module (USM)</strong>.
-                  Wire <strong>BLACK → (–) Negative</strong> and <strong>WHITE → (+) Plus</strong> — reversed polarity will cause a probe fault on startup.
+                <p style={{ margin: '0 0 6px', fontSize: 15 }}>
+                  Mag Plus probe wires to the <strong>ITPM module</strong> (In-Tank Probe Module) inside the TLS-450PLUS — one channel per probe.
                 </p>
-                <p style={{ margin: '0 0 12px', fontSize: 12, color: '#64748b' }}>
-                  Source: Manual 577014-073, Figure 43, p. 47
+                <p style={{ margin: '0 0 10px', fontSize: 13, lineHeight: 1.7 }}>
+                  <strong style={{ color: '#e2e8f0' }}>WHITE → SIG+ (+)</strong> at both the ITPM terminal and the probe head junction box.<br/>
+                  <strong style={{ color: '#e2e8f0' }}>BLACK → SIG– (–)</strong> at both ends.<br/>
+                  <strong style={{ color: '#94a3b8' }}>DRAIN wire</strong> → SHLD terminal at the console <em>only</em> — leave floating at the probe end to avoid ground loops.<br/>
+                  <span style={{ color: '#fb923c', fontWeight: 600 }}>⚠ Reversed polarity = PROBE COMM FAULT on startup.</span>
+                </p>
+                <p style={{ margin: '0 0 10px', fontSize: 11, color: '#64748b' }}>
+                  Use 2-conductor shielded cable (Belden 9740 or equiv) · max 1,000 ft<br/>
+                  Source: TLS-450PLUS Field Installation Manual 577013-880, Fig. 3-12
                 </p>
                 <div className="lp-figure-pill">
                   <span className="lp-figure-icon">🗺</span>
@@ -377,7 +383,7 @@ export default function Home() {
               </a>
 
               <p className="pricing-note">
-                After payment you&apos;ll receive login credentials automatically.
+                After payment, enter your email on the next screen to create your account instantly.
               </p>
             </div>
 
@@ -424,7 +430,7 @@ export default function Home() {
               </a>
 
               <p className="pricing-note">
-                After payment you&apos;ll receive login credentials automatically.
+                After payment, enter your email on the next screen to create your account instantly.
                 Questions? Email{' '}
                 <a href="mailto:info@fueltechaipro.com" style={{ color: 'var(--color-primary)' }}>
                   info@fueltechaipro.com
@@ -511,6 +517,25 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Desktop app download */}
+      <div className="lp-download-bar">
+        <div className="container lp-download-inner">
+          <div className="lp-download-left">
+            <span className="lp-download-icon">🖥️</span>
+            <div>
+              <div className="lp-download-title">FuelTech AI Console Connect — Free with any plan</div>
+              <div className="lp-download-sub">Windows desktop app · Direct RS-232 serial access · Alarm history · Console setup · PDF export</div>
+            </div>
+          </div>
+          <a
+            href="/api/download"
+            className="lp-download-btn"
+          >
+            ↓ Download for Windows
+          </a>
+        </div>
+      </div>
+
       {/* Disclaimer */}
       <section className="lp-disclaimer">
         <div className="container">
@@ -553,6 +578,7 @@ export default function Home() {
           <div style={{ textAlign: 'right', color: 'var(--color-subtext)', fontSize: 13 }}>
             <div>© 2026 Gen X Data Acquisitions LLC. All rights reserved.</div>
             <div style={{ marginTop: 4 }}>FuelTech AI Pro™ is a trademark of Gen X Data Acquisitions LLC.</div>
+            <div style={{ marginTop: 4, fontSize: 12, color: 'var(--color-subtext)' }}>Patent Pending — U.S. App. No. 64/091,436</div>
             <div style={{ marginTop: 12 }}>
               <a href="/admin" style={{ color: '#22d3ee', textDecoration: 'none', fontSize: 12, fontWeight: 600, border: '1px solid rgba(34,211,238,0.3)', borderRadius: 6, padding: '4px 12px' }}>Admin Portal</a>
             </div>

@@ -89,8 +89,8 @@ const SYSTEM_STATUS_CMD  = buildCmd('I30100');
 const INVENTORY_CMD      = buildCmd('I20100');
 
 // VR raw function code pattern — if the user types one directly, skip AI
-// Matches I20100, I2010001 (tank suffix), I20600MMDDYYYYMMDDYYYY (date range suffix), etc.
-const VR_CODE_RE = /^[Ii]\d{5}\d*$/;
+// Matches I20100, S10100, P20600, etc. and codes with suffixes (tank number, date range)
+const VR_CODE_RE = /^[IiSsPp]\d{5}/;
 
 // ── PDF generation (lazy-loaded so jsPDF doesn't bloat initial bundle) ────────
 async function savePdf(opts: {
@@ -114,7 +114,7 @@ async function savePdf(opts: {
   // ── Header (first page only) ─────────────────────────────────────────────
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
-  doc.text('TLS-450PLUS — ' + opts.title, ml, mt + 13);
+  doc.text('ATG — ' + opts.title, ml, mt + 13);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
@@ -144,7 +144,7 @@ async function savePdf(opts: {
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(8);
         doc.setTextColor(120, 120, 120);
-        doc.text(`TLS-450PLUS — ${opts.title}`, ml, mt);
+        doc.text(`ATG — ${opts.title}`, ml, mt);
         doc.setDrawColor(200, 200, 200);
         doc.line(ml, mt + 6, pageW - mr, mt + 6);
         doc.setTextColor(0, 0, 0);
@@ -220,7 +220,7 @@ export default function TlsPage() {
 
   // ── Ethernet state ─────────────────────────────────────────────────────────
   const [ethIp,        setEthIp]       = useState('');
-  const [ethPort,      setEthPort]     = useState('80');
+  const [ethPort,      setEthPort]     = useState('443');
   const [ethTesting,   setEthTesting]  = useState(false);
   const [ethResult,    setEthResult]   = useState<{ ok: boolean; msg: string } | null>(null);
 
@@ -400,7 +400,7 @@ export default function TlsPage() {
 
   const handleAutoDiagnose = useCallback(() => {
     if (status !== 'connected' || analyzing) return;
-    // Clear terminal so Claude sees only the fresh system status
+    // Clear terminal so Atlas sees only the fresh system status
     setOutput('');
     setReportType(null);
     setAlarmRange('');
@@ -408,6 +408,23 @@ export default function TlsPage() {
     pendingAnalyzeRef.current = true;
     runCommand(SYSTEM_STATUS_CMD, 'System Status — Auto-Diagnose  (I30100)', 'custom');
   }, [status, analyzing, runCommand]);
+
+  const handlePrintAlarmHistory = useCallback(() => {
+    const end   = new Date();
+    const start = new Date(end);
+    start.setFullYear(start.getFullYear() - 1);
+    const cmd = buildCmd(`P20600${vrDate(start)}${vrDate(end)}`);
+    const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    runCommand(cmd, `Print Alarm History  (P20600) — ${fmt(start)} – ${fmt(end)}`, 'alarm-history');
+  }, [runCommand]);
+
+  const handlePrintConsoleSetup = useCallback(() => {
+    runCommand(buildCmd('P10100'), 'Print Console Setup  (P10100)', 'console-setup');
+  }, [runCommand]);
+
+  const handlePrintSystemStatus = useCallback(() => {
+    runCommand(buildCmd('P30100'), 'Print System Status  (P30100)', 'custom');
+  }, [runCommand]);
 
   const handleAnalyze = useCallback(async () => {
     if (!output || analyzing) return;
@@ -453,21 +470,21 @@ export default function TlsPage() {
         await savePdf({
           title: 'Alarm History Report',
           subtitle: `Date range: ${alarmRange}`,
-          filename: `TLS450-AlarmHistory-${today}.pdf`,
+          filename: `ATG-AlarmHistory-${today}.pdf`,
           content: output,
         });
       } else if (reportType === 'console-setup') {
         await savePdf({
           title: 'Console Setup Report',
           subtitle: `Retrieved: ${new Date().toLocaleDateString()}`,
-          filename: `TLS450-ConsoleSetup-${today}.pdf`,
+          filename: `ATG-ConsoleSetup-${today}.pdf`,
           content: output,
         });
       } else {
         await savePdf({
           title: 'ATG Report',
           subtitle: `Retrieved: ${new Date().toLocaleString()}`,
-          filename: `TLS450-Report-${today}.pdf`,
+          filename: `ATG-Report-${today}.pdf`,
           content: output,
         });
       }
@@ -554,7 +571,8 @@ export default function TlsPage() {
   }, [cmdInput, cmdBusy, status, runCommand]);
 
   // ── Ethernet handlers ──────────────────────────────────────────────────────
-  const ethUrl = `http://${ethIp.trim()}:${ethPort.trim() || '80'}`;
+  const _ethPort = ethPort.trim() || '443';
+  const ethUrl = `${_ethPort === '443' || _ethPort === '8443' ? 'https' : 'http'}://${ethIp.trim()}:${_ethPort}`;
 
   const handleEthTest = useCallback(async () => {
     if (!ethIp.trim()) return;
@@ -586,7 +604,12 @@ export default function TlsPage() {
     window.open(ethUrl, '_blank', 'noopener,noreferrer');
   }, [ethIp, ethUrl]);
 
-  if (!ready || !authed) return null;
+  if (!ready) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100dvh', background: 'var(--bg)' }}>
+      <div style={{ width: 28, height: 28, border: '3px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'tls-spin 0.7s linear infinite' }} />
+    </div>
+  );
+  if (!authed) return null;
 
   const hasSerial = !!getSerial();
   const isConn    = status === 'connected' || status === 'running';
@@ -603,8 +626,8 @@ export default function TlsPage() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icon-192.png" alt="" className="tls-header-logo" />
           <div>
-            <div className="tls-header-title">TLS-450PLUS Direct Connect</div>
-            <div className="tls-header-sub">RS-232 Serial &amp; Ethernet Web Interface</div>
+            <div className="tls-header-title">ATG Direct Connect</div>
+            <div className="tls-header-sub">TLS-450PLUS · TLS-350 · TLS-350R — RS-232 Serial &amp; Ethernet</div>
           </div>
         </div>
         <div
@@ -771,8 +794,8 @@ export default function TlsPage() {
           {connErr && <div className="tls-conn-error">{connErr}</div>}
           <div className="tls-conn-hint">
             Requires a <strong>USB-to-RS-232 adapter</strong> plugged into your PC and connected
-            to the TLS-450PLUS computer port (DB9 or DB25). TLS-450PLUS default is{' '}
-            <strong>9600 baud, 8-N-1</strong> — only change if the ATG is configured differently.
+            to the ATG computer port (DB9 or DB25). Default for most ATGs is{' '}
+            <strong>9600 baud, 8-N-1</strong> — only change if your ATG is configured differently.
           </div>
         </div>
 
@@ -852,7 +875,7 @@ export default function TlsPage() {
               <div>
                 <div className="tls-action-name">Auto-Diagnose Active Alarms</div>
                 <div className="tls-action-desc">
-                  Pulls live system status from the ATG and immediately sends it to Claude for AI
+                  Pulls live system status from the ATG and immediately sends it to Atlas for AI
                   diagnosis — one click to read active alarms and get numbered corrective action
                   steps with documentation references.
                 </div>
@@ -862,6 +885,62 @@ export default function TlsPage() {
           </div>
           {!isConn && (
             <div className="tls-actions-lock">Connect to the ATG first to enable quick actions</div>
+          )}
+        </div>
+
+        {/* Print to ATG printer */}
+        <div className="tls-card">
+          <div className="tls-card-title">Print to ATG Printer</div>
+          <div className="tls-actions-grid">
+
+            <button
+              className="tls-action"
+              disabled={!isConn || isBusy}
+              onClick={handlePrintAlarmHistory}
+            >
+              <div className="tls-action-icon">🖨️</div>
+              <div>
+                <div className="tls-action-name">Print Alarm History — 1 Year</div>
+                <div className="tls-action-desc">
+                  Sends P20600 to the ATG, which prints the last 12 months of alarm history
+                  directly to the console&apos;s built-in thermal printer.
+                </div>
+              </div>
+            </button>
+
+            <button
+              className="tls-action"
+              disabled={!isConn || isBusy}
+              onClick={handlePrintConsoleSetup}
+            >
+              <div className="tls-action-icon">🖨️</div>
+              <div>
+                <div className="tls-action-name">Print Console Setup Report</div>
+                <div className="tls-action-desc">
+                  Sends P10100 — prints the full system setup report (tanks, probes, alarm
+                  setpoints) to the ATG&apos;s thermal printer.
+                </div>
+              </div>
+            </button>
+
+            <button
+              className="tls-action"
+              disabled={!isConn || isBusy}
+              onClick={handlePrintSystemStatus}
+            >
+              <div className="tls-action-icon">🖨️</div>
+              <div>
+                <div className="tls-action-name">Print System Status</div>
+                <div className="tls-action-desc">
+                  Sends P30100 — prints the current ATG health summary and active alarm
+                  list to the thermal printer.
+                </div>
+              </div>
+            </button>
+
+          </div>
+          {!isConn && (
+            <div className="tls-actions-lock">Connect to the ATG first to print</div>
           )}
         </div>
 
@@ -921,29 +1000,33 @@ export default function TlsPage() {
             )}
             {aiAnalysis && (() => {
               const suggestedCodes = [...new Set(
-                [...aiAnalysis.matchAll(/`([Ii]\d{5}[^`]*)`/g)].map(m => m[1].trim())
+                [...aiAnalysis.matchAll(/`([IiSs]\d{5}[^`]*)`/g)].map(m => m[1].trim())
               )];
               return (
                 <>
                   <pre className="tls-terminal tls-ai-result">{aiAnalysis}</pre>
                   {suggestedCodes.length > 0 && (
                     <div className="tls-suggested-cmds">
-                      <div className="tls-suggested-label">Suggested commands — click to send to ATG:</div>
+                      <div className="tls-suggested-label">Commands — click to send to ATG:</div>
                       <div className="tls-suggested-chips">
-                        {suggestedCodes.map(code => (
-                          <button
-                            key={code}
-                            className="tls-cmd-ex-chip tls-cmd-ex-chip-send"
-                            disabled={!isConn || isBusy}
-                            onClick={() => runCommand(
-                              buildCmd(code.split(/\s+/)[0].toUpperCase()),
-                              `${code} (suggested)`,
-                              'custom'
-                            )}
-                          >
-                            {code} ↗
-                          </button>
-                        ))}
+                        {suggestedCodes.map(code => {
+                          const isSetCmd = /^[Ss]/.test(code);
+                          return (
+                            <button
+                              key={code}
+                              className={`tls-cmd-ex-chip${isSetCmd ? ' tls-cmd-chip-fix' : ' tls-cmd-ex-chip-send'}`}
+                              disabled={!isConn || isBusy}
+                              title={isSetCmd ? 'SET command — applies a configuration change to the ATG' : 'Query command — reads data from the ATG'}
+                              onClick={() => runCommand(
+                                buildCmd(code.toUpperCase()),
+                                `${code} (${isSetCmd ? 'fix' : 'suggested'})`,
+                                'custom'
+                              )}
+                            >
+                              {isSetCmd ? '⚙ ' : ''}{code} ↗
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -1019,7 +1102,7 @@ export default function TlsPage() {
           <div className="tls-card tls-eth-card">
             <div className="tls-card-title">Ethernet / Web Interface</div>
             <p className="tls-eth-desc">
-              Enter the TLS-450PLUS IP address to open its built-in web interface directly
+              Enter the ATG&apos;s IP address to open its built-in web interface directly
               in a new browser tab. The ATG must be on the same network as this PC.
               Contact your network administrator or check the ATG's network settings screen
               for the IP address.
@@ -1032,7 +1115,7 @@ export default function TlsPage() {
                   <input
                     type="text"
                     className="tls-cmd-input tls-eth-ip"
-                    placeholder="e.g. 192.168.1.100"
+                    placeholder="e.g. 192.168.11.100"
                     value={ethIp}
                     onChange={e => { setEthIp(e.target.value); setEthResult(null); }}
                     spellCheck={false}
@@ -1044,7 +1127,7 @@ export default function TlsPage() {
                   <input
                     type="text"
                     className="tls-cmd-input tls-eth-port"
-                    placeholder="80"
+                    placeholder="443"
                     value={ethPort}
                     onChange={e => { setEthPort(e.target.value); setEthResult(null); }}
                     spellCheck={false}
@@ -1079,8 +1162,7 @@ export default function TlsPage() {
               <div className="tls-eth-hint-row">
                 <span className="tls-eth-hint-icon">ℹ</span>
                 <span>
-                  The web interface opens on <strong>port 80</strong> by default. Only change the
-                  port if your ATG is configured to use a different one.
+                  Factory defaults — TLS-450/550/600: <strong>192.168.11.100</strong>, port <strong>443 (HTTPS)</strong>. TLS-350: <strong>192.168.1.100</strong>, port <strong>80 (HTTP)</strong>. Scheme is auto-selected based on port.
                 </span>
               </div>
               <div className="tls-eth-hint-row">

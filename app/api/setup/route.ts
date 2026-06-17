@@ -120,6 +120,8 @@ export async function POST(req: Request) {
 
   await sql`CREATE INDEX IF NOT EXISTS console_licenses_key_idx ON console_licenses (license_key)`;
 
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS console_license_key TEXT`;
+
   await sql`
     CREATE TABLE IF NOT EXISTS enterprise_waitlist (
       email    TEXT PRIMARY KEY,
@@ -155,6 +157,28 @@ export async function POST(req: Request) {
   `;
 
   await sql`CREATE INDEX IF NOT EXISTS suggestions_created_idx ON suggestions (created_at DESC)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS remote_sessions (
+      username    TEXT PRIMARY KEY,
+      output      TEXT NOT NULL DEFAULT '',
+      conn_status TEXT NOT NULL DEFAULT 'connected',
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS remote_commands (
+      id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      username   TEXT NOT NULL,
+      command    TEXT NOT NULL,
+      label      TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      sent_at    TIMESTAMPTZ
+    )
+  `;
+
+  await sql`CREATE INDEX IF NOT EXISTS remote_commands_pending_idx ON remote_commands (username, created_at) WHERE sent_at IS NULL`;
 
   return Response.json({ ok: true, message: "Database initialized" });
 }

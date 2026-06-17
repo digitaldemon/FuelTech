@@ -11,7 +11,7 @@ const SCENES = [
   { id: 'diagram', title: 'Diagrams On Demand',  start: 33,  end: 48  },
   { id: 'field',   title: 'On the Job Site',     start: 48,  end: 63  },
   { id: 'connect', title: 'ATG Direct Connect',  start: 63,  end: 90  },
-  { id: 'desktop', title: 'TLSConnect Desktop',  start: 90,  end: 112 },
+  { id: 'desktop', title: 'Console Connect',       start: 90,  end: 112 },
   { id: 'cta',     title: 'Get Access',          start: 112, end: 118 },
 ] as const;
 
@@ -21,9 +21,9 @@ const CAPTIONS: Record<SceneId, [number, string][]> = {
   intro:   [[0, 'FuelTech AI Pro — the AI field assistant built for fueling technicians.'], [0.55, 'Trained on official documentation across every major equipment brand.']],
   chat:    [[0, 'Ask about any alarm or error code — in plain English.'], [0.45, 'The AI reasons through the problem like an experienced tech.'], [0.75, 'Every answer cites the exact manual and page number.']],
   diagram: [[0, 'Need a wiring diagram or installation schematic? Just ask.'], [0.5, 'The right figure from the right manual — displayed instantly.']],
-  field:   [[0, 'Use it right on the job site — any phone, any browser, no app store.'], [0.5, 'Gilbarco, Veeder-Root, Wayne, Franklin — the AI knows all of them.']],
-  connect: [[0, 'Connect directly to a TLS-350 or TLS-450 from your browser — no software required.'], [0.38, 'Claude spots a probe comm protocol mismatch from the day before — the kind of thing that takes hours to find manually.'], [0.76, 'One command corrects the probe type setting. PROBE OUT clears instantly.']],
-  desktop: [[0, 'TLSConnect Desktop Lite — direct RS-232 serial access to any TLS console.'], [0.32, 'Alarm History — a full year of events, color-coded and ready to export.'], [0.42, 'Console Setup — pulls the complete ATG configuration in seconds.'], [0.72, 'Live Tank Inventory — volume, temperature, and ullage for every tank.']],
+  field:   [[0, 'Works on any device — phone, tablet, or desktop. No install required.'], [0.5, 'Same AI assistant whether you\'re on the job site or back at the office.']],
+  connect: [[0, 'Connect directly to a TLS-350 or TLS-450 from your browser — no software required.'], [0.38, 'Atlas spots a probe comm protocol mismatch from the day before — the kind of thing that takes hours to find manually.'], [0.76, 'One command corrects the probe type setting. PROBE OUT clears instantly.']],
+  desktop: [[0, 'FuelTech AI Console Connect — direct RS-232 serial access to any TLS console.'], [0.32, 'Alarm History — a full year of events, color-coded and ready to export.'], [0.42, 'Console Setup — pulls the complete ATG configuration in seconds.'], [0.72, 'Live Tank Inventory — volume, temperature, and ullage for every tank.']],
   cta:     [[0, 'Get started for $14.99/month — or save 45% with an annual plan.'], [0.5, 'No setup. No downloads. Works on any device, right now.']],
 };
 
@@ -37,15 +37,15 @@ const CURSOR: [number, number, number, boolean?][] = [
   [34, 50, 89], [34.8, 50, 89, true], [37, 85, 89, true], [43, 50, 65], [47, 52, 72],
   // Scene 4: Field tech
   [49, 72, 50], [51, 72, 84], [52, 72, 84, true], [56.5, 76, 87, true], [60, 65, 55], [62, 68, 65],
-  // Scene 5: ATG Direct Connect — Connect button, Current Alarms, Claude diagnoses + fixes
+  // Scene 5: ATG Direct Connect — Connect button, Current Alarms, Atlas diagnoses + fixes
   [64, 82, 8],    [65.2, 82, 8, true],     // click Connect
   [66.5, 20, 14], [67.8, 20, 14, true],   // click Current Alarms quick cmd
   [70, 35, 55],   [73, 40, 60],            // reading alarm output
   [75, 65, 88],   [76.5, 65, 88, true],   // click Diagnose button
-  [79, 42, 55],   [81, 38, 60],            // reading Claude analysis
+  [79, 42, 55],   [81, 38, 60],            // reading Atlas analysis
   [83, 35, 55],   [85.5, 40, 65],          // reading Tank Setup pull
   [87, 38, 60],   [89, 42, 68],            // reading fix result + verify
-  // Scene 6: TLSConnect Desktop — Alarm History, Console Setup, Inventory, Save PDF
+  // Scene 6: Console Connect — Alarm History, Console Setup, Inventory, Save PDF
   [91.2, 86, 14],  [92.4, 86, 14, true],  // click Alarm History
   [94, 22, 58],    [97, 28, 70],           // reading alarm rows
   [98.2, 60, 14],  [99.4, 60, 14, true],  // click Console Setup
@@ -133,174 +133,43 @@ function makeSounds(muted: boolean) {
 }
 
 // ── Background music engine ───────────────────────────────────────────────────
-// Zero sustained oscillators — every sound is a discrete note with ADSR.
-// Uses the Web Audio lookahead scheduler pattern (schedules 350ms ahead).
+// Plays public/music/demo-track.mp3 via the HTML5 Audio API.
+// Drop the Pixabay "Inspiring Cinematic Electronica" MP3 at:
+//   FuelTech/public/music/demo-track.mp3
 function makeMusic(muted: boolean) {
   if (typeof window === 'undefined') return null;
-  const ctx = new AudioContext();
+  const audio = new Audio('/music/demo-track.mp3');
+  audio.loop = true;
+  audio.volume = 0;
+  audio.play().catch(() => {});
 
-  // Master compressor gives polished, glued sound
-  const comp = ctx.createDynamicsCompressor();
-  comp.threshold.value = -14; comp.knee.value = 5;
-  comp.ratio.value = 5; comp.attack.value = 0.003; comp.release.value = 0.18;
-  comp.connect(ctx.destination);
+  const TARGET_VOL = 0.52;
+  let fadeTimer: ReturnType<typeof setInterval> | null = null;
 
-  const master = ctx.createGain();
-  master.gain.value = 0;
-  master.connect(comp);
-  let targetVol = muted ? 0 : 0.72;
-  master.gain.linearRampToValueAtTime(targetVol, ctx.currentTime + 2.5);
-
-  const BPM = 95, beat = 60 / BPM;
-  const eighth = beat / 2, sixteenth = beat / 4, bar = beat * 4;
-
-  // ── Sound primitives (all percussive — attack + decay, NO sustain) ──────────
-
-  // Kick: deep sine sweep 180→25 Hz
-  const kick = (t: number, vol = 1) => {
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.connect(g); g.connect(master);
-    o.frequency.setValueAtTime(180, t);
-    o.frequency.exponentialRampToValueAtTime(25, t + 0.13);
-    g.gain.setValueAtTime(vol * 0.85, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
-    o.start(t); o.stop(t + 0.3);
+  const fadeTo = (target: number) => {
+    if (fadeTimer) clearInterval(fadeTimer);
+    const step = target > audio.volume ? 0.015 : -0.015;
+    fadeTimer = setInterval(() => {
+      const next = audio.volume + step;
+      if ((step > 0 && next >= target) || (step < 0 && next <= target)) {
+        audio.volume = Math.max(0, Math.min(1, target));
+        if (fadeTimer) clearInterval(fadeTimer);
+        fadeTimer = null;
+      } else {
+        audio.volume = Math.max(0, Math.min(1, next));
+      }
+    }, 30);
   };
 
-  // Bass pluck: triangle, tight low-pass, quick decay
-  const bassPluck = (freq: number, t: number, dur = 0.38) => {
-    const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain();
-    o.type = 'triangle'; o.frequency.value = freq;
-    f.type = 'lowpass'; f.frequency.value = 210;
-    g.gain.setValueAtTime(0.52, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(f); f.connect(g); g.connect(master);
-    o.start(t); o.stop(t + dur + 0.05);
-  };
-
-  // Synth arp pluck: two detuned sawtooths, resonant lowpass sweep = classic pluck
-  const arpNote = (freq: number, t: number) => {
-    const o1 = ctx.createOscillator(), o2 = ctx.createOscillator();
-    const f = ctx.createBiquadFilter(), g = ctx.createGain();
-    o1.type = 'sawtooth'; o1.frequency.value = freq;
-    o2.type = 'sawtooth'; o2.frequency.value = freq * 1.0045;
-    f.type = 'lowpass';
-    f.frequency.setValueAtTime(3400, t);
-    f.frequency.exponentialRampToValueAtTime(620, t + eighth * 0.82);
-    f.Q.value = 4.2;
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.12, t + 0.006);
-    g.gain.exponentialRampToValueAtTime(0.001, t + eighth * 0.86);
-    o1.connect(f); o2.connect(f); f.connect(g); g.connect(master);
-    o1.start(t); o2.start(t);
-    o1.stop(t + eighth); o2.stop(t + eighth);
-  };
-
-  // Chord stab: multi-voice sawtooth, very short
-  const stab = (freqs: number[], t: number) => {
-    freqs.forEach(freq => {
-      const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain();
-      o.type = 'sawtooth'; o.frequency.value = freq;
-      f.type = 'lowpass';
-      f.frequency.setValueAtTime(2000, t); f.frequency.exponentialRampToValueAtTime(650, t + 0.09);
-      f.Q.value = 2.2;
-      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.052, t + 0.005);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
-      o.connect(f); f.connect(g); g.connect(master);
-      o.start(t); o.stop(t + 0.16);
-    });
-  };
-
-  // Hi-hat: high-pass filtered noise burst
-  const hat = (t: number, vol: number) => {
-    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.044), ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
-    src.buffer = buf; f.type = 'highpass'; f.frequency.value = 9800;
-    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.038);
-    src.connect(f); f.connect(g); g.connect(master);
-    src.start(t);
-  };
-
-  // Melody note: soft sine, moderate decay (sits above the arp)
-  const melNote = (freq: number, t: number) => {
-    const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain();
-    o.type = 'sine'; o.frequency.value = freq;
-    f.type = 'lowpass'; f.frequency.value = 1800;
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.11, t + 0.035);
-    g.gain.setValueAtTime(0.11, t + beat * 0.55);
-    g.gain.exponentialRampToValueAtTime(0.001, t + beat * 1.05);
-    o.connect(f); f.connect(g); g.connect(master);
-    o.start(t); o.stop(t + beat * 1.1);
-  };
-
-  // ── Chord progression: Am Am F F C C G G ────────────────────────────────────
-  const CHORDS = [
-    { bass: 55,    arp: [220.00, 261.63, 329.63, 440.00, 329.63, 261.63, 220.00, 164.81], stab: [110.00, 130.81, 164.81], mel: 440.00 },
-    { bass: 55,    arp: [220.00, 329.63, 440.00, 329.63, 261.63, 329.63, 220.00, 261.63], stab: [110.00, 130.81, 164.81], mel: 493.88 },
-    { bass: 43.65, arp: [174.61, 220.00, 261.63, 349.23, 261.63, 220.00, 174.61, 130.81], stab: [87.31,  110.00, 130.81], mel: 523.25 },
-    { bass: 43.65, arp: [174.61, 261.63, 349.23, 261.63, 220.00, 261.63, 174.61, 220.00], stab: [87.31,  110.00, 130.81], mel: 523.25 },
-    { bass: 65.41, arp: [261.63, 329.63, 392.00, 523.25, 392.00, 329.63, 261.63, 196.00], stab: [130.81, 164.81, 196.00], mel: 587.33 },
-    { bass: 65.41, arp: [261.63, 392.00, 523.25, 392.00, 329.63, 392.00, 261.63, 329.63], stab: [130.81, 164.81, 196.00], mel: 523.25 },
-    { bass: 49,    arp: [196.00, 246.94, 293.66, 392.00, 293.66, 246.94, 196.00, 146.83], stab: [98.00,  123.47, 146.83], mel: 440.00 },
-    { bass: 49,    arp: [196.00, 293.66, 392.00, 293.66, 246.94, 293.66, 196.00, 246.94], stab: [98.00,  123.47, 146.83], mel: 392.00 },
-  ];
-
-  const scheduleBar = (chord: typeof CHORDS[0], t: number, barNum: number) => {
-    const full = barNum >= 2;
-
-    for (let b = 0; b < 4; b++) {
-      const bt = t + b * beat;
-      // Kick on 1 and 3
-      if (b === 0) kick(bt, 1.0);
-      if (b === 2) kick(bt, 0.78);
-      // Bass: root on 1+3, fifth on 2+4
-      if (b === 0 || b === 2) bassPluck(chord.bass, bt);
-      if (full && (b === 1 || b === 3)) bassPluck(chord.bass * 1.5, bt, 0.2);
-      // Hi-hat every beat; offbeat from bar 2 on
-      hat(bt, b === 0 ? 0.068 : 0.040);
-      if (full) hat(bt + eighth, 0.024);
-      // Chord stab on offbeats (beat 2+4 shifted by half a sixteenth)
-      if (full && (b === 1 || b === 3)) stab(chord.stab, bt + sixteenth * 0.5);
-    }
-
-    // Arpeggio: 8 eighth-note steps, skip step 3 for breathing room
-    const arpSteps = full ? [0,1,2,4,5,6,7] : [0,2,4,6];
-    arpSteps.forEach(n => arpNote(chord.arp[n], t + n * eighth));
-
-    // Melody note on beat 2 (from bar 4 onward)
-    if (barNum >= 4) melNote(chord.mel, t + beat);
-  };
-
-  // Lookahead scheduler
-  let nextBar = ctx.currentTime + 0.25;
-  let barIdx = 0;
-  let stopped = false;
-
-  const timerId = setInterval(() => {
-    if (stopped) return;
-    while (nextBar < ctx.currentTime + 0.35) {
-      scheduleBar(CHORDS[barIdx % CHORDS.length], nextBar, barIdx);
-      nextBar += bar;
-      barIdx++;
-    }
-  }, 25);
+  if (!muted) fadeTo(TARGET_VOL);
 
   return {
-    setMuted: (m: boolean) => {
-      targetVol = m ? 0 : 0.72;
-      master.gain.cancelScheduledValues(ctx.currentTime);
-      master.gain.linearRampToValueAtTime(targetVol, ctx.currentTime + (m ? 0.25 : 0.5));
-    },
+    setMuted: (m: boolean) => { fadeTo(m ? 0 : TARGET_VOL); },
     stop: () => {
-      stopped = true;
-      clearInterval(timerId);
-      master.gain.cancelScheduledValues(ctx.currentTime);
-      master.gain.linearRampToValueAtTime(0, ctx.currentTime + 1.5);
+      fadeTo(0);
+      setTimeout(() => { audio.pause(); audio.currentTime = 0; }, 1600);
     },
-    resume: () => ctx.resume(),
+    resume: () => { audio.play().catch(() => {}); },
   };
 }
 
@@ -401,7 +270,7 @@ function SceneChat({ p }: { p: number }) {
             {p >= 0.30 && (
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, animation: 'demoFadeUp 0.35s ease' }}>
                 <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, alignSelf: 'flex-end' }}>
-                  <div style={{ fontSize: 'clamp(6px,0.72vw,9px)', color: '#475569', fontWeight: 600 }}>claude</div>
+                  <div style={{ fontSize: 'clamp(6px,0.72vw,9px)', color: '#475569', fontWeight: 600 }}>Atlas</div>
                   <div style={{ width: 'clamp(18px,2.3vw,28px)', borderRadius: 6, overflow: 'hidden', boxShadow: '0 0 0 1.5px rgba(34,211,238,0.35)' }}>
                     <img src="/icon-192.png" style={{ width: '100%', display: 'block' }} alt="" />
                   </div>
@@ -482,32 +351,70 @@ function SceneDiagram({ p }: { p: number }) {
         {p > 0.33 && (
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, animation: 'demoFadeUp 0.35s ease', flex: 1, minHeight: 0 }}>
             <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-              <div style={{ fontSize: 'clamp(6px,0.72vw,9px)', color: '#475569', fontWeight: 600 }}>claude</div>
+              <div style={{ fontSize: 'clamp(6px,0.72vw,9px)', color: '#475569', fontWeight: 600 }}>Atlas</div>
               <div style={{ width: 'clamp(18px,2.3vw,28px)', borderRadius: 6, overflow: 'hidden', boxShadow: '0 0 0 1.5px rgba(34,211,238,0.35)' }}>
                 <img src="/icon-192.png" style={{ width: '100%', display: 'block' }} alt="" />
               </div>
             </div>
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', padding: 'clamp(6px,0.9vw,10px) clamp(8px,1.2vw,14px)', borderRadius: '16px 16px 16px 4px', fontSize: 'clamp(8px,1.05vw,13px)', color: '#e2e8f0', lineHeight: 1.6, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'hidden' }}>
-              <div>Mag Plus probe assembly from the TLS-450PLUS Service Manual:</div>
+              <div>Mag Plus probe wiring — ITPM module (console) to probe head junction box:</div>
               {showFig && (
                 <div style={{ background: 'rgba(34,211,238,0.03)', border: '1px solid rgba(34,211,238,0.14)', borderRadius: 8, padding: 8, animation: 'demoFadeUp 0.5s ease', flex: 1 }}>
-                  <svg width="100%" viewBox="0 0 340 145" fill="none">
-                    <rect x="20" y="8" width="300" height="130" rx="6" stroke="rgba(100,116,139,0.25)" strokeWidth="1.2" fill="none"/>
-                    <rect x="155" y="10" width="30" height="82" rx="3" stroke="#22d3ee" strokeWidth="1.4" fill="rgba(34,211,238,0.04)"/>
-                    <rect x="148" y="33" width="44" height="14" rx="4" stroke="#22d3ee" strokeWidth="1" fill="rgba(34,211,238,0.1)"/>
-                    <text x="170" y="43" fill="#22d3ee" fontSize="7" textAnchor="middle" fontFamily="monospace">HI PRODUCT</text>
-                    <rect x="148" y="55" width="44" height="14" rx="4" stroke="#22d3ee" strokeWidth="1" fill="rgba(34,211,238,0.1)"/>
-                    <text x="170" y="65" fill="#22d3ee" fontSize="7" textAnchor="middle" fontFamily="monospace">HI WATER</text>
-                    <rect x="155" y="92" width="30" height="15" rx="3" stroke="#7dd3fc" strokeWidth="1" fill="rgba(125,211,252,0.06)"/>
-                    <text x="170" y="103" fill="#7dd3fc" fontSize="6.5" textAnchor="middle" fontFamily="monospace">SUMP</text>
-                    <line x1="170" y1="107" x2="170" y2="125" stroke="#475569" strokeWidth="1" strokeDasharray="3,2"/>
-                    <text x="37" y="22" fill="#64748b" fontSize="8" fontFamily="monospace">RISER CABLE</text>
-                    <line x1="104" y1="20" x2="154" y2="20" stroke="#334155" strokeWidth="0.8"/>
-                    <text x="213" y="42" fill="#64748b" fontSize="7.5" fontFamily="monospace">HIGH PRODUCT</text>
-                    <line x1="212" y1="40" x2="192" y2="40" stroke="#334155" strokeWidth="0.8"/>
-                    <text x="213" y="63" fill="#64748b" fontSize="7.5" fontFamily="monospace">HIGH WATER</text>
-                    <line x1="212" y1="61" x2="192" y2="61" stroke="#334155" strokeWidth="0.8"/>
-                    <text x="55" y="135" fill="#64748b" fontSize="7.5" fontFamily="monospace">Fig. 3-12 &middot; Mag Plus Probe Assembly &middot; TLS-450PLUS Service Manual p. 84</text>
+                  <svg width="100%" viewBox="0 0 340 162" fill="none">
+                    {/* Cable shield outline — draw first so wires render on top */}
+                    <rect x="90" y="44" width="160" height="68" rx="5" stroke="rgba(71,85,105,0.22)" strokeWidth="1" fill="rgba(15,23,42,0.15)" strokeDasharray="5,3"/>
+                    {/* Boxes — semi-transparent so internal wire segments show */}
+                    <rect x="4" y="14" width="88" height="112" rx="5" stroke="rgba(34,211,238,0.5)" strokeWidth="1.5" fill="rgba(34,211,238,0.04)"/>
+                    <rect x="248" y="14" width="88" height="112" rx="5" stroke="rgba(167,139,250,0.5)" strokeWidth="1.5" fill="rgba(167,139,250,0.04)"/>
+                    {/* WHITE wire — SIG+ */}
+                    <line x1="65" y1="56" x2="264" y2="56" stroke="#e2e8f0" strokeWidth="2.2"/>
+                    {/* BLACK wire — SIG– (dark fill with visible border) */}
+                    <line x1="65" y1="78" x2="264" y2="78" stroke="#475569" strokeWidth="3.2"/>
+                    <line x1="65" y1="78" x2="264" y2="78" stroke="#0d1117" strokeWidth="1.8"/>
+                    {/* DRAIN — dashed, terminates at console end only */}
+                    <line x1="65" y1="100" x2="182" y2="100" stroke="#374151" strokeWidth="1" strokeDasharray="3,2"/>
+                    <circle cx="182" cy="100" r="2.5" fill="#0f172a" stroke="#374151" strokeWidth="0.8"/>
+                    {/* ── LEFT BOX labels ── */}
+                    <text x="48" y="26" fill="#22d3ee" fontSize="7" textAnchor="middle" fontFamily="monospace" fontWeight="700">TLS-450PLUS</text>
+                    <text x="48" y="35" fill="#94a3b8" fontSize="5.5" textAnchor="middle" fontFamily="monospace">ITPM  CH 1</text>
+                    {/* SIG+ terminal */}
+                    <text x="10" y="59" fill="#94a3b8" fontSize="5.5" fontFamily="monospace">SIG+</text>
+                    <rect x="45" y="50" width="20" height="13" rx="2" stroke="rgba(34,211,238,0.65)" strokeWidth="1.2" fill="rgba(34,211,238,0.12)"/>
+                    <text x="55" y="60" fill="#22d3ee" fontSize="8" textAnchor="middle" fontFamily="monospace" fontWeight="700">+</text>
+                    {/* SIG– terminal */}
+                    <text x="10" y="81" fill="#94a3b8" fontSize="5.5" fontFamily="monospace">SIG–</text>
+                    <rect x="45" y="72" width="20" height="13" rx="2" stroke="rgba(248,113,113,0.65)" strokeWidth="1.2" fill="rgba(248,113,113,0.1)"/>
+                    <text x="55" y="82" fill="#f87171" fontSize="8" textAnchor="middle" fontFamily="monospace" fontWeight="700">–</text>
+                    {/* SHLD terminal */}
+                    <text x="10" y="103" fill="#64748b" fontSize="5.5" fontFamily="monospace">SHLD</text>
+                    <rect x="45" y="94" width="20" height="13" rx="2" stroke="rgba(100,116,139,0.45)" strokeWidth="1.2" fill="rgba(100,116,139,0.07)"/>
+                    <text x="55" y="104" fill="#64748b" fontSize="6" textAnchor="middle" fontFamily="monospace">SH</text>
+                    <text x="48" y="120" fill="#475569" fontSize="5.5" textAnchor="middle" fontFamily="monospace">CONSOLE</text>
+                    {/* ── CABLE ZONE labels ── */}
+                    <text x="170" y="52" fill="#94a3b8" fontSize="5.5" textAnchor="middle" fontFamily="monospace">WHITE  (+)</text>
+                    <text x="170" y="74" fill="#64748b" fontSize="5.5" textAnchor="middle" fontFamily="monospace">BLACK  (–)</text>
+                    <text x="128" y="109" fill="#2a3a4a" fontSize="5" textAnchor="middle" fontFamily="monospace">DRAIN — CONSOLE END ONLY</text>
+                    <text x="170" y="121" fill="#334155" fontSize="5.5" textAnchor="middle" fontFamily="monospace">2-CONDUCTOR SHIELDED · MAX 1000 FT</text>
+                    {/* ── RIGHT BOX labels ── */}
+                    <text x="292" y="26" fill="#a78bfa" fontSize="7" textAnchor="middle" fontFamily="monospace" fontWeight="700">MAG PLUS</text>
+                    <text x="292" y="35" fill="#94a3b8" fontSize="5.5" textAnchor="middle" fontFamily="monospace">PROBE HEAD</text>
+                    {/* Probe SIG+ terminal */}
+                    <rect x="264" y="50" width="20" height="13" rx="2" stroke="rgba(34,211,238,0.65)" strokeWidth="1.2" fill="rgba(34,211,238,0.12)"/>
+                    <text x="274" y="60" fill="#22d3ee" fontSize="8" textAnchor="middle" fontFamily="monospace" fontWeight="700">+</text>
+                    <text x="288" y="59" fill="#94a3b8" fontSize="5.5" fontFamily="monospace">SIG+</text>
+                    {/* Probe SIG– terminal */}
+                    <rect x="264" y="72" width="20" height="13" rx="2" stroke="rgba(248,113,113,0.65)" strokeWidth="1.2" fill="rgba(248,113,113,0.1)"/>
+                    <text x="274" y="82" fill="#f87171" fontSize="8" textAnchor="middle" fontFamily="monospace" fontWeight="700">–</text>
+                    <text x="288" y="81" fill="#94a3b8" fontSize="5.5" fontFamily="monospace">SIG–</text>
+                    {/* Probe drain note */}
+                    <text x="292" y="100" fill="#2a3a4a" fontSize="5" textAnchor="middle" fontFamily="monospace">DRAIN: FLOAT</text>
+                    <text x="292" y="108" fill="#2a3a4a" fontSize="5" textAnchor="middle" fontFamily="monospace">DO NOT CONNECT</text>
+                    <text x="292" y="120" fill="#475569" fontSize="5.5" textAnchor="middle" fontFamily="monospace">PROBE</text>
+                    {/* ── WARNING BANNER ── */}
+                    <rect x="4" y="132" width="332" height="16" rx="3" stroke="rgba(251,146,60,0.4)" strokeWidth="1" fill="rgba(251,146,60,0.07)"/>
+                    <text x="170" y="143" fill="#fb923c" fontSize="6" textAnchor="middle" fontFamily="monospace" fontWeight="700">REVERSED POLARITY = PROBE COMM FAULT — VERIFY + / – AT BOTH ENDS BEFORE POWER-UP</text>
+                    {/* Caption */}
+                    <text x="170" y="158" fill="#1e2d40" fontSize="5.5" textAnchor="middle" fontFamily="monospace">Fig. 3-12 · Mag Plus Probe Wiring · TLS-450PLUS Field Installation Manual 577013-880</text>
                   </svg>
                 </div>
               )}
@@ -532,192 +439,105 @@ function SceneDiagram({ p }: { p: number }) {
   );
 }
 
-// ── Scene: Field tech ─────────────────────────────────────────────────────────
-const FIELD_CHAT = [
-  { role: 'user', text: 'Getting Error 101 on a Gilbarco Encore 700. Display went blank on startup.', showAt: 0.2 },
-  { role: 'ai',   text: 'Error 101 on the Encore 700 is a Display Board Communication Fault.\n\nCheck the J9 ribbon cable on the back of the display board — it works loose during maintenance. Reseat it firmly and cycle power. If it persists, check DC voltage at J9 pin 1 (should read +12 V).\n\n\u{1F4C4} Source: Gilbarco Encore 700 Service Manual, Ch. 4 — Fault Codes', showAt: 0.48 },
+// ── Scene: Field tech (mobile + desktop side-by-side) ────────────────────────
+const FIELD_PHONE_CHAT = [
+  { role: 'user', text: 'Error 101 on Gilbarco Encore 700. Display went blank on startup.', showAt: 0.22 },
+  { role: 'ai',   text: 'Error 101 = Display Board Comm Fault.\n\nReseat J9 ribbon cable on the back of the display board — works loose during maintenance. Cycle power.\n\n📄 Encore 700 Service Manual, Ch. 4', showAt: 0.42 },
+];
+const FIELD_DESKTOP_CHAT = [
+  { role: 'user', text: 'How do I change probe comm type to ISPI on TLS-450PLUS Tank 3?', showAt: 0.62 },
+  { role: 'ai',   text: 'Setup → Tank Setup → Tank 3 → Probe Comm Type.\nChange VR-STD → ISPI (required for Mag Plus SmartProbe).\n\nSave and allow 60s to re-initialize.\n\n📄 TLS-450PLUS Programming Manual §5.2, p. 41', showAt: 0.80 },
 ];
 
 function SceneField({ p }: { p: number }) {
-  const chatMsg = FIELD_CHAT.filter(m => p > m.showAt);
-  const showTyping = p > 0.32 && p < 0.48;
-  const inputText = p > 0.18 && p < 0.35
-    ? 'Getting Error 101 on a Gilbarco Encore 700...'.slice(0, Math.floor((p - 0.18) / 0.17 * 46))
-    : null;
+  const phoneTyping   = p > 0.30 && p < 0.42;
+  const phoneInput    = p > 0.12 && p < 0.22 ? 'Error 101 on Gilbarco Encore 700...'.slice(0, Math.floor((p - 0.12) / 0.10 * 35)) : null;
+  const desktopTyping = p > 0.70 && p < 0.80;
+  const desktopInput  = p > 0.54 && p < 0.62 ? 'How do I change probe comm type to ISPI?'.slice(0, Math.floor((p - 0.54) / 0.08 * 40)) : null;
 
   return (
     <div style={{ height: '100%', display: 'grid', gridTemplateColumns: '1fr 1fr', overflow: 'hidden' }}>
-      {/* Left: field illustration */}
-      <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(160deg, #06111f 0%, #030a14 100%)', borderRight: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-        {/* Ambient glow */}
-        <div style={{ position: 'absolute', top: '30%', left: '35%', width: '40%', height: '40%', background: 'radial-gradient(circle, rgba(34,211,238,0.07) 0%, transparent 70%)', pointerEvents: 'none' }} />
-        <div style={{ position: 'absolute', top: 8, left: 10, fontSize: 8, color: '#1e3a5f', letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 700 }}>SUNOCO #7419 &middot; BAY 3</div>
-        <svg width="82%" viewBox="0 0 280 295" fill="none" style={{ display: 'block' }}>
-          {/* === GROUND / ISLAND === */}
-          <rect x="55" y="264" width="170" height="10" rx="2" fill="rgba(20,32,50,0.9)" stroke="rgba(34,211,238,0.06)" strokeWidth="0.5"/>
-          <rect x="0" y="274" width="280" height="21" fill="rgba(10,16,28,1)"/>
-          <line x1="0" y1="274" x2="280" y2="274" stroke="rgba(255,255,255,0.04)" strokeWidth="1"/>
-          <line x1="40" y1="282" x2="240" y2="282" stroke="rgba(255,255,255,0.025)" strokeWidth="5"/>
-          {/* === SERVICE VAN (background) === */}
-          <rect x="188" y="178" width="82" height="86" rx="3" fill="rgba(14,24,40,0.85)" stroke="rgba(35,55,85,0.35)" strokeWidth="1"/>
-          <rect x="193" y="183" width="38" height="24" rx="1.5" fill="rgba(34,211,238,0.04)" stroke="rgba(34,211,238,0.1)" strokeWidth="0.5"/>
-          <line x1="232" y1="183" x2="232" y2="264" stroke="rgba(35,55,85,0.3)" strokeWidth="0.8"/>
-          <ellipse cx="205" cy="266" rx="11" ry="3.5" fill="rgba(8,14,24,0.9)"/>
-          <ellipse cx="258" cy="266" rx="11" ry="3.5" fill="rgba(8,14,24,0.9)"/>
-          <text x="220" y="254" fill="rgba(34,211,238,0.18)" fontSize="6.5" textAnchor="middle" fontFamily="Arial" letterSpacing="1.2">SERVICE</text>
-          {/* === DISPENSER (Gilbarco Encore style) === */}
-          {/* Base skirt */}
-          <rect x="96" y="253" width="74" height="13" rx="2" fill="rgba(20,32,52,0.95)" stroke="rgba(55,80,120,0.25)" strokeWidth="1"/>
-          {/* Main body */}
-          <rect x="101" y="68" width="64" height="187" rx="3" fill="rgba(16,26,44,0.98)" stroke="rgba(60,85,130,0.3)" strokeWidth="1.5"/>
-          {/* Top canopy / header */}
-          <rect x="94" y="58" width="78" height="15" rx="4" fill="rgba(22,34,56,0.98)" stroke="rgba(55,80,120,0.3)" strokeWidth="1"/>
-          <rect x="96" y="60" width="74" height="2" rx="1" fill="rgba(34,211,238,0.18)"/>
-          {/* Brand stripe */}
-          <rect x="101" y="73" width="64" height="7" fill="rgba(34,211,238,0.12)"/>
-          <text x="133" y="79" fill="rgba(34,211,238,0.55)" fontSize="5" textAnchor="middle" fontFamily="Arial" fontWeight="bold" letterSpacing="1.8">GILBARCO</text>
-          {/* Main display screen */}
-          <rect x="107" y="86" width="52" height="44" rx="2" fill="rgba(4,8,18,0.99)" stroke="rgba(239,68,68,0.45)" strokeWidth="1.5"/>
-          <rect x="108" y="87" width="50" height="42" rx="1.5" fill="rgba(239,68,68,0.03)"/>
-          <text x="133" y="103" fill="rgba(239,68,68,0.85)" fontSize="7" textAnchor="middle" fontFamily="monospace" fontWeight="bold" letterSpacing="0.5">SYSTEM FAULT</text>
-          <text x="133" y="116" fill="#ef4444" fontSize="13" textAnchor="middle" fontFamily="monospace" fontWeight="bold">ERR 101</text>
-          <text x="133" y="126" fill="rgba(239,68,68,0.5)" fontSize="5.5" textAnchor="middle" fontFamily="monospace">CALL SERVICE</text>
-          {/* Keypad */}
-          <rect x="110" y="138" width="46" height="38" rx="1.5" fill="rgba(10,18,32,0.8)" stroke="rgba(45,65,100,0.2)" strokeWidth="0.8"/>
-          {[0,1,2].flatMap(col => [0,1,2,3].map(row =>
-            <rect key={`k${col}${row}`} x={112+col*14} y={140+row*8.5} width="11" height="6" rx="0.8" fill="rgba(28,42,68,0.9)" stroke="rgba(50,72,112,0.2)" strokeWidth="0.4"/>
-          ))}
-          {/* Grade select buttons */}
-          <rect x="107" y="183" width="16" height="11" rx="1.5" fill="rgba(34,211,238,0.12)" stroke="rgba(34,211,238,0.3)" strokeWidth="0.8"/>
-          <text x="115" y="191" fill="rgba(34,211,238,0.8)" fontSize="5.5" textAnchor="middle" fontFamily="monospace" fontWeight="bold">87</text>
-          <rect x="126" y="183" width="16" height="11" rx="1.5" fill="rgba(28,42,68,0.5)" stroke="rgba(50,72,112,0.2)" strokeWidth="0.8"/>
-          <text x="134" y="191" fill="#475569" fontSize="5.5" textAnchor="middle" fontFamily="monospace">89</text>
-          <rect x="145" y="183" width="16" height="11" rx="1.5" fill="rgba(28,42,68,0.5)" stroke="rgba(50,72,112,0.2)" strokeWidth="0.8"/>
-          <text x="153" y="191" fill="#475569" fontSize="5.5" textAnchor="middle" fontFamily="monospace">93</text>
-          {/* Payment terminal */}
-          <rect x="107" y="200" width="52" height="22" rx="1.5" fill="rgba(10,18,32,0.9)" stroke="rgba(45,65,100,0.2)" strokeWidth="0.8"/>
-          <rect x="109" y="202" width="28" height="18" rx="1" fill="rgba(18,28,48,0.8)"/>
-          <rect x="139" y="204" width="18" height="8" rx="1" fill="rgba(34,211,238,0.06)" stroke="rgba(34,211,238,0.12)" strokeWidth="0.5"/>
-          <text x="148" y="209.5" fill="rgba(34,211,238,0.4)" fontSize="4.5" textAnchor="middle" fontFamily="monospace">TAP/CHIP</text>
-          {/* Right nozzle holster */}
-          <rect x="163" y="128" width="11" height="32" rx="3" fill="rgba(18,30,50,0.9)" stroke="rgba(45,68,105,0.25)" strokeWidth="1"/>
-          <path d="M167 158 Q182 164 180 184 Q178 200 166 206" stroke="rgba(28,44,72,0.9)" strokeWidth="4.5" fill="none" strokeLinecap="round"/>
-          <path d="M162 204 L172 208 L170 216 L160 212Z" fill="rgba(24,38,62,0.9)"/>
-          <circle cx="163" cy="213" r="1.8" fill="rgba(34,211,238,0.15)"/>
-          {/* Left nozzle holster */}
-          <rect x="92" y="128" width="11" height="32" rx="3" fill="rgba(18,30,50,0.9)" stroke="rgba(45,68,105,0.25)" strokeWidth="1"/>
-          {/* Side edge detail lines */}
-          <line x1="101" y1="80" x2="101" y2="253" stroke="rgba(28,44,72,0.4)" strokeWidth="0.5"/>
-          <line x1="165" y1="80" x2="165" y2="253" stroke="rgba(28,44,72,0.4)" strokeWidth="0.5"/>
-          {/* Ground shadow */}
-          <ellipse cx="133" cy="268" rx="40" ry="4.5" fill="rgba(0,0,0,0.5)"/>
-          {/* === TECH FIGURE === */}
-          {/* Shadow */}
-          <ellipse cx="55" cy="270" rx="17" ry="3.5" fill="rgba(0,0,0,0.3)"/>
-          {/* Boots */}
-          <path d="M44 252 L44 262 Q40 264 36 264 L36 261 L42 259 L42 252Z" fill="rgba(16,26,42,0.98)"/>
-          <path d="M58 252 L58 262 Q62 264 66 264 L66 261 L60 259 L60 252Z" fill="rgba(16,26,42,0.98)"/>
-          {/* Pants */}
-          <rect x="38" y="210" width="15" height="44" rx="2" fill="rgba(65,82,108,0.85)"/>
-          <rect x="48" y="210" width="15" height="44" rx="2" fill="rgba(55,72,98,0.85)"/>
-          {/* Belt */}
-          <rect x="36" y="208" width="30" height="4" rx="1" fill="rgba(26,38,58,0.95)"/>
-          <rect x="48" y="208" width="4" height="4" rx="0.5" fill="rgba(170,150,90,0.6)"/>
-          {/* Hi-vis vest */}
-          <path d="M35 165 L43 165 L52 208 L34 208Z" fill="rgba(230,175,20,0.72)"/>
-          <path d="M67 165 L59 165 L50 208 L68 208Z" fill="rgba(230,175,20,0.72)"/>
-          {/* Work shirt under vest */}
-          <rect x="35" y="163" width="32" height="47" rx="3" fill="rgba(52,72,105,0.88)"/>
-          {/* Vest over shirt */}
-          <path d="M35 165 L43 165 L52 208 L34 208Z" fill="rgba(230,175,20,0.65)"/>
-          <path d="M67 165 L59 165 L50 208 L68 208Z" fill="rgba(230,175,20,0.65)"/>
-          {/* Reflective stripes on vest */}
-          <line x1="36" y1="182" x2="66" y2="182" stroke="rgba(255,255,255,0.28)" strokeWidth="2.5"/>
-          <line x1="37" y1="193" x2="65" y2="193" stroke="rgba(255,255,255,0.28)" strokeWidth="2.5"/>
-          {/* Left arm reaching to dispenser */}
-          <path d="M67 172 Q80 170 88 162" stroke="rgba(52,72,105,0.9)" strokeWidth="10" fill="none" strokeLinecap="round"/>
-          <path d="M88 162 Q95 158 101 155" stroke="rgba(62,84,118,0.85)" strokeWidth="8.5" fill="none" strokeLinecap="round"/>
-          {/* Left hand on display */}
-          <circle cx="102" cy="154" r="4.5" fill="rgba(195,162,128,0.9)"/>
-          <path d="M105 151 L109 148" stroke="rgba(195,162,128,0.9)" strokeWidth="2.5" strokeLinecap="round"/>
-          {/* Right arm holding tablet */}
-          <path d="M35 173 Q24 182 21 196" stroke="rgba(52,72,105,0.9)" strokeWidth="10" fill="none" strokeLinecap="round"/>
-          <path d="M21 196 Q19 208 21 218" stroke="rgba(62,84,118,0.85)" strokeWidth="8.5" fill="none" strokeLinecap="round"/>
-          <circle cx="21" cy="220" r="4" fill="rgba(195,162,128,0.9)"/>
-          {/* Tablet in right hand */}
-          <rect x="5" y="210" width="22" height="30" rx="3" fill="rgba(6,12,24,0.97)" stroke="rgba(34,211,238,0.65)" strokeWidth="1.5"/>
-          <rect x="7" y="213" width="18" height="24" rx="1.5" fill="rgba(34,211,238,0.06)"/>
-          {/* App UI on tablet screen */}
-          <rect x="8" y="214" width="16" height="4" rx="0.5" fill="rgba(34,211,238,0.22)"/>
-          <rect x="8" y="220" width="12" height="2.5" rx="0.5" fill="rgba(255,255,255,0.1)"/>
-          <rect x="8" y="224" width="14" height="2.5" rx="0.5" fill="rgba(255,255,255,0.07)"/>
-          <rect x="8" y="228" width="10" height="2.5" rx="0.5" fill="rgba(255,255,255,0.07)"/>
-          <rect x="8" y="232" width="8" height="2" rx="0.5" fill="rgba(34,211,238,0.12)"/>
-          {/* Tablet glow */}
-          <rect x="5" y="210" width="22" height="30" rx="3" fill="none" stroke="rgba(34,211,238,0.12)" strokeWidth="4"/>
-          {/* Neck */}
-          <rect x="47" y="155" width="8" height="10" rx="2" fill="rgba(188,155,122,0.9)"/>
-          {/* Head */}
-          <ellipse cx="51" cy="145" rx="12.5" ry="13.5" fill="rgba(198,165,130,0.92)"/>
-          {/* Face */}
-          <circle cx="47" cy="143" r="1.4" fill="rgba(55,38,25,0.7)"/>
-          <circle cx="55" cy="143" r="1.4" fill="rgba(55,38,25,0.7)"/>
-          <path d="M47 149 Q51 152 55 149" stroke="rgba(130,95,65,0.45)" strokeWidth="1" fill="none"/>
-          {/* Hard hat dome */}
-          <ellipse cx="51" cy="136" rx="15" ry="11" fill="rgba(245,185,25,0.9)" stroke="rgba(195,140,10,0.5)" strokeWidth="1"/>
-          {/* Hat brim */}
-          <rect x="35" y="142" width="32" height="4" rx="1" fill="rgba(245,185,25,0.85)" stroke="rgba(195,140,10,0.4)" strokeWidth="0.8"/>
-          {/* Hat highlight */}
-          <path d="M38 138 Q51 132 64 138" stroke="rgba(255,255,255,0.25)" strokeWidth="2" fill="none"/>
-          {/* Hat vent */}
-          <rect x="47" y="133" width="8" height="2" rx="0.5" fill="rgba(195,140,10,0.3)"/>
-          {/* Ambient tech glow */}
-          <circle cx="51" cy="195" r="45" fill="rgba(34,211,238,0.015)"/>
-        </svg>
-        <div style={{ position: 'absolute', bottom: 8, left: 0, right: 0, textAlign: 'center', fontSize: 9, color: '#1e3a5f', letterSpacing: '0.04em' }}>
-          Gilbarco Encore 700 &mdash; ERR 101 &mdash; Display Board Fault
+      {/* ── Left: Mobile ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(160deg, #06111f 0%, #030a14 100%)', borderRight: '1px solid rgba(255,255,255,0.06)', gap: 8, padding: '14px 16px' }}>
+        <div style={{ textAlign: 'center', opacity: p > 0.03 ? 1 : 0, transition: 'opacity 0.5s', marginBottom: 2 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#22d3ee', letterSpacing: '0.1em', textTransform: 'uppercase' }}>📱 Mobile</div>
+          <div style={{ fontSize: 8.5, color: '#334155', marginTop: 2 }}>Any phone · No install</div>
         </div>
-      </div>
-
-      {/* Right: phone mockup */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(5,10,20,0.5)', padding: 20 }}>
-        <div style={{ width: 'clamp(140px,22vw,190px)', background: '#050c1a', border: '2px solid rgba(255,255,255,0.14)', borderRadius: 22, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(34,211,238,0.08)', display: 'flex', flexDirection: 'column' }}>
-          {/* Status bar */}
-          <div style={{ background: '#03070f', padding: '7px 12px 5px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 9, color: '#475569', fontWeight: 700 }}>9:41</span>
-            <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-              <span style={{ fontSize: 8, color: '#334155' }}>&#x25A0;&#x25A0;&#x25A0;</span>
-              <span style={{ fontSize: 8, color: '#334155' }}>WiFi</span>
-            </div>
+        <div style={{ width: 'clamp(115px,16vw,152px)', background: '#050c1a', border: '2.5px solid rgba(255,255,255,0.16)', borderRadius: 20, overflow: 'hidden', boxShadow: '0 16px 50px rgba(0,0,0,0.65), 0 0 0 1px rgba(34,211,238,0.10)', display: 'flex', flexDirection: 'column', opacity: p > 0.04 ? 1 : 0, transform: `translateY(${p > 0.04 ? 0 : 10}px)`, transition: 'opacity 0.5s, transform 0.5s' }}>
+          <div style={{ background: '#03070f', padding: '5px 10px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 8, color: '#475569', fontWeight: 700 }}>9:41</span>
+            <div style={{ width: 14, height: 4, background: '#0f172a', borderRadius: 3 }} />
+            <span style={{ fontSize: 7, color: '#334155' }}>⬛⬛⬛</span>
           </div>
-          {/* App header */}
-          <div style={{ background: '#08101e', padding: '6px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 5 }}>
-            <img src="/icon-192.png" style={{ width: 14, height: 14, borderRadius: 3 }} alt="" />
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#22d3ee' }}>FuelTech AI Pro</span>
+          <div style={{ background: '#08101e', padding: '5px 9px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <img src="/icon-192.png" style={{ width: 12, height: 12, borderRadius: 3 }} alt="" />
+            <span style={{ fontSize: 9, fontWeight: 700, color: '#22d3ee' }}>FuelTech AI Pro</span>
           </div>
-          {/* Chat area */}
-          <div style={{ flex: 1, padding: '8px 8px 6px', display: 'flex', flexDirection: 'column', gap: 8, minHeight: 220, background: '#050c1a' }}>
-            {chatMsg.map((m, i) => (
-              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 2, animation: 'demoFadeUp 0.35s ease' }}>
-                <div style={{ fontSize: 7, color: '#334155', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{m.role === 'user' ? '👷 Tech' : '🤖 AI'}</div>
-                <div style={{ background: m.role === 'user' ? 'rgba(34,211,238,0.1)' : 'rgba(15,23,42,0.8)', border: m.role === 'user' ? '1px solid rgba(34,211,238,0.2)' : '1px solid rgba(255,255,255,0.07)', borderRadius: m.role === 'user' ? '8px 8px 8px 2px' : '8px 8px 2px 8px', padding: '5px 7px', fontSize: 8.5, lineHeight: 1.55, color: m.role === 'user' ? '#e2e8f0' : '#94a3b8', whiteSpace: 'pre-wrap' }}>
-                  {m.text}
-                </div>
+          <div style={{ flex: 1, padding: '6px 6px 5px', display: 'flex', flexDirection: 'column', gap: 5, minHeight: 148, background: '#050c1a' }}>
+            {FIELD_PHONE_CHAT.filter(m => p > m.showAt).map((m, i) => (
+              <div key={i} style={{ animation: 'demoFadeUp 0.35s ease' }}>
+                <div style={{ fontSize: 6, color: '#334155', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>{m.role === 'user' ? '👷 Tech' : '🤖 AI'}</div>
+                <div style={{ background: m.role === 'user' ? 'rgba(34,211,238,0.1)' : 'rgba(15,23,42,0.8)', border: m.role === 'user' ? '1px solid rgba(34,211,238,0.2)' : '1px solid rgba(255,255,255,0.07)', borderRadius: m.role === 'user' ? '6px 6px 6px 1.5px' : '6px 6px 1.5px 6px', padding: '3.5px 5px', fontSize: 7, lineHeight: 1.5, color: m.role === 'user' ? '#e2e8f0' : '#94a3b8', whiteSpace: 'pre-wrap' }}>{m.text}</div>
               </div>
             ))}
-            {showTyping && (
-              <div style={{ display: 'flex', gap: 3, background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '8px 8px 2px 8px', padding: '6px 8px', width: 'fit-content' }}>
-                {[0, 0.15, 0.3].map(d => <span key={d} style={{ width: 4, height: 4, background: '#334155', borderRadius: '50%', animation: `demoDot 0.8s ${d}s ease infinite` }} />)}
+            {phoneTyping && (
+              <div style={{ display: 'flex', gap: 3, background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '6px 6px 1.5px 6px', padding: '4px 6px', width: 'fit-content' }}>
+                {[0, 0.15, 0.3].map(d => <span key={d} style={{ width: 3, height: 3, background: '#334155', borderRadius: '50%', animation: `demoDot 0.8s ${d}s ease infinite` }} />)}
               </div>
             )}
           </div>
-          {/* Input */}
-          <div style={{ padding: '5px 7px', borderTop: '1px solid rgba(255,255,255,0.06)', background: '#03070f', display: 'flex', gap: 4, alignItems: 'center' }}>
-            <div style={{ flex: 1, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '4px 7px', fontSize: 8, color: inputText ? '#94a3b8' : '#1e3a5f', minHeight: 20 }}>
-              {inputText ?? 'Ask anything…'}
-              {inputText && <span style={{ animation: 'demoBlink 1s step-start infinite', color: '#22d3ee' }}>|</span>}
+          <div style={{ padding: '4px 5px', borderTop: '1px solid rgba(255,255,255,0.05)', background: '#03070f', display: 'flex', gap: 3 }}>
+            <div style={{ flex: 1, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 5, padding: '2.5px 5px', fontSize: 6.5, color: phoneInput ? '#e2e8f0' : '#1e3a5f' }}>
+              {phoneInput ? <>{phoneInput}<span style={{ animation: 'demoBlink 1s step-start infinite', color: '#22d3ee' }}>|</span></> : 'Ask anything…'}
             </div>
-            <div style={{ background: 'rgba(34,211,238,0.6)', borderRadius: 5, padding: '4px 7px', fontSize: 9, color: '#020617', fontWeight: 700 }}>&uarr;</div>
+            <div style={{ background: p > 0.20 ? '#22d3ee' : 'rgba(34,211,238,0.25)', borderRadius: 4, padding: '2.5px 5px', fontSize: 7.5, color: '#020617', fontWeight: 700, transition: 'background 0.2s' }}>↑</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Right: Desktop Browser ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(5,10,20,0.5)', gap: 8, padding: '14px 14px' }}>
+        <div style={{ textAlign: 'center', opacity: p > 0.03 ? 1 : 0, transition: 'opacity 0.5s', marginBottom: 2 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#22d3ee', letterSpacing: '0.1em', textTransform: 'uppercase' }}>🖥️ Desktop</div>
+          <div style={{ fontSize: 8.5, color: '#334155', marginTop: 2 }}>Any browser · Full featured</div>
+        </div>
+        <div style={{ width: '100%', maxWidth: 300, background: '#050c1a', border: '1px solid rgba(255,255,255,0.10)', borderRadius: 9, overflow: 'hidden', boxShadow: '0 10px 36px rgba(0,0,0,0.5)', opacity: p > 0.04 ? 1 : 0, transform: `translateY(${p > 0.04 ? 0 : 10}px)`, transition: 'opacity 0.5s 0.08s, transform 0.5s 0.08s' }}>
+          <div style={{ background: '#070d1a', padding: '6px 9px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 3.5 }}>
+              {['#ef4444', '#f59e0b', '#22c55e'].map((c, i) => <div key={i} style={{ width: 6.5, height: 6.5, borderRadius: '50%', background: c, opacity: 0.65 }} />)}
+            </div>
+            <div style={{ flex: 1, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 4, padding: '2px 7px', fontSize: 7.5, color: '#334155', textAlign: 'center' }}>fueltechaipro.com/chat</div>
+          </div>
+          <div style={{ display: 'flex', height: 172 }}>
+            <div style={{ width: 66, background: '#030710', borderRight: '1px solid rgba(255,255,255,0.05)', padding: '7px 5px', display: 'flex', flexDirection: 'column', gap: 3, flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2.5, padding: '3px 4px', borderRadius: 4, background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.2)', marginBottom: 2 }}>
+                <img src="/icon-192.png" style={{ width: 8, height: 8, borderRadius: 2 }} alt="" />
+                <span style={{ fontSize: 6, color: '#22d3ee', fontWeight: 700 }}>FuelTech</span>
+              </div>
+              {['New Chat', 'Alarm Lookup', 'Wiring', 'ATG Direct', 'History'].map((item, i) => (
+                <div key={item} style={{ padding: '2.5px 4px', fontSize: 6, color: i === 0 ? '#22d3ee' : '#334155', background: i === 0 ? 'rgba(34,211,238,0.06)' : 'transparent', borderRadius: 3, overflow: 'hidden', whiteSpace: 'nowrap' }}>{item}</div>
+              ))}
+            </div>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ flex: 1, padding: '6px 7px', display: 'flex', flexDirection: 'column', gap: 5, overflow: 'hidden' }}>
+                {FIELD_DESKTOP_CHAT.filter(m => p > m.showAt).map((m, i) => (
+                  <div key={i} style={{ display: 'flex', flexDirection: m.role === 'user' ? 'row-reverse' : 'row', animation: 'demoFadeUp 0.35s ease' }}>
+                    <div style={{ background: m.role === 'user' ? '#1d4ed8' : 'rgba(255,255,255,0.04)', border: m.role === 'user' ? 'none' : '1px solid rgba(255,255,255,0.07)', borderRadius: m.role === 'user' ? '7px 7px 2px 7px' : '7px 7px 7px 2px', padding: '3.5px 5.5px', fontSize: 6.5, lineHeight: 1.5, color: m.role === 'user' ? '#fff' : '#94a3b8', maxWidth: '88%', whiteSpace: 'pre-wrap' }}>{m.text}</div>
+                  </div>
+                ))}
+                {desktopTyping && (
+                  <div style={{ display: 'flex', gap: 3, background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '7px 7px 7px 2px', padding: '4px 6px', width: 'fit-content' }}>
+                    {[0, 0.15, 0.3].map(d => <span key={d} style={{ width: 3, height: 3, background: '#334155', borderRadius: '50%', animation: `demoDot 0.8s ${d}s ease infinite` }} />)}
+                  </div>
+                )}
+              </div>
+              <div style={{ padding: '4px 6px', borderTop: '1px solid rgba(255,255,255,0.05)', background: '#03070f', display: 'flex', gap: 4 }}>
+                <div style={{ flex: 1, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 4, padding: '2.5px 6px', fontSize: 7, color: desktopInput ? '#e2e8f0' : '#1e3a5f' }}>
+                  {desktopInput ? <>{desktopInput}<span style={{ animation: 'demoBlink 1s step-start infinite', color: '#22d3ee' }}>|</span></> : 'Ask anything…'}
+                </div>
+                <div style={{ background: p > 0.60 ? '#22d3ee' : 'rgba(34,211,238,0.25)', borderRadius: 4, padding: '2.5px 6px', fontSize: 7.5, color: '#020617', fontWeight: 700, transition: 'background 0.2s' }}>↑</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -748,9 +568,9 @@ const CONNECT_LINES = [
   { cls: 'warn', text: '   TK3  0003  PROBE OUT         [ACTIVE]  07:44', at: 0.38 },
   { cls: 'warn', text: '   TK1  0004  HIGH WATER        [ACTIVE]  08:14', at: 0.42 },
   { cls: '',     text: '', at: 0.46 },
-  // Claude analyzes inline
-  { cls: 'ai',   text: '   [Claude]  TK3 PROBE OUT — probe replaced 06/14. Checking setup.', at: 0.47 },
-  { cls: 'ai',   text: '   [Claude]  TK1 HIGH WATER — pulling water level reading.', at: 0.50 },
+  // Atlas analyzes inline
+  { cls: 'ai',   text: '   [Atlas]  TK3 PROBE OUT — probe replaced 06/14. Checking setup.', at: 0.47 },
+  { cls: 'ai',   text: '   [Atlas]  TK1 HIGH WATER — pulling water level reading.', at: 0.50 },
   { cls: '',     text: '', at: 0.53 },
   // Pull Tank 3 setup
   { cls: 'dim',  text: '> I80200 03  [Tank 3 Setup]', at: 0.54 },
@@ -761,26 +581,26 @@ const CONNECT_LINES = [
   { cls: 'warn', text: '   PROBE TYPE:     VR-STD   <-- old protocol', at: 0.63 },
   { cls: 'warn', text: '   PROBE MODEL:    Mag Plus SmartProbe (installed 06/14)', at: 0.65 },
   { cls: '',     text: '', at: 0.67 },
-  // Claude diagnosis
-  { cls: 'ai',   text: '   [Claude]  SmartProbe requires ISPI comm — TLS still set to VR-STD.', at: 0.68 },
-  { cls: 'ai',   text: '   [Claude]  Protocol mismatch = no probe data = PROBE OUT alarm.', at: 0.71 },
-  { cls: 'ai',   text: '   [Claude]  Updating probe communication type…', at: 0.73 },
+  // Atlas diagnosis
+  { cls: 'ai',   text: '   [Atlas]  SmartProbe requires ISPI comm — TLS still set to VR-STD.', at: 0.68 },
+  { cls: 'ai',   text: '   [Atlas]  Protocol mismatch = no probe data = PROBE OUT alarm.', at: 0.71 },
+  { cls: 'ai',   text: '   [Atlas]  Updating probe communication type…', at: 0.73 },
   { cls: '',     text: '', at: 0.75 },
   // Send fix command
   { cls: 'dim',  text: '> S80200 03 PROBETYPE ISPI', at: 0.76 },
   { cls: 'ok',   text: '✓  TK3 Probe Comm Type: VR-STD → ISPI', at: 0.79 },
   { cls: '',     text: '', at: 0.81 },
   // Re-poll to verify
-  { cls: 'ai',   text: '   [Claude]  Verifying — re-polling alarm status…', at: 0.82 },
+  { cls: 'ai',   text: '   [Atlas]  Verifying — re-polling alarm status…', at: 0.82 },
   { cls: 'dim',  text: '> I20200  [Verify alarm status]', at: 0.84 },
   { cls: '',     text: '', at: 0.86 },
   { cls: 'hdr',  text: '== CURRENT ALARM STATUS ==========================', at: 0.87 },
   { cls: 'ok',   text: '   TK3  PROBE OUT    [CLEARED] ✓  09:14', at: 0.89 },
   { cls: 'warn', text: '   TK1  HIGH WATER   [ACTIVE]   08:14', at: 0.91 },
   { cls: '',     text: '', at: 0.93 },
-  // Claude final
-  { cls: 'ai',   text: '   [Claude]  TK3 cleared. Protocol fix restored probe comms.', at: 0.94 },
-  { cls: 'ai',   text: '   [Claude]  TK1 HIGH WATER: measure riser depth — do not dismiss.', at: 0.97 },
+  // Atlas final
+  { cls: 'ai',   text: '   [Atlas]  TK3 cleared. Protocol fix restored probe comms.', at: 0.94 },
+  { cls: 'ai',   text: '   [Atlas]  TK1 HIGH WATER: measure riser depth — do not dismiss.', at: 0.97 },
 ];
 
 
@@ -791,7 +611,13 @@ function SceneConnect({ p }: { p: number }) {
   const btnState = p > 0.80 ? 'cleared' : p > 0.73 ? 'fixing' : p > 0.46 ? 'analyzing' : 'idle';
   const btnBg = btnState === 'cleared' ? '#22c55e' : btnState === 'fixing' ? '#f59e0b' : btnState === 'analyzing' ? '#22d3ee' : 'rgba(255,255,255,0.05)';
   const btnFg = btnState === 'idle' ? '#334155' : '#020617';
-  const btnLabel = btnState === 'cleared' ? '✓ TK3 Probe Restored' : btnState === 'fixing' ? '⚡ Updating Probe Type…' : btnState === 'analyzing' ? '\u{1F916} Analyzing…' : '\u{1F916} Diagnose with Claude →';
+  const btnLabel = btnState === 'cleared' ? '✓ TK3 Probe Restored' : btnState === 'fixing' ? '⚡ Updating Probe Type…' : btnState === 'analyzing' ? '\u{1F916} Analyzing…' : '\u{1F916} Diagnose with Atlas →';
+  // Shows user typing their own TLS commands — demonstrates full bidirectional access
+  const typedCmd =
+    p > 0.14 && p < 0.22 ? 'I20200'.slice(0, Math.ceil(Math.min((p - 0.14) / 0.07, 1) * 6)) :
+    p > 0.50 && p < 0.54 ? 'I80200 03'.slice(0, Math.ceil(Math.min((p - 0.50) / 0.04, 1) * 9)) :
+    p > 0.73 && p < 0.76 ? 'S80200 03 PROBETYPE ISPI'.slice(0, Math.ceil(Math.min((p - 0.73) / 0.03, 1) * 23)) :
+    '';
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 'clamp(6px,1vw,10px) clamp(12px,2vw,16px)', borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: 0 }}>
@@ -823,10 +649,21 @@ function SceneConnect({ p }: { p: number }) {
           </div>
         ))}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 'clamp(6px,1vw,9px) clamp(12px,2vw,16px)', borderTop: '1px solid rgba(255,255,255,0.07)', flexShrink: 0 }}>
-        <span style={{ fontSize: 10, color: '#1e3a5f', fontFamily: 'monospace' }}>{connected ? 'TLS-350 / TLS-450 · 9600,8,N,1 · Web Serial' : 'Waiting…'}</span>
-        <div style={{ background: btnBg, color: btnFg, border: btnState === 'idle' ? '1px solid rgba(255,255,255,0.08)' : 'none', borderRadius: 7, padding: 'clamp(4px,0.7vw,6px) clamp(10px,1.6vw,14px)', fontSize: 11, fontWeight: 700, transition: 'all 0.5s ease', display: 'flex', alignItems: 'center', gap: 5, boxShadow: btnState !== 'idle' ? `0 0 18px ${btnBg}44` : 'none' }}>
-          {btnLabel}
+      {/* Command input bar — full bidirectional TLS access */}
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', flexShrink: 0, background: 'rgba(3,7,15,0.7)', padding: 'clamp(5px,0.8vw,8px) clamp(12px,2vw,16px)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <span style={{ fontFamily: 'monospace', fontSize: 'clamp(9px,1.1vw,12px)', color: '#22d3ee', flexShrink: 0, fontWeight: 700 }}>{connected ? '>' : '─'}</span>
+          <div style={{ flex: 1, fontFamily: "'Courier New', monospace", fontSize: 'clamp(9px,1.1vw,12px)', color: typedCmd ? '#e2e8f0' : '#1e3a5f', background: 'rgba(255,255,255,0.03)', border: `1px solid ${typedCmd ? 'rgba(34,211,238,0.3)' : 'rgba(255,255,255,0.06)'}`, borderRadius: 5, padding: 'clamp(3px,0.5vw,5px) clamp(7px,1.1vw,10px)', minHeight: 22, display: 'flex', alignItems: 'center', transition: 'border-color 0.2s' }}>
+            {typedCmd || <span style={{ color: '#1e3a5f', fontStyle: 'italic', fontSize: 'clamp(8px,1vw,11px)' }}>Type any TLS command…</span>}
+            {connected && <span style={{ animation: 'demoBlink 0.9s step-start infinite', color: '#22d3ee', marginLeft: 1 }}>█</span>}
+          </div>
+          <div style={{ background: typedCmd ? 'rgba(34,211,238,0.15)' : 'rgba(255,255,255,0.03)', border: typedCmd ? '1px solid rgba(34,211,238,0.45)' : '1px solid rgba(255,255,255,0.06)', borderRadius: 5, padding: 'clamp(3px,0.5vw,5px) clamp(8px,1.2vw,12px)', fontSize: 'clamp(8px,1vw,10px)', color: typedCmd ? '#22d3ee' : '#1e3a5f', fontWeight: 700, transition: 'all 0.2s', flexShrink: 0 }}>SEND</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 'clamp(8px,0.9vw,10px)', color: '#1e3a5f', fontFamily: 'monospace' }}>{connected ? 'Web Serial · COM3 · 9600,8,N,1' : 'Disconnected'}</span>
+          <div style={{ background: btnBg, color: btnFg, border: btnState === 'idle' ? '1px solid rgba(255,255,255,0.08)' : 'none', borderRadius: 7, padding: 'clamp(3px,0.6vw,5px) clamp(9px,1.4vw,13px)', fontSize: 'clamp(9px,1.1vw,11px)', fontWeight: 700, transition: 'all 0.5s ease', display: 'flex', alignItems: 'center', gap: 5, boxShadow: btnState !== 'idle' ? `0 0 18px ${btnBg}44` : 'none' }}>
+            {btnLabel}
+          </div>
         </div>
       </div>
     </div>
@@ -902,7 +739,7 @@ function SceneDesktop({ p }: { p: number }) {
       {/* Titlebar */}
       <div style={{ display: 'flex', alignItems: 'center', padding: 'clamp(6px,1vw,9px) clamp(10px,1.6vw,14px)', background: '#06090f', borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: 0, gap: 7 }}>
         <img src="/icon-192.png" style={{ width: 16, height: 16, borderRadius: 3 }} alt="" />
-        <span style={{ fontSize: 'clamp(11px,1.3vw,13px)', fontWeight: 700, color: '#22d3ee', letterSpacing: '0.03em' }}>TLSConnect Desktop Lite</span>
+        <span style={{ fontSize: 'clamp(11px,1.3vw,13px)', fontWeight: 700, color: '#22d3ee', letterSpacing: '0.03em' }}>Console Connect</span>
         <span style={{ fontSize: 10, color: '#1e3a5f', marginLeft: 2 }}>v1.0</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 5 }}>
           {['─', '□', '✕'].map((c, i) => (
@@ -1147,7 +984,7 @@ export default function DemoPage() {
             </div>
             <h1 style={{ fontSize: 'clamp(22px,3.8vw,38px)', fontWeight: 800, letterSpacing: '-0.04em', margin: '0 0 7px', lineHeight: 1 }}>See it in action</h1>
             <p style={{ fontSize: 'clamp(12px,1.6vw,15px)', color: '#64748b', margin: 0 }}>
-              FuelTech AI Pro web app &bull; TLSConnect Desktop Lite &bull; Full walkthrough
+              FuelTech AI Pro web app &bull; Console Connect &bull; Full walkthrough
             </p>
           </div>
 
@@ -1173,12 +1010,6 @@ export default function DemoPage() {
                 </div>
               </div>
 
-              {/* Caption */}
-              {captionText && started && (
-                <div style={{ position: 'absolute', bottom: 14, left: 14, right: 14, pointerEvents: 'none', zIndex: 10 }}>
-                  <div style={{ display: 'inline-block', background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)', borderRadius: 7, padding: '6px 13px', fontSize: 'clamp(10px,1.4vw,13px)', color: '#e2e8f0', lineHeight: 1.5, maxWidth: '82%' }}>{captionText}</div>
-                </div>
-              )}
 
               {/* Play overlay */}
               {(!started || (!playing && !ended)) && (
@@ -1199,6 +1030,13 @@ export default function DemoPage() {
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* Caption bar — outside the screen so it never overlaps demo content */}
+            <div style={{ background: '#060d1c', borderLeft: '1px solid rgba(255,255,255,0.08)', borderRight: '1px solid rgba(255,255,255,0.08)', padding: '9px 18px', minHeight: 40, display: 'flex', alignItems: 'center' }}>
+              <p style={{ margin: 0, fontSize: 'clamp(11px,1.45vw,14px)', color: started && captionText ? '#cbd5e1' : 'transparent', lineHeight: 1.5, transition: 'color 0.35s ease', fontStyle: 'italic' }}>
+                {captionText || ' '}
+              </p>
             </div>
 
             {/* Controls */}

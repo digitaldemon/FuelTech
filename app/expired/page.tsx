@@ -31,10 +31,10 @@ export default function ExpiredPage() {
         </div>
 
         <p className="expired-note">
-          After renewing, email <a href="mailto:info@fueltechaipro.com">info@fueltechaipro.com</a> with your PayPal receipt and your username to reactivate your account.
+          After payment you&apos;ll be taken to a page to set up your account. Your new login credentials will be emailed to you automatically — no manual steps required.
         </p>
 
-        <a href="/login" className="expired-back">← Back to login</a>
+        <a href="/login" className="expired-back">Already renewed? Log in →</a>
       </div>
     </div>
   );

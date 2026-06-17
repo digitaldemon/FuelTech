@@ -1,0 +1,42 @@
+import { sql } from "@vercel/postgres";
+import bcrypt from "bcryptjs";
+import crypto from "crypto";
+
+const KEY_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+function generateConsoleKey(): string {
+  const seg = () => Array.from(crypto.randomBytes(4)).map(b => KEY_CHARS[b % KEY_CHARS.length]).join("");
+  return `FTAI-${seg()}-${seg()}-${seg()}`;
+}
+
+export async function POST(req: Request) {
+  const secret = req.headers.get("x-admin-secret");
+  if (!secret || secret !== process.env.ADMIN_SECRET) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { username, password, email } = (await req.json()) as {
+    username: string; password: string; email: string;
+  };
+  if (!username || !password || !email) {
+    return Response.json({ error: "username, password, email required" }, { status: 400 });
+  }
+
+  // Wipe all existing data
+  await sql`DELETE FROM console_licenses`;
+  await sql`DELETE FROM users`;
+
+  // Create new account + console key
+  const expiresAt = new Date(Date.now() + 365 * 86_400_000).toISOString();
+  const consoleKey = generateConsoleKey();
+  await sql`
+    INSERT INTO console_licenses (id, license_key, tech_name, expires_at)
+    VALUES (${crypto.randomUUID()}, ${consoleKey}, ${username}, ${expiresAt})
+  `;
+  const hash = await bcrypt.hash(password, 12);
+  await sql`
+    INSERT INTO users (id, username, password_hash, email, expires_at, console_license_key)
+    VALUES (${crypto.randomUUID()}, ${username}, ${hash}, ${email}, ${expiresAt}, ${consoleKey})
+  `;
+
+  return Response.json({ ok: true, username, consoleKey, expiresAt });
+}

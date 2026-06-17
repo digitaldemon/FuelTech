@@ -389,6 +389,16 @@ export default function AdminUpload() {
     loadLicenses();
   };
 
+  const deleteKey = async (licenseKey: string) => {
+    if (!confirm(`Permanently delete ${licenseKey}? This removes the key entirely and cannot be undone.`)) return;
+    await fetch("/api/console/licenses", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", "x-admin-secret": secret },
+      body: JSON.stringify({ licenseKey }),
+    });
+    setLicenses(prev => prev.filter(l => l.license_key !== licenseKey));
+  };
+
   const copyKey = (key: string) => {
     navigator.clipboard.writeText(key).catch(() => {});
     setCopied(key);
@@ -792,10 +802,13 @@ export default function AdminUpload() {
                       {copied === lic.license_key ? "✓" : "Copy"}
                     </button>
                     {lic.active && (
-                      <button style={{ ...s.logoutBtn, color: "#ef4444", borderColor: "rgba(239,68,68,0.2)" }} onClick={() => revokeKey(lic.license_key)}>
+                      <button style={{ ...s.logoutBtn, color: "#f59e0b", borderColor: "rgba(245,158,11,0.2)" }} onClick={() => revokeKey(lic.license_key)}>
                         Revoke
                       </button>
                     )}
+                    <button style={{ ...s.logoutBtn, color: "#ef4444", borderColor: "rgba(239,68,68,0.2)" }} onClick={() => deleteKey(lic.license_key)}>
+                      Delete
+                    </button>
                   </div>
                 </div>
               );
