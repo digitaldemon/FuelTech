@@ -211,12 +211,12 @@ function FaqModal({ onClose }: { onClose: () => void }) {
               <div className="faq-section">
                 <div className="faq-section-title">FuelTech AI Console Connect — Overview</div>
                 <p>Console Connect is a free Windows desktop application included with any FuelTech AI Pro subscription. It provides the same RS-232 serial connection as the browser-based Direct Connect page, plus additional features that require a native app: Remote Session, offline PDF saving, and more reliable port handling on older hardware.</p>
-                <p style={{ marginTop: 10 }}>Download the installer from the landing page or your Account page (<strong>My Account → Download Console App</strong>). The current version is <strong>v1.0.45</strong>.</p>
+                <p style={{ marginTop: 10 }}>Download the installer from the landing page or your Account page (<strong>My Account → Download Console App</strong>). The current version is <strong>v1.0.46</strong>.</p>
               </div>
 
               <div className="faq-section">
                 <div className="faq-section-title">Installation</div>
-                {step(1, <>Download <strong>FuelTech AI Console Connect Setup 1.0.45.exe</strong> from your Account page or the main website.</>)}
+                {step(1, <>Download <strong>FuelTech AI Console Connect Setup 1.0.46.exe</strong> from your Account page or the main website.</>)}
                 {step(2, 'Run the installer. Windows SmartScreen may warn you — click "More info" then "Run anyway." The app is signed but may not yet have enough install history to avoid the warning.')}
                 {step(3, 'Click through the installer prompts. The app installs to your user profile — no admin rights required.')}
                 {step(4, 'Launch the app from the Start Menu or Desktop shortcut.')}

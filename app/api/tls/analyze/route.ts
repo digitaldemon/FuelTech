@@ -11,7 +11,28 @@ function extractToken(req: Request): string | null {
   return m ? m[1] : null;
 }
 
+async function isValidLicenseKey(key: string): Promise<boolean> {
+  if (!key || !key.startsWith('FTAI-')) return false;
+  const result = await sql`
+    SELECT 1 FROM console_licenses
+    WHERE license_key = ${key}
+      AND active = true
+      AND expires_at > NOW()
+    LIMIT 1
+  `;
+  return result.rows.length > 0;
+}
+
 async function authGuard(req: Request): Promise<Response | null> {
+  // Desktop app sends x-license-key instead of a session cookie
+  const licenseKey = req.headers.get('x-license-key');
+  if (licenseKey) {
+    if (!(await isValidLicenseKey(licenseKey))) {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    return null;
+  }
+  // Web app uses session cookie
   const token = extractToken(req);
   if (!token || !(await verifySession(token))) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const info = getMembershipStatus(token);
