@@ -18,7 +18,8 @@ export default function AccountPage() {
   useEffect(() => {
     fetch('/api/account')
       .then(r => {
-        if (r.status === 401) { window.location.href = '/login'; return null; }
+        if (r.status === 401 || r.status === 403) { window.location.href = '/login'; return null; }
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
       .then(d => {

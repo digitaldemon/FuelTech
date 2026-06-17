@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { sql } from '@vercel/postgres';
 
+export const maxDuration = 300;
+
 const client = new Anthropic();
 
 async function isValidLicenseKey(key: string): Promise<boolean> {

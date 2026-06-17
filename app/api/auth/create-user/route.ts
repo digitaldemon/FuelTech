@@ -113,7 +113,7 @@ export async function DELETE(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { username } = (await req.json()) as { username: string };
+  const { username } = (await req.json().catch(() => ({}))) as { username?: string };
   if (!username) {
     return Response.json({ error: "username is required" }, { status: 400 });
   }

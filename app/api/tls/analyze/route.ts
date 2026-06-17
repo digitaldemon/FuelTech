@@ -145,6 +145,7 @@ export async function POST(req: Request) {
     );
   }
 
+  try {
   // Step 1: Distil the terminal output into a focused DB search query
   const query = await extractDiagnosticQuery(output);
 
@@ -273,13 +274,17 @@ export async function POST(req: Request) {
   const encoder = new TextEncoder();
   const readable = new ReadableStream({
     async start(controller) {
-      for await (const event of aiStream) {
-        if (
-          event.type === "content_block_delta" &&
-          event.delta.type === "text_delta"
-        ) {
-          controller.enqueue(encoder.encode(event.delta.text));
+      try {
+        for await (const event of aiStream) {
+          if (
+            event.type === "content_block_delta" &&
+            event.delta.type === "text_delta"
+          ) {
+            controller.enqueue(encoder.encode(event.delta.text));
+          }
         }
+      } catch {
+        // swallow — send whatever streamed before the error
       }
       controller.close();
     },
@@ -291,4 +296,8 @@ export async function POST(req: Request) {
   return new Response(readable, {
     headers: { "Content-Type": "text/plain; charset=utf-8" },
   });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Analysis failed";
+    return Response.json({ error: msg }, { status: 500 });
+  }
 }

@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { sql } from '@vercel/postgres';
-import { verifySession, getMembershipStatus, COOKIE_NAME } from '../../../lib/session';
+import { verifySession, getMembershipStatus, COOKIE_NAME } from '../../../../lib/session';
 
 const client = new Anthropic();
 

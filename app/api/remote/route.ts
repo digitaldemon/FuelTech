@@ -59,7 +59,7 @@ export async function GET() {
   }
   const info = getMembershipStatus(token);
   if (!info || info.membershipExpired) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+    return Response.json({ error: "Subscription expired" }, { status: 403 });
   }
 
   const result = await sql`

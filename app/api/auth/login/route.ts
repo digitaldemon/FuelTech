@@ -14,9 +14,9 @@ function setSessionCookie(res: NextResponse, token: string) {
 }
 
 export async function POST(req: Request) {
-  const { username, password } = (await req.json()) as {
-    username: string;
-    password: string;
+  const { username, password } = (await req.json().catch(() => ({}))) as {
+    username?: string;
+    password?: string;
   };
 
   if (!username || !password) {
