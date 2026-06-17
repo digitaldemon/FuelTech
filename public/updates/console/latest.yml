@@ -1,8 +1,8 @@
-version: 1.0.44
+version: 1.0.45
 files:
-  - url: https://wdmydlxkb6x834dc.public.blob.vercel-storage.com/updates/console/FuelTech%20AI%20Console%20Connect%20Setup%201.0.44.exe
-    sha512: BSgy2X88PrGKK346knbYnEGuWc5+pUccyYrODt0/M8ZmyR7y1egmTwsI3mOUL/yg8kyJmHeh9DP+8LJ1wG1j4A==
-    size: 105008257
-path: https://wdmydlxkb6x834dc.public.blob.vercel-storage.com/updates/console/FuelTech%20AI%20Console%20Connect%20Setup%201.0.44.exe
-sha512: BSgy2X88PrGKK346knbYnEGuWc5+pUccyYrODt0/M8ZmyR7y1egmTwsI3mOUL/yg8kyJmHeh9DP+8LJ1wG1j4A==
+  - url: https://wdmydlxkb6x834dc.public.blob.vercel-storage.com/updates/console/FuelTech%20AI%20Console%20Connect%20Setup%201.0.45.exe
+    sha512: NKf2rXGkEpr90QLMoCmeyPGt6hdZWM76Msx4Lj1fsYX7szk1Q6o3jBPD6VVhyq3c0E92G7+qSH0ddatmTKiVbA==
+    size: 105001167
+path: https://wdmydlxkb6x834dc.public.blob.vercel-storage.com/updates/console/FuelTech%20AI%20Console%20Connect%20Setup%201.0.45.exe
+sha512: NKf2rXGkEpr90QLMoCmeyPGt6hdZWM76Msx4Lj1fsYX7szk1Q6o3jBPD6VVhyq3c0E92G7+qSH0ddatmTKiVbA==
 releaseDate: '2026-06-17T00:00:00.000Z'
