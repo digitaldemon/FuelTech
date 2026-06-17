@@ -1,6 +1,35 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { sql } from '@vercel/postgres';
+import { verifySession, getMembershipStatus, COOKIE_NAME } from '../../../lib/session';
 
 const client = new Anthropic();
+
+async function isValidLicenseKey(key: string): Promise<boolean> {
+  if (!key || !key.startsWith('FTAI-')) return false;
+  const result = await sql`
+    SELECT 1 FROM console_licenses
+    WHERE license_key = ${key}
+      AND active = true
+      AND expires_at > NOW()
+    LIMIT 1
+  `;
+  return result.rows.length > 0;
+}
+
+async function authGuard(req: Request): Promise<Response | null> {
+  const licenseKey = req.headers.get('x-license-key');
+  if (licenseKey) {
+    if (!(await isValidLicenseKey(licenseKey))) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    return null;
+  }
+  const raw = req.headers.get('cookie') ?? '';
+  const m = raw.match(new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]+)`));
+  const token = m ? m[1] : null;
+  if (!token || !(await verifySession(token))) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  const info = getMembershipStatus(token);
+  if (!info || info.membershipExpired) return Response.json({ error: 'Subscription expired' }, { status: 403 });
+  return null;
+}
 
 // Known Veeder-Root TLS function codes the AI can map to.
 // Raw codes typed directly by the user bypass this and are sent as-is.
@@ -41,10 +70,10 @@ Or when unknown:
   "explanation": "Could not match to a known command. Explanation of what to try."
 }`;
 
-// Note: no session auth here — this endpoint is also called by the Electron desktop app
-// (FuelTech AI Console Connect) which uses machine-bound license keys, not web sessions.
-// Cost is minimal: claude-haiku-4-5 with max 300 tokens per call.
 export async function POST(req: Request) {
+  const denied = await authGuard(req);
+  if (denied) return denied;
+
   const body = await req.json().catch(() => ({}));
   const request: string = body.request ?? '';
 

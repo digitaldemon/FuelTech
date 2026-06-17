@@ -21,9 +21,9 @@ export async function POST(req: Request) {
     return Response.json({ error: "username, password, email required" }, { status: 400 });
   }
 
-  // Wipe all existing data
-  await sql`DELETE FROM console_licenses`;
+  // Delete users first (FK references console_licenses), then licenses
   await sql`DELETE FROM users`;
+  await sql`DELETE FROM console_licenses`;
 
   // Create new account + console key
   const expiresAt = new Date(Date.now() + 365 * 86_400_000).toISOString();

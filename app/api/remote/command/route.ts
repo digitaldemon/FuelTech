@@ -2,6 +2,18 @@ import { sql } from "@vercel/postgres";
 import { cookies } from "next/headers";
 import { verifySession, getMembershipStatus, COOKIE_NAME } from "../../../../lib/session";
 
+async function isValidLicenseKey(key: string): Promise<boolean> {
+  if (!key || !key.startsWith('FTAI-')) return false;
+  const result = await sql`
+    SELECT 1 FROM console_licenses
+    WHERE license_key = ${key}
+      AND active = true
+      AND expires_at > NOW()
+    LIMIT 1
+  `;
+  return result.rows.length > 0;
+}
+
 async function getSessionUsername(): Promise<string | null> {
   const token = (await cookies()).get(COOKIE_NAME)?.value ?? "";
   if (!token || !(await verifySession(token))) return null;
@@ -53,7 +65,7 @@ export async function POST(req: Request) {
 // PATCH — Electron app marks commands as sent (prevents re-delivery)
 export async function PATCH(req: Request) {
   const licenseKey = req.headers.get("x-license-key") ?? "";
-  if (!licenseKey.startsWith("FTAI-")) {
+  if (!(await isValidLicenseKey(licenseKey))) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 

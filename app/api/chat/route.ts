@@ -264,14 +264,18 @@ export async function POST(req: Request) {
     return Response.json({ error: "Subscription expired", expired: true }, { status: 403 });
   }
 
-  const { message, history = [], guidedMode = false, imageBase64, imageMediaType, lang = "en" } = (await req.json()) as {
-    message: string;
+  const { message, history = [], guidedMode = false, imageBase64, imageMediaType, lang = "en" } = (await req.json().catch(() => ({}))) as {
+    message?: string;
     history?: Array<{ role: "user" | "assistant"; content: string }>;
     guidedMode?: boolean;
     imageBase64?: string;
     imageMediaType?: string;
     lang?: "en" | "es";
   };
+
+  if (!message?.trim()) {
+    return Response.json({ error: "No message provided." }, { status: 400 });
+  }
 
   // Step 1: Generate HyDE + query expansions + embed original, all in parallel
   const [origEmbRes, hydeText, expandedQueries] = await Promise.all([
@@ -553,6 +557,7 @@ export async function POST(req: Request) {
   // Step 14: Stream Claude response
   const encoder = new TextEncoder();
 
+  let pendingAiStream: ReturnType<typeof anthropic.messages.stream> | null = null;
   const stream = new ReadableStream({
     async start(controller) {
       controller.enqueue(
@@ -580,6 +585,7 @@ export async function POST(req: Request) {
           system: sysPrompt,
           messages,
         });
+        pendingAiStream = aiStream;
 
         for await (const event of aiStream) {
           if (
@@ -606,6 +612,9 @@ export async function POST(req: Request) {
         encoder.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`)
       );
       controller.close();
+    },
+    cancel() {
+      pendingAiStream?.abort();
     },
   });
 
