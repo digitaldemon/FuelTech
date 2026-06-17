@@ -52,12 +52,15 @@ export async function POST(req: Request) {
   const id        = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + days * 86_400_000).toISOString();
 
-  await sql`
-    INSERT INTO console_licenses (id, license_key, tech_name, expires_at)
-    VALUES (${id}, ${licenseKey}, ${techName.trim()}, ${expiresAt})
-  `;
-
-  return Response.json({ ok: true, licenseKey, techName: techName.trim(), expiresAt });
+  try {
+    await sql`
+      INSERT INTO console_licenses (id, license_key, tech_name, expires_at)
+      VALUES (${id}, ${licenseKey}, ${techName.trim()}, ${expiresAt})
+    `;
+    return Response.json({ ok: true, licenseKey, techName: techName.trim(), expiresAt });
+  } catch {
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
 }
 
 // DELETE /api/console/issue  — revoke a license key
@@ -72,8 +75,12 @@ export async function DELETE(req: Request) {
     return Response.json({ error: "licenseKey is required" }, { status: 400 });
   }
 
-  await sql`
-    UPDATE console_licenses SET active = FALSE WHERE license_key = ${licenseKey.trim().toUpperCase()}
-  `;
-  return Response.json({ ok: true });
+  try {
+    await sql`
+      UPDATE console_licenses SET active = FALSE WHERE license_key = ${licenseKey.trim().toUpperCase()}
+    `;
+    return Response.json({ ok: true });
+  } catch {
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
 }

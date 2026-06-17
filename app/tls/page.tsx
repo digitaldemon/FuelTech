@@ -547,7 +547,8 @@ export default function TlsPage() {
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ request: raw }),
         });
-        if (res.status === 401 || res.status === 403) { window.location.href = '/login'; return; }
+        if (res.status === 401) { window.location.href = '/login'; return; }
+        if (res.status === 403) { window.location.href = '/expired'; return; }
         const data = await res.json();
 
         if (!data.code) {

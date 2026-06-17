@@ -21,22 +21,27 @@ export async function POST(req: Request) {
     return Response.json({ error: "username, password, email required" }, { status: 400 });
   }
 
-  // Delete users first (FK references console_licenses), then licenses
-  await sql`DELETE FROM users`;
-  await sql`DELETE FROM console_licenses`;
+  try {
+    // Delete users first (FK references console_licenses), then licenses
+    await sql`DELETE FROM users`;
+    await sql`DELETE FROM console_licenses`;
 
-  // Create new account + console key
-  const expiresAt = new Date(Date.now() + 365 * 86_400_000).toISOString();
-  const consoleKey = generateConsoleKey();
-  await sql`
-    INSERT INTO console_licenses (id, license_key, tech_name, expires_at)
-    VALUES (${crypto.randomUUID()}, ${consoleKey}, ${username}, ${expiresAt})
-  `;
-  const hash = await bcrypt.hash(password, 12);
-  await sql`
-    INSERT INTO users (id, username, password_hash, email, expires_at, console_license_key)
-    VALUES (${crypto.randomUUID()}, ${username}, ${hash}, ${email}, ${expiresAt}, ${consoleKey})
-  `;
+    // Create new account + console key
+    const expiresAt = new Date(Date.now() + 365 * 86_400_000).toISOString();
+    const consoleKey = generateConsoleKey();
+    await sql`
+      INSERT INTO console_licenses (id, license_key, tech_name, expires_at)
+      VALUES (${crypto.randomUUID()}, ${consoleKey}, ${username}, ${expiresAt})
+    `;
+    const hash = await bcrypt.hash(password, 12);
+    await sql`
+      INSERT INTO users (id, username, password_hash, email, expires_at, console_license_key)
+      VALUES (${crypto.randomUUID()}, ${username}, ${hash}, ${email}, ${expiresAt}, ${consoleKey})
+    `;
 
-  return Response.json({ ok: true, username, consoleKey, expiresAt });
+    return Response.json({ ok: true, username, consoleKey, expiresAt });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Database error";
+    return Response.json({ error: msg }, { status: 500 });
+  }
 }

@@ -85,12 +85,16 @@ export async function GET(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const result = await sql`
-    SELECT id, username, email, active, expires_at, created_at
-    FROM users
-    ORDER BY created_at DESC
-  `;
-  return Response.json({ ok: true, users: result.rows });
+  try {
+    const result = await sql`
+      SELECT id, username, email, active, expires_at, created_at
+      FROM users
+      ORDER BY created_at DESC
+    `;
+    return Response.json({ ok: true, users: result.rows });
+  } catch {
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
 }
 
 // PATCH /api/auth/create-user  — activate or deactivate a user
@@ -103,8 +107,12 @@ export async function PATCH(req: Request) {
   const { username, active } = (await req.json().catch(() => ({}))) as { username?: string; active?: boolean };
   if (!username) return Response.json({ error: "username is required" }, { status: 400 });
 
-  await sql`UPDATE users SET active = ${active} WHERE username = ${username}`;
-  return Response.json({ ok: true });
+  try {
+    await sql`UPDATE users SET active = ${active} WHERE username = ${username}`;
+    return Response.json({ ok: true });
+  } catch {
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
 }
 
 // DELETE /api/auth/create-user  — remove a user by username
@@ -119,7 +127,11 @@ export async function DELETE(req: Request) {
     return Response.json({ error: "username is required" }, { status: 400 });
   }
 
-  const result = await sql`DELETE FROM users WHERE username = ${username}`;
-  const deleted = result.rowCount ?? 0;
-  return Response.json({ ok: true, deleted });
+  try {
+    const result = await sql`DELETE FROM users WHERE username = ${username}`;
+    const deleted = result.rowCount ?? 0;
+    return Response.json({ ok: true, deleted });
+  } catch {
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
 }

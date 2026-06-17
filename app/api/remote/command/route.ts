@@ -42,24 +42,29 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid command format" }, { status: 400 });
   }
 
-  // Require an active session (updated in last 2 minutes)
-  const session = await sql`
-    SELECT 1 FROM remote_sessions
-    WHERE username = ${username}
-      AND updated_at > NOW() - INTERVAL '2 minutes'
-    LIMIT 1
-  `;
-  if (session.rows.length === 0) {
-    return Response.json({ error: "No active remote session — laptop may be offline" }, { status: 409 });
+  try {
+    // Require an active session (updated in last 2 minutes)
+    const session = await sql`
+      SELECT 1 FROM remote_sessions
+      WHERE username = ${username}
+        AND updated_at > NOW() - INTERVAL '2 minutes'
+      LIMIT 1
+    `;
+    if (session.rows.length === 0) {
+      return Response.json({ error: "No active remote session — laptop may be offline" }, { status: 409 });
+    }
+
+    const result = await sql`
+      INSERT INTO remote_commands (username, command, label)
+      VALUES (${username}, ${command}, ${label})
+      RETURNING id
+    `;
+    const id = result.rows[0]?.id as string | undefined;
+    if (!id) return Response.json({ error: "Command insert failed" }, { status: 500 });
+    return Response.json({ ok: true, id });
+  } catch {
+    return Response.json({ error: "Database error" }, { status: 500 });
   }
-
-  const result = await sql`
-    INSERT INTO remote_commands (username, command, label)
-    VALUES (${username}, ${command}, ${label})
-    RETURNING id
-  `;
-
-  return Response.json({ ok: true, id: result.rows[0].id as string });
 }
 
 // PATCH — Electron app marks commands as sent (prevents re-delivery)
@@ -73,12 +78,15 @@ export async function PATCH(req: Request) {
   const ids = (body.ids ?? []).slice(0, 20);
   if (!ids.length) return Response.json({ ok: true });
 
-  await sql`
-    UPDATE remote_commands
-    SET sent_at = NOW()
-    WHERE id = ANY(${ids as unknown as string}::uuid[])
-      AND sent_at IS NULL
-  `;
-
-  return Response.json({ ok: true });
+  try {
+    await sql`
+      UPDATE remote_commands
+      SET sent_at = NOW()
+      WHERE id = ANY(${ids as unknown as string}::uuid[])
+        AND sent_at IS NULL
+    `;
+    return Response.json({ ok: true });
+  } catch {
+    return Response.json({ error: "Database error" }, { status: 500 });
+  }
 }

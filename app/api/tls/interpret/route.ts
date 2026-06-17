@@ -90,7 +90,8 @@ export async function POST(req: Request) {
     });
 
     const raw = response.content[0].type === 'text' ? response.content[0].text.trim() : '{}';
-    const parsed = JSON.parse(raw);
+    const clean = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    const parsed = JSON.parse(clean);
     return Response.json(parsed);
   } catch {
     return Response.json(
