@@ -212,6 +212,9 @@ export default function Home() {
                   <strong style={{ color: '#94a3b8' }}>DRAIN wire</strong> → SHLD terminal at the console <em>only</em> — leave floating at the probe end to avoid ground loops.<br/>
                   <span style={{ color: '#fb923c', fontWeight: 600 }}>⚠ Reversed polarity = PROBE COMM FAULT on startup.</span>
                 </p>
+                <p style={{ margin: '0 0 8px', fontSize: 13, lineHeight: 1.6, background: 'rgba(251,191,36,0.07)', border: '1px solid rgba(251,191,36,0.18)', borderRadius: 6, padding: '6px 10px' }}>
+                  <span style={{ color: '#fbbf24', fontWeight: 600 }}>📋 Note for programming:</span> Record the <strong>bay number</strong> (e.g. Bay 1) and <strong>slot/channel position</strong> (e.g. Ch 3) where you terminated this probe. You'll need both to correctly assign the tank in the <em>Device Setup</em> menu — wrong position = probe reads the wrong tank or throws a fault.
+                </p>
                 <p style={{ margin: '0 0 10px', fontSize: 11, color: '#64748b' }}>
                   Use 2-conductor shielded cable (Belden 9740 or equiv) · max 1,000 ft<br/>
                   Source: TLS-450PLUS Field Installation Manual 577013-880, Fig. 3-12
