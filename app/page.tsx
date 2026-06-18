@@ -47,8 +47,8 @@ const features = [
   },
   {
     icon: <Cable size={22} />,
-    title: 'ATG Direct Connect & Serial Dashboard',
-    text: 'Connect directly to a TLS-350 or TLS-450 console via RS-232 serial — from Chrome or Edge with no install required, or using the free Windows desktop app for full features including PDF export, remote session, and AI analysis. Pull current active alarms, a full year of alarm history, and the complete console setup report with one click.',
+    title: 'ATG Dashboard & Control Center',
+    text: 'Connect to any TLS-350 or TLS-450PLUS via RS-232 or Ethernet — auto-detected. Browse a full searchable I-code library, send live commands, pull alarm history and setup reports in one click, then push the raw output straight to Atlas AI for an instant plain-English diagnosis with exact fix steps. Read and program — not just read.',
   },
 ];
 
@@ -332,6 +332,107 @@ export default function Home() {
                 <p>{f.text}</p>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ATG Dashboard spotlight */}
+      <section className="section alt" style={{ borderTop: '1px solid rgba(34,211,238,0.1)', borderBottom: '1px solid rgba(34,211,238,0.1)' }}>
+        <div className="container">
+          <div className="two-col" style={{ gap: '3.5rem', alignItems: 'flex-start' }}>
+
+            {/* Left: text */}
+            <div>
+              <span className="badge">ATG Dashboard &amp; Control Center</span>
+              <h2 style={{ marginTop: 12 }}>
+                Connect. Command. Program. Diagnose.<br/>
+                <span style={{ color: '#22d3ee' }}>All from one screen.</span>
+              </h2>
+              <p>
+                Most field tools let you <em>read</em> ATG data. Console Connect lets you <strong>control</strong> it.
+                Plug in over RS-232 serial or Ethernet — the app auto-detects your connection type and baud rate.
+                You get a live interactive terminal, a fully searchable database of every Veeder-Root I-code command
+                (categorized, described, ready to send), the ability to issue SET commands to program or fix the
+                console on the spot, and a single button that feeds the raw ATG output straight to Atlas AI for an
+                instant plain-English diagnosis with exact repair steps.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '7px 20px', margin: '20px 0 28px', fontSize: 13 }}>
+                {[
+                  ['RS-232 serial or Ethernet/TCP', 'Auto-detects connection & baud rate'],
+                  ['Full searchable I-code command library', 'Categorized, described, one-click send'],
+                  ['Send SET commands — program live', 'Fix issues on the spot, not just read'],
+                  ['Pull full year of alarm history', 'Active alarms, tank status, setup report'],
+                  ['Feed raw output to Atlas AI', 'Instant diagnosis with exact fix steps'],
+                  ['AI reasons which commands to run', 'Guided troubleshooting — no guesswork'],
+                  ['PDF export of every report', 'Leave a paper trail on every job'],
+                  ['Remote support session', 'Over-the-phone screen share assistance'],
+                ].map(([feat, detail]) => (
+                  <div key={feat} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <span style={{ color: '#e2e8f0', fontWeight: 600 }}><span style={{ color: '#22d3ee' }}>✓ </span>{feat}</span>
+                    <span style={{ color: '#475569', fontSize: 11 }}>{detail}</span>
+                  </div>
+                ))}
+              </div>
+              <a href="/api/download" className="button" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
+                ↓ Download Console Connect — Free with any plan
+              </a>
+              <p style={{ margin: '8px 0 0', fontSize: 11, color: '#475569' }}>Windows 10 / 11 &nbsp;·&nbsp; Included free with Pro or Annual subscription</p>
+            </div>
+
+            {/* Right: terminal mockup */}
+            <div style={{ background: '#030912', border: '1px solid rgba(34,211,238,0.18)', borderRadius: 12, overflow: 'hidden', fontFamily: 'monospace', fontSize: 10 }}>
+              {/* Window chrome */}
+              <div style={{ padding: '8px 14px', background: 'rgba(34,211,238,0.04)', borderBottom: '1px solid rgba(34,211,238,0.1)', display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444', display: 'inline-block' }}/>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#f59e0b', display: 'inline-block' }}/>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', display: 'inline-block' }}/>
+                <span style={{ marginLeft: 'auto', color: '#334155', fontSize: 9 }}>FuelTech AI Console Connect &nbsp;·&nbsp; TLS-450PLUS &nbsp;·&nbsp; COM3 &nbsp;·&nbsp; 9600 baud &nbsp;·&nbsp; ● Connected</span>
+              </div>
+              {/* Tab bar */}
+              <div style={{ display: 'flex', borderBottom: '1px solid rgba(34,211,238,0.08)', fontSize: 10 }}>
+                {['RS-232', 'I-Codes ★', 'Atlas AI', 'Reports', 'Env Forms'].map((tab, i) => (
+                  <div key={tab} style={{ padding: '5px 11px', color: i === 1 ? '#22d3ee' : '#334155', background: i === 1 ? 'rgba(34,211,238,0.06)' : 'transparent', borderRight: '1px solid rgba(34,211,238,0.08)', borderBottom: i === 1 ? '2px solid #22d3ee' : 'none', marginBottom: i === 1 ? -1 : 0 }}>{tab}</div>
+                ))}
+              </div>
+              {/* Search bar */}
+              <div style={{ padding: '8px 12px 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ flex: 1, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(34,211,238,0.15)', borderRadius: 4, padding: '4px 8px', color: '#475569', fontSize: 9 }}>
+                  🔍 &nbsp;Search commands — e.g. "probe", "alarm history", "tank setup"…
+                </div>
+                <div style={{ color: '#22d3ee', fontSize: 9, whiteSpace: 'nowrap' }}>▸ All Categories ▾</div>
+              </div>
+              {/* Command rows */}
+              <div style={{ padding: '4px 12px 8px' }}>
+                {[
+                  { code: 'I10100', name: 'In-Tank Inventory Report', cat: 'Tanks', action: true },
+                  { code: 'I20200', name: 'Sensor Status Report', cat: 'Sensors', action: false },
+                  { code: 'I61500', name: 'Line Leak Detection Status', cat: 'LLD', action: false },
+                  { code: 'S80200', name: 'Probe Setup — SET command', cat: 'Setup', action: false, set: true },
+                ].map(row => (
+                  <div key={row.code} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 6px', marginBottom: 2, borderRadius: 4, background: row.action ? 'rgba(34,211,238,0.07)' : 'transparent', border: `1px solid ${row.action ? 'rgba(34,211,238,0.2)' : 'transparent'}` }}>
+                    <code style={{ color: row.set ? '#a78bfa' : '#22d3ee', fontWeight: 700, minWidth: 50, fontSize: 9 }}>{row.code}</code>
+                    <span style={{ color: '#94a3b8', flex: 1, fontSize: 9 }}>{row.name}</span>
+                    <span style={{ color: '#1e3a5f', fontSize: 8, background: '#0f172a', padding: '1px 5px', borderRadius: 2, whiteSpace: 'nowrap' }}>{row.cat}</span>
+                    <div style={{ fontSize: 8, color: row.set ? '#a78bfa' : '#22d3ee', background: row.set ? 'rgba(167,139,250,0.1)' : 'rgba(34,211,238,0.1)', border: `1px solid ${row.set ? 'rgba(167,139,250,0.25)' : 'rgba(34,211,238,0.25)'}`, borderRadius: 3, padding: '2px 7px', whiteSpace: 'nowrap' }}>▶ Send</div>
+                  </div>
+                ))}
+                {/* Live ATG response panel */}
+                <div style={{ marginTop: 8, padding: 10, background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(34,211,238,0.1)', borderRadius: 6 }}>
+                  <div style={{ color: '#22d3ee', fontSize: 9, fontWeight: 700, marginBottom: 5 }}>▸ ATG Response — I10100 In-Tank Inventory</div>
+                  <div style={{ color: '#475569', fontSize: 8, lineHeight: 1.7 }}>
+                    TANK 1 &nbsp;REGULAR UNLEADED<br/>
+                    &nbsp;&nbsp;VOLUME: 8,942 GAL &nbsp;·&nbsp; ULLAGE: 1,058 GAL<br/>
+                    &nbsp;&nbsp;WATER: 0.00 IN &nbsp;·&nbsp; TEMP: 62.4 °F<br/>
+                    <span style={{ color: '#fb923c' }}>⚠ SENSOR FAULT — SUMP SENSOR OPEN / TANK 1</span>
+                  </div>
+                  <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+                    <div style={{ fontSize: 8, color: '#a78bfa', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.22)', borderRadius: 3, padding: '3px 9px', cursor: 'pointer' }}>✦ Analyze with Atlas AI</div>
+                    <div style={{ fontSize: 8, color: '#475569', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 3, padding: '3px 9px', cursor: 'pointer' }}>↓ Export PDF</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
           </div>
         </div>
       </section>
