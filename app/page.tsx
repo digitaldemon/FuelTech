@@ -204,10 +204,10 @@ export default function Home() {
 
               <div className="bubble-bot">
                 <p style={{ margin: '0 0 6px', fontSize: 15 }}>
-                  Mag Plus probe wires to the <strong>ITPM module</strong> (In-Tank Probe Module) inside the TLS-450PLUS — one channel per probe.
+                  Mag Plus probe wires to the <strong>USM</strong> (Universal Sensor Module) inside the TLS-450PLUS — one channel per probe.
                 </p>
                 <p style={{ margin: '0 0 10px', fontSize: 13, lineHeight: 1.7 }}>
-                  <strong style={{ color: '#e2e8f0' }}>WHITE → SIG+ (+)</strong> at both the ITPM terminal and the probe head junction box.<br/>
+                  <strong style={{ color: '#e2e8f0' }}>WHITE → SIG+ (+)</strong> at both the USM terminal and the probe head junction box.<br/>
                   <strong style={{ color: '#e2e8f0' }}>BLACK → SIG– (–)</strong> at both ends.<br/>
                   <strong style={{ color: '#94a3b8' }}>DRAIN wire</strong> → SHLD terminal at the console <em>only</em> — leave floating at the probe end to avoid ground loops.<br/>
                   <span style={{ color: '#fb923c', fontWeight: 600 }}>⚠ Reversed polarity = PROBE COMM FAULT on startup.</span>

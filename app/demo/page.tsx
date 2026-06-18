@@ -357,7 +357,7 @@ function SceneDiagram({ p }: { p: number }) {
               </div>
             </div>
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', padding: 'clamp(6px,0.9vw,10px) clamp(8px,1.2vw,14px)', borderRadius: '16px 16px 16px 4px', fontSize: 'clamp(8px,1.05vw,13px)', color: '#e2e8f0', lineHeight: 1.6, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'hidden' }}>
-              <div>Mag Plus probe wiring — ITPM module (console) to probe head junction box:</div>
+              <div>Mag Plus probe wiring — USM (Universal Sensor Module) to probe head junction box:</div>
               {showFig && (
                 <div style={{ background: 'rgba(34,211,238,0.03)', border: '1px solid rgba(34,211,238,0.14)', borderRadius: 8, padding: 8, animation: 'demoFadeUp 0.5s ease', flex: 1 }}>
                   <svg width="100%" viewBox="0 0 340 162" fill="none">
@@ -376,7 +376,7 @@ function SceneDiagram({ p }: { p: number }) {
                     <circle cx="182" cy="100" r="2.5" fill="#0f172a" stroke="#374151" strokeWidth="0.8"/>
                     {/* ── LEFT BOX labels ── */}
                     <text x="48" y="26" fill="#22d3ee" fontSize="7" textAnchor="middle" fontFamily="monospace" fontWeight="700">TLS-450PLUS</text>
-                    <text x="48" y="35" fill="#94a3b8" fontSize="5.5" textAnchor="middle" fontFamily="monospace">ITPM  CH 1</text>
+                    <text x="48" y="35" fill="#94a3b8" fontSize="5.5" textAnchor="middle" fontFamily="monospace">USM  CH 1</text>
                     {/* SIG+ terminal */}
                     <text x="10" y="59" fill="#94a3b8" fontSize="5.5" fontFamily="monospace">SIG+</text>
                     <rect x="45" y="50" width="20" height="13" rx="2" stroke="rgba(34,211,238,0.65)" strokeWidth="1.2" fill="rgba(34,211,238,0.12)"/>
