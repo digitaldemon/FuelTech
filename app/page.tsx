@@ -212,6 +212,76 @@ export default function Home() {
                   <strong style={{ color: '#94a3b8' }}>DRAIN wire</strong> → SHLD terminal at the console <em>only</em> — leave floating at the probe end to avoid ground loops.<br/>
                   <span style={{ color: '#fb923c', fontWeight: 600 }}>⚠ Reversed polarity = PROBE COMM FAULT on startup.</span>
                 </p>
+                {/* USM module diagram */}
+                <div style={{ margin: '10px 0', background: 'rgba(0,0,0,0.25)', borderRadius: 8, padding: '8px 6px' }}>
+                  <svg width="100%" viewBox="0 0 290 130" fill="none">
+                    {/* Module body */}
+                    <rect x="4" y="4" width="163" height="122" rx="5" fill="#070f1c" stroke="#1e3a5f" strokeWidth="1.5"/>
+                    <rect x="4" y="4" width="163" height="22" rx="5" fill="#0a1f38"/>
+                    <rect x="4" y="16" width="163" height="10" fill="#0a1f38"/>
+                    <text x="85" y="13" fill="#22d3ee" fontSize="6.5" textAnchor="middle" fontFamily="monospace" fontWeight="700">USM — UNIVERSAL SENSOR MODULE</text>
+                    <text x="85" y="22" fill="#334155" fontSize="5.5" textAnchor="middle" fontFamily="monospace">TLS-450PLUS · BAY 1 · 8 INPUTS</text>
+                    {/* Column headers */}
+                    <text x="20" y="32" fill="#1e3a5f" fontSize="5" textAnchor="middle" fontFamily="monospace">CH</text>
+                    <text x="60" y="32" fill="#1e3a5f" fontSize="5" textAnchor="middle" fontFamily="monospace">SIG+</text>
+                    <text x="93" y="32" fill="#1e3a5f" fontSize="5" textAnchor="middle" fontFamily="monospace">SIG−</text>
+                    <text x="126" y="32" fill="#1e3a5f" fontSize="5" textAnchor="middle" fontFamily="monospace">SHLD</text>
+                    <text x="156" y="32" fill="#1e3a5f" fontSize="5" textAnchor="middle" fontFamily="monospace">GND</text>
+                    <line x1="8" y1="34" x2="164" y2="34" stroke="#1e3a5f" strokeWidth="0.8"/>
+                    {/* CH 1 — highlighted */}
+                    <rect x="7" y="35" width="157" height="19" rx="2" fill="rgba(34,211,238,0.06)" stroke="rgba(34,211,238,0.38)" strokeWidth="0.8"/>
+                    <text x="20" y="47" fill="#22d3ee" fontSize="7" textAnchor="middle" fontFamily="monospace" fontWeight="700">1</text>
+                    <rect x="50" y="37" width="20" height="13" rx="2" fill="rgba(34,211,238,0.14)" stroke="rgba(34,211,238,0.6)" strokeWidth="0.9"/>
+                    <line x1="57" y1="40" x2="63" y2="46" stroke="rgba(34,211,238,0.55)" strokeWidth="0.9"/><line x1="63" y1="40" x2="57" y2="46" stroke="rgba(34,211,238,0.55)" strokeWidth="0.9"/>
+                    <rect x="83" y="37" width="20" height="13" rx="2" fill="rgba(248,113,113,0.09)" stroke="rgba(248,113,113,0.45)" strokeWidth="0.9"/>
+                    <line x1="90" y1="40" x2="96" y2="46" stroke="rgba(248,113,113,0.45)" strokeWidth="0.9"/><line x1="96" y1="40" x2="90" y2="46" stroke="rgba(248,113,113,0.45)" strokeWidth="0.9"/>
+                    <rect x="116" y="37" width="20" height="13" rx="2" fill="rgba(100,116,139,0.1)" stroke="rgba(100,116,139,0.4)" strokeWidth="0.9"/>
+                    <line x1="123" y1="40" x2="129" y2="46" stroke="rgba(100,116,139,0.4)" strokeWidth="0.9"/><line x1="129" y1="40" x2="123" y2="46" stroke="rgba(100,116,139,0.4)" strokeWidth="0.9"/>
+                    <rect x="146" y="37" width="20" height="13" rx="2" fill="rgba(51,65,85,0.1)" stroke="rgba(51,65,85,0.3)" strokeWidth="0.9"/>
+                    <line x1="153" y1="40" x2="159" y2="46" stroke="rgba(51,65,85,0.28)" strokeWidth="0.9"/><line x1="159" y1="40" x2="153" y2="46" stroke="rgba(51,65,85,0.28)" strokeWidth="0.9"/>
+                    {/* CH 2 */}
+                    <rect x="7" y="55" width="157" height="17" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.6"/>
+                    <text x="20" y="66" fill="#0e1e30" fontSize="7" textAnchor="middle" fontFamily="monospace">2</text>
+                    <rect x="50" y="57" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    <rect x="83" y="57" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    <rect x="116" y="57" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    <rect x="146" y="57" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    {/* CH 3 */}
+                    <rect x="7" y="73" width="157" height="17" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.6"/>
+                    <text x="20" y="84" fill="#0e1e30" fontSize="7" textAnchor="middle" fontFamily="monospace">3</text>
+                    <rect x="50" y="75" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    <rect x="83" y="75" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    <rect x="116" y="75" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    <rect x="146" y="75" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    {/* CH 4 */}
+                    <rect x="7" y="91" width="157" height="17" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.6"/>
+                    <text x="20" y="102" fill="#0e1e30" fontSize="7" textAnchor="middle" fontFamily="monospace">4</text>
+                    <rect x="50" y="93" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    <rect x="83" y="93" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    <rect x="116" y="93" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    <rect x="146" y="93" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    {/* CH 5 */}
+                    <rect x="7" y="109" width="157" height="15" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.6"/>
+                    <text x="20" y="119" fill="#0e1e30" fontSize="7" textAnchor="middle" fontFamily="monospace">5</text>
+                    <rect x="50" y="110" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    <rect x="83" y="110" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    <rect x="116" y="110" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    <rect x="146" y="110" width="20" height="11" rx="2" fill="transparent" stroke="#0e1e30" strokeWidth="0.7"/>
+                    {/* Right-side annotation */}
+                    <line x1="167" y1="44.5" x2="177" y2="44.5" stroke="rgba(34,211,238,0.4)" strokeWidth="0.8" strokeDasharray="3,2"/>
+                    <polygon points="173,42.5 177,44.5 173,46.5" fill="rgba(34,211,238,0.4)"/>
+                    <text x="180" y="38" fill="#22d3ee" fontSize="6.5" fontFamily="monospace" fontWeight="700">← PROBE 1</text>
+                    <text x="180" y="47" fill="#475569" fontSize="5.5" fontFamily="monospace">wires to CH 1</text>
+                    <circle cx="182" cy="59" r="3" fill="white"/>
+                    <text x="189" y="63" fill="#cbd5e1" fontSize="5.5" fontFamily="monospace">WHITE → SIG+</text>
+                    <circle cx="182" cy="72" r="3" fill="#1e293b" stroke="#4b5563" strokeWidth="0.8"/>
+                    <text x="189" y="76" fill="#64748b" fontSize="5.5" fontFamily="monospace">BLACK → SIG−</text>
+                    <line x1="179" y1="85" x2="185" y2="85" stroke="#475569" strokeWidth="1.5" strokeDasharray="2,2"/>
+                    <text x="189" y="89" fill="#475569" fontSize="5.5" fontFamily="monospace">DRAIN → SHLD</text>
+                    <text x="180" y="104" fill="#1e3a5f" fontSize="5" fontFamily="monospace">CH 2–8: additional</text>
+                    <text x="180" y="112" fill="#1e3a5f" fontSize="5" fontFamily="monospace">probes / sensors</text>
+                  </svg>
+                </div>
                 <p style={{ margin: '0 0 8px', fontSize: 13, lineHeight: 1.6, background: 'rgba(251,191,36,0.07)', border: '1px solid rgba(251,191,36,0.18)', borderRadius: 6, padding: '6px 10px' }}>
                   <span style={{ color: '#fbbf24', fontWeight: 600 }}>📋 Note for programming:</span> Record the <strong>bay number</strong> (e.g. Bay 1) and <strong>slot/channel position</strong> (e.g. Ch 3) where you terminated this probe. You'll need both to correctly assign the tank in the <em>Device Setup</em> menu — wrong position = probe reads the wrong tank or throws a fault.
                 </p>
