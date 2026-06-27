@@ -10,7 +10,7 @@ export async function middleware(req: NextRequest) {
 
   // Redirect expired members to the renewal page — no DB hit needed,
   // expiry is encoded in the session token at login time.
-  const status = getMembershipStatus(token);
+  const status = await getMembershipStatus(token);
   if (status?.membershipExpired) {
     return NextResponse.redirect(new URL("/expired", req.url));
   }
@@ -19,5 +19,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/chat", "/chat/:path*", "/tls/:path*", "/tls", "/account", "/remote", "/suggestions"],
+  matcher: ["/chat", "/chat/:path*", "/tls/:path*", "/tls", "/account", "/remote", "/suggestions", "/admin", "/admin/:path*"],
 };

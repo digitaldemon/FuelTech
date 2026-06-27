@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 
 type Status = 'open' | 'planned' | 'in_progress' | 'done';
@@ -59,17 +59,25 @@ export default function SuggestionsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const submitTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
+    const controller = new AbortController();
     (async () => {
-      const me = await fetch('/api/auth/me').then(r => r.json()).catch(() => ({}));
-      if (!me.username) { setAuthed(false); setLoading(false); return; }
-      setUsername(me.username);
-      setAuthed(true);
-      const data = await fetch('/api/suggestions').then(r => r.json()).catch(() => ({}));
-      setSuggestions(data.suggestions ?? []);
-      setLoading(false);
+      try {
+        const me = await fetch('/api/auth/me', { signal: controller.signal }).then(r => r.json());
+        if (!me.username) { setAuthed(false); setLoading(false); return; }
+        setUsername(me.username);
+        setAuthed(true);
+        const data = await fetch('/api/suggestions', { signal: controller.signal }).then(r => r.json());
+        setSuggestions(data.suggestions ?? []);
+      } catch (e) {
+        if ((e as Error)?.name !== 'AbortError') { setAuthed(false); }
+      } finally {
+        setLoading(false);
+      }
     })();
+    return () => { controller.abort(); clearTimeout(submitTimerRef.current); };
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -88,7 +96,8 @@ export default function SuggestionsPage() {
       setSuggestions(prev => [data.suggestion, ...prev]);
       setTitle(''); setBody(''); setCategory('feature');
       setSubmitted(true);
-      setTimeout(() => setSubmitted(false), 4000);
+      clearTimeout(submitTimerRef.current);
+      submitTimerRef.current = setTimeout(() => setSubmitted(false), 4000);
     } catch {
       setSubmitError('Network error — please try again.');
     } finally {

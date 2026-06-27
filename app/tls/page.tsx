@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect, FormEvent } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo, FormEvent } from 'react';
 import Link from 'next/link';
 
 // ── Web Serial API type shims ─────────────────────────────────────────────────
@@ -90,7 +90,7 @@ const INVENTORY_CMD      = buildCmd('I20100');
 
 // VR raw function code pattern — if the user types one directly, skip AI
 // Matches I20100, S10100, P20600, etc. and codes with suffixes (tank number, date range)
-const VR_CODE_RE = /^[IiSsPp]\d{5}/;
+const VR_CODE_RE = /^[IiSsPp][0-9A-Fa-f]{5}/;
 
 // ── PDF generation (lazy-loaded so jsPDF doesn't bloat initial bundle) ────────
 async function savePdf(opts: {
@@ -236,26 +236,32 @@ export default function TlsPage() {
 
   // Auth check on mount — offline fallback uses localStorage flag set on last successful login
   useEffect(() => {
-    fetch('/api/auth/me')
+    const controller = new AbortController();
+    fetch('/api/auth/me', { signal: controller.signal })
       .then(r => r.json().then(d => ({ d, status: r.status })))
       .then(({ d, status }) => {
+        if (controller.signal.aborted) return;
         if (d.username) {
-          localStorage.setItem('ft_tls_authed', '1');
+          localStorage.setItem('ft_tls_authed', Date.now().toString());
           setAuthed(true);
+          setReady(true);
         } else if (status === 403 || d.expired) {
           window.location.href = '/expired';
         } else {
           window.location.href = '/login';
         }
       })
-      .catch(() => {
-        if (!navigator.onLine && localStorage.getItem('ft_tls_authed') === '1') {
+      .catch((e) => {
+        if (e?.name === 'AbortError') return;
+        const authTs = parseInt(localStorage.getItem('ft_tls_authed') ?? '0', 10);
+        if (!navigator.onLine && !isNaN(authTs) && Date.now() - authTs < 24 * 60 * 60 * 1000) {
           setAuthed(true);
+          setReady(true);
         } else {
           window.location.href = '/login';
         }
-      })
-      .finally(() => setReady(true));
+      });
+    return () => controller.abort();
   }, []);
 
   // Auto-scroll terminal as output grows
@@ -426,8 +432,14 @@ export default function TlsPage() {
     runCommand(buildCmd('P30100'), 'Print System Status  (P30100)', 'custom');
   }, [runCommand]);
 
+  const analyzeAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { analyzeAbortRef.current?.abort(); }, []);
+
   const handleAnalyze = useCallback(async () => {
     if (!output || analyzing) return;
+    analyzeAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    analyzeAbortRef.current = ctrl;
     setAnalyzing(true);
     setAiAnalysis('');
     try {
@@ -435,6 +447,7 @@ export default function TlsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ output }),
+        signal: ctrl.signal,
       });
       if (res.status === 401) { window.location.href = '/login'; return; }
       if (res.status === 403) { window.location.href = '/expired'; return; }
@@ -446,7 +459,8 @@ export default function TlsPage() {
         if (done) break;
         setAiAnalysis(prev => prev + dec.decode(value, { stream: true }));
       }
-    } catch {
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return;
       setAiAnalysis('Analysis failed — check your connection and try again.');
     } finally {
       setAnalyzing(false);
@@ -508,7 +522,10 @@ export default function TlsPage() {
         setCmdFeedback({ ok: true, text: 'Output copied to clipboard.' });
         copyTimerRef.current = setTimeout(() => { setCmdFeedback(null); copyTimerRef.current = null; }, 2000);
       })
-      .catch(() => { setCmdFeedback({ ok: false, text: 'Clipboard access denied.' }); });
+      .catch(() => {
+        setCmdFeedback({ ok: false, text: 'Clipboard access denied.' });
+        copyTimerRef.current = setTimeout(() => { setCmdFeedback(null); copyTimerRef.current = null; }, 3000);
+      });
   };
 
   const handleClear = () => {
@@ -573,8 +590,10 @@ export default function TlsPage() {
   }, [cmdInput, cmdBusy, status, runCommand]);
 
   // ── Ethernet handlers ──────────────────────────────────────────────────────
-  const _ethPort = ethPort.trim() || '443';
-  const ethUrl = `${_ethPort === '443' || _ethPort === '8443' ? 'https' : 'http'}://${ethIp.trim()}:${_ethPort}`;
+  const ethUrl = useMemo(() => {
+    const p = ethPort.trim() || '443';
+    return `${p === '443' || p === '8443' ? 'https' : 'http'}://${ethIp.trim()}:${p}`;
+  }, [ethIp, ethPort]);
 
   const handleEthTest = useCallback(async () => {
     if (!ethIp.trim()) return;
@@ -605,6 +624,11 @@ export default function TlsPage() {
     if (!ethIp.trim()) return;
     window.open(ethUrl, '_blank', 'noopener,noreferrer');
   }, [ethIp, ethUrl]);
+
+  // Must be declared before any conditional returns (Rules of Hooks)
+  const suggestedCodes = useMemo(() => [
+    ...new Set([...aiAnalysis.matchAll(/`([IiSs][0-9A-Fa-f]{5}[^`]*)`/g)].map(m => m[1].trim()))
+  ], [aiAnalysis]);
 
   if (!ready) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100dvh', background: 'var(--bg)' }}>
@@ -715,7 +739,7 @@ export default function TlsPage() {
               <div className="tls-ports-list">
                 {availPorts.map((p, i) => (
                   <label
-                    key={i}
+                    key={`${p.getInfo().usbVendorId ?? 'native'}-${p.getInfo().usbProductId ?? i}`}
                     className={`tls-port-item${selectedPort === p ? ' tls-port-item-active' : ''}`}
                   >
                     <input
@@ -1000,41 +1024,36 @@ export default function TlsPage() {
                 ↳ Searching documentation and generating diagnosis…
               </div>
             )}
-            {aiAnalysis && (() => {
-              const suggestedCodes = [...new Set(
-                [...aiAnalysis.matchAll(/`([IiSs]\d{5}[^`]*)`/g)].map(m => m[1].trim())
-              )];
-              return (
-                <>
-                  <pre className="tls-terminal tls-ai-result">{aiAnalysis}</pre>
-                  {suggestedCodes.length > 0 && (
-                    <div className="tls-suggested-cmds">
-                      <div className="tls-suggested-label">Commands — click to send to ATG:</div>
-                      <div className="tls-suggested-chips">
-                        {suggestedCodes.map(code => {
-                          const isSetCmd = /^[Ss]/.test(code);
-                          return (
-                            <button
-                              key={code}
-                              className={`tls-cmd-ex-chip${isSetCmd ? ' tls-cmd-chip-fix' : ' tls-cmd-ex-chip-send'}`}
-                              disabled={!isConn || isBusy}
-                              title={isSetCmd ? 'SET command — applies a configuration change to the ATG' : 'Query command — reads data from the ATG'}
-                              onClick={() => runCommand(
-                                buildCmd(code.toUpperCase()),
-                                `${code} (${isSetCmd ? 'fix' : 'suggested'})`,
-                                'custom'
-                              )}
-                            >
-                              {isSetCmd ? '⚙ ' : ''}{code} ↗
-                            </button>
-                          );
-                        })}
-                      </div>
+            {aiAnalysis && (
+              <>
+                <pre className="tls-terminal tls-ai-result">{aiAnalysis}</pre>
+                {suggestedCodes.length > 0 && (
+                  <div className="tls-suggested-cmds">
+                    <div className="tls-suggested-label">Commands — click to send to ATG:</div>
+                    <div className="tls-suggested-chips">
+                      {suggestedCodes.map(code => {
+                        const isSetCmd = /^[Ss]/.test(code);
+                        return (
+                          <button
+                            key={code}
+                            className={`tls-cmd-ex-chip${isSetCmd ? ' tls-cmd-chip-fix' : ' tls-cmd-ex-chip-send'}`}
+                            disabled={!isConn || isBusy}
+                            title={isSetCmd ? 'SET command — applies a configuration change to the ATG' : 'Query command — reads data from the ATG'}
+                            onClick={() => runCommand(
+                              buildCmd(code.toUpperCase()),
+                              `${code} (${isSetCmd ? 'fix' : 'suggested'})`,
+                              'custom'
+                            )}
+                          >
+                            {isSetCmd ? '⚙ ' : ''}{code} ↗
+                          </button>
+                        );
+                      })}
                     </div>
-                  )}
-                </>
-              );
-            })()}
+                  </div>
+                )}
+              </>
+            )}
             {!aiAnalysis && !analyzing && (
               <p className="tls-cmd-desc">
                 Click <strong>Analyze with AI</strong> to search the Veeder-Root documentation

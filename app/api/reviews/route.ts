@@ -43,7 +43,7 @@ export async function POST(req: Request) {
   };
 
   const name = (body.name ?? "").trim();
-  const company = (body.company ?? "").trim() || null;
+  const company = (body.company ?? "").trim().slice(0, 80) || null;
   const rating = Number(body.rating);
   const review_text = (body.review_text ?? "").trim();
 
@@ -76,9 +76,16 @@ export async function PATCH(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
   const body = await req.json().catch(() => ({})) as { id?: string; approved?: boolean };
-  if (!body.id) return Response.json({ error: "id is required." }, { status: 400 });
-  await sql`UPDATE reviews SET approved = ${body.approved ?? true} WHERE id = ${body.id}`;
-  return Response.json({ ok: true });
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!body.id || !uuidRe.test(body.id)) return Response.json({ error: "Valid id is required." }, { status: 400 });
+  if (typeof body.approved !== 'boolean') return Response.json({ error: "approved must be a boolean." }, { status: 400 });
+  try {
+    await sql`UPDATE reviews SET approved = ${body.approved} WHERE id = ${body.id}`;
+    return Response.json({ ok: true });
+  } catch (err) {
+    console.error('reviews PATCH:', err);
+    return Response.json({ error: 'Database error' }, { status: 500 });
+  }
 }
 
 // GET /api/reviews/pending — list unapproved reviews (admin only)

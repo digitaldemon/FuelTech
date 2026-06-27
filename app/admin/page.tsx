@@ -28,11 +28,6 @@ const SOURCES = [
   { value: "manual",            label: "Other / Manual" },
 ];
 
-function getSavedSecret(): string {
-  if (typeof window === "undefined") return "";
-  return localStorage.getItem("ft_admin_secret") ?? "";
-}
-
 // ── Lock screen ───────────────────────────────────────────────────────────────
 
 function LockScreen({ onUnlock }: { onUnlock: (secret: string) => void }) {
@@ -52,7 +47,7 @@ function LockScreen({ onUnlock }: { onUnlock: (secret: string) => void }) {
         body: JSON.stringify({ secret: input.trim() }),
       });
       if (res.ok) {
-        localStorage.setItem("ft_admin_secret", input.trim());
+        sessionStorage.setItem("ft_admin_secret", input.trim());
         onUnlock(input.trim());
       } else {
         setError("Incorrect password.");
@@ -92,19 +87,32 @@ function LockScreen({ onUnlock }: { onUnlock: (secret: string) => void }) {
 // ── Main upload UI ────────────────────────────────────────────────────────────
 
 export default function AdminUpload() {
-  const saved = getSavedSecret();
-  const [secret, setSecret]   = useState(saved);
-  const [unlocked, setUnlocked] = useState(!!saved);
+  const [secret, setSecret]   = useState('');
+  const [unlocked, setUnlocked] = useState(false);
+
+  useEffect(() => {
+    const saved = sessionStorage.getItem('ft_admin_secret') ?? '';
+    if (saved) { setSecret(saved); setUnlocked(true); }
+  }, []);
   const [source, setSource]   = useState("pei");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [running, setRunning] = useState(false);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const copyKeyTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyUserTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyKeyTimerRef.current)  clearTimeout(copyKeyTimerRef.current);
+      if (copyUserTimerRef.current) clearTimeout(copyUserTimerRef.current);
+    };
+  }, []);
 
   const handleUnlock = (s: string) => { setSecret(s); setUnlocked(true); };
 
   const logout = () => {
-    localStorage.removeItem("ft_admin_secret");
+    sessionStorage.removeItem("ft_admin_secret");
     setSecret("");
     setUnlocked(false);
     setEntries([]);
@@ -237,7 +245,8 @@ export default function AdminUpload() {
   const copyUserField = (field: "username" | "password", value: string) => {
     navigator.clipboard.writeText(value).catch(() => {});
     setCopiedUser(field);
-    setTimeout(() => setCopiedUser(""), 2000);
+    if (copyUserTimerRef.current) clearTimeout(copyUserTimerRef.current);
+    copyUserTimerRef.current = setTimeout(() => setCopiedUser(""), 2000);
   };
 
   // ── Web users list ───────────────────────────────────────────────────────
@@ -268,22 +277,28 @@ export default function AdminUpload() {
   useEffect(() => { if (unlocked) loadWebUsers(); }, [unlocked, loadWebUsers]);
 
   const toggleUserActive = async (username: string, active: boolean) => {
-    await fetch("/api/auth/create-user", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", "x-admin-secret": secret },
-      body: JSON.stringify({ username, active }),
-    });
-    setWebUsers(prev => prev.map(u => u.username === username ? { ...u, active } : u));
+    try {
+      const res = await fetch("/api/auth/create-user", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "x-admin-secret": secret },
+        body: JSON.stringify({ username, active }),
+      });
+      if (res.ok) setWebUsers(prev => prev.map(u => u.username === username ? { ...u, active } : u));
+      else setUsersError(`Failed to update user.`);
+    } catch { setUsersError("Network error — please try again."); }
   };
 
   const deleteUser = async (username: string) => {
     if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
-    await fetch("/api/auth/create-user", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json", "x-admin-secret": secret },
-      body: JSON.stringify({ username }),
-    });
-    setWebUsers(prev => prev.filter(u => u.username !== username));
+    try {
+      const res = await fetch("/api/auth/create-user", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", "x-admin-secret": secret },
+        body: JSON.stringify({ username }),
+      });
+      if (res.ok) setWebUsers(prev => prev.filter(u => u.username !== username));
+      else setUsersError(`Failed to delete user.`);
+    } catch { setUsersError("Network error — please try again."); }
   };
 
   // ── Reviews moderation ───────────────────────────────────────────────────
@@ -312,12 +327,15 @@ export default function AdminUpload() {
   }, [secret]);
 
   const moderateReview = async (id: string, approved: boolean) => {
-    await fetch("/api/reviews", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", "x-admin-secret": secret },
-      body: JSON.stringify({ id, approved }),
-    });
-    setPendingReviews(prev => prev.filter(r => r.id !== id));
+    try {
+      const res = await fetch("/api/reviews", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "x-admin-secret": secret },
+        body: JSON.stringify({ id, approved }),
+      });
+      if (res.ok) setPendingReviews(prev => prev.filter(r => r.id !== id));
+      else setRevError('Moderation failed. Refresh and try again.');
+    } catch { setRevError("Network error — please try again."); }
   };
 
   useEffect(() => { if (unlocked) loadPendingReviews(); }, [unlocked, loadPendingReviews]);
@@ -381,28 +399,35 @@ export default function AdminUpload() {
 
   const revokeKey = async (licenseKey: string) => {
     if (!confirm(`Revoke ${licenseKey}? This cannot be undone.`)) return;
-    await fetch("/api/console/issue", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json", "x-admin-secret": secret },
-      body: JSON.stringify({ licenseKey }),
-    });
-    loadLicenses();
+    try {
+      const res = await fetch("/api/console/issue", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", "x-admin-secret": secret },
+        body: JSON.stringify({ licenseKey }),
+      });
+      if (res.ok) await loadLicenses();
+      else setIssueError('Revoke failed. Refresh and try again.');
+    } catch { setIssueError("Network error — please try again."); }
   };
 
   const deleteKey = async (licenseKey: string) => {
     if (!confirm(`Permanently delete ${licenseKey}? This removes the key entirely and cannot be undone.`)) return;
-    await fetch("/api/console/licenses", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json", "x-admin-secret": secret },
-      body: JSON.stringify({ licenseKey }),
-    });
-    setLicenses(prev => prev.filter(l => l.license_key !== licenseKey));
+    try {
+      const res = await fetch("/api/console/licenses", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", "x-admin-secret": secret },
+        body: JSON.stringify({ licenseKey }),
+      });
+      if (res.ok) setLicenses(prev => prev.filter(l => l.license_key !== licenseKey));
+      else setIssueError('Delete failed. Refresh and try again.');
+    } catch { setIssueError("Network error — please try again."); }
   };
 
   const copyKey = (key: string) => {
     navigator.clipboard.writeText(key).catch(() => {});
     setCopied(key);
-    setTimeout(() => setCopied(""), 2000);
+    if (copyKeyTimerRef.current) clearTimeout(copyKeyTimerRef.current);
+    copyKeyTimerRef.current = setTimeout(() => setCopied(""), 2000);
   };
 
   if (!unlocked) return <LockScreen onUnlock={handleUnlock} />;

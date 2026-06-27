@@ -211,12 +211,12 @@ function FaqModal({ onClose }: { onClose: () => void }) {
               <div className="faq-section">
                 <div className="faq-section-title">FuelTech AI Console Connect — Overview</div>
                 <p>Console Connect is a free Windows desktop application included with any FuelTech AI Pro subscription. It provides the same RS-232 serial connection as the browser-based Direct Connect page, plus additional features that require a native app: Remote Session, offline PDF saving, and more reliable port handling on older hardware.</p>
-                <p style={{ marginTop: 10 }}>Download the installer from the landing page or your Account page (<strong>My Account → Download Console App</strong>). The current version is <strong>v1.0.46</strong>.</p>
+                <p style={{ marginTop: 10 }}>Download the installer from the landing page or your Account page (<strong>My Account → Download Console App</strong>). The current version is <strong>v1.0.49</strong>.</p>
               </div>
 
               <div className="faq-section">
                 <div className="faq-section-title">Installation</div>
-                {step(1, <>Download <strong>FuelTech AI Console Connect Setup 1.0.46.exe</strong> from your Account page or the main website.</>)}
+                {step(1, <>Download <strong>FuelTech AI Console Connect Setup 1.0.49.exe</strong> from your Account page or the main website.</>)}
                 {step(2, 'Run the installer. Windows SmartScreen may warn you — click "More info" then "Run anyway." The app is signed but may not yet have enough install history to avoid the warning.')}
                 {step(3, 'Click through the installer prompts. The app installs to your user profile — no admin rights required.')}
                 {step(4, 'Launch the app from the Start Menu or Desktop shortcut.')}
@@ -424,6 +424,7 @@ interface SourceDoc {
 }
 
 interface Message {
+  id?: string;
   role: 'user' | 'assistant';
   content: string;
   citations?: string[];
@@ -454,7 +455,9 @@ function compressImage(file: File): Promise<PendingImage> {
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
-      canvas.getContext('2d')!.drawImage(img, 0, 0, width, height);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { reject(new Error('Canvas context unavailable')); return; }
+      ctx.drawImage(img, 0, 0, width, height);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       resolve({ base64: dataUrl.split(',')[1], mediaType: 'image/jpeg', preview: dataUrl });
     };
@@ -463,10 +466,40 @@ function compressImage(file: File): Promise<PendingImage> {
   });
 }
 
-const HISTORY_KEY = 'ft_chat_history';
-const GUIDED_KEY  = 'ft_guided_mode';
-const LANG_KEY    = 'ft_lang';
-const MAX_STORED  = 60;
+const HISTORY_KEY      = 'ft_chat_history';
+const GUIDED_KEY       = 'ft_guided_mode';
+const LANG_KEY         = 'ft_lang';
+const JURISDICTION_KEY = 'ft_jurisdiction';
+const MAX_STORED       = 60;
+
+const US_STATES: { abbr: string; name: string }[] = [
+  { abbr: 'AL', name: 'Alabama' },       { abbr: 'AK', name: 'Alaska' },
+  { abbr: 'AZ', name: 'Arizona' },       { abbr: 'AR', name: 'Arkansas' },
+  { abbr: 'CA', name: 'California' },    { abbr: 'CO', name: 'Colorado' },
+  { abbr: 'CT', name: 'Connecticut' },   { abbr: 'DE', name: 'Delaware' },
+  { abbr: 'DC', name: 'D.C.' },          { abbr: 'FL', name: 'Florida' },
+  { abbr: 'GA', name: 'Georgia' },       { abbr: 'HI', name: 'Hawaii' },
+  { abbr: 'ID', name: 'Idaho' },         { abbr: 'IL', name: 'Illinois' },
+  { abbr: 'IN', name: 'Indiana' },       { abbr: 'IA', name: 'Iowa' },
+  { abbr: 'KS', name: 'Kansas' },        { abbr: 'KY', name: 'Kentucky' },
+  { abbr: 'LA', name: 'Louisiana' },     { abbr: 'ME', name: 'Maine' },
+  { abbr: 'MD', name: 'Maryland' },      { abbr: 'MA', name: 'Massachusetts' },
+  { abbr: 'MI', name: 'Michigan' },      { abbr: 'MN', name: 'Minnesota' },
+  { abbr: 'MS', name: 'Mississippi' },   { abbr: 'MO', name: 'Missouri' },
+  { abbr: 'MT', name: 'Montana' },       { abbr: 'NE', name: 'Nebraska' },
+  { abbr: 'NV', name: 'Nevada' },        { abbr: 'NH', name: 'New Hampshire' },
+  { abbr: 'NJ', name: 'New Jersey' },    { abbr: 'NM', name: 'New Mexico' },
+  { abbr: 'NY', name: 'New York' },      { abbr: 'NC', name: 'North Carolina' },
+  { abbr: 'ND', name: 'North Dakota' },  { abbr: 'OH', name: 'Ohio' },
+  { abbr: 'OK', name: 'Oklahoma' },      { abbr: 'OR', name: 'Oregon' },
+  { abbr: 'PA', name: 'Pennsylvania' },  { abbr: 'RI', name: 'Rhode Island' },
+  { abbr: 'SC', name: 'South Carolina' },{ abbr: 'SD', name: 'South Dakota' },
+  { abbr: 'TN', name: 'Tennessee' },     { abbr: 'TX', name: 'Texas' },
+  { abbr: 'UT', name: 'Utah' },          { abbr: 'VT', name: 'Vermont' },
+  { abbr: 'VA', name: 'Virginia' },      { abbr: 'WA', name: 'Washington' },
+  { abbr: 'WV', name: 'West Virginia' }, { abbr: 'WI', name: 'Wisconsin' },
+  { abbr: 'WY', name: 'Wyoming' },
+];
 
 
 function loadHistory(): Message[] {
@@ -488,7 +521,7 @@ function saveHistory(msgs: Message[]) {
     const toSave = msgs
       .filter((m) => !m.streaming)
       .slice(-MAX_STORED)
-      .map((m) => ({ role: m.role, content: m.content, docs: m.docs, figures: m.figures }));
+      .map((m) => ({ id: m.id, role: m.role, content: m.content, docs: m.docs, figures: m.figures }));
     localStorage.setItem(HISTORY_KEY, JSON.stringify(toSave));
   } catch { /* storage full — skip */ }
 }
@@ -547,35 +580,45 @@ export default function ChatPage() {
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [lang, setLang] = useState<'en' | 'es'>('en');
+  const [jurisdiction, setJurisdiction] = useState('');
   const [showMore, setShowMore] = useState(false);
   const messagesEndRef  = useRef<HTMLDivElement>(null);
   const inputRef        = useRef<HTMLInputElement>(null);
   const modelSectionRef = useRef<HTMLDivElement>(null);
   const imageInputRef   = useRef<HTMLInputElement>(null);
+  const chatAbortRef    = useRef<AbortController | null>(null);
 
   // Hydrate from localStorage after first render
   useEffect(() => {
+    const controller = new AbortController();
     const saved = loadHistory();
     if (saved.length > 0) setMessages(saved);
     const savedGuided = localStorage.getItem(GUIDED_KEY);
     if (savedGuided === 'true') setGuidedMode(true);
-    fetch('/api/auth/me')
+    const savedTheme = localStorage.getItem('ft_theme') as 'dark' | 'light' | null;
+    if (savedTheme) {
+      setTheme(savedTheme);
+      document.documentElement.setAttribute('data-theme', savedTheme === 'light' ? 'light' : '');
+    }
+    const savedLang = localStorage.getItem(LANG_KEY) as 'en' | 'es' | null;
+    if (savedLang) setLang(savedLang);
+    const savedJurisdiction = localStorage.getItem(JURISDICTION_KEY);
+    if (savedJurisdiction) setJurisdiction(savedJurisdiction);
+    fetch('/api/auth/me', { signal: controller.signal })
       .then(r => r.json())
       .then(d => {
+        if (controller.signal.aborted) return;
         if (d.username) {
           setUsername(d.username);
+          setHydrated(true);
         } else if (d.expired) {
           window.location.href = '/expired';
         } else {
           window.location.href = '/login';
         }
       })
-      .catch(() => { window.location.href = '/login'; });
-    const savedTheme = localStorage.getItem('ft_theme') as 'dark' | 'light' | null;
-    if (savedTheme) setTheme(savedTheme);
-    const savedLang = localStorage.getItem(LANG_KEY) as 'en' | 'es' | null;
-    if (savedLang) setLang(savedLang);
-    setHydrated(true);
+      .catch((e) => { if (e?.name !== 'AbortError') window.location.href = '/login'; });
+    return () => { controller.abort(); chatAbortRef.current?.abort(); };
   }, []);
 
   // Persist messages whenever they change (after hydration)
@@ -596,34 +639,44 @@ export default function ChatPage() {
     localStorage.setItem(LANG_KEY, lang);
   }, [lang, hydrated]);
 
+  // Persist jurisdiction preference
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(JURISDICTION_KEY, jurisdiction);
+  }, [jurisdiction, hydrated]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   const sendMessage = async (question: string) => {
     if ((!question.trim() && !pendingImage) || loading) return;
-    const history = messages.map(({ role, content }) => ({ role, content }));
+    const history = messages.filter(m => !m.streaming).slice(-21, -1).map(({ role, content }) => ({ role, content }));
     const image = pendingImage;
 
     setMessages((prev) => [
       ...prev,
-      { role: 'user', content: question, imagePreview: image?.preview },
-      { role: 'assistant', content: '', streaming: true },
+      { id: crypto.randomUUID(), role: 'user', content: question, imagePreview: image?.preview },
+      { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true },
     ]);
     setInput('');
     setPendingImage(null);
     if (imageInputRef.current) imageInputRef.current.value = '';
     setLoading(true);
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = new AbortController();
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: chatAbortRef.current.signal,
         body: JSON.stringify({
           message: question || 'Please analyze this image.',
           history,
           guidedMode,
           lang,
+          ...(jurisdiction ? { jurisdiction } : {}),
           ...(image ? { imageBase64: image.base64, imageMediaType: image.mediaType } : {}),
         }),
       });
@@ -688,9 +741,9 @@ export default function ChatPage() {
         const next = [...prev];
         const last = next[next.length - 1];
         if (last?.role === 'assistant') {
-          next[next.length - 1] = { role: 'assistant', content: errorText, streaming: false };
+          next[next.length - 1] = { ...last, content: errorText, streaming: false };
         } else {
-          next.push({ role: 'assistant', content: errorText });
+          next.push({ id: crypto.randomUUID(), role: 'assistant', content: errorText });
         }
         return next;
       });
@@ -728,7 +781,7 @@ export default function ChatPage() {
       inputRef.current?.focus();
       setTimeout(() => {
         if (inputRef.current) {
-          const pos = text.indexOf('  mean') + 1;
+          const pos = text.indexOf('  ') + 1;
           inputRef.current.setSelectionRange(pos, pos);
         }
       }, 0);
@@ -832,6 +885,20 @@ export default function ChatPage() {
                   <span>{lang === 'en' ? 'EN' : 'ES'}</span>
                   {lang === 'en' ? ' → Español' : ' → English'}
                 </button>
+                <div className="chat-more-item" style={{ padding: '6px 10px' }} onClick={(e) => e.stopPropagation()}>
+                  <div style={{ fontSize: 11, color: '#64748b', marginBottom: 5 }}>📍 State regulations</div>
+                  <select
+                    value={jurisdiction}
+                    onChange={(e) => setJurisdiction(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6, color: jurisdiction ? '#22d3ee' : '#94a3b8', fontSize: 13, padding: '5px 8px', cursor: 'pointer', outline: 'none' }}
+                  >
+                    <option value="">None — federal only (40 CFR 280)</option>
+                    {US_STATES.map((s) => (
+                      <option key={s.abbr} value={s.abbr}>{s.abbr} — {s.name}</option>
+                    ))}
+                  </select>
+                </div>
                 <Link href="/account" className="chat-more-item chat-more-link">
                   🔑 My Account &amp; License
                 </Link>
@@ -936,7 +1003,7 @@ export default function ChatPage() {
         {messages.length > 0 && (
           <div className="chat-messages">
             {messages.map((msg, idx) => (
-              <ChatBubble key={idx} message={msg} figures={msg.figures} username={username} />
+              <ChatBubble key={msg.id ?? String(idx)} message={msg} figures={msg.figures} username={username} />
             ))}
           </div>
         )}
@@ -949,6 +1016,12 @@ export default function ChatPage() {
           <div className="guided-mode-banner">
             <Footprints size={13} />
             <span>Guided mode — the assistant will walk you through one step at a time</span>
+          </div>
+        )}
+        {jurisdiction && (
+          <div className="guided-mode-banner" style={{ justifyContent: 'space-between' }}>
+            <span>📍 {US_STATES.find(s => s.abbr === jurisdiction)?.name ?? jurisdiction} — state UST regulations active</span>
+            <button type="button" onClick={() => setJurisdiction('')} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}>✕</button>
           </div>
         )}
         {selectedModel && (
@@ -978,7 +1051,6 @@ export default function ChatPage() {
             ref={imageInputRef}
             type="file"
             accept="image/*"
-            capture="environment"
             style={{ display: 'none' }}
             onChange={handleImageSelect}
           />

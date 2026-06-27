@@ -97,7 +97,7 @@ export async function GET(req: Request) {
   if (!token || !(await verifySession(token))) {
     return new Response("Unauthorized", { status: 401 });
   }
-  const memberInfo = getMembershipStatus(token);
+  const memberInfo = await getMembershipStatus(token);
   if (!memberInfo || memberInfo.membershipExpired) {
     return new Response("Subscription expired", { status: 403 });
   }

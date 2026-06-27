@@ -29,7 +29,10 @@ export async function POST(req: Request) {
   };
 
   const output = (body.output ?? "").slice(-30_000);
-  const connStatus = body.connStatus ?? "connected";
+  const VALID_STATUSES = ['connected', 'disconnected', 'connecting', 'error'];
+  const connStatus = VALID_STATUSES.includes(body.connStatus ?? '')
+    ? body.connStatus as string
+    : 'disconnected';
 
   try {
     await sql`
@@ -61,7 +64,7 @@ export async function GET() {
   if (!token || !(await verifySession(token))) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const info = getMembershipStatus(token);
+  const info = await getMembershipStatus(token);
   if (!info || info.membershipExpired) {
     return Response.json({ error: "Subscription expired" }, { status: 403 });
   }
@@ -77,10 +80,14 @@ export async function GET() {
     if (result.rows.length === 0) return Response.json({ noSession: true });
 
     const row = result.rows[0];
+    const updatedAt = row.updated_at as string;
+    const ageMs = Date.now() - new Date(updatedAt).getTime();
+    const stale = ageMs > 5 * 60 * 1000; // no push in 5+ minutes
     return Response.json({
       output:     row.output as string,
       connStatus: row.conn_status as string,
-      updatedAt:  row.updated_at as string,
+      updatedAt,
+      stale,
     });
   } catch {
     return Response.json({ error: "Database error" }, { status: 500 });

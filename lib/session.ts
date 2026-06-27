@@ -6,7 +6,9 @@ export const COOKIE_NAME = "ft_session";
 export const MAX_AGE_SECONDS = 8 * 60 * 60; // 8 hours
 
 function secret(): string {
-  return process.env.AUTH_SECRET ?? "dev-insecure-secret-change-in-production";
+  const s = process.env.AUTH_SECRET;
+  if (!s) throw new Error("AUTH_SECRET env var is required");
+  return s;
 }
 
 async function getKey(): Promise<CryptoKey> {
@@ -63,26 +65,30 @@ export async function verifySession(token: string): Promise<boolean> {
     );
     if (!valid) return false;
     const payload = new TextDecoder().decode(payloadBytes);
-    const parts = payload.split(":");
-    // parts[0]=username, parts[1]=sessionExpiresAt, parts[2]=membershipExpiresAt
-    const sessionExpiry = parseInt(parts[1] ?? "0", 10);
+    // Parse from right so usernames containing ':' don't corrupt the field indices
+    const lastColon = payload.lastIndexOf(':');
+    const prevColon = payload.lastIndexOf(':', lastColon - 1);
+    const sessionExpiry = parseInt(payload.slice(prevColon + 1, lastColon), 10);
     return Date.now() < sessionExpiry;
   } catch {
     return false;
   }
 }
 
-// Decode membership status from a verified token — no HMAC re-check, call after verifySession.
-// Returns null if token is malformed.
-export function getMembershipStatus(token: string): { username: string; membershipExpired: boolean } | null {
+// Decode membership status — re-verifies the HMAC so it is safe to call standalone.
+// Returns null if token is invalid, expired, or malformed.
+export async function getMembershipStatus(token: string): Promise<{ username: string; membershipExpired: boolean } | null> {
   try {
+    const valid = await verifySession(token);
+    if (!valid) return null;
     const dot = token.lastIndexOf(".");
     if (dot === -1) return null;
     const payloadBytes = decodeBase64Url(token.slice(0, dot));
     const payload = new TextDecoder().decode(payloadBytes);
-    const parts = payload.split(":");
-    const username = parts[0];
-    const membershipExpiresAt = parts.length >= 3 ? parseInt(parts[2], 10) : 0;
+    const lastColon = payload.lastIndexOf(':');
+    const prevColon = payload.lastIndexOf(':', lastColon - 1);
+    const username = payload.slice(0, prevColon);
+    const membershipExpiresAt = parseInt(payload.slice(lastColon + 1), 10) || 0;
     // 0 = no expiry
     const membershipExpired = membershipExpiresAt > 0 && Date.now() > membershipExpiresAt;
     return { username, membershipExpired };

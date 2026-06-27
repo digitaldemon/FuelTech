@@ -53,9 +53,12 @@ export async function POST(req: Request) {
       setSessionCookie(res, token);
       return res;
     }
-  } catch {
+  } catch (e) {
+    console.error('Login error:', e);
     return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 
+  // Run dummy bcrypt to prevent timing-based username enumeration
+  await bcrypt.compare(password, '$2b$12$KIGDmmRF/Z5NsWfFH.hN0ekjb61s0o5b7YZLTh18JT1GGMTvJ5Gmm').catch(() => {});
   return NextResponse.json({ error: "Invalid username or password." }, { status: 401 });
 }

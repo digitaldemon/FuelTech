@@ -250,6 +250,85 @@ const SPANISH_ADDENDUM = `
 ## IDIOMA — ESPAÑOL
 El técnico ha seleccionado respuestas en español. Responde SIEMPRE en español, sin importar el idioma de la pregunta. Mantén todos los términos técnicos (nombres de equipos, códigos de error, rutas de menú) exactamente como aparecen en los manuales de fábrica —en inglés—. Traduce todas las explicaciones, instrucciones y comentarios al español.`;
 
+// ── Jurisdiction regulatory data ──────────────────────────────────────────────
+const STATE_REGS: Record<string, { name: string; agency: string; regs: string }> = {
+  AK: { name: 'Alaska',               agency: 'ADEC',         regs: '18 AAC 78 — ADEC UST Program. Follows EPA 40 CFR 280.' },
+  AL: { name: 'Alabama',              agency: 'ADEM',         regs: 'ADEM Admin. Code R.335-6-15 — closely follows EPA 40 CFR 280.' },
+  AR: { name: 'Arkansas',             agency: 'ADEQ',         regs: 'Ark. Code §8-7-801; ADEQ UST Program — closely follows EPA 40 CFR 280.' },
+  AZ: { name: 'Arizona',              agency: 'ADEQ',         regs: 'ARS §49-1001 et seq.; ADEQ UST Section — closely tracks EPA 40 CFR 280; LUST corrective action under ADEQ.' },
+  CA: { name: 'California',           agency: 'SWRCB / CUPA', regs: 'Health & Safety Code §25280–25299.8; 23 CCR §§2610–2660; 27 CCR §15000–16100. CARB Phase I/II EVR required on all dispensing equipment. Secondary containment performance standard: 0.1 gph. Annual line testing required. CUPA (Certified Unified Program Agency) is the local enforcement authority — requirements vary by county.' },
+  CO: { name: 'Colorado',             agency: 'CDPHE',        regs: '6 CCR 1007-2, Part 264 — CDPHE UST Program. Closely tracks EPA 40 CFR 280; Colorado-specific release detection and corrective action requirements apply.' },
+  CT: { name: 'Connecticut',          agency: 'CT DEEP',      regs: 'CGS §22a-449(d); RCSA §22a-449(d)-1 through -107. Enhanced release detection and secondary containment requirements exceed federal minimums.' },
+  DC: { name: 'District of Columbia', agency: 'DOEE',         regs: '20 DCMR Ch. 56 — DOEE UST Program. Closely tracks EPA 40 CFR 280.' },
+  DE: { name: 'Delaware',             agency: 'DNREC',        regs: '7 DE Admin. Code §1302 — DNREC UST Program. Closely tracks EPA 40 CFR 280.' },
+  FL: { name: 'Florida',              agency: 'FDEP',         regs: '62-761 FAC (Petroleum Contamination) and 62-762 FAC (UST Systems). Secondary containment required since 1991. Monthly monitoring required. FDEP Discharge Reporting Rules and cleanup criteria are often stricter than federal minimums.' },
+  GA: { name: 'Georgia',              agency: 'GA EPD',       regs: 'OCGA §12-13-1 et seq. — GA EPD UST Management Program. Closely follows EPA 40 CFR 280.' },
+  HI: { name: 'Hawaii',               agency: 'HDOH',         regs: 'HAR §11-281 — Hawaii UST Program. Closely tracks EPA 40 CFR 280.' },
+  IA: { name: 'Iowa',                 agency: 'Iowa DNR',     regs: '567 IAC Ch. 135 — Iowa UST Program. Closely tracks EPA 40 CFR 280.' },
+  ID: { name: 'Idaho',                agency: 'IDEQ',         regs: 'IDAPA 58.01.07 — Idaho DEQ UST Program. Closely follows EPA 40 CFR 280.' },
+  IL: { name: 'Illinois',             agency: 'OSFM / IEPA',  regs: '41 Ill. Admin. Code Part 170 (OSFM — installation/equipment) and 35 Ill. Admin. Code Part 734 (IEPA — LUST corrective action). UST oversight is split between OSFM and IEPA.' },
+  IN: { name: 'Indiana',              agency: 'IDEM',         regs: '329 IAC 9 — IDEM UST Program. Closely follows EPA 40 CFR 280.' },
+  KS: { name: 'Kansas',               agency: 'KDHE',         regs: 'KAR 28-44 — KDHE Bureau of Environmental Remediation. Closely follows EPA 40 CFR 280.' },
+  KY: { name: 'Kentucky',             agency: 'KDEP',         regs: '401 KAR Ch. 42 — KDEP UST Branch. Closely follows EPA 40 CFR 280.' },
+  LA: { name: 'Louisiana',            agency: 'LDEQ',         regs: 'LAC 33:XI — LDEQ UST Program. Closely follows EPA 40 CFR 280.' },
+  MA: { name: 'Massachusetts',        agency: 'MassDEP',      regs: '310 CMR 80.00 (UST) and 310 CMR 40.00 (MCP). Massachusetts Contingency Plan (MCP) governs cleanup and is often stricter than EPA standards. Enhanced release prevention requirements apply.' },
+  MD: { name: 'Maryland',             agency: 'MDE',          regs: 'COMAR 26.10.01–26.10.08 — MDE Oil Control Program. Enhanced secondary containment and spill bucket testing; annual spill containment and overfill device inspections required.' },
+  ME: { name: 'Maine',                agency: 'MEDEP',        regs: '06-096 CMR Ch. 691 — Maine UST Program. Closely tracks EPA 40 CFR 280.' },
+  MI: { name: 'Michigan',             agency: 'EGLE',         regs: 'MCL 324.21501 et seq.; R 29.2001 et seq. — EGLE UST Program. Enhanced facility inspection requirements and release reporting timelines apply.' },
+  MN: { name: 'Minnesota',            agency: 'MPCA',         regs: 'Minn. Stat. §115C; Minn. R. 7150. Stricter than federal — 30-day monitoring, annual line testing, SIR or ATG with monthly printouts required. MPCA Petroleum Remediation Program.' },
+  MO: { name: 'Missouri',             agency: 'MDNR',         regs: '10 CSR 26-2.010 et seq. — MDNR UST Program. Closely tracks EPA 40 CFR 280; Petroleum Storage Tank Insurance Fund (PSTIF) available for eligible cleanup costs.' },
+  MS: { name: 'Mississippi',          agency: 'MDEQ',         regs: 'Miss. Code §49-17-401 et seq. — MDEQ UST Program. Closely follows EPA 40 CFR 280.' },
+  MT: { name: 'Montana',              agency: 'MT DEQ',       regs: 'ARM 17.56.101 et seq. — Montana UST Program. Closely follows EPA 40 CFR 280.' },
+  NC: { name: 'North Carolina',       agency: 'NCDEQ',        regs: '15A NCAC 02N .0100 et seq. — NCDEQ UST Section. Closely follows EPA 40 CFR 280; state-specific risk-based corrective action criteria apply.' },
+  ND: { name: 'North Dakota',         agency: 'NDDH',         regs: 'N.D. Admin. Code Art. 33-24 — ND UST Program. Closely tracks EPA 40 CFR 280.' },
+  NE: { name: 'Nebraska',             agency: 'NDEE',         regs: '178 NAC 12 — Nebraska UST Program. Closely tracks EPA 40 CFR 280.' },
+  NH: { name: 'New Hampshire',        agency: 'NHDES',        regs: 'RSA 146-C; Env-Or 400 — NHDES UST Program. Enhanced groundwater protection standards apply.' },
+  NJ: { name: 'New Jersey',           agency: 'NJDEP',        regs: 'N.J.A.C. 7:14B. Stricter than federal — mandatory secondary containment on all USTs including existing tanks, annual line leak testing, enhanced release detection. NJDEP requires more frequent monitoring and reporting than EPA 40 CFR 280 minimums.' },
+  NM: { name: 'New Mexico',           agency: 'NMED',         regs: '20 NMAC 5.1 — New Mexico Petroleum Storage Tank Bureau. Closely follows EPA 40 CFR 280.' },
+  NV: { name: 'Nevada',               agency: 'NDEP',         regs: 'NRS 459.740–459.999; NAC 459.900 et seq. — NDEP Bureau of Corrective Actions. Closely tracks EPA 40 CFR 280.' },
+  NY: { name: 'New York',             agency: 'NYSDEC',       regs: '6 NYCRR Part 613 (effective 2015). Stricter than federal — spill prevention equipment testing every 3 years, overfill protection required, annual release detection certifications. Petroleum Bulk Storage (PBS) registration required. New York City may have additional Local Law requirements.' },
+  OH: { name: 'Ohio',                 agency: 'BUSTR',        regs: 'OAC Ch. 1301:7-9 — BUSTR (Bureau of Underground Storage Tank Regulations) under Ohio Commerce Dept. Detailed release detection and SIR requirements. BUSTR conducts facility inspections — maintain an updated facility record.' },
+  OK: { name: 'Oklahoma',             agency: 'OK DEQ',       regs: 'OAC 252:652 — Oklahoma UST Division. Closely follows EPA 40 CFR 280.' },
+  OR: { name: 'Oregon',               agency: 'OR DEQ',       regs: 'OAR 340-150 — Oregon UST Program. Enhanced secondary containment requirements; cathodic protection testing required every 3 years.' },
+  PA: { name: 'Pennsylvania',         agency: 'PADEP',        regs: '25 Pa. Code Ch. 245 — PADEP USTMO. Closely tracks EPA 40 CFR 280; corrective action governed by Act 2 (Land Recycling Program).' },
+  RI: { name: 'Rhode Island',         agency: 'RIDEM',        regs: 'RIGL §46-12.3 — RIDEM UST Program. Closely tracks EPA 40 CFR 280.' },
+  SC: { name: 'South Carolina',       agency: 'SCDHEC',       regs: 'S.C. Code §44-2-10 et seq.; R.61-92 — SCDHEC UST Program. Closely follows EPA 40 CFR 280.' },
+  SD: { name: 'South Dakota',         agency: 'DENR',         regs: 'ARSD 74:36:07 — SD UST Program. Closely tracks EPA 40 CFR 280.' },
+  TN: { name: 'Tennessee',            agency: 'TDEC',         regs: 'T.C.A. §68-215-101 et seq. — TDEC UST Program. Closely follows EPA 40 CFR 280.' },
+  TX: { name: 'Texas',                agency: 'TCEQ',         regs: '30 TAC Chapter 334 — TCEQ Underground Storage Tanks program. Release detection at 30-day intervals. Secondary containment required for new and upgraded installations. Annual line testing required. Tier II annual reports required. TCEQ LPST (Leaking Petroleum Storage Tank) guidance governs corrective action. Phase I/II ESAs follow ASTM E1527-21.' },
+  UT: { name: 'Utah',                 agency: 'DERR',         regs: 'UAC R311-200 et seq. — DERR UST Program. Closely tracks EPA 40 CFR 280.' },
+  VA: { name: 'Virginia',             agency: 'VDEQ',         regs: '9 VAC 25-580-10 et seq. — Virginia UST Regulations. Closely tracks EPA 40 CFR 280; Virginia Risk-Based Corrective Action (VRBCA) applies for petroleum cleanups.' },
+  VT: { name: 'Vermont',              agency: 'ANR',          regs: 'Vermont Environmental Protection Rules Ch. 13 — Petroleum Storage Tank Rules. Enhanced secondary containment and release detection requirements for new and upgraded tanks.' },
+  WA: { name: 'Washington',           agency: 'Ecology',      regs: 'WAC 173-360A (effective 2018). Stricter than federal — enhanced secondary containment, annual spill bucket testing required, monthly monitoring records required. 3-year facility inspection cycles required.' },
+  WI: { name: 'Wisconsin',            agency: 'WDNR / DSPS',  regs: 'Wis. Admin. Code ATCP Ch. 93 (DSPS — installation) and NR Ch. 700-754 (WDNR — corrective action). Detailed release detection requirements; NR 700 governs environmental remediation.' },
+  WV: { name: 'West Virginia',        agency: 'WVDEP',        regs: '33 CSR 30 — WV UST Program. Closely tracks EPA 40 CFR 280.' },
+  WY: { name: 'Wyoming',              agency: 'WDEQ',         regs: 'Wyoming Solid Waste and Hazardous Waste Rules Ch. 21 — WDEQ UST Program. Closely follows EPA 40 CFR 280.' },
+};
+
+function buildJurisdictionAddendum(stateAbbr: string): string {
+  const st = STATE_REGS[stateAbbr.toUpperCase()];
+  const stateDisplay = st ? `${st.name} (${stateAbbr.toUpperCase()})` : stateAbbr;
+  const agencyLine = st ? `\nPrimary enforcement agency: **${st.agency}**` : '';
+  const regDetails = st?.regs ?? `Follow EPA 40 CFR Part 280 as the minimum federal standard. Verify current requirements with your state environmental agency — many states have requirements that exceed federal minimums.`;
+
+  return `
+
+## JURISDICTION — ${stateDisplay}
+
+The technician is working in ${stateDisplay}. Apply the following regulatory context to all compliance-related answers:
+
+**Federal baseline (EPA 40 CFR Part 280):** Establishes national minimum standards for release detection, spill/overfill protection, corrosion protection, financial responsibility, and corrective action. States may only adopt requirements at least as stringent.${agencyLine}
+
+**State-specific requirements:**
+${regDetails}
+
+**How to apply this context:**
+- For questions about alarm reporting timelines, release detection methods, corrective action requirements, or regulatory documentation — apply the applicable state standard, not just the federal minimum.
+- Cite specific rule numbers (e.g., "30 TAC §334.50" or "40 CFR §280.43") when referencing any requirement so the technician can verify directly.
+- If a state standard is stricter than the federal floor, always apply the stricter requirement.
+- If you don't have state-specific regulatory documentation, clearly state: "I don't have [state] regulatory documentation. Based on EPA 40 CFR 280 and general knowledge: [answer]. Verify current requirements with [agency]."`;
+}
+
 // ── Main route ────────────────────────────────────────────────────────────────
 export async function POST(req: Request) {
   // Session auth — only logged-in subscribers may consume API tokens
@@ -259,22 +338,30 @@ export async function POST(req: Request) {
   if (!token || !(await verifySession(token))) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const memberInfo = getMembershipStatus(token);
+  const memberInfo = await getMembershipStatus(token);
   if (!memberInfo || memberInfo.membershipExpired) {
     return Response.json({ error: "Subscription expired", expired: true }, { status: 403 });
   }
 
-  const { message, history = [], guidedMode = false, imageBase64, imageMediaType, lang = "en" } = (await req.json().catch(() => ({}))) as {
+  const { message, history = [], guidedMode = false, imageBase64, imageMediaType, lang = "en", jurisdiction } = (await req.json().catch(() => ({}))) as {
     message?: string;
     history?: Array<{ role: "user" | "assistant"; content: string }>;
     guidedMode?: boolean;
     imageBase64?: string;
     imageMediaType?: string;
     lang?: "en" | "es";
+    jurisdiction?: string;
   };
 
   if (!message?.trim()) {
     return Response.json({ error: "No message provided." }, { status: 400 });
+  }
+  if (imageBase64 && imageBase64.length > 5_000_000) {
+    return Response.json({ error: 'Image too large (max ~3.5 MB).' }, { status: 413 });
+  }
+  const ALLOWED_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+  if (imageMediaType && !ALLOWED_MEDIA_TYPES.has(imageMediaType)) {
+    return Response.json({ error: "Invalid image media type." }, { status: 400 });
   }
 
   // Step 1: Generate HyDE + query expansions + embed original, all in parallel
@@ -286,25 +373,33 @@ export async function POST(req: Request) {
 
   // Step 2: Embed HyDE doc + all expanded queries in parallel
   const [hydeEmbRes, ...expandedEmbResults] = await Promise.all([
-    openai.embeddings.create({ model: "text-embedding-3-small", input: hydeText }),
+    openai.embeddings.create({ model: "text-embedding-3-small", input: hydeText.trim() || message }),
     ...expandedQueries.map((q) =>
       openai.embeddings.create({ model: "text-embedding-3-small", input: q })
     ),
   ]);
 
   // Step 3: Fuse original + HyDE embeddings, then re-normalize (improves recall)
+  if (!origEmbRes.data.length || !hydeEmbRes.data.length) {
+    return Response.json({ error: 'Embedding service unavailable — please try again.' }, { status: 502 });
+  }
   const origEmb = origEmbRes.data[0].embedding as number[];
   const hydeEmb = hydeEmbRes.data[0].embedding as number[];
   const fused = origEmb.map((v, i) => (v + hydeEmb[i]) / 2);
   const norm = Math.sqrt(fused.reduce((s, v) => s + v * v, 0));
+  if (norm === 0) return Response.json({ error: 'Embedding error — please rephrase your question.' }, { status: 502 });
   const searchEmbStr = JSON.stringify(fused.map((v) => v / norm));
 
-  // Build search strings for each expanded query
-  const expandedEmbStrs = expandedEmbResults.map((r) => {
-    const emb = r.data[0].embedding as number[];
-    const n = Math.sqrt(emb.reduce((s, v) => s + v * v, 0));
-    return JSON.stringify(emb.map((v) => v / n));
-  });
+  // Build search strings for each expanded query (guard against empty data or zero-norm vectors)
+  const expandedEmbStrs = expandedEmbResults
+    .filter(r => r.data.length > 0)
+    .map(r => {
+      const emb = r.data[0].embedding as number[];
+      const n = Math.sqrt(emb.reduce((s, v) => s + v * v, 0));
+      if (n === 0) return null;
+      return JSON.stringify(emb.map(v => v / n));
+    })
+    .filter((s): s is string => s !== null);
 
   // Step 4: Detect equipment model — used to run a parallel model-boosted search
   const detectedModel = detectEquipmentModel(message);
@@ -421,7 +516,7 @@ export async function POST(req: Request) {
   // Step 9: Web search — only when there are truly no good local results
   const topDistance = Number(semanticRows.rows[0]?.distance ?? 1);
   const hasAnyResults = candidates.length > 0;
-  const shouldWebSearch = !hasAnyResults || topDistance > 0.8;
+  const shouldWebSearch = !hasAnyResults || topDistance > 0.45;
 
   let webResult: { summary: string; urls: string[] } = { summary: "", urls: [] };
   if (shouldWebSearch) {
@@ -577,11 +672,15 @@ export async function POST(req: Request) {
       try {
         let sysPrompt = guidedMode ? SYSTEM_PROMPT + GUIDED_MODE_ADDENDUM : SYSTEM_PROMPT;
         if (lang === "es") sysPrompt += SPANISH_ADDENDUM;
+        // Validate against STATE_REGS keys (2-letter abbr) — prevents prompt injection
+        const rawJurisdiction = (jurisdiction ?? '').trim().toUpperCase();
+        const safeJurisdiction = Object.prototype.hasOwnProperty.call(STATE_REGS, rawJurisdiction) ? rawJurisdiction : '';
+        if (safeJurisdiction) sysPrompt += buildJurisdictionAddendum(safeJurisdiction);
 
         const aiStream = anthropic.messages.stream({
           model: "claude-opus-4-8",
           max_tokens: 20000,
-          thinking: { type: "adaptive" },
+          thinking: { type: "enabled", budget_tokens: 10000 },
           system: sysPrompt,
           messages,
         });
@@ -611,7 +710,7 @@ export async function POST(req: Request) {
       controller.enqueue(
         encoder.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`)
       );
-      controller.close();
+      try { controller.close(); } catch { /* already closed by client cancel */ }
     },
     cancel() {
       pendingAiStream?.abort();

@@ -5,7 +5,7 @@ import { COOKIE_NAME, verifySession, getMembershipStatus } from '../../../lib/se
 async function getUsername(req: Request): Promise<string | null> {
   const token = (await cookies()).get(COOKIE_NAME)?.value ?? '';
   if (!token || !(await verifySession(token))) return null;
-  const info = getMembershipStatus(token);
+  const info = await getMembershipStatus(token);
   if (!info || info.membershipExpired) return null;
   return info.username;
 }
@@ -14,13 +14,19 @@ export async function GET(req: Request) {
   const username = await getUsername(req);
   if (!username) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { rows } = await sql`
-    SELECT id, username, title, body, category, status, created_at
-    FROM suggestions
-    ORDER BY created_at DESC
-    LIMIT 200
-  `;
-  return Response.json({ suggestions: rows });
+  try {
+    const { rows } = await sql`
+      SELECT id, title, body, category, status, created_at,
+             LEFT(username, 3) || REPEAT('*', GREATEST(LENGTH(username) - 3, 0)) AS username
+      FROM suggestions
+      ORDER BY created_at DESC
+      LIMIT 200
+    `;
+    return Response.json({ suggestions: rows });
+  } catch (err) {
+    console.error('suggestions GET:', err);
+    return Response.json({ error: 'Failed to load suggestions' }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request) {
@@ -38,10 +44,15 @@ export async function POST(req: Request) {
 
   if (!title || !text) return Response.json({ error: 'Title and description are required.' }, { status: 400 });
 
-  const { rows } = await sql`
-    INSERT INTO suggestions (username, title, body, category)
-    VALUES (${username}, ${title}, ${text}, ${category})
-    RETURNING id, username, title, body, category, status, created_at
-  `;
-  return Response.json({ suggestion: rows[0] }, { status: 201 });
+  try {
+    const { rows } = await sql`
+      INSERT INTO suggestions (username, title, body, category)
+      VALUES (${username}, ${title}, ${text}, ${category})
+      RETURNING id, username, title, body, category, status, created_at
+    `;
+    return Response.json({ suggestion: rows[0] }, { status: 201 });
+  } catch (err) {
+    console.error('suggestions POST:', err);
+    return Response.json({ error: 'Failed to save suggestion.' }, { status: 500 });
+  }
 }

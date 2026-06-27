@@ -55,6 +55,16 @@ export async function POST(req: Request) {
   if (!safeUsername || !password) {
     return Response.json({ error: "username and password are required" }, { status: 400 });
   }
+  if (password.length < 8) {
+    return Response.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+  }
+
+  if (email) {
+    const dup = await sql`SELECT 1 FROM users WHERE email = ${email} LIMIT 1`;
+    if (dup.rows.length > 0) {
+      return Response.json({ error: "Email already registered" }, { status: 409 });
+    }
+  }
 
   const hash = await bcrypt.hash(password, 12);
   const id = crypto.randomUUID();
@@ -74,7 +84,8 @@ export async function POST(req: Request) {
     if (msg.toLowerCase().includes("unique") || msg.toLowerCase().includes("duplicate")) {
       return Response.json({ error: "Username already exists" }, { status: 409 });
     }
-    return Response.json({ error: msg }, { status: 500 });
+    console.error('create-user DB error:', msg);
+    return Response.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
@@ -106,6 +117,7 @@ export async function PATCH(req: Request) {
 
   const { username, active } = (await req.json().catch(() => ({}))) as { username?: string; active?: boolean };
   if (!username) return Response.json({ error: "username is required" }, { status: 400 });
+  if (typeof active !== 'boolean') return Response.json({ error: "active must be a boolean" }, { status: 400 });
 
   try {
     await sql`UPDATE users SET active = ${active} WHERE username = ${username}`;

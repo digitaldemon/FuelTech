@@ -6,7 +6,7 @@ export async function GET() {
   if (!token || !(await verifySession(token))) {
     return Response.json({ username: null }, { status: 401 });
   }
-  const info = getMembershipStatus(token);
+  const info = await getMembershipStatus(token);
   if (!info) return Response.json({ username: null }, { status: 401 });
   if (info.membershipExpired) {
     return Response.json({ username: null, expired: true }, { status: 403 });

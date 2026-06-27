@@ -8,7 +8,7 @@ export async function GET() {
   if (!token || !(await verifySession(token))) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const info = getMembershipStatus(token);
+  const info = await getMembershipStatus(token);
   if (!info || info.membershipExpired) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }

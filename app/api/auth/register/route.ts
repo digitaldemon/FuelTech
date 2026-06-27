@@ -48,7 +48,8 @@ export async function POST(req: Request) {
   const { email } = body;
   const durationDays = Math.round(Number(body.durationDays ?? 365));
 
-  if (!email || !email.includes("@")) {
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!email || !emailRe.test(email)) {
     return Response.json({ error: "A valid email address is required." }, { status: 400 });
   }
   if (!Number.isFinite(durationDays) || durationDays < 1 || durationDays > 3650) {
@@ -63,7 +64,9 @@ export async function POST(req: Request) {
   const expiresAt  = new Date(expiresIso).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
   let consoleKey = "";
-  try { consoleKey = await issueConsoleKey(baseUsername, expiresIso); } catch { /* non-fatal */ }
+  let consoleKeyError: string | undefined;
+  try { consoleKey = await issueConsoleKey(baseUsername, expiresIso); }
+  catch (e) { consoleKeyError = (e as Error).message; console.error('Console key generation failed:', e); }
 
   for (let attempt = 0; attempt <= 9; attempt++) {
     const username = attempt === 0 ? baseUsername : `${baseUsername}${attempt}`;
@@ -73,7 +76,7 @@ export async function POST(req: Request) {
         VALUES (${id}, ${username}, ${hash}, ${email}, ${expiresIso}, ${consoleKey || null})
       `;
       const emailResult = await sendCredentialsEmail({ to: email, username, password, expiresAt, consoleKey: consoleKey || undefined });
-      return Response.json({ ok: true, username, password, consoleKey, emailSent: emailResult.ok, emailError: emailResult.error });
+      return Response.json({ ok: true, username, password, consoleKey, consoleKeyError, emailSent: emailResult.ok, emailError: emailResult.error });
     } catch (e: unknown) {
       const msg = (e instanceof Error ? e.message : "").toLowerCase();
       if (msg.includes("unique") || msg.includes("duplicate")) continue;

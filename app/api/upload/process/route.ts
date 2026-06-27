@@ -81,11 +81,23 @@ export async function POST(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { url, source = "pei" } = (await req.json()) as {
+  const { url, source: rawSource = "pei" } = (await req.json()) as {
     url: string;
     source?: string;
   };
   if (!url) return Response.json({ error: "url required" }, { status: 400 });
+  const VALID_SOURCES = new Set(["gilbarco", "veeder_root", "pei", "franklin", "dover", "gilbarco_extranet"]);
+  const source = VALID_SOURCES.has(rawSource) ? rawSource : "pei";
+
+  // SSRF guard — only allow Vercel Blob storage URLs (check parsed hostname, not raw string)
+  let parsedUrl: URL;
+  try { parsedUrl = new URL(url); } catch { return Response.json({ error: 'Invalid URL' }, { status: 400 }); }
+  if (
+    parsedUrl.protocol !== 'https:' ||
+    (!parsedUrl.hostname.endsWith('.vercel-blob.com') && !parsedUrl.hostname.endsWith('.public.blob.vercel-storage.com'))
+  ) {
+    return Response.json({ error: 'Invalid URL' }, { status: 400 });
+  }
 
   // Fetch the PDF from Vercel Blob
   let buf: Buffer;
@@ -124,31 +136,38 @@ export async function POST(req: Request) {
 
   await sql`DELETE FROM fuel_tech_docs WHERE url = ${url}`;
 
-  let added = 0;
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = sanitizeText(chunks[i]);
-    if (chunk.split(/\s+/).length < 30) continue;
+  const validChunks = chunks
+    .map((c, i) => ({ index: i, text: sanitizeText(c) }))
+    .filter(c => c.text.split(/\s+/).length >= 30);
 
+  let added = 0;
+  const EMBED_BATCH = 100;
+  for (let b = 0; b < validChunks.length; b += EMBED_BATCH) {
+    const batch = validChunks.slice(b, b + EMBED_BATCH);
     const embRes = await openai.embeddings.create({
       model: "text-embedding-3-small",
-      input: chunk,
+      input: batch.map(c => c.text),
     });
-    const embStr = JSON.stringify(embRes.data[0].embedding);
-    const id = makeId(url, i);
-
-    await sql`
-      INSERT INTO fuel_tech_docs
-        (id, url, title, chunk_text, chunk_index, source, embedding, page_number, model)
-      VALUES
-        (${id}, ${url}, ${sanitizeText(title)}, ${chunk}, ${i},
-         ${source}, ${embStr}::vector, ${0}, ${sanitizeText(model)})
-      ON CONFLICT (id) DO UPDATE
-        SET chunk_text = EXCLUDED.chunk_text,
-            embedding  = EXCLUDED.embedding,
-            title      = EXCLUDED.title,
-            model      = EXCLUDED.model
-    `;
-    added++;
+    for (let j = 0; j < batch.length; j++) {
+      const { index, text: chunk } = batch[j];
+      const embedding = embRes.data[j]?.embedding;
+      if (!embedding) { console.error('Missing embedding for chunk', index); continue; }
+      const embStr = JSON.stringify(embedding);
+      const id = makeId(url, index);
+      await sql`
+        INSERT INTO fuel_tech_docs
+          (id, url, title, chunk_text, chunk_index, source, embedding, page_number, model)
+        VALUES
+          (${id}, ${url}, ${sanitizeText(title)}, ${chunk}, ${index},
+           ${source}, ${embStr}::vector, ${-1}, ${sanitizeText(model)})
+        ON CONFLICT (id) DO UPDATE
+          SET chunk_text = EXCLUDED.chunk_text,
+              embedding  = EXCLUDED.embedding,
+              title      = EXCLUDED.title,
+              model      = EXCLUDED.model
+      `;
+      added++;
+    }
   }
 
   return Response.json({ ok: true, url, title, chunks: added });

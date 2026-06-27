@@ -34,9 +34,13 @@ function PaymentSuccessContent() {
   };
 
   const copy = async (field: "username" | "password" | "appkey", value: string) => {
-    await navigator.clipboard.writeText(value);
-    setCopied(field);
-    setTimeout(() => setCopied(null), 2000);
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(field);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      // Clipboard unavailable — values are displayed on screen for manual copy
+    }
   };
 
   return (
@@ -123,7 +127,7 @@ function PaymentSuccessContent() {
 
 export default function PaymentSuccessPage() {
   return (
-    <Suspense>
+    <Suspense fallback={<div style={{ minHeight: '100vh', background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', fontFamily: 'Inter, sans-serif' }}>Loading…</div>}>
       <PaymentSuccessContent />
     </Suspense>
   );

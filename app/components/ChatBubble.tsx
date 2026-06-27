@@ -81,7 +81,7 @@ export default function ChatBubble({ message, figures, username }: ChatBubblePro
                 <span /><span /><span />
               </span>
             ) : isUser ? (message.content || null) : (
-              <div className="chat-md"><ReactMarkdown>{message.content}</ReactMarkdown></div>
+              <div className="chat-md"><ReactMarkdown components={{ a: ({ href, children }) => <a href={href?.toLowerCase().startsWith('javascript:') ? '#' : href} rel="noopener noreferrer" target="_blank">{children}</a> }}>{message.content}</ReactMarkdown></div>
             )}
           </div>
 
@@ -90,7 +90,7 @@ export default function ChatBubble({ message, figures, username }: ChatBubblePro
               <p className="chat-figures-label">Figures from documentation</p>
               <div className="chat-figures-strip">
                 {figures.map((url, i) => (
-                  <button key={i} className="chat-figure-thumb" onClick={() => setLightbox(url)}>
+                  <button key={url || i} className="chat-figure-thumb" onClick={() => setLightbox(url)}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={url} alt={`Figure ${i + 1}`} />
                   </button>
@@ -103,7 +103,7 @@ export default function ChatBubble({ message, figures, username }: ChatBubblePro
             <div className="chat-sources">
               <ul className="chat-sources-list">
                 {docs.map((doc, i) => (
-                  <li key={i} className="chat-source-item">
+                  <li key={doc.url || i} className="chat-source-item">
                     <span className={`chat-source-badge source-${doc.source}`}>
                       {sourceLabel(doc.source)}
                     </span>

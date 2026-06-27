@@ -52,6 +52,7 @@ function formatDate(iso: string) {
 export default function ReviewsSection() {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [name, setName] = useState("");
   const [company, setCompany] = useState("");
@@ -61,15 +62,18 @@ export default function ReviewsSection() {
   const [submitError, setSubmitError] = useState("");
 
   useEffect(() => {
-    fetch("/api/reviews")
+    const controller = new AbortController();
+    fetch("/api/reviews", { signal: controller.signal })
       .then((r) => r.json())
       .then((d) => setReviews(d.reviews ?? []))
-      .catch(() => {})
+      .catch((e) => { if (e?.name !== 'AbortError') setLoadError(true); })
       .finally(() => setLoading(false));
+    return () => controller.abort();
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (submitStatus === "loading") return;
     setSubmitStatus("loading");
     setSubmitError("");
     try {
@@ -103,6 +107,8 @@ export default function ReviewsSection() {
         {/* Review cards */}
         {loading ? (
           <div className="reviews-loading">Loading reviews…</div>
+        ) : loadError ? (
+          <div className="reviews-empty">Could not load reviews. Please refresh the page.</div>
         ) : reviews.length === 0 ? (
           <div className="reviews-empty">
             No reviews yet — be the first to leave one below.

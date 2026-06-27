@@ -75,11 +75,18 @@ export async function POST(req: Request) {
   }
 
   const url = new URL(req.url);
-  const titleParam = url.searchParams.get("title") ?? "";
-  const sourceParam = url.searchParams.get("source") ?? "gilbarco";
+  const titleParam = (url.searchParams.get("title") ?? "").slice(0, 200);
+  const sourceParam = (url.searchParams.get("source") ?? "gilbarco")
+    .replace(/[^a-z0-9_-]/gi, "_")
+    .slice(0, 40);
   const docId = url.searchParams.get("doc_id") ?? crypto.randomUUID();
 
   const docUrl = `local://${sourceParam}/${docId}`;
+
+  const contentLength = req.headers.get('content-length');
+  if (contentLength && parseInt(contentLength, 10) > 20 * 1024 * 1024) {
+    return Response.json({ error: 'File too large (max 20 MB)' }, { status: 413 });
+  }
 
   try {
     const contentType = req.headers.get("content-type") ?? "";
@@ -88,11 +95,17 @@ export async function POST(req: Request) {
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
       const file = formData.get("file") as File | null;
+      if (file && file.size > 20 * 1024 * 1024) {
+        return Response.json({ error: 'File too large (max 20 MB)' }, { status: 413 });
+      }
       if (!file) return Response.json({ error: "No file field in form data" }, { status: 400 });
       pdfBuf = Buffer.from(await file.arrayBuffer());
     } else {
       // Raw binary body
       pdfBuf = Buffer.from(await req.arrayBuffer());
+      if (pdfBuf.length > 20 * 1024 * 1024) {
+        return Response.json({ error: 'File too large (max 20 MB)' }, { status: 413 });
+      }
     }
 
     if (!pdfBuf.length) return Response.json({ error: "Empty file" }, { status: 400 });
@@ -107,33 +120,41 @@ export async function POST(req: Request) {
     // Remove any previous version
     await sql`DELETE FROM fuel_tech_docs WHERE url = ${docUrl}`;
 
-    const chunks = chunkText(fullText);
-    let count = 0;
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = sanitizeText(chunks[i]);
-      if (chunk.split(/\s+/).length < 20) continue;
+    const rawChunks = chunkText(fullText);
+    const validChunks = rawChunks
+      .map((c, i) => ({ index: i, text: sanitizeText(c) }))
+      .filter(c => c.text.split(/\s+/).length >= 20);
 
+    let count = 0;
+    const EMBED_BATCH = 100;
+    for (let b = 0; b < validChunks.length; b += EMBED_BATCH) {
+      const batch = validChunks.slice(b, b + EMBED_BATCH);
       const embRes = await openai.embeddings.create({
         model: "text-embedding-3-small",
-        input: chunk,
+        input: batch.map(c => c.text),
       });
-      const embStr = JSON.stringify(embRes.data[0].embedding);
-      const id = makeId(docUrl, i);
-
-      await sql`
-        INSERT INTO fuel_tech_docs (id, url, title, chunk_text, chunk_index, source, embedding, page_number, model)
-        VALUES (${id}, ${docUrl}, ${title}, ${chunk}, ${i}, ${sourceParam}, ${embStr}::vector, ${0}, ${model})
-        ON CONFLICT (id) DO UPDATE
-          SET chunk_text = EXCLUDED.chunk_text,
-              embedding  = EXCLUDED.embedding,
-              title      = EXCLUDED.title,
-              model      = EXCLUDED.model
-      `;
-      count++;
+      for (let j = 0; j < batch.length; j++) {
+        const { index, text: chunk } = batch[j];
+        const embedding = embRes.data[j]?.embedding;
+        if (!embedding) { console.error('Missing embedding for chunk', index); continue; }
+        const embStr = JSON.stringify(embedding);
+        const id = makeId(docUrl, index);
+        await sql`
+          INSERT INTO fuel_tech_docs (id, url, title, chunk_text, chunk_index, source, embedding, page_number, model)
+          VALUES (${id}, ${docUrl}, ${title}, ${chunk}, ${index}, ${sourceParam}, ${embStr}::vector, ${-1}, ${model})
+          ON CONFLICT (id) DO UPDATE
+            SET chunk_text = EXCLUDED.chunk_text,
+                embedding  = EXCLUDED.embedding,
+                title      = EXCLUDED.title,
+                model      = EXCLUDED.model
+        `;
+        count++;
+      }
     }
 
     return Response.json({ ok: true, upserted: count, title, model, pages: parsed.numpages });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    console.error('upload-pdf error:', err);
+    return Response.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

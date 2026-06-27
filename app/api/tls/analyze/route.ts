@@ -35,13 +35,13 @@ async function authGuard(req: Request): Promise<Response | null> {
   // Web app uses session cookie
   const token = extractToken(req);
   if (!token || !(await verifySession(token))) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const info = getMembershipStatus(token);
+  const info = await getMembershipStatus(token);
   if (!info || info.membershipExpired) return Response.json({ error: "Subscription expired" }, { status: 403 });
   return null;
 }
 
 const openai  = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const anthropic = new Anthropic();
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 type ChunkRow = {
   url: unknown; title: unknown; chunk_text: unknown;
@@ -156,6 +156,7 @@ export async function POST(req: Request) {
   );
   const emb = embRes.data[0].embedding as number[];
   const norm = Math.sqrt(emb.reduce((s, v) => s + v * v, 0));
+  if (norm === 0) return Response.json({ error: 'Embedding error — retry' }, { status: 500 });
   const embStr = JSON.stringify(emb.map((v) => v / norm));
 
   // Pull all alarm codes from the output for exact keyword search
