@@ -5,7 +5,7 @@ export async function POST(req: Request) {
   const email = (body.email ?? "").trim().toLowerCase();
   const company = (body.company ?? "").trim() || null;
 
-  if (!email || !email.includes("@")) {
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return Response.json({ error: "A valid email address is required." }, { status: 400 });
   }
 

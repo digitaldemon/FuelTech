@@ -81,7 +81,7 @@ export default function ChatBubble({ message, figures, username }: ChatBubblePro
                 <span /><span /><span />
               </span>
             ) : isUser ? (message.content || null) : (
-              <div className="chat-md"><ReactMarkdown components={{ a: ({ href, children }) => <a href={href?.toLowerCase().startsWith('javascript:') ? '#' : href} rel="noopener noreferrer" target="_blank">{children}</a> }}>{message.content}</ReactMarkdown></div>
+              <div className="chat-md"><ReactMarkdown components={{ a: ({ href, children }) => <a href={/^https?:\/\//i.test(href ?? '') ? href : '#'} rel="noopener noreferrer" target="_blank">{children}</a> }}>{message.content}</ReactMarkdown></div>
             )}
           </div>
 

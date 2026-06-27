@@ -76,9 +76,9 @@ export async function POST(req: Request) {
 
   const url = new URL(req.url);
   const titleParam = (url.searchParams.get("title") ?? "").slice(0, 200);
-  const sourceParam = (url.searchParams.get("source") ?? "gilbarco")
-    .replace(/[^a-z0-9_-]/gi, "_")
-    .slice(0, 40);
+  const rawSource = url.searchParams.get("source") ?? "gilbarco";
+  const VALID_SOURCES = new Set(["gilbarco", "veeder_root", "pei", "franklin", "dover", "gilbarco_extranet"]);
+  const sourceParam = VALID_SOURCES.has(rawSource) ? rawSource : "gilbarco";
   const docId = url.searchParams.get("doc_id") ?? crypto.randomUUID();
 
   const docUrl = `local://${sourceParam}/${docId}`;

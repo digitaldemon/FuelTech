@@ -14,11 +14,14 @@ export async function POST(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { username, password, email } = (await req.json()) as {
-    username: string; password: string; email: string;
+  const { username, password, email, confirm } = (await req.json()) as {
+    username: string; password: string; email: string; confirm?: string;
   };
   if (!username || !password || !email) {
     return Response.json({ error: "username, password, email required" }, { status: 400 });
+  }
+  if (confirm !== "DELETE_ALL_USERS") {
+    return Response.json({ error: 'Must pass confirm: "DELETE_ALL_USERS"' }, { status: 400 });
   }
 
   try {

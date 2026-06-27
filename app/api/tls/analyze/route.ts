@@ -285,9 +285,10 @@ export async function POST(req: Request) {
           }
         }
       } catch {
-        // swallow — send whatever streamed before the error
+        controller.enqueue(encoder.encode("\n\n[Analysis interrupted — please retry.]"));
+      } finally {
+        controller.close();
       }
-      controller.close();
     },
     cancel() {
       aiStream.abort();
