@@ -48,11 +48,24 @@ export async function registerAccount(
     return { ok: false, error: "A valid email address is required." };
   }
 
+  // Only allow the two valid plan durations — any other value gets the annual plan
+  const safeDuration = durationDays === 31 ? 31 : 365;
+
+  // Prevent duplicate account creation for the same email
+  try {
+    const existing = await sql`SELECT username FROM users WHERE email = ${email} LIMIT 1`;
+    if (existing.rows.length > 0) {
+      return { ok: false, error: "An account for this email already exists. Contact support at info@fueltechaipro.com if you need access." };
+    }
+  } catch {
+    return { ok: false, error: "Could not create account. Please try again." };
+  }
+
   const baseUsername = generateUsername(email);
   const password = generatePassword();
   const hash = await bcrypt.hash(password, 12);
   const id = crypto.randomUUID();
-  const expiresIso = new Date(Date.now() + durationDays * 86_400_000).toISOString();
+  const expiresIso = new Date(Date.now() + safeDuration * 86_400_000).toISOString();
   const expiresAt  = new Date(expiresIso).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
 
   let consoleKey = "";
@@ -73,7 +86,15 @@ export async function registerAccount(
       return { ok: true, username, password, consoleKey };
     } catch (e: unknown) {
       const msg = (e instanceof Error ? e.message : "").toLowerCase();
-      if (msg.includes("unique") || msg.includes("duplicate")) continue;
+      if (msg.includes("unique") || msg.includes("duplicate")) {
+        // Could be a username OR email collision — re-check email to distinguish
+        const emailRace = await sql`SELECT 1 FROM users WHERE email = ${email} LIMIT 1`.catch(() => ({ rows: [] }));
+        if (emailRace.rows.length > 0) {
+          if (consoleKey) await sql`DELETE FROM console_licenses WHERE license_key = ${consoleKey}`.catch(() => {});
+          return { ok: false, error: "An account for this email already exists. Contact support at info@fueltechaipro.com if you need access." };
+        }
+        continue; // username collision — try next suffix
+      }
       return { ok: false, error: "Could not create account. Please try again." };
     }
   }

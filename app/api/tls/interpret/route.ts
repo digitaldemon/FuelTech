@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { sql } from '@vercel/postgres';
 import { verifySession, getMembershipStatus, COOKIE_NAME } from '../../../../lib/session';
 
-const client = new Anthropic();
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 async function isValidLicenseKey(key: string): Promise<boolean> {
   if (!key || !key.startsWith('FTAI-')) return false;
@@ -26,7 +26,7 @@ async function authGuard(req: Request): Promise<Response | null> {
   const m = raw.match(new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]+)`));
   const token = m ? m[1] : null;
   if (!token || !(await verifySession(token))) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  const info = getMembershipStatus(token);
+  const info = await getMembershipStatus(token);
   if (!info || info.membershipExpired) return Response.json({ error: 'Subscription expired' }, { status: 403 });
   return null;
 }
@@ -52,7 +52,7 @@ Known function codes:
 Rules:
 1. If the user specifies a tank number, append it as two digits (e.g., "tank 2" → append "02").
 2. If the user asks for a date range on alarm history, format dates as MMDDYYYY and append both (start then end).
-3. Today's date is ${new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).replace(/\//g, '')}.
+3. Today's date is DATE_PLACEHOLDER.
 4. If the request is ambiguous but leans toward a command, choose the most likely one and explain.
 5. If the request cannot be mapped to any known command, set code to null and explain clearly.
 
@@ -76,22 +76,29 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => ({}));
   const request: string = body.request ?? '';
+  const todayStr = new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).replace(/\//g, '');
 
   if (!request.trim()) {
     return Response.json({ code: null, label: null, explanation: 'No request provided.' });
+  }
+  if (request.length > 2000) {
+    return Response.json({ error: 'Request too long' }, { status: 400 });
   }
 
   try {
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 300,
-      system: SYSTEM,
+      system: SYSTEM.replace('DATE_PLACEHOLDER', todayStr),
       messages: [{ role: 'user', content: request }],
     });
 
-    const raw = response.content[0].type === 'text' ? response.content[0].text.trim() : '{}';
+    const textBlock = response.content.find(b => b.type === 'text') as { type: 'text'; text: string } | undefined;
+    const raw = textBlock?.text.trim() ?? '{}';
     const clean = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-    const parsed = JSON.parse(clean);
+    let parsed: unknown;
+    try { parsed = JSON.parse(clean); }
+    catch { parsed = { code: null, label: null, explanation: clean || 'Could not parse response.' }; }
     return Response.json(parsed);
   } catch {
     return Response.json(

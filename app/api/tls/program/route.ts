@@ -3,7 +3,7 @@ import { sql } from '@vercel/postgres';
 
 export const maxDuration = 300;
 
-const client = new Anthropic();
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 async function isValidLicenseKey(key: string): Promise<boolean> {
   if (!key || !key.startsWith('FTAI-')) return false;
@@ -202,8 +202,12 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const body = await req.json().catch(() => ({}));
-  const pdfs: { name: string; data: string }[] = body.pdfs ?? [];
+  const rawBuf = await req.arrayBuffer().catch(() => null);
+  if (!rawBuf) return Response.json({ error: 'Could not read request body' }, { status: 400 });
+  if (rawBuf.byteLength > 25_000_000) return Response.json({ error: 'Request too large' }, { status: 413 });
+  let body: Record<string, unknown>;
+  try { body = JSON.parse(new TextDecoder().decode(rawBuf)); } catch { body = {}; }
+  const pdfs: { name: string; data: string }[] = Array.isArray(body.pdfs) ? (body.pdfs as { name: string; data: string }[]) : [];
 
   if (!pdfs.length) {
     return Response.json({ error: 'No PDF data provided.' }, { status: 400 });
@@ -239,9 +243,12 @@ export async function POST(req: Request) {
       messages: [{ role: 'user', content }],
     });
 
-    const raw   = response.content[0].type === 'text' ? response.content[0].text.trim() : '{}';
+    const textBlock = response.content.find(b => b.type === 'text') as { type: 'text'; text: string } | undefined;
+    const raw   = textBlock?.text.trim() ?? '{}';
     const clean = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-    const parsed = JSON.parse(clean);
+    let parsed: unknown;
+    try { parsed = JSON.parse(clean); }
+    catch { return Response.json({ error: 'Claude did not return valid JSON. Try again or simplify the drawings.' }, { status: 500 }); }
     return Response.json(parsed);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';

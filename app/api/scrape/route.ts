@@ -258,6 +258,7 @@ async function upsertChunks(
       model: "text-embedding-3-small",
       input: chunk,
     });
+    if (!embRes.data.length) { console.error('Empty embedding for chunk', i); continue; }
     const embStr = JSON.stringify(embRes.data[0].embedding);
     const id = makeId(safeUrl, i);
 
@@ -364,8 +365,8 @@ async function extractAndStoreFigures(pdfBuf: Buffer, docUrl: string): Promise<v
         console.error("[figures] blob put failed:", blobErr);
         // Dev fallback: write to public/figures/ and serve as static asset
         const figuresDir = path.join(process.cwd(), "public", "figures");
-        if (!fs.existsSync(figuresDir)) fs.mkdirSync(figuresDir, { recursive: true });
-        fs.writeFileSync(path.join(figuresDir, `${figId}.png`), pngBuf);
+        await fs.promises.mkdir(figuresDir, { recursive: true });
+        await fs.promises.writeFile(path.join(figuresDir, `${figId}.png`), pngBuf);
         url = `/figures/${figId}.png`;
       }
 
@@ -629,7 +630,16 @@ async function fetchDirectPdf(url: string): Promise<Buffer | null> {
       signal: AbortSignal.timeout(30000),
     });
     if (!res.ok || !res.headers.get("content-type")?.includes("pdf")) return null;
-    return Buffer.from(await res.arrayBuffer());
+    if (!res.body) return null;
+    const MAX_PDF_BYTES = 50 * 1024 * 1024;
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      total += chunk.length;
+      if (total > MAX_PDF_BYTES) return null;
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
   } catch {
     return null;
   }
@@ -643,6 +653,7 @@ async function scrapeVeederRoot(limit: number): Promise<number> {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; FuelTechBot/1.0)" },
       signal: AbortSignal.timeout(20000),
     });
+    if (!res.ok) { console.warn('scrapeVeederRoot: HTTP', res.status); return 0; }
     libraryHtml = await res.text();
   } catch {
     return 0;
@@ -1034,7 +1045,8 @@ async function scrapeGilbarcoExtranet(limit: number): Promise<number> {
     const productUrl = `${EXTRANET_BASE}/apps/tech_resource/product/${encodeURIComponent(b64)}`;
 
     let page = 1;
-    while (true) {
+    const MAX_PAGES = 50;
+    while (page <= MAX_PAGES) {
       try {
         const formBody = new URLSearchParams({
           bulletin_result_type: "0",
@@ -1110,7 +1122,8 @@ async function scrapeGilbarcoExtranet(limit: number): Promise<number> {
       : "";
 
     // Extract text content from all <td> cells in the bulletin detail table
-    const mainContent = detailHtml.substring(detailHtml.indexOf("bulletin_results_wrapper") || 0);
+    const wrapperIdx = detailHtml.indexOf("bulletin_results_wrapper");
+    const mainContent = detailHtml.substring(wrapperIdx !== -1 ? wrapperIdx : 0);
     const bulletinText = stripHtml(
       mainContent
         .replace(/<thead[\s\S]*?<\/thead>/gi, "")
@@ -1184,7 +1197,7 @@ export async function POST(req: Request) {
     recheck?: boolean;
   };
   const source = body.source ?? "both";
-  const limit = Number(body.limit ?? 40);
+  const limit = Math.min(Math.max(1, Number(body.limit ?? 40) || 40), 200);
   const recheck = body.recheck ?? false;
 
   const ALL_SOURCES = ["veeder-root", "gilbarco", "pei", "franklin", "dover", "gilbarco-extranet"];

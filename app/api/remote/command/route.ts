@@ -17,7 +17,7 @@ async function isValidLicenseKey(key: string): Promise<boolean> {
 async function getSessionUsername(): Promise<string | null> {
   const token = (await cookies()).get(COOKIE_NAME)?.value ?? "";
   if (!token || !(await verifySession(token))) return null;
-  const info = getMembershipStatus(token);
+  const info = await getMembershipStatus(token);
   if (!info || info.membershipExpired) return null;
   return info.username;
 }
@@ -37,8 +37,8 @@ export async function POST(req: Request) {
 
   if (!command) return Response.json({ error: "No command provided" }, { status: 400 });
 
-  // Only allow valid VR function codes — no injection possible
-  if (!/^[IiSsPp]\d{5}/.test(command)) {
+  // Only allow valid VR function codes — anchored at both ends
+  if (!/^[IiSsPp][0-9A-Fa-f]{5}$/.test(command)) {
     return Response.json({ error: "Invalid command format" }, { status: 400 });
   }
 
@@ -75,16 +75,20 @@ export async function PATCH(req: Request) {
   }
 
   const body = (await req.json().catch(() => ({}))) as { ids?: string[] };
-  const ids = (body.ids ?? []).slice(0, 20);
+  const raw = (body.ids ?? []).slice(0, 20);
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const ids = raw.filter(id => typeof id === 'string' && UUID_RE.test(id));
   if (!ids.length) return Response.json({ ok: true });
 
   try {
-    await sql`
-      UPDATE remote_commands
-      SET sent_at = NOW()
-      WHERE id = ANY(${ids as unknown as string}::uuid[])
-        AND sent_at IS NULL
-    `;
+    for (const id of ids) {
+      await sql`
+        UPDATE remote_commands
+        SET sent_at = NOW()
+        WHERE id = ${id}::uuid
+          AND sent_at IS NULL
+      `;
+    }
     return Response.json({ ok: true });
   } catch {
     return Response.json({ error: "Database error" }, { status: 500 });
