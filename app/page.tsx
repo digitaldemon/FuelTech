@@ -152,10 +152,10 @@ export default function Home() {
             <span className="badge">Built for the gasoline station industry</span>
             <h1 className="h1">Stop searching. Start fixing.</h1>
             <p className="lead">
-              FuelTech AI Pro turns the average technician into a super tech. Every alarm code, wiring diagram, startup procedure, and compliance protocol — answered in plain English, right from the job site. No hold queues. No guesswork.
+              FuelTech AI Pro gives every technician instant access to manufacturer-level expertise — alarm codes, wiring diagrams, startup procedures, compliance protocols — answered in plain English, right from the job site. No hold queues. No guesswork.
             </p>
             <p className="lead" style={{ marginTop: '0.75em', fontSize: '0.95em' }}>
-              And you&rsquo;re not just getting answers — you&rsquo;re getting the hands-on training that no classroom can replicate. Every response explains the why, walks you through the reasoning, and builds the kind of deep equipment knowledge that takes years to develop on your own.
+              Every response explains the reasoning behind the answer — so you&rsquo;re not just getting a fix, you understand it well enough to handle it yourself next time.
             </p>
             <div className="cta-row">
               <a href="#pricing" className="button">
@@ -252,12 +252,9 @@ export default function Home() {
       <section id="features" className="section">
         <div className="container">
           <span className="badge">What it can do</span>
-          <h2>AI that reasons like a senior tech — backed by real manufacturer knowledge.</h2>
+          <h2>Built for what you actually need to know in the field.</h2>
           <p>
-            FuelTech AI Pro uses Anthropic Claude and OpenAI to understand the intent behind your question,
-            draw on a curated knowledge base of Gilbarco, Veeder-Root, Wayne, Red Jacket, Franklin Fueling,
-            and industry documentation, and reason through the right answer — combining AI intelligence
-            with industry-specific expertise so you get a professional-grade response, not a keyword match.
+            FuelTech AI Pro uses Anthropic Claude and OpenAI to reason through your question against a curated knowledge base built from official Gilbarco, Veeder-Root, Wayne, Red Jacket, and Franklin Fueling documentation — so you get a correct, professional answer grounded in the actual source material, not a keyword match from a search engine.
           </p>
           <div className="features" style={{ marginTop: 48 }}>
             {features.map((f) => (
@@ -401,7 +398,7 @@ export default function Home() {
       <section id="library" className="section alt">
         <div className="container">
           <span className="badge">Built-in expertise</span>
-          <h2>The knowledge that makes the AI a specialist.</h2>
+          <h2>Built on real manufacturer documentation — always current, always accurate.</h2>
           <p>
             Every answer FuelTech AI Pro gives is informed by a continuously updated knowledge base built from
             official Gilbarco, Veeder-Root, Wayne, Red Jacket, Franklin Fueling, and industry documentation —
@@ -442,8 +439,8 @@ export default function Home() {
             <h2>Built for field techs, service companies and ATG specialists.</h2>
             <p>
               Whether you&apos;re on a startup, running a service call, or training a new hire, FuelTech AI Pro
-              acts as the senior technician in your pocket — one who understands your equipment, knows
-              the procedures, and can explain them clearly on the spot.
+              acts as a senior technician on every job — one who knows the equipment, understands the procedures,
+              and can walk you through the answer clearly on the spot.
             </p>
           </div>
           <div className="audiences">
@@ -466,7 +463,7 @@ export default function Home() {
           <span className="badge">Introductory Beta Pricing</span>
           <h2 style={{ textAlign: 'center', marginBottom: 8 }}>Simple, transparent pricing.</h2>
           <p style={{ textAlign: 'center', color: 'var(--color-subtext)', marginBottom: 4 }}>
-            Everything you need to put AI-powered documentation in every tech&apos;s pocket.
+            Full access for every technician. Everything included.
           </p>
           <p className="pricing-beta-note">
             🔒 Beta phase pricing — these rates are locked in for early adopters and will increase when we exit beta.
