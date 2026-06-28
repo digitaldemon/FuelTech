@@ -214,127 +214,172 @@ export default function Home() {
                 </p>
                 {/* USM module diagram — screw terminal block layout */}
                 <div style={{ margin: '10px 0', background: 'rgba(0,0,0,0.25)', borderRadius: 8, padding: '8px 6px' }}>
-                  <svg width="100%" viewBox="0 0 295 152" fill="none">
-                    {/* ── Module housing ── */}
-                    <rect x="3" y="3" width="172" height="146" rx="4" fill="#040d1a" stroke="#1e3a5f" strokeWidth="1.5"/>
-                    <rect x="3" y="3" width="172" height="22" rx="4" fill="#0a1f38"/>
-                    <rect x="3" y="15" width="172" height="10" fill="#0a1f38"/>
-                    <text x="89" y="11" fill="#22d3ee" fontSize="6" textAnchor="middle" fontFamily="monospace" fontWeight="700">USM — UNIVERSAL SENSOR MODULE</text>
-                    <text x="89" y="21" fill="#334155" fontSize="5" textAnchor="middle" fontFamily="monospace">TLS-450PLUS · PROBE / SENSOR INPUTS</text>
-                    {/* DIN-rail mounting clip at bottom */}
-                    <rect x="10" y="143" width="158" height="4" rx="1" fill="#0a1f38" stroke="#1e3a5f" strokeWidth="0.5"/>
+                  <svg width="100%" viewBox="0 0 295 164" fill="none">
 
-                    {/* ── CH 1 — highlighted (screw terminals with live wires) ── */}
-                    <rect x="5" y="25" width="168" height="56" rx="2" fill="rgba(34,211,238,0.07)" stroke="rgba(34,211,238,0.4)" strokeWidth="0.9"/>
-                    {/* CH 1 label */}
-                    <text x="19" y="49" fill="#22d3ee" fontSize="9" textAnchor="middle" fontFamily="monospace" fontWeight="700">1</text>
-                    <text x="19" y="38" fill="#22d3ee" fontSize="5.5" textAnchor="middle" fontFamily="monospace">CH</text>
+                    {/* ══ PCB card body — green FR4 laminate ══ */}
+                    <rect x="2" y="2" width="174" height="160" rx="3" fill="#071209" stroke="#1a4423" strokeWidth="1.5"/>
+                    {/* PCB laminate surface */}
+                    <rect x="4" y="23" width="170" height="126" fill="#0c1e0f"/>
+                    {/* Subtle PCB trace lines */}
+                    <line x1="4" y1="88" x2="174" y2="88" stroke="#0e2311" strokeWidth="0.4"/>
+                    <line x1="4" y1="112" x2="174" y2="112" stroke="#0e2311" strokeWidth="0.4"/>
+                    <line x1="25" y1="23" x2="25" y2="149" stroke="#0e2311" strokeWidth="0.3"/>
 
-                    {/* CH1 · SIG+ terminal block */}
-                    <rect x="32" y="27" width="16" height="26" rx="2" fill="#166534" stroke="#4ade80" strokeWidth="1.1"/>
-                    <rect x="33" y="28" width="14" height="10" rx="1" fill="#14532d"/>
-                    <circle cx="40" cy="33" r="4.5" fill="#78350f" stroke="#d97706" strokeWidth="0.8"/>
-                    <line x1="37" y1="33" x2="43" y2="33" stroke="#fbbf24" strokeWidth="0.8"/>
-                    <line x1="40" y1="30" x2="40" y2="36" stroke="#fbbf24" strokeWidth="0.8"/>
-                    <rect x="36" y="47" width="8" height="3" rx="1" fill="#040d1a" stroke="#1e4d3a" strokeWidth="0.4"/>
-                    <text x="40" y="62" fill="#4ade80" fontSize="5" textAnchor="middle" fontFamily="monospace">SIG+</text>
+                    {/* Card header / silkscreen label band */}
+                    <rect x="2" y="2" width="174" height="21" rx="3" fill="#040a05"/>
+                    <rect x="2" y="12" width="174" height="11" fill="#040a05"/>
+                    <text x="89" y="10" fill="#22c55e" fontSize="6" textAnchor="middle" fontFamily="monospace" fontWeight="700">USM — UNIVERSAL SENSOR MODULE</text>
+                    <text x="89" y="19" fill="#14532d" fontSize="5" textAnchor="middle" fontFamily="monospace">TLS-450PLUS  ·  8-CH PROBE / SENSOR INPUT</text>
 
-                    {/* CH1 · SIG− terminal block */}
-                    <rect x="51" y="27" width="16" height="26" rx="2" fill="#166534" stroke="#4ade80" strokeWidth="1.1"/>
-                    <rect x="52" y="28" width="14" height="10" rx="1" fill="#14532d"/>
-                    <circle cx="59" cy="33" r="4.5" fill="#78350f" stroke="#d97706" strokeWidth="0.8"/>
-                    <line x1="56" y1="33" x2="62" y2="33" stroke="#fbbf24" strokeWidth="0.8"/>
-                    <line x1="59" y1="30" x2="59" y2="36" stroke="#fbbf24" strokeWidth="0.8"/>
-                    <rect x="55" y="47" width="8" height="3" rx="1" fill="#040d1a" stroke="#1e4d3a" strokeWidth="0.4"/>
-                    <text x="59" y="62" fill="#4ade80" fontSize="5" textAnchor="middle" fontFamily="monospace">SIG−</text>
+                    {/* Silkscreen row label */}
+                    <text x="8" y="29" fill="#14532d" fontSize="4.5" fontFamily="monospace">PLUG-IN TERMINAL CONNECTOR (Phoenix Contact MSTB)</text>
 
-                    {/* CH1 · SHLD terminal block */}
-                    <rect x="70" y="27" width="16" height="26" rx="2" fill="#166534" stroke="#4ade80" strokeWidth="1.1"/>
-                    <rect x="71" y="28" width="14" height="10" rx="1" fill="#14532d"/>
-                    <circle cx="78" cy="33" r="4.5" fill="#78350f" stroke="#d97706" strokeWidth="0.8"/>
-                    <line x1="75" y1="33" x2="81" y2="33" stroke="#fbbf24" strokeWidth="0.8"/>
-                    <line x1="78" y1="30" x2="78" y2="36" stroke="#fbbf24" strokeWidth="0.8"/>
-                    <rect x="74" y="47" width="8" height="3" rx="1" fill="#040d1a" stroke="#1e4d3a" strokeWidth="0.4"/>
-                    <text x="78" y="62" fill="#4ade80" fontSize="5" textAnchor="middle" fontFamily="monospace">SHLD</text>
+                    {/* ══ CH 1 — active, wired ══ */}
+                    <rect x="4" y="31" width="170" height="55" rx="2" fill="rgba(34,197,94,0.05)" stroke="rgba(34,197,94,0.30)" strokeWidth="0.8"/>
+                    <text x="16" y="45" fill="#4ade80" fontSize="10" textAnchor="middle" fontFamily="monospace" fontWeight="700">1</text>
+                    <text x="16" y="35" fill="#86efac" fontSize="5" textAnchor="middle" fontFamily="monospace">CH</text>
+                    <text x="16" y="55" fill="#4ade80" fontSize="4" textAnchor="middle" fontFamily="monospace">PRB</text>
+                    <text x="16" y="61" fill="#4ade80" fontSize="4" textAnchor="middle" fontFamily="monospace">IN</text>
 
-                    {/* CH1 wires coming from below */}
-                    <line x1="40" y1="50" x2="40" y2="68" stroke="white" strokeWidth="1.5"/>
-                    <line x1="59" y1="50" x2="59" y2="68" stroke="#111" strokeWidth="1.5"/>
-                    <line x1="78" y1="50" x2="78" y2="68" stroke="#6b7280" strokeWidth="1.2" strokeDasharray="3,2"/>
-                    <circle cx="40" cy="70" r="2.5" fill="white"/>
-                    <circle cx="59" cy="70" r="2.5" fill="#1f2937" stroke="#4b5563" strokeWidth="0.7"/>
-                    <circle cx="78" cy="70" r="2.5" fill="#374151" stroke="#6b7280" strokeWidth="0.7"/>
-                    <text x="40" y="79" fill="white" fontSize="4.5" textAnchor="middle" fontFamily="monospace">WHT</text>
-                    <text x="59" y="79" fill="#94a3b8" fontSize="4.5" textAnchor="middle" fontFamily="monospace">BLK</text>
-                    <text x="78" y="79" fill="#6b7280" fontSize="4.5" textAnchor="middle" fontFamily="monospace">DRN</text>
+                    {/* Plug-in connector body (the removable piece) */}
+                    <rect x="27" y="33" width="66" height="33" rx="2" fill="#15803d" stroke="#22c55e" strokeWidth="1"/>
+                    {/* Connector position separators */}
+                    <line x1="49" y1="33" x2="49" y2="66" stroke="#14532d" strokeWidth="0.8"/>
+                    <line x1="71" y1="33" x2="71" y2="66" stroke="#14532d" strokeWidth="0.8"/>
 
-                    {/* ── CH 2 (dimmed — empty terminals) ── */}
-                    <rect x="5" y="84" width="168" height="18" rx="2" fill="transparent" stroke="#0a1e30" strokeWidth="0.5"/>
-                    <text x="19" y="96" fill="#0e1e30" fontSize="7" textAnchor="middle" fontFamily="monospace">2</text>
-                    <text x="19" y="88" fill="#0e1e30" fontSize="5" textAnchor="middle" fontFamily="monospace">CH</text>
-                    <rect x="32" y="86" width="16" height="14" rx="2" fill="#0a2218" stroke="#0d3320" strokeWidth="0.8"/>
-                    <circle cx="40" cy="91" r="3.5" fill="#2d1500" stroke="#3b2000" strokeWidth="0.5"/>
-                    <line x1="37.5" y1="91" x2="42.5" y2="91" stroke="#3b2000" strokeWidth="0.6"/>
-                    <line x1="40" y1="88.5" x2="40" y2="93.5" stroke="#3b2000" strokeWidth="0.6"/>
-                    <rect x="51" y="86" width="16" height="14" rx="2" fill="#0a2218" stroke="#0d3320" strokeWidth="0.8"/>
-                    <circle cx="59" cy="91" r="3.5" fill="#2d1500" stroke="#3b2000" strokeWidth="0.5"/>
-                    <line x1="56.5" y1="91" x2="61.5" y2="91" stroke="#3b2000" strokeWidth="0.6"/>
-                    <line x1="59" y1="88.5" x2="59" y2="93.5" stroke="#3b2000" strokeWidth="0.6"/>
-                    <rect x="70" y="86" width="16" height="14" rx="2" fill="#0a2218" stroke="#0d3320" strokeWidth="0.8"/>
-                    <circle cx="78" cy="91" r="3.5" fill="#2d1500" stroke="#3b2000" strokeWidth="0.5"/>
-                    <line x1="75.5" y1="91" x2="80.5" y2="91" stroke="#3b2000" strokeWidth="0.6"/>
-                    <line x1="78" y1="88.5" x2="78" y2="93.5" stroke="#3b2000" strokeWidth="0.6"/>
+                    {/* ── Terminal A (SIG+) ── */}
+                    {/* Screw recess */}
+                    <rect x="30" y="35" width="17" height="17" rx="1" fill="#166534"/>
+                    {/* Screw head */}
+                    <circle cx="38" cy="43" r="6" fill="#292524" stroke="#57534e" strokeWidth="0.7"/>
+                    {/* Flat-head slot — horizontal, what a tech turns with a screwdriver */}
+                    <line x1="33" y1="43" x2="43" y2="43" stroke="#78716c" strokeWidth="1.2"/>
+                    {/* Wire clamp opening */}
+                    <rect x="32" y="55" width="13" height="8" rx="1" fill="#0f3320"/>
+                    {/* White wire in clamp */}
+                    <rect x="34" y="56" width="9" height="6" rx="0.5" fill="#f1f5f9"/>
+                    {/* Terminal label on PCB silkscreen */}
+                    <text x="38" y="74" fill="#86efac" fontSize="6.5" textAnchor="middle" fontFamily="monospace" fontWeight="700">A</text>
+                    <text x="38" y="80" fill="#4ade80" fontSize="4.5" textAnchor="middle" fontFamily="monospace">SIG+</text>
 
-                    {/* ── CH 3 (dimmed) ── */}
-                    <rect x="5" y="105" width="168" height="18" rx="2" fill="transparent" stroke="#0a1e30" strokeWidth="0.5"/>
-                    <text x="19" y="117" fill="#0e1e30" fontSize="7" textAnchor="middle" fontFamily="monospace">3</text>
-                    <text x="19" y="109" fill="#0e1e30" fontSize="5" textAnchor="middle" fontFamily="monospace">CH</text>
-                    <rect x="32" y="107" width="16" height="14" rx="2" fill="#0a2218" stroke="#0d3320" strokeWidth="0.8"/>
-                    <circle cx="40" cy="112" r="3.5" fill="#2d1500" stroke="#3b2000" strokeWidth="0.5"/>
-                    <line x1="37.5" y1="112" x2="42.5" y2="112" stroke="#3b2000" strokeWidth="0.6"/>
-                    <line x1="40" y1="109.5" x2="40" y2="114.5" stroke="#3b2000" strokeWidth="0.6"/>
-                    <rect x="51" y="107" width="16" height="14" rx="2" fill="#0a2218" stroke="#0d3320" strokeWidth="0.8"/>
-                    <circle cx="59" cy="112" r="3.5" fill="#2d1500" stroke="#3b2000" strokeWidth="0.5"/>
-                    <line x1="56.5" y1="112" x2="61.5" y2="112" stroke="#3b2000" strokeWidth="0.6"/>
-                    <line x1="59" y1="109.5" x2="59" y2="114.5" stroke="#3b2000" strokeWidth="0.6"/>
-                    <rect x="70" y="107" width="16" height="14" rx="2" fill="#0a2218" stroke="#0d3320" strokeWidth="0.8"/>
-                    <circle cx="78" cy="112" r="3.5" fill="#2d1500" stroke="#3b2000" strokeWidth="0.5"/>
-                    <line x1="75.5" y1="112" x2="80.5" y2="112" stroke="#3b2000" strokeWidth="0.6"/>
-                    <line x1="78" y1="109.5" x2="78" y2="114.5" stroke="#3b2000" strokeWidth="0.6"/>
+                    {/* ── Terminal B (SIG−) ── */}
+                    <rect x="52" y="35" width="17" height="17" rx="1" fill="#166534"/>
+                    <circle cx="60" cy="43" r="6" fill="#292524" stroke="#57534e" strokeWidth="0.7"/>
+                    <line x1="55" y1="43" x2="65" y2="43" stroke="#78716c" strokeWidth="1.2"/>
+                    <rect x="54" y="55" width="13" height="8" rx="1" fill="#0f3320"/>
+                    {/* Black wire — use dark gray with outline so it's visible */}
+                    <rect x="56" y="56" width="9" height="6" rx="0.5" fill="#0f172a" stroke="#334155" strokeWidth="0.4"/>
+                    <text x="60" y="74" fill="#86efac" fontSize="6.5" textAnchor="middle" fontFamily="monospace" fontWeight="700">B</text>
+                    <text x="60" y="80" fill="#4ade80" fontSize="4.5" textAnchor="middle" fontFamily="monospace">SIG−</text>
 
-                    {/* CH 4–8 indicator */}
-                    <text x="19" y="131" fill="#091525" fontSize="5.5" textAnchor="middle" fontFamily="monospace">CH</text>
-                    <text x="19" y="139" fill="#091525" fontSize="5.5" textAnchor="middle" fontFamily="monospace">4–8</text>
-                    <line x1="30" y1="135" x2="170" y2="135" stroke="#091525" strokeWidth="0.5" strokeDasharray="4,3"/>
-                    <text x="100" y="139" fill="#091525" fontSize="5" textAnchor="middle" fontFamily="monospace">· · · additional probe / sensor channels · · ·</text>
+                    {/* ── Terminal SH (Shield / Drain) ── */}
+                    <rect x="74" y="35" width="17" height="17" rx="1" fill="#166534"/>
+                    <circle cx="82" cy="43" r="6" fill="#292524" stroke="#57534e" strokeWidth="0.7"/>
+                    <line x1="77" y1="43" x2="87" y2="43" stroke="#78716c" strokeWidth="1.2"/>
+                    <rect x="76" y="55" width="13" height="8" rx="1" fill="#0f3320"/>
+                    {/* Bare copper drain wire */}
+                    <rect x="78" y="56" width="9" height="6" rx="0.5" fill="#b45309" stroke="#d97706" strokeWidth="0.3"/>
+                    <text x="82" y="74" fill="#86efac" fontSize="6.5" textAnchor="middle" fontFamily="monospace" fontWeight="700">SH</text>
+                    <text x="82" y="80" fill="#4ade80" fontSize="4.5" textAnchor="middle" fontFamily="monospace">SHLD</text>
 
-                    {/* ── Vertical divider ── */}
-                    <line x1="177" y1="3" x2="177" y2="149" stroke="#1e3a5f" strokeWidth="0.6"/>
+                    {/* ── Wires below connector — stripped leads ── */}
+                    {/* White conductor */}
+                    <line x1="38" y1="63" x2="38" y2="82" stroke="#f1f5f9" strokeWidth="2"/>
+                    {/* Black conductor — dark gray outline so visible on dark bg */}
+                    <line x1="60" y1="63" x2="60" y2="82" stroke="#475569" strokeWidth="2.6"/>
+                    <line x1="60" y1="63" x2="60" y2="82" stroke="#0f172a" strokeWidth="2"/>
+                    {/* Drain — bare copper, dashed */}
+                    <line x1="82" y1="63" x2="82" y2="82" stroke="#b45309" strokeWidth="1.6" strokeDasharray="3,2"/>
 
-                    {/* ── Right panel: annotation & legend ── */}
-                    {/* Arrow to CH1 */}
-                    <polygon points="176,38 179,40 176,42" fill="rgba(34,211,238,0.5)"/>
-                    <text x="181" y="37" fill="#22d3ee" fontSize="6.5" fontFamily="monospace" fontWeight="700">PROBE 1</text>
-                    <text x="181" y="45" fill="#475569" fontSize="5" fontFamily="monospace">→ CH 1 terminals</text>
+                    {/* Cable jacket where conductors bundle */}
+                    <rect x="26" y="80" width="66" height="8" rx="3" fill="#1e293b" stroke="#334155" strokeWidth="0.8"/>
+                    <text x="59" y="86.5" fill="#475569" fontSize="4" textAnchor="middle" fontFamily="monospace">BELDEN 9740 · 2-COND SHIELDED</text>
+
+                    {/* ══ CH 2 — empty / dimmed ══ */}
+                    <rect x="4" y="91" width="170" height="20" rx="2" fill="transparent" stroke="#0d2411" strokeWidth="0.5"/>
+                    <text x="16" y="105" fill="#0d2411" fontSize="8" textAnchor="middle" fontFamily="monospace">2</text>
+                    <text x="16" y="96" fill="#0d2411" fontSize="4.5" textAnchor="middle" fontFamily="monospace">CH</text>
+                    <rect x="27" y="93" width="66" height="16" rx="2" fill="#0b1e0e" stroke="#0e2712" strokeWidth="0.7"/>
+                    <line x1="49" y1="93" x2="49" y2="109" stroke="#0a1c0d" strokeWidth="0.6"/>
+                    <line x1="71" y1="93" x2="71" y2="109" stroke="#0a1c0d" strokeWidth="0.6"/>
+                    <circle cx="38" cy="101" r="4.5" fill="#071009" stroke="#0d2010" strokeWidth="0.5"/>
+                    <line x1="34" y1="101" x2="42" y2="101" stroke="#0d2010" strokeWidth="0.7"/>
+                    <circle cx="60" cy="101" r="4.5" fill="#071009" stroke="#0d2010" strokeWidth="0.5"/>
+                    <line x1="56" y1="101" x2="64" y2="101" stroke="#0d2010" strokeWidth="0.7"/>
+                    <circle cx="82" cy="101" r="4.5" fill="#071009" stroke="#0d2010" strokeWidth="0.5"/>
+                    <line x1="78" y1="101" x2="86" y2="101" stroke="#0d2010" strokeWidth="0.7"/>
+
+                    {/* ══ CH 3 — empty / dimmed ══ */}
+                    <rect x="4" y="114" width="170" height="20" rx="2" fill="transparent" stroke="#0d2411" strokeWidth="0.5"/>
+                    <text x="16" y="128" fill="#0d2411" fontSize="8" textAnchor="middle" fontFamily="monospace">3</text>
+                    <text x="16" y="119" fill="#0d2411" fontSize="4.5" textAnchor="middle" fontFamily="monospace">CH</text>
+                    <rect x="27" y="116" width="66" height="16" rx="2" fill="#0b1e0e" stroke="#0e2712" strokeWidth="0.7"/>
+                    <line x1="49" y1="116" x2="49" y2="132" stroke="#0a1c0d" strokeWidth="0.6"/>
+                    <line x1="71" y1="116" x2="71" y2="132" stroke="#0a1c0d" strokeWidth="0.6"/>
+                    <circle cx="38" cy="124" r="4.5" fill="#071009" stroke="#0d2010" strokeWidth="0.5"/>
+                    <line x1="34" y1="124" x2="42" y2="124" stroke="#0d2010" strokeWidth="0.7"/>
+                    <circle cx="60" cy="124" r="4.5" fill="#071009" stroke="#0d2010" strokeWidth="0.5"/>
+                    <line x1="56" y1="124" x2="64" y2="124" stroke="#0d2010" strokeWidth="0.7"/>
+                    <circle cx="82" cy="124" r="4.5" fill="#071009" stroke="#0d2010" strokeWidth="0.5"/>
+                    <line x1="78" y1="124" x2="86" y2="124" stroke="#0d2010" strokeWidth="0.7"/>
+
+                    {/* CH 4–8 dots */}
+                    <text x="16" y="143" fill="#091408" fontSize="5" textAnchor="middle" fontFamily="monospace">4–8</text>
+                    <line x1="27" y1="139" x2="172" y2="139" stroke="#091408" strokeWidth="0.5" strokeDasharray="4,3"/>
+                    <text x="99" y="143" fill="#091408" fontSize="4.5" textAnchor="middle" fontFamily="monospace">· · · channels 4–8 · · ·</text>
+
+                    {/* ══ Card edge connector — plugs into TLS-450PLUS backplane ══ */}
+                    <rect x="4" y="148" width="170" height="13" rx="1" fill="#0c1a0d" stroke="#1a4423" strokeWidth="0.5"/>
+                    {/* Gold edge pads — alternating signal/ground */}
+                    <rect x="8"   y="149" width="7" height="11" rx="0.5" fill="#92400e" stroke="#d97706" strokeWidth="0.3"/>
+                    <rect x="17"  y="149" width="7" height="11" rx="0.5" fill="#78350f" stroke="#b45309" strokeWidth="0.3"/>
+                    <rect x="26"  y="149" width="7" height="11" rx="0.5" fill="#92400e" stroke="#d97706" strokeWidth="0.3"/>
+                    <rect x="35"  y="149" width="7" height="11" rx="0.5" fill="#78350f" stroke="#b45309" strokeWidth="0.3"/>
+                    <rect x="44"  y="149" width="7" height="11" rx="0.5" fill="#92400e" stroke="#d97706" strokeWidth="0.3"/>
+                    <rect x="53"  y="149" width="7" height="11" rx="0.5" fill="#78350f" stroke="#b45309" strokeWidth="0.3"/>
+                    <rect x="62"  y="149" width="7" height="11" rx="0.5" fill="#92400e" stroke="#d97706" strokeWidth="0.3"/>
+                    <rect x="71"  y="149" width="7" height="11" rx="0.5" fill="#78350f" stroke="#b45309" strokeWidth="0.3"/>
+                    <rect x="80"  y="149" width="7" height="11" rx="0.5" fill="#92400e" stroke="#d97706" strokeWidth="0.3"/>
+                    <rect x="89"  y="149" width="7" height="11" rx="0.5" fill="#78350f" stroke="#b45309" strokeWidth="0.3"/>
+                    <rect x="98"  y="149" width="7" height="11" rx="0.5" fill="#92400e" stroke="#d97706" strokeWidth="0.3"/>
+                    <rect x="107" y="149" width="7" height="11" rx="0.5" fill="#78350f" stroke="#b45309" strokeWidth="0.3"/>
+                    <rect x="116" y="149" width="7" height="11" rx="0.5" fill="#92400e" stroke="#d97706" strokeWidth="0.3"/>
+                    <rect x="125" y="149" width="7" height="11" rx="0.5" fill="#78350f" stroke="#b45309" strokeWidth="0.3"/>
+                    <rect x="134" y="149" width="7" height="11" rx="0.5" fill="#92400e" stroke="#d97706" strokeWidth="0.3"/>
+                    <rect x="143" y="149" width="7" height="11" rx="0.5" fill="#78350f" stroke="#b45309" strokeWidth="0.3"/>
+                    <text x="89" y="162" fill="#3d1a00" fontSize="4" textAnchor="middle" fontFamily="monospace">BACKPLANE EDGE CONNECTOR</text>
+
+                    {/* ══ Right panel ══ */}
+                    <line x1="180" y1="2" x2="180" y2="162" stroke="#1a3020" strokeWidth="0.6"/>
+
+                    {/* Arrow to CH1 connector */}
+                    <polygon points="179,48 183,50 179,52" fill="rgba(34,197,94,0.5)"/>
+                    <text x="185" y="43" fill="#22c55e" fontSize="6.5" fontFamily="monospace" fontWeight="700">PROBE 1</text>
+                    <text x="185" y="51" fill="#475569" fontSize="5" fontFamily="monospace">MAG PLUS</text>
+                    <text x="185" y="58" fill="#475569" fontSize="5" fontFamily="monospace">→ CH 1 plug</text>
 
                     {/* Wire color legend */}
-                    <line x1="181" y1="56" x2="191" y2="56" stroke="white" strokeWidth="1.5"/>
-                    <text x="193" y="60" fill="#e2e8f0" fontSize="5.5" fontFamily="monospace">WHITE → SIG+</text>
-                    <line x1="181" y1="68" x2="191" y2="68" stroke="#374151" strokeWidth="1.5"/>
-                    <text x="193" y="72" fill="#94a3b8" fontSize="5.5" fontFamily="monospace">BLACK → SIG−</text>
-                    <line x1="181" y1="80" x2="191" y2="80" stroke="#6b7280" strokeWidth="1.2" strokeDasharray="3,2"/>
-                    <text x="193" y="84" fill="#6b7280" fontSize="5.5" fontFamily="monospace">DRAIN → SHLD</text>
+                    <line x1="184" y1="70" x2="196" y2="70" stroke="#f1f5f9" strokeWidth="2"/>
+                    <text x="198" y="74" fill="#e2e8f0" fontSize="5.5" fontFamily="monospace">WHITE → A (SIG+)</text>
+                    <line x1="184" y1="82" x2="196" y2="82" stroke="#475569" strokeWidth="2.4"/>
+                    <line x1="184" y1="82" x2="196" y2="82" stroke="#0f172a" strokeWidth="1.8"/>
+                    <text x="198" y="86" fill="#94a3b8" fontSize="5.5" fontFamily="monospace">BLACK → B (SIG−)</text>
+                    <line x1="184" y1="94" x2="196" y2="94" stroke="#b45309" strokeWidth="1.5" strokeDasharray="3,2"/>
+                    <text x="198" y="98" fill="#92400e" fontSize="5.5" fontFamily="monospace">DRAIN → SH (SHLD)</text>
 
-                    {/* Drain wire note */}
-                    <rect x="179" y="89" width="113" height="26" rx="2" fill="rgba(251,191,36,0.05)" stroke="rgba(251,191,36,0.15)" strokeWidth="0.6"/>
-                    <text x="183" y="97" fill="#92400e" fontSize="5" fontFamily="monospace">⚠ DRAIN: tie at console SHLD</text>
-                    <text x="183" y="105" fill="#92400e" fontSize="5" fontFamily="monospace">only — float at probe end</text>
-                    <text x="183" y="113" fill="#92400e" fontSize="5" fontFamily="monospace">to avoid ground loops.</text>
+                    {/* Drain note */}
+                    <rect x="182" y="103" width="110" height="28" rx="2" fill="rgba(251,191,36,0.05)" stroke="rgba(251,191,36,0.18)" strokeWidth="0.6"/>
+                    <text x="186" y="111" fill="#92400e" fontSize="5" fontFamily="monospace">⚠ DRAIN: land at SH terminal</text>
+                    <text x="186" y="119" fill="#92400e" fontSize="5" fontFamily="monospace">at console ONLY — leave</text>
+                    <text x="186" y="127" fill="#92400e" fontSize="5" fontFamily="monospace">floating at probe end.</text>
 
                     {/* Polarity warning */}
-                    <rect x="179" y="119" width="113" height="16" rx="2" fill="rgba(239,68,68,0.06)" stroke="rgba(239,68,68,0.2)" strokeWidth="0.6"/>
-                    <text x="183" y="127" fill="#f87171" fontSize="5" fontFamily="monospace">⚠ Reversed polarity =</text>
-                    <text x="183" y="133" fill="#f87171" fontSize="5" fontFamily="monospace">PROBE COMM FAULT on boot</text>
+                    <rect x="182" y="135" width="110" height="17" rx="2" fill="rgba(239,68,68,0.06)" stroke="rgba(239,68,68,0.2)" strokeWidth="0.6"/>
+                    <text x="186" y="143" fill="#f87171" fontSize="5" fontFamily="monospace">⚠ Reversed polarity =</text>
+                    <text x="186" y="150" fill="#f87171" fontSize="5" fontFamily="monospace">PROBE COMM FAULT on boot</text>
+
+                    {/* Plug-in note */}
+                    <text x="184" y="161" fill="#1a3020" fontSize="4.5" fontFamily="monospace">Connector unplugs from card</text>
                   </svg>
                 </div>
                 <p style={{ margin: '0 0 8px', fontSize: 13, lineHeight: 1.6, background: 'rgba(251,191,36,0.07)', border: '1px solid rgba(251,191,36,0.18)', borderRadius: 6, padding: '6px 10px' }}>
