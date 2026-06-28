@@ -314,55 +314,80 @@ export default function Home() {
               <p style={{ margin: '8px 0 0', fontSize: 11, color: '#475569' }}>Windows 10 / 11 &nbsp;·&nbsp; Included free with Pro or Annual subscription</p>
             </div>
 
-            {/* Right: terminal mockup */}
+            {/* Right: app mockup */}
             <div style={{ background: '#030912', border: '1px solid rgba(34,211,238,0.18)', borderRadius: 12, overflow: 'hidden', fontFamily: 'monospace', fontSize: 10 }}>
               {/* Window chrome */}
               <div style={{ padding: '8px 14px', background: 'rgba(34,211,238,0.04)', borderBottom: '1px solid rgba(34,211,238,0.1)', display: 'flex', alignItems: 'center', gap: 7 }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444', display: 'inline-block' }}/>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#f59e0b', display: 'inline-block' }}/>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', display: 'inline-block' }}/>
-                <span style={{ marginLeft: 'auto', color: '#334155', fontSize: 9 }}>FuelTech AI Console Connect &nbsp;·&nbsp; TLS-450PLUS &nbsp;·&nbsp; COM3 &nbsp;·&nbsp; 9600 baud &nbsp;·&nbsp; ● Connected</span>
+                <span style={{ marginLeft: 'auto', color: '#334155', fontSize: 9 }}>FuelTech AI Console Connect &nbsp;·&nbsp; v1.0.50 &nbsp;·&nbsp; <span style={{ color: '#22d3ee' }}>● Connected</span></span>
               </div>
               {/* Tab bar */}
               <div style={{ display: 'flex', borderBottom: '1px solid rgba(34,211,238,0.08)', fontSize: 10 }}>
-                {['RS-232', 'I-Codes ★', 'Atlas AI', 'Reports', 'Env Forms'].map((tab, i) => (
-                  <div key={tab} style={{ padding: '5px 11px', color: i === 1 ? '#22d3ee' : '#334155', background: i === 1 ? 'rgba(34,211,238,0.06)' : 'transparent', borderRight: '1px solid rgba(34,211,238,0.08)', borderBottom: i === 1 ? '2px solid #22d3ee' : 'none', marginBottom: i === 1 ? -1 : 0 }}>{tab}</div>
+                {[{ label: '⚡ Console', active: true }, { label: '📋 Code Reference', active: false }, { label: '📋 Env Forms', active: false }].map(tab => (
+                  <div key={tab.label} style={{ padding: '5px 11px', color: tab.active ? '#22d3ee' : '#334155', background: tab.active ? 'rgba(34,211,238,0.06)' : 'transparent', borderRight: '1px solid rgba(34,211,238,0.08)', borderBottom: tab.active ? '2px solid #22d3ee' : 'none', marginBottom: tab.active ? -1 : 0 }}>{tab.label}</div>
                 ))}
               </div>
-              {/* Search bar */}
-              <div style={{ padding: '8px 12px 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ flex: 1, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(34,211,238,0.15)', borderRadius: 4, padding: '4px 8px', color: '#475569', fontSize: 9 }}>
-                  🔍 &nbsp;Search commands — e.g. "probe", "alarm history", "tank setup"…
+              {/* Two-column workspace */}
+              <div style={{ display: 'flex', gap: 0 }}>
+                {/* Sidebar */}
+                <div style={{ width: 130, borderRight: '1px solid rgba(34,211,238,0.08)', padding: '8px 8px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {/* Conn toggle */}
+                  <div style={{ display: 'flex', border: '1px solid rgba(34,211,238,0.15)', borderRadius: 5, overflow: 'hidden' }}>
+                    <div style={{ flex: 1, textAlign: 'center', padding: '3px 0', background: 'rgba(34,211,238,0.1)', color: '#22d3ee', fontSize: 8, fontWeight: 700 }}>🔌 RS-232</div>
+                    <div style={{ flex: 1, textAlign: 'center', padding: '3px 0', color: '#334155', fontSize: 8, borderLeft: '1px solid rgba(34,211,238,0.15)' }}>🌐 Ethernet</div>
+                  </div>
+                  {/* Port / connect */}
+                  <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 5, padding: '6px 7px' }}>
+                    <div style={{ color: '#475569', fontSize: 8, marginBottom: 4 }}>COM PORT</div>
+                    <div style={{ color: '#94a3b8', fontSize: 8, padding: '3px 6px', background: 'rgba(34,211,238,0.05)', border: '1px solid rgba(34,211,238,0.15)', borderRadius: 3, marginBottom: 6 }}>● COM3 — CP210x USB</div>
+                    <div style={{ background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.25)', borderRadius: 4, padding: '4px 0', textAlign: 'center', color: '#22d3ee', fontSize: 8, fontWeight: 700 }}>Connected ✓</div>
+                  </div>
+                  {/* Quick actions */}
+                  <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 5, padding: '6px 7px' }}>
+                    <div style={{ color: '#475569', fontSize: 8, marginBottom: 5 }}>QUICK ACTIONS</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
+                      {['🔔 Alarms', '📊 Status', '🛢️ Tanks', '⚙️ Setup', '📄 Alarms PDF', '📄 Setup PDF'].map(a => (
+                        <div key={a} style={{ fontSize: 7, color: '#94a3b8', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 3, padding: '3px 4px', textAlign: 'center' }}>{a}</div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-                <div style={{ color: '#22d3ee', fontSize: 9, whiteSpace: 'nowrap' }}>▸ All Categories ▾</div>
-              </div>
-              {/* Command rows */}
-              <div style={{ padding: '4px 12px 8px' }}>
-                {[
-                  { code: 'I10100', name: 'In-Tank Inventory Report', cat: 'Tanks', action: true },
-                  { code: 'I20200', name: 'Sensor Status Report', cat: 'Sensors', action: false },
-                  { code: 'I61500', name: 'Line Leak Detection Status', cat: 'LLD', action: false },
-                  { code: 'S80200', name: 'Probe Setup — SET command', cat: 'Setup', action: false, set: true },
-                ].map(row => (
-                  <div key={row.code} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 6px', marginBottom: 2, borderRadius: 4, background: row.action ? 'rgba(34,211,238,0.07)' : 'transparent', border: `1px solid ${row.action ? 'rgba(34,211,238,0.2)' : 'transparent'}` }}>
-                    <code style={{ color: row.set ? '#a78bfa' : '#22d3ee', fontWeight: 700, minWidth: 50, fontSize: 9 }}>{row.code}</code>
-                    <span style={{ color: '#94a3b8', flex: 1, fontSize: 9 }}>{row.name}</span>
-                    <span style={{ color: '#1e3a5f', fontSize: 8, background: '#0f172a', padding: '1px 5px', borderRadius: 2, whiteSpace: 'nowrap' }}>{row.cat}</span>
-                    <div style={{ fontSize: 8, color: row.set ? '#a78bfa' : '#22d3ee', background: row.set ? 'rgba(167,139,250,0.1)' : 'rgba(34,211,238,0.1)', border: `1px solid ${row.set ? 'rgba(167,139,250,0.25)' : 'rgba(34,211,238,0.25)'}`, borderRadius: 3, padding: '2px 7px', whiteSpace: 'nowrap' }}>▶ Send</div>
+                {/* Main area */}
+                <div style={{ flex: 1, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 7, minWidth: 0 }}>
+                  {/* Terminal */}
+                  <div style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(34,211,238,0.1)', borderRadius: 5, padding: '7px 9px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                      <span style={{ color: '#475569', fontSize: 8, fontWeight: 700 }}>OUTPUT</span>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {['Clear', 'Copy', 'Save PDF'].map(b => <div key={b} style={{ fontSize: 7, color: '#475569', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 3, padding: '2px 5px' }}>{b}</div>)}
+                      </div>
+                    </div>
+                    <div style={{ color: '#475569', fontSize: 8, lineHeight: 1.7 }}>
+                      ────────────────────────────<br/>
+                      ▶ &nbsp;Alarm History (I20600)<br/>
+                      ────────────────────────────<br/>
+                      <span style={{ color: '#fb923c' }}>SUMP SENSOR — OPEN ALARM</span><br/>
+                      &nbsp;&nbsp;TANK 1 · SENSOR 2 · 06/27/26<br/>
+                      <span style={{ color: '#94a3b8' }}>HIGH WATER — TANK 3 · 06/20/26</span>
+                    </div>
                   </div>
-                ))}
-                {/* Live ATG response panel */}
-                <div style={{ marginTop: 8, padding: 10, background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(34,211,238,0.1)', borderRadius: 6 }}>
-                  <div style={{ color: '#22d3ee', fontSize: 9, fontWeight: 700, marginBottom: 5 }}>▸ ATG Response — I10100 In-Tank Inventory</div>
-                  <div style={{ color: '#475569', fontSize: 8, lineHeight: 1.7 }}>
-                    TANK 1 &nbsp;REGULAR UNLEADED<br/>
-                    &nbsp;&nbsp;VOLUME: 8,942 GAL &nbsp;·&nbsp; ULLAGE: 1,058 GAL<br/>
-                    &nbsp;&nbsp;WATER: 0.00 IN &nbsp;·&nbsp; TEMP: 62.4 °F<br/>
-                    <span style={{ color: '#fb923c' }}>⚠ SENSOR FAULT — SUMP SENSOR OPEN / TANK 1</span>
+                  {/* Command prompt */}
+                  <div style={{ display: 'flex', gap: 5 }}>
+                    <div style={{ flex: 1, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(34,211,238,0.15)', borderRadius: 4, padding: '4px 8px', color: '#334155', fontSize: 8 }}>I20600 — Alarm History</div>
+                    <div style={{ background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.3)', borderRadius: 4, padding: '4px 10px', color: '#22d3ee', fontSize: 8, fontWeight: 700 }}>Send</div>
                   </div>
-                  <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
-                    <div style={{ fontSize: 8, color: '#a78bfa', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.22)', borderRadius: 3, padding: '3px 9px', cursor: 'pointer' }}>✦ Analyze with Atlas AI</div>
-                    <div style={{ fontSize: 8, color: '#475569', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 3, padding: '3px 9px', cursor: 'pointer' }}>↓ Export PDF</div>
+                  {/* Atlas */}
+                  <div style={{ background: 'rgba(167,139,250,0.06)', border: '1px solid rgba(167,139,250,0.2)', borderRadius: 5, padding: '7px 9px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ color: '#a78bfa', fontSize: 8, fontWeight: 700 }}>ATLAS AI DIAGNOSIS</span>
+                      <div style={{ fontSize: 7, color: '#a78bfa', background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: 3, padding: '2px 7px' }}>🔍 Analyze with Atlas</div>
+                    </div>
+                    <div style={{ color: '#64748b', fontSize: 8, lineHeight: 1.6 }}>
+                      <span style={{ color: '#a78bfa' }}>Sump Sensor Open</span> — sensor float stuck or wiring fault at conduit entry. Check sensor leads at the USM terminal block (positions 5–6).<br/>
+                      <span style={{ color: '#94a3b8' }}>→ Run </span><code style={{ color: '#22d3ee' }}>I20800</code><span style={{ color: '#94a3b8' }}> to confirm sensor state.</span>
+                    </div>
                   </div>
                 </div>
               </div>
