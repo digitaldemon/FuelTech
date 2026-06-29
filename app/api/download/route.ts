@@ -6,7 +6,7 @@ export const runtime = 'edge';
 const LATEST_YML = 'https://www.fueltechaipro.com/updates/console/latest.yml';
 
 // Fallback in case latest.yml is unreachable
-const FALLBACK_URL = 'https://wdmydlxkb6x834dc.public.blob.vercel-storage.com/updates/console/FuelTech%20AI%20Console%20Connect%20Setup%201.0.57.exe';
+const FALLBACK_URL = 'https://wdmydlxkb6x834dc.public.blob.vercel-storage.com/updates/console/FuelTech%20AI%20Console%20Connect%20Setup%201.0.58.exe';
 
 export async function GET() {
   try {
