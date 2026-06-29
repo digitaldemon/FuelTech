@@ -2,8 +2,8 @@ import { put } from '@vercel/blob';
 import { readFileSync } from 'fs';
 
 const TOKEN = 'vercel_blob_rw_wdmydLxKB6x834DC_PcALDGSIETJujmUVuvuIX4I9ho9U3m';
-const FILE  = 'C:/Users/Billy/TLSConnect/dist/FuelTech AI Console Connect Setup 1.0.60.exe';
-const NAME  = 'updates/console/FuelTech AI Console Connect Setup 1.0.60.exe';
+const FILE  = 'C:/Users/Billy/TLSConnect/dist/FuelTech AI Console Connect Setup 1.0.61.exe';
+const NAME  = 'updates/console/FuelTech AI Console Connect Setup 1.0.61.exe';
 
 console.log('Reading installer...');
 const data = readFileSync(FILE);
