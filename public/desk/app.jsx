@@ -1,0 +1,2038 @@
+/* global React, ReactDOM */
+const { useState, useRef, useEffect, useMemo } = React;
+
+// Everything outbound goes through the local server: it holds the API key
+// and sidesteps the venues' browser CORS rules.
+const px = (u) => "/api/desk/proxy?url=" + encodeURIComponent(u);
+
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+.cd {
+  --slate-900:#1B202B; --slate-800:#232A38; --slate-700:#2C3446;
+  --slate-600:#3A445A; --line:#414B63;
+  --bone:#EDE8DC; --dim:#939CB0;
+  --amber:#F2B33D; --rose:#E4707E; --cyan:#6FB3D2; --moss:#7FB98B; --violet:#9B8CD8;
+  background:
+    repeating-linear-gradient(to bottom, rgba(255,255,255,.014) 0 1px, transparent 1px 5px),
+    linear-gradient(178deg, var(--slate-800) 0%, var(--slate-900) 100%);
+  color: var(--bone);
+  font-family: 'Inter Tight', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  min-height: 100vh;
+  padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) calc(64px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  -webkit-font-smoothing: antialiased;
+}
+.cd * { box-sizing: border-box; }
+.cd-wrap { max-width: 880px; margin: 0 auto; }
+
+/* plain-language helpers */
+.help { font-size:12.5px; line-height:1.55; color:var(--dim); margin:6px 0 0; }
+.lede { font-size:15px; line-height:1.6; color:#D2CDC1; margin:0 0 18px; }
+.sect { font-size:16px; font-weight:600; letter-spacing:-.01em; margin:0 0 4px; }
+
+/* collapsible detail */
+details.fold { border-top:1px solid var(--line); margin-top:18px; padding-top:14px; }
+details.fold > summary { cursor:pointer; list-style:none; font-size:13.5px; font-weight:600;
+  color:var(--dim); display:flex; align-items:center; gap:8px; }
+details.fold > summary::-webkit-details-marker { display:none; }
+details.fold > summary::before { content:'+'; font-family:'JetBrains Mono',monospace;
+  font-size:14px; color:var(--amber); width:12px; }
+details.fold[open] > summary::before { content:'–'; }
+details.fold > summary:hover { color:var(--bone); }
+
+/* the plain-English answer */
+.answer { font-size:17px; line-height:1.6; margin:16px 0 0; }
+.answer strong { font-weight:600; }
+.figures { display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr));
+  gap:18px; margin-top:20px; padding-top:18px; border-top:1px solid var(--line); }
+.fig .big { font-family:'JetBrains Mono',monospace; font-size:22px; font-weight:700;
+  letter-spacing:-.01em; display:block; }
+.fig .cap { font-size:13px; font-weight:500; display:block; margin-top:3px; }
+.fig .sub { font-size:11.5px; color:var(--dim); display:block; margin-top:2px; line-height:1.4; }
+
+/* onboarding */
+.start { display:grid; grid-template-columns:26px 1fr; gap:12px 14px; margin-top:16px; }
+.start .n { font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--amber); padding-top:2px; }
+.start .t { font-size:14px; line-height:1.5; }
+.start .t b { font-weight:600; }
+.example { display:block; width:100%; text-align:left; margin-top:8px; background:var(--slate-800);
+  border:1px solid var(--slate-600); border-radius:3px; color:var(--cyan); cursor:pointer;
+  font-family:'JetBrains Mono',monospace; font-size:11.5px; padding:9px 11px; }
+.example:hover { border-color:var(--cyan); }
+
+.mono { font-family:'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.eyebrow { font-family:'JetBrains Mono', monospace; font-size:10.5px; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--dim); }
+.label { font-size:12.5px; font-weight:600; letter-spacing:0; text-transform:none;
+  color:var(--dim); font-family:'Inter Tight',sans-serif; }
+
+.cd-head { display:flex; align-items:baseline; justify-content:space-between; gap:16px;
+  padding-bottom:12px; flex-wrap:wrap; }
+.cd-title { font-family:'Bricolage Grotesque', sans-serif; font-weight:800; font-size:26px;
+  letter-spacing:-.02em; margin:0; }
+.cd-title span { color:var(--amber); }
+
+.tabs { display:flex; gap:2px; border-bottom:1px solid var(--line); margin-bottom:20px; overflow-x:auto; }
+.tabs button { background:none; border:none; border-bottom:2px solid transparent; color:var(--dim);
+  font-family:'Inter Tight',sans-serif; font-size:14px; font-weight:500; letter-spacing:0;
+  padding:12px 16px; cursor:pointer; white-space:nowrap; }
+.tabs button.on { color:var(--amber); border-bottom-color:var(--amber); }
+.tabs button:hover { color:var(--bone); }
+
+.bar { display:flex; gap:10px; flex-wrap:wrap; }
+.bar input, .srch {
+  flex:1 1 300px; min-width:0; background:var(--slate-700); border:1px solid var(--slate-600);
+  color:var(--bone); font-family:'JetBrains Mono', monospace; font-size:13px;
+  padding:13px 14px; border-radius:3px; outline:none;
+}
+.bar input::placeholder, .srch::placeholder { color:#6E778C; }
+.bar input:focus, .srch:focus { border-color:var(--amber); box-shadow:0 0 0 2px rgba(242,179,61,.16); }
+@media (max-width:560px) { .bar input, .srch { font-size:16px; } }
+
+.btn { background:var(--amber); color:#1B202B; border:none; border-radius:3px; cursor:pointer;
+  font-family:'JetBrains Mono', monospace; font-weight:700; font-size:12px; letter-spacing:.12em;
+  padding:13px 22px; text-transform:uppercase; transition:filter .15s; }
+.btn:hover:not(:disabled) { filter:brightness(1.12); }
+.btn:disabled { opacity:.4; cursor:not-allowed; }
+.btn-ghost { background:transparent; color:var(--dim); border:1px solid var(--slate-600); }
+.btn-ghost:hover:not(:disabled) { color:var(--bone); border-color:var(--dim); filter:none; }
+.btn-sm { padding:8px 13px; font-size:10.5px; }
+.cd :focus-visible { outline:2px solid var(--amber); outline-offset:2px; }
+
+.chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:12px; align-items:center; }
+.chip { font-family:'JetBrains Mono', monospace; font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
+  padding:5px 10px; border-radius:2px; border:1px solid var(--slate-600); color:var(--dim);
+  background:transparent; cursor:pointer; }
+.chip.on { border-color:var(--amber); color:var(--amber); background:rgba(242,179,61,.08); }
+.chip.static { cursor:default; }
+
+.panel { background:var(--slate-700); border:1px solid var(--slate-600); border-radius:4px;
+  padding:20px; margin-top:18px; }
+.q { font-size:19px; font-weight:600; line-height:1.32; margin:8px 0 0; letter-spacing:-.01em; }
+.meta { display:flex; gap:18px; flex-wrap:wrap; margin-top:14px; }
+.meta div { font-size:11px; }
+.meta .k, .vstat .k { color:var(--dim); font-family:'JetBrains Mono',monospace; font-size:9.5px;
+  letter-spacing:.16em; text-transform:uppercase; display:block; margin-bottom:3px; }
+.meta .v { font-family:'JetBrains Mono',monospace; font-size:13px; }
+
+/* signature: probability rail */
+.rail-box { margin:26px 0 6px; }
+.rail { position:relative; height:52px; background:var(--slate-800);
+  border:1px solid var(--slate-600); border-radius:2px; }
+.rail-tick { position:absolute; top:0; bottom:0; width:1px; background:var(--line); }
+.rail-band { position:absolute; top:1px; bottom:1px;
+  background-image:repeating-linear-gradient(45deg, rgba(242,179,61,.30) 0 5px, rgba(242,179,61,.07) 5px 10px);
+  transition:left .7s cubic-bezier(.22,1,.36,1), width .7s cubic-bezier(.22,1,.36,1); }
+.rail-band.neg { background-image:repeating-linear-gradient(45deg, rgba(228,112,126,.30) 0 5px, rgba(228,112,126,.07) 5px 10px); }
+.rail-mark { position:absolute; top:-7px; bottom:-7px; width:2px; transition:left .7s cubic-bezier(.22,1,.36,1); }
+.rail-mark .lbl { position:absolute; left:50%; transform:translateX(-50%); white-space:nowrap;
+  font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:.08em; padding:2px 6px; border-radius:2px; }
+.rail-mark .lbl.top { bottom:calc(100% + 5px); }
+.rail-mark .lbl.bot { top:calc(100% + 5px); }
+.rail-scale { display:flex; justify-content:space-between; margin-top:26px; }
+.rail-scale span { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim); }
+.sweep { position:absolute; top:0; bottom:0; width:26%;
+  background:linear-gradient(90deg, transparent, rgba(111,179,210,.20), transparent);
+  animation:sweep 1.5s linear infinite; }
+@keyframes sweep { from{left:-26%} to{left:100%} }
+
+.verdict { display:flex; align-items:flex-end; gap:22px; flex-wrap:wrap;
+  border-top:1px solid var(--line); margin-top:24px; padding-top:20px; }
+.verdict h2 { font-family:'Bricolage Grotesque',sans-serif; font-weight:800; font-size:40px;
+  letter-spacing:-.03em; line-height:.95; margin:0; }
+.vstat { display:flex; gap:22px; flex-wrap:wrap; }
+.vstat .v { font-family:'JetBrains Mono',monospace; font-size:17px; font-weight:500; }
+.thesis { margin:18px 0 0; font-size:14.5px; line-height:1.6; color:#DAD5C9; }
+
+.pillar { display:grid; grid-template-columns:30px 1fr auto; gap:14px; align-items:start;
+  padding:15px 0; border-bottom:1px solid rgba(65,75,99,.55); }
+.pillar:last-child { border-bottom:none; }
+.pillar.arrive { animation:arrive .4s cubic-bezier(.22,1,.36,1) both; }
+@keyframes arrive { from{opacity:0; transform:translateY(5px)} to{opacity:1; transform:none} }
+.pnum { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--dim); padding-top:2px; }
+.pname { font-size:13.5px; font-weight:600; letter-spacing:-.005em; }
+.pdesc { font-size:12px; color:var(--dim); margin-top:1px; }
+.pfind { font-size:13.5px; line-height:1.55; margin-top:7px; color:#DAD5C9; }
+.pwait { font-size:12px; color:var(--dim); font-family:'JetBrains Mono',monospace; margin-top:6px; }
+.sig { font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:.1em; padding:4px 8px;
+  border-radius:2px; white-space:nowrap; border:1px solid; }
+.dots::after { content:''; animation:dots 1.2s steps(4,end) infinite; }
+@keyframes dots { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'...'} }
+.contra { background:rgba(228,112,126,.05); margin:0 -20px; padding:15px 20px; border-radius:3px; }
+.off { opacity:.42; }
+
+.live { margin-top:16px; padding:14px 16px; border:1px solid var(--slate-600); border-radius:3px;
+  background:var(--slate-800); }
+.live-top { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-bottom:11px; }
+.pulse { width:7px; height:7px; border-radius:50%; background:var(--rose); flex:0 0 auto;
+  animation:pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:1; transform:scale(1)} 50%{opacity:.35; transform:scale(.75)} }
+.score-row { display:flex; align-items:baseline; justify-content:space-between; gap:14px; padding:6px 0; }
+.score-row .who { font-size:14.5px; font-weight:600; }
+.score-row .pts { font-family:'JetBrains Mono',monospace; font-size:24px; font-weight:700;
+  letter-spacing:-.02em; }
+.score-row.lead .pts { color:var(--amber); }
+.score-row.lead .who { color:var(--bone); }
+.score-row:not(.lead) .who, .score-row:not(.lead) .pts { color:var(--dim); }
+.live-foot { margin-top:12px; padding-top:11px; border-top:1px solid var(--line);
+  display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.srcchip { font-family:'JetBrains Mono',monospace; font-size:9.5px; letter-spacing:.08em;
+  border:1px solid var(--slate-600); color:var(--dim); padding:3px 7px; border-radius:2px; }
+.srcchip.ok { border-color:rgba(127,185,139,.5); color:var(--moss); }
+.srcchip.bad { border-color:var(--rose); color:var(--rose); }
+.wp { margin-top:11px; }
+.wp-bar { height:6px; background:var(--slate-900); border:1px solid var(--slate-600);
+  border-radius:3px; position:relative; overflow:hidden; }
+.wp-fill { position:absolute; top:0; bottom:0; left:0; background:var(--violet);
+  transition:width .5s cubic-bezier(.22,1,.36,1); }
+.play { margin-top:10px; font-size:12.5px; line-height:1.5; color:#C9C4B8;
+  border-left:2px solid var(--slate-600); padding-left:10px; }
+
+.lst { margin:0; padding-left:17px; }
+.lst li { font-size:13px; line-height:1.6; margin-bottom:6px; color:#DAD5C9; }
+.src { display:flex; gap:6px; flex-wrap:wrap; margin-top:12px; }
+.src a { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim);
+  border:1px solid var(--slate-600); padding:3px 7px; border-radius:2px; text-decoration:none; }
+.src a:hover { color:var(--cyan); border-color:var(--cyan); }
+
+.err { border-color:var(--rose); color:#F3C0C6; font-size:13px; line-height:1.55; white-space:pre-wrap; font-family:ui-monospace,monospace; }
+.foot { margin-top:26px; font-size:11.5px; line-height:1.6; color:var(--dim); }
+.sel { width:100%; text-align:left; background:var(--slate-800); border:1px solid var(--slate-600);
+  color:var(--bone); padding:11px 13px; border-radius:3px; cursor:pointer; margin-bottom:7px;
+  display:flex; justify-content:space-between; gap:12px; align-items:center; font-size:13px; }
+.sel:hover { border-color:var(--amber); }
+.sel .px { font-family:'JetBrains Mono',monospace; color:var(--amber); font-size:14px; }
+.sel .sub { display:block; font-family:'JetBrains Mono',monospace; font-size:10px;
+  color:var(--dim); letter-spacing:.1em; margin-top:3px; }
+
+table.tbl { width:100%; border-collapse:collapse; margin-top:14px; }
+table.tbl th { text-align:left; font-family:'JetBrains Mono',monospace; font-size:9.5px;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--dim); font-weight:400;
+  padding:0 10px 8px 0; border-bottom:1px solid var(--line); }
+table.tbl td { padding:10px 10px 10px 0; border-bottom:1px solid rgba(65,75,99,.4);
+  font-size:12.5px; vertical-align:top; }
+table.tbl td.m { font-family:'JetBrains Mono',monospace; font-variant-numeric:tabular-nums; }
+
+.scorecard { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:16px; }
+.scorecard .n { font-family:'Bricolage Grotesque',sans-serif; font-weight:800; font-size:30px;
+  letter-spacing:-.02em; line-height:1; }
+
+.fw { border:1px solid var(--slate-600); border-radius:3px; padding:13px; margin-bottom:9px;
+  background:var(--slate-800); }
+.fw textarea, .fw input[type=text] { width:100%; background:var(--slate-900); color:var(--bone);
+  border:1px solid var(--slate-600); border-radius:2px; padding:8px 10px; font-size:12.5px;
+  font-family:'Inter Tight',sans-serif; resize:vertical; margin-top:7px; }
+.fw-top { display:flex; gap:10px; align-items:center; justify-content:space-between; }
+.rel { font-family:'JetBrains Mono',monospace; font-size:10px; padding:3px 7px; border-radius:2px;
+  border:1px solid var(--slate-600); color:var(--dim); }
+.sw { width:34px; height:19px; border-radius:10px; border:1px solid var(--slate-600);
+  background:var(--slate-900); position:relative; cursor:pointer; flex:0 0 auto; }
+.sw i { position:absolute; top:2px; left:2px; width:13px; height:13px; border-radius:50%;
+  background:var(--dim); transition:left .16s, background .16s; }
+.sw.on { border-color:var(--amber); background:rgba(242,179,61,.15); }
+.sw.on i { left:17px; background:var(--amber); }
+
+@media (prefers-reduced-motion: reduce) { .cd *, .cd *::after { animation:none !important; transition:none !important; } }
+@media (max-width:560px) {
+  .cd { padding: max(18px, env(safe-area-inset-top)) 14px calc(48px + env(safe-area-inset-bottom)) 14px; }
+  .verdict h2 { font-size:32px; }
+  .pillar { grid-template-columns:26px 1fr; }
+  .pillar .sig { grid-column:2; justify-self:start; margin-top:8px; }
+  table.tbl th:nth-child(n+4), table.tbl td:nth-child(n+4) { display:none; }
+}
+`;
+
+/* ================= framework library =================
+   Each pillar is a template you can edit. Wording here flows
+   straight into the prompts, so editing a method changes the analysis. */
+const DEFAULTS = {
+  politics: {
+    label: "Politics",
+    items: [
+      ["Polls Analysis", "Compare current polling averages against the market's implied probability. Note sample sizes, pollster ratings and trend direction.", "538, RealClearPolitics, Silver Bulletin"],
+      ["Economic Impact", "Assess how GDP, unemployment and inflation are moving, and how that historically shifts incumbent vote share.", "BLS, BEA, FRED"],
+      ["Approval Ratings", "Track favourability and job approval for the named figures, including direction over the last 30 days.", "Gallup, 538 approval tracker"],
+      ["Cross-Platform Markets", "Compare the equivalent contract on the other venue and note any divergence in implied probability.", "Polymarket, Kalshi"],
+      ["Breaking News", "Find events in the last 72 hours that plausibly move this outcome, and judge whether the market has already absorbed them.", "Reuters, AP, major outlets"],
+      ["Regional Patterns", "Break the outcome down by state or district where relevant, focusing on the marginal seats that decide it.", "State polling, past margins"],
+      ["Social Sentiment", "Read political discussion volume and direction, treating it as a crowd signal rather than evidence.", "Reddit, X"],
+      ["Data Uncertainty", "State the confidence interval around the central estimate and how wide it should be given the time to resolution.", "Poll margins of error"],
+      ["Contrarian Risk", "Argue the opposite case. What would make the market price correct after all?", "—"],
+    ],
+    groups: [[1, 3], [2, 6], [4, 8], [5, 7]],
+  },
+  sports: {
+    label: "Sports",
+    items: [
+      ["Vegas Lines", "Pull the current spread, moneyline and total, and convert the moneyline to a no-vig implied probability.", "Action Network, VegasInsider"],
+      ["Line Movement", "Compare opening to current line and identify whether moves ran with or against public ticket share.", "Sportsbook line history"],
+      ["Injury Reports", "Check official injury designations and late scratches for both sides, weighted by player usage.", "Official team reports, Rotowire"],
+      ["Reddit Sentiment", "Read the consensus and note whether the popular side is the crowded one.", "r/sportsbook"],
+      ["Team Statistics", "Look at recent form, head-to-head history and relevant splits like home/away or pace.", "Official league stats"],
+      ["Situational Factors", "Account for rest days, travel distance, altitude, schedule spots and motivation.", "Schedule data"],
+      ["Handle Splits", "Compare ticket percentage against money percentage to separate public volume from sharp money.", "Book-published splits"],
+      ["Time Decay", "Assess how much can still change before tip-off or kick-off, and whether late moves are likely.", "—"],
+      ["Contrarian Check", "Argue the fade. Is the popular side popular for good reasons, or is this a trap?", "—"],
+    ],
+    groups: [[1, 2], [3, 5], [4, 7], [6, 8]],
+  },
+  weather: {
+    label: "Weather",
+    items: [
+      ["Forecast Consensus", "Compare GFS, ECMWF and the NWS local office forecast and state where they agree.", "NWS, NOAA, ECMWF"],
+      ["Ensemble Spread", "Report the GEFS ensemble range for the relevant variable and how tight the members are.", "NOAA GEFS"],
+      ["Forecast Skill Decay", "Weight the forecast by known accuracy at this lead time; day-7 skill is far weaker than day-2.", "NOAA verification stats"],
+      ["Historical Base Rate", "Find the climatological frequency of this outcome at this station for this calendar window.", "NOAA climate normals"],
+      ["Model Divergence", "Identify where the models disagree and which one the market appears to be pricing.", "Model comparison"],
+      ["Micro-Climate Bias", "Account for station-specific effects: urban heat island, coastal influence, elevation.", "Station metadata"],
+      ["Storm Track", "For tropical systems, read the NHC cone and intensity guidance, including uncertainty at landfall.", "NHC"],
+      ["Market Pricing", "Convert the forecast into a probability and compare it directly to the contract price.", "—"],
+      ["Contrarian Check", "Check for overshoot. Forecast-driven markets often overreact to a single model run.", "—"],
+    ],
+    groups: [[1, 5], [2, 3], [4, 6], [7, 8]],
+  },
+  finance: {
+    label: "Finance",
+    items: [
+      ["Technical Analysis", "Read price structure: trend, RSI, moving averages and the nearest support and resistance to the strike.", "TradingView, exchange data"],
+      ["Fundamental Metrics", "Check the fundamentals that bear on the outcome: earnings, revenue trend, valuation.", "Company filings"],
+      ["Smart Money", "Look for institutional positioning, insider transactions and unusual options flow.", "SEC filings, flow data"],
+      ["Reddit Sentiment", "Gauge retail positioning and whether the trade is already crowded.", "r/wallstreetbets, r/stocks"],
+      ["Macro Indicators", "Factor in Fed policy path, inflation prints and rate expectations relevant to the horizon.", "FRED, CME FedWatch"],
+      ["News Catalysts", "Map scheduled catalysts between now and resolution: earnings dates, CPI prints, product events.", "Earnings calendars"],
+      ["Social Velocity", "Measure whether attention is accelerating or fading, as a momentum proxy.", "X, Google Trends"],
+      ["Market Signals", "Read volume, bid-ask spread and order book depth on the contract itself.", "Venue order book"],
+      ["Contrarian Check", "Test whether this is an overcrowded trade where the obvious read is already priced.", "—"],
+    ],
+    groups: [[1, 8], [2, 3], [4, 7], [5, 6]],
+  },
+  general: {
+    label: "General",
+    items: [
+      ["Base Rate", "Find how often this class of event has happened historically, and start from that number.", "Historical records"],
+      ["Official Benchmarks", "Check what official bodies or domain experts currently forecast.", "Agency forecasts"],
+      ["Reddit Sentiment", "Read the relevant subreddit consensus as a crowd signal.", "Reddit"],
+      ["Social Velocity", "Judge whether attention on this topic is building or decaying.", "X, Google Trends"],
+      ["News Recency", "Surface anything from the last 24 to 72 hours that changes the picture.", "Reuters, AP"],
+      ["Source Quality", "Rate the credibility of what you found and flag anything resting on a single weak source.", "—"],
+      ["Time Decay", "Consider how much time remains and how much can still change before resolution.", "—"],
+      ["Market Signals", "Read the contract's own volume, price direction and liquidity.", "Venue data"],
+      ["Contrarian Check", "Look for the hidden edge, especially in the resolution criteria themselves.", "—"],
+    ],
+    groups: [[1, 2], [3, 4], [5, 6], [7, 8]],
+  },
+};
+
+function buildFrameworks() {
+  const out = {};
+  for (const [k, v] of Object.entries(DEFAULTS)) {
+    out[k] = {
+      label: v.label,
+      groups: v.groups,
+      items: v.items.map(([name, method, sources], i) => ({
+        n: i + 1, name, method, sources, weight: 1, enabled: true,
+      })),
+    };
+  }
+  return out;
+}
+
+/* ================= helpers ================= */
+const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+const today = () => new Date().toISOString().slice(0, 10);
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+const STOP = new Set("will the a an of in on at to be by for and or is are it its this that with from as no yes than more less".split(" "));
+const toks = (s) => new Set(String(s).toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w)));
+function overlap(a, b) {
+  const A = toks(a), B = toks(b);
+  let hit = 0;
+  A.forEach((t) => { if (B.has(t)) hit++; });
+  return hit / Math.max(3, Math.min(A.size, B.size));
+}
+
+function parseUrl(raw) {
+  const u = raw.trim();
+  if (!u) return { error: "Paste a Kalshi or Polymarket market URL to start." };
+  let host = "", parts = [], qs = new URLSearchParams();
+  try {
+    const url = new URL(u.startsWith("http") ? u : "https://" + u);
+    host = url.hostname.replace(/^www\./, "");
+    parts = url.pathname.split("/").filter(Boolean);
+    qs = url.searchParams;
+  } catch {
+    return { error: "That doesn't parse as a URL. Copy the full link from your browser bar." };
+  }
+  if (host.includes("polymarket")) {
+    const i = parts.findIndex((p) => p === "event" || p === "market" || p === "markets");
+    const slug = i >= 0 ? parts[i + 1] : parts[parts.length - 1];
+    if (!slug) return { error: "No market slug found in that Polymarket link." };
+    return { venue: "Polymarket", slug, url: u };
+  }
+  if (host.includes("kalshi")) {
+    const i = parts.findIndex((p) => p === "markets" || p === "events");
+    const segs = (i >= 0 ? parts.slice(i + 1) : parts).filter(Boolean);
+    if (!segs.length) return { error: "No series or event ticker found in that Kalshi link." };
+    return { venue: "Kalshi", segs, ticker: qs.get("ticker"), url: u };
+  }
+  return { error: "Only Kalshi and Polymarket links work here. Check the domain." };
+}
+
+const jparse = (v) => { try { return typeof v === "string" ? JSON.parse(v) : v || []; } catch { return []; } };
+
+function pmMarket(m, ev) {
+  const outs = jparse(m.outcomes), pxs = jparse(m.outcomePrices).map(Number);
+  const yi = Math.max(0, outs.findIndex((o) => String(o).toLowerCase() === "yes"));
+  const price = Number.isFinite(pxs[yi]) ? pxs[yi] * 100 : null;
+  return {
+    id: m.conditionId || String(m.id),
+    token: jparse(m.clobTokenIds)[yi] || null,
+    slug: (ev && ev.slug) || m.slug,
+    name: m.groupItemTitle || m.question || (ev && ev.title),
+    question: m.question || (ev && ev.title),
+    price,
+    volume: Number(m.volumeNum || m.volume || 0),
+    liquidity: Number(m.liquidityNum || m.liquidity || 0),
+    close: m.endDate || (ev && ev.endDate) || null,
+    rules: String(m.description || (ev && ev.description) || "").slice(0, 900),
+    venue: "Polymarket",
+    link: "https://polymarket.com/event/" + ((ev && ev.slug) || m.slug || ""),
+  };
+}
+
+async function fetchPolymarket(p) {
+  const r = await fetch(px("https://gamma-api.polymarket.com/events?slug=" + encodeURIComponent(p.slug)));
+  if (!r.ok) throw new Error("Polymarket API returned " + r.status);
+  const data = await r.json();
+  const ev = Array.isArray(data) ? data[0] : data;
+  if (!ev || !ev.markets || !ev.markets.length) throw new Error("No markets on that event.");
+  const markets = ev.markets
+    .filter((m) => m.active !== false && m.archived !== true)
+    .map((m) => pmMarket(m, ev))
+    .filter((m) => m.price !== null)
+    .sort((a, b) => b.price - a.price);
+  if (!markets.length) throw new Error("No priced markets on that event.");
+  return { venue: "Polymarket", event: ev.title, markets, source: "live API" };
+}
+
+// Kalshi now publishes prices as decimal dollars (yes_bid_dollars: 0.45) and
+// sizes as fixed-point (volume_fp). Older payloads used integer cents. Read both.
+function kaPrice(m) {
+  const n = (x) => {
+    if (x === null || x === undefined || x === "") return null;
+    const v = Number(x);
+    return Number.isFinite(v) ? v : null;
+  };
+  // Cents fields, used as-is.
+  const cents = (...names) => { for (const k of names) { const v = n(m[k]); if (v !== null) return v; } return null; };
+  // Dollar fields, scaled to cents.
+  const dol = (...names) => { for (const k of names) { const v = n(m[k]); if (v !== null) return v * 100; } return null; };
+  const or = (a, b) => (a !== null ? a : b);
+
+  let bid = or(cents("yes_bid", "best_yes_bid"), dol("yes_bid_dollars", "previous_yes_bid_dollars"));
+  let ask = or(cents("yes_ask", "best_yes_ask"), dol("yes_ask_dollars", "previous_yes_ask_dollars"));
+  const noBid = or(cents("no_bid", "best_no_bid"), dol("no_bid_dollars"));
+  const noAsk = or(cents("no_ask", "best_no_ask"), dol("no_ask_dollars"));
+  if (bid === null && noAsk !== null) bid = 100 - noAsk;
+  if (ask === null && noBid !== null) ask = 100 - noBid;
+  const last = or(cents("last_price", "yes_price"), dol("last_price_dollars", "previous_price_dollars"));
+
+  let price = null;
+  if (last !== null && last > 0) price = last;
+  else if (bid !== null && ask !== null) price = (bid + ask) / 2;
+  else if (bid !== null) price = bid;
+  else if (ask !== null) price = ask;
+  else if (last !== null) price = last;
+  return { price, bid, ask };
+}
+
+function kaMarket(m) {
+  const { price, bid, ask } = kaPrice(m);
+  const num = (x) => { const v = Number(x); return Number.isFinite(v) ? v : 0; };
+  return {
+    id: m.ticker,
+    name: m.yes_sub_title || m.subtitle || m.title || m.ticker,
+    question: m.title || m.ticker,
+    price,
+    quoted: price !== null && price > 0,
+    bid, ask,
+    status: m.status || null,
+    volume: num(m.volume) || num(m.volume_fp) || num(m.volume_24h_fp),
+    liquidity: num(m.open_interest) || num(m.open_interest_fp) || num(m.liquidity_dollars),
+    close: m.close_time || null,
+    rules: String(m.rules_primary || "").slice(0, 900),
+    venue: "Kalshi",
+    link: "https://kalshi.com/markets/" + String(m.ticker).split("-")[0].toLowerCase(),
+  };
+}
+
+async function fetchKalshi(p) {
+  const base = "https://api.elections.kalshi.com/trade-api/v2";
+  const segs = p.segs || [];
+  const tried = [];
+
+  // Pull markets out of whichever shape the endpoint returns.
+  const get = async (url) => {
+    let r;
+    try {
+      r = await fetch(px(url));
+    } catch (e) {
+      tried.push(url.replace(base, "") + " -> " + e.message);
+      return null;
+    }
+    if (!r.ok) { tried.push(url.replace(base, "") + " -> " + r.status); return null; }
+    const d = await r.json();
+    const ms = []
+      .concat(d.markets || [])
+      .concat(d.market ? [d.market] : [])
+      .concat(d.event && d.event.markets ? d.event.markets : [])
+      .concat((d.events || []).flatMap((e) => e.markets || []));
+    tried.push(url.replace(base, "") + " -> " + r.status + " (" + ms.length + " markets)");
+    if (!ms.length) return null;
+    const title = (d.event && d.event.title) || (d.events && d.events[0] && d.events[0].title) || null;
+    return { ms, title };
+  };
+
+  // A full market ticker contains a dash (KXWTAMATCH-25AUG08SWI); a series ticker doesn't.
+  const looksTicker = (x) => /-/.test(x) && /\d/.test(x);
+  const tickers = segs.filter(looksTicker).map((x) => x.toUpperCase());
+  const series = segs.filter((x) => !looksTicker(x)).map((x) => x.toUpperCase());
+
+  let raw = null;
+
+  if (p.ticker) raw = await get(base + "/markets?tickers=" + encodeURIComponent(p.ticker.toUpperCase()));
+
+  for (const T of tickers) {
+    if (raw) break;
+    raw = await get(base + "/markets?tickers=" + encodeURIComponent(T));
+    if (!raw) raw = await get(base + "/events/" + encodeURIComponent(T) + "?with_nested_markets=true");
+  }
+
+  for (const S of series) {
+    if (raw) break;
+    for (const url of [
+      base + "/events?series_ticker=" + S + "&with_nested_markets=true&limit=200",
+      base + "/markets?series_ticker=" + S + "&status=open&limit=200",
+      base + "/markets?event_ticker=" + S + "&limit=200",
+      base + "/events/" + S + "?with_nested_markets=true",
+    ]) {
+      const got = await get(url);
+      if (!got) continue;
+      // Guard: if the API ignored an unsupported filter it hands back unrelated
+      // markets. Every ticker in this series must start with the series ticker.
+      const own = got.ms.filter((m) => String(m.ticker || "").toUpperCase().startsWith(S));
+      if (own.length) { raw = { ms: own, title: got.title }; break; }
+      tried.push("  ^ discarded: none of those tickers start with " + S);
+    }
+  }
+
+  // Last resort: match the words in the URL slug against open market titles.
+  if (!raw && segs.length) {
+    const words = segs.join(" ").replace(/-/g, " ");
+    const got = await get(base + "/markets?status=open&limit=1000");
+    if (got) {
+      const scored = got.ms
+        .map((m) => ({ m, s: overlap(words, (m.title || "") + " " + (m.subtitle || m.yes_sub_title || "")) }))
+        .filter((x) => x.s > 0.34)
+        .sort((a, b) => b.s - a.s)
+        .slice(0, 40);
+      if (scored.length) raw = { ms: scored.map((x) => x.m), title: null, fuzzy: true };
+    }
+  }
+
+  if (!raw) {
+    throw new Error("no Kalshi endpoint matched this link.\nAttempts:\n" + tried.join("\n"));
+  }
+
+  // Nested market records from /events are trimmed and carry no quotes.
+  // Re-fetch the full records for anything missing a bid, ask and last price.
+  const thin = raw.ms.filter((m) => m.yes_bid == null && m.yes_ask == null && m.last_price == null);
+  if (thin.length) {
+    const byTicker = {};
+    for (let i = 0; i < thin.length && i < 200; i += 40) {
+      const batch = thin.slice(i, i + 40).map((m) => m.ticker).filter(Boolean);
+      if (!batch.length) continue;
+      const got = await get(base + "/markets?tickers=" + encodeURIComponent(batch.join(",")));
+      (got ? got.ms : []).forEach((m) => { byTicker[m.ticker] = m; });
+    }
+    raw.ms = raw.ms.map((m) => byTicker[m.ticker] || m);
+  }
+
+  const all = raw.ms.map(kaMarket);
+  const priced = all.filter((m) => m.price !== null);
+  const tradeable = priced.filter((m) => !m.status || /open|active/i.test(m.status));
+  let markets = tradeable.length ? tradeable : priced;
+
+  if (!markets.length) {
+    const counts = {};
+    all.forEach((m) => { const k = m.status || "no status"; counts[k] = (counts[k] || 0) + 1; });
+    const summary = Object.entries(counts).map(([k, v]) => v + " " + k).join(", ");
+    throw new Error(
+      "Found " + all.length + " contracts in this series but none are currently quoted (" + summary + ").\n\n" +
+      "This usually means the series has no live matches right now. Try the Browse markets tab to see what is actually trading."
+    );
+  }
+
+  // A series page holds many contests. Busiest and soonest first beats price order.
+  markets = markets.length > 3
+    ? markets.sort((a, b) => (b.volume - a.volume) || (new Date(a.close || 0) - new Date(b.close || 0)))
+    : markets.sort((a, b) => b.price - a.price);
+
+  return {
+    venue: "Kalshi",
+    event: raw.title || (markets.length > 1 ? segs.join(" / ").replace(/-/g, " ") : markets[0].question),
+    markets,
+    source: raw.fuzzy ? "matched by keyword" : "live API",
+  };
+}
+
+/* ---- order book + slippage ---- */
+async function fetchBook(m) {
+  try {
+    if (m.venue === "Kalshi") {
+      const r = await fetch(px("https://api.elections.kalshi.com/trade-api/v2/markets/" + m.id + "/orderbook?depth=12"));
+      if (!r.ok) return null;
+      const d = await r.json();
+      const ob = d.orderbook || {};
+      const rows = (a) => (a || []).map((r) => [Number(r[0]), Number(r[1])]).filter((r) => Number.isFinite(r[0]));
+      // Levels may arrive in dollars (0.45) or cents (45). Scale if they look decimal.
+      const toCents = (rs) => (rs.length && Math.max.apply(null, rs.map((r) => r[0])) <= 1.001
+        ? rs.map((r) => [r[0] * 100, r[1]]) : rs);
+      const yes = toCents(rows(ob.yes || ob.yes_dollars));
+      const no = toCents(rows(ob.no || ob.no_dollars));
+      // Buying YES fills against resting NO bids at (100 - no price).
+      const asks = no.map((r) => [100 - r[0], r[1]]).sort((a, b) => a[0] - b[0]);
+      const bids = yes.slice().sort((a, b) => b[0] - a[0]);
+      return { asks, bids, unit: "contracts" };
+    }
+    if (!m.token) return null;
+    const r = await fetch(px("https://clob.polymarket.com/book?token_id=" + encodeURIComponent(m.token)));
+    if (!r.ok) return null;
+    const d = await r.json();
+    const asks = (d.asks || []).map((x) => [Number(x.price) * 100, Number(x.size)]).sort((a, b) => a[0] - b[0]);
+    const bids = (d.bids || []).map((x) => [Number(x.price) * 100, Number(x.size)]).sort((a, b) => b[0] - a[0]);
+    return { asks, bids, unit: "shares" };
+  } catch { return null; }
+}
+
+function walkBook(levels, size) {
+  let left = size, cost = 0, filled = 0;
+  for (const [p, q] of levels) {
+    const take = Math.min(left, q);
+    cost += take * p; filled += take; left -= take;
+    if (left <= 0) break;
+  }
+  if (filled === 0) return null;
+  return { avg: cost / filled, filled, short: left > 0 ? left : 0 };
+}
+
+/* ================= live game state =================
+   Several feeds, cross-checked. ESPN covers every league and carries win
+   probability and sportsbook odds; the league's own API is the authority on
+   score and clock. Disagreement between them is itself a signal. */
+const LEAGUES = [
+  [/KXNBAGAME|\bnba\b/i, "basketball/nba", "NBA"],
+  [/KXWNBAGAME|\bwnba\b/i, "basketball/wnba", "WNBA"],
+  [/KXMLBGAME|\bmlb\b|world series/i, "baseball/mlb", "MLB"],
+  [/KXNFLGAME|\bnfl\b|super bowl/i, "football/nfl", "NFL"],
+  [/KXNHLGAME|\bnhl\b|stanley cup/i, "hockey/nhl", "NHL"],
+  [/KXCFBGAME|KXNCAAFGAME|college football/i, "football/college-football", "NCAAF"],
+  [/KXCBBGAME|KXNCAABGAME|march madness/i, "basketball/mens-college-basketball", "NCAAM"],
+  [/KXATPMATCH|\batp\b/i, "tennis/atp", "ATP"],
+  [/KXWTAMATCH|\bwta\b/i, "tennis/wta", "WTA"],
+  [/KXUFCFIGHT|\bufc\b|\bmma\b/i, "mma/ufc", "UFC"],
+  [/KXEPLGAME|premier league/i, "soccer/eng.1", "EPL"],
+  [/KXMLSGAME|\bmls\b/i, "soccer/usa.1", "MLS"],
+  [/champions league/i, "soccer/uefa.champions", "UCL"],
+  [/la liga/i, "soccer/esp.1", "La Liga"],
+];
+
+function detectLeague(m) {
+  const hay = (m.id || "") + " " + (m.question || "") + " " + (m.name || "");
+  for (const [re, path, label] of LEAGUES) if (re.test(hay)) return { path, label };
+  return null;
+}
+
+// Trailing capitals in a Kalshi ticker are the two competitors' codes.
+function teamCodes(ticker) {
+  const tail = String(ticker || "").split("-").pop();
+  const mt = tail.match(/([A-Z]{4,10})$/);
+  if (!mt) return [];
+  const run = mt[1];
+  if (run.length % 2 === 0) return [run.slice(0, run.length / 2), run.slice(run.length / 2)];
+  return [run];
+}
+
+const codeHit = (codes, abbrs) =>
+  codes.filter((c) => abbrs.some((a) => a && (a === c || a.startsWith(c) || c.startsWith(a)))).length;
+
+const getJson = async (url) => {
+  const r = await fetch(px(url));
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+};
+
+/* ---- source 1: ESPN scoreboard + summary ---- */
+async function espnGame(lg, m, codes) {
+  const d = await getJson("https://site.api.espn.com/apis/site/v2/sports/" + lg.path + "/scoreboard");
+  const events = d.events || [];
+  if (!events.length) return null;
+  const target = (m.question || "") + " " + (m.name || "");
+  const scored = events.map((ev) => {
+    const comp = (ev.competitions && ev.competitions[0]) || {};
+    const abbrs = (comp.competitors || []).map((c) => String((c.team && c.team.abbreviation) || "").toUpperCase());
+    return { ev, s: overlap(target, (ev.name || "") + " " + (ev.shortName || "")) + codeHit(codes, abbrs) * 0.8 };
+  }).sort((a, b) => b.s - a.s)[0];
+  if (!scored || scored.s < 0.5) return null;
+
+  const ev = scored.ev;
+  const comp = (ev.competitions && ev.competitions[0]) || {};
+  const st = ev.status || comp.status || {};
+  const type = st.type || {};
+  const sides = (comp.competitors || []).map((c) => ({
+    name: (c.team && (c.team.displayName || c.team.name)) || (c.athlete && c.athlete.displayName) || "—",
+    abbr: String((c.team && c.team.abbreviation) || "").toUpperCase(),
+    score: c.score != null && c.score !== "" ? Number(c.score) : null,
+    home: c.homeAway === "home",
+  }));
+
+  const base = {
+    source: "ESPN", eventId: ev.id, path: lg.path,
+    name: ev.name || ev.shortName || "",
+    state: type.state || "pre",
+    detail: type.shortDetail || type.detail || "",
+    clock: st.displayClock || "",
+    period: st.period || 0,
+    sides,
+    venue: (comp.venue && comp.venue.fullName) || "",
+  };
+
+  // Summary carries win probability, book odds and the last play.
+  try {
+    const sm = await getJson("https://site.api.espn.com/apis/site/v2/sports/" + lg.path + "/summary?event=" + ev.id);
+    const wp = sm.winprobability;
+    if (Array.isArray(wp) && wp.length) {
+      const last = wp[wp.length - 1];
+      if (last && last.homeWinPercentage != null) base.homeWinPct = Number(last.homeWinPercentage) * 100;
+    }
+    if (base.homeWinPct == null && sm.predictor && sm.predictor.homeTeam) {
+      const v = Number(sm.predictor.homeTeam.gameProjection);
+      if (Number.isFinite(v)) base.homeWinPct = v;
+    }
+    const od = (sm.odds || sm.pickcenter || [])[0];
+    if (od) {
+      base.odds = {
+        provider: (od.provider && od.provider.name) || "book",
+        details: od.details || "",
+        overUnder: od.overUnder != null ? od.overUnder : null,
+        homeML: od.homeTeamOdds && od.homeTeamOdds.moneyLine,
+        awayML: od.awayTeamOdds && od.awayTeamOdds.moneyLine,
+      };
+    }
+    const sit = sm.situation || (sm.header && sm.header.competitions && sm.header.competitions[0].situation);
+    if (sit && sit.lastPlay && sit.lastPlay.text) base.lastPlay = String(sit.lastPlay.text).slice(0, 180);
+  } catch { /* scoreboard alone is still usable */ }
+
+  return base;
+}
+
+/* ---- source 2: the league's own feed ---- */
+async function officialGame(lg, codes) {
+  if (lg.label === "MLB") {
+    const sch = await getJson("https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=" + today());
+    const games = (sch.dates || []).flatMap((d) => d.games || []);
+    const pick = games.find((g) => {
+      const ab = [g.teams.home.team.abbreviation, g.teams.away.team.abbreviation]
+        .map((x) => String(x || "").toUpperCase());
+      return codeHit(codes, ab) > 0;
+    });
+    if (!pick) return null;
+    const f = await getJson("https://statsapi.mlb.com/api/v1.1/game/" + pick.gamePk + "/feed/live");
+    const ls = (f.liveData && f.liveData.linescore) || {};
+    const st = (f.gameData && f.gameData.status) || {};
+    const abstract = String(st.abstractGameState || "").toLowerCase();
+    return {
+      source: "MLB StatsAPI",
+      state: abstract === "live" ? "in" : abstract === "final" ? "post" : "pre",
+      detail: (ls.inningState ? ls.inningState + " " + (ls.currentInningOrdinal || "") : st.detailedState) || "",
+      sides: [
+        { name: f.gameData.teams.away.name, abbr: String(f.gameData.teams.away.abbreviation || "").toUpperCase(), score: (ls.teams && ls.teams.away && ls.teams.away.runs) ?? null, home: false },
+        { name: f.gameData.teams.home.name, abbr: String(f.gameData.teams.home.abbreviation || "").toUpperCase(), score: (ls.teams && ls.teams.home && ls.teams.home.runs) ?? null, home: true },
+      ],
+      extra: ls.balls != null ? ls.balls + "-" + ls.strikes + " count, " + (ls.outs ?? "?") + " out" : "",
+    };
+  }
+
+  if (lg.label === "NHL") {
+    const d = await getJson("https://api-web.nhle.com/v1/score/now");
+    const g = (d.games || []).find((x) =>
+      codeHit(codes, [String(x.homeTeam.abbrev || "").toUpperCase(), String(x.awayTeam.abbrev || "").toUpperCase()]) > 0);
+    if (!g) return null;
+    const gs = String(g.gameState || "").toUpperCase();
+    return {
+      source: "NHL API",
+      state: gs === "LIVE" || gs === "CRIT" ? "in" : gs === "OFF" || gs === "FINAL" ? "post" : "pre",
+      detail: g.periodDescriptor ? "P" + (g.periodDescriptor.number || "") : "",
+      clock: (g.clock && g.clock.timeRemaining) || "",
+      sides: [
+        { name: (g.awayTeam.name && g.awayTeam.name.default) || g.awayTeam.abbrev, abbr: String(g.awayTeam.abbrev || "").toUpperCase(), score: g.awayTeam.score ?? null, home: false },
+        { name: (g.homeTeam.name && g.homeTeam.name.default) || g.homeTeam.abbrev, abbr: String(g.homeTeam.abbrev || "").toUpperCase(), score: g.homeTeam.score ?? null, home: true },
+      ],
+    };
+  }
+
+  if (lg.label === "NBA") {
+    const d = await getJson("https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json");
+    const games = (d.scoreboard && d.scoreboard.games) || [];
+    const g = games.find((x) =>
+      codeHit(codes, [String(x.homeTeam.teamTricode || "").toUpperCase(), String(x.awayTeam.teamTricode || "").toUpperCase()]) > 0);
+    if (!g) return null;
+    return {
+      source: "NBA Live",
+      state: g.gameStatus === 2 ? "in" : g.gameStatus === 3 ? "post" : "pre",
+      detail: g.gameStatusText || "",
+      clock: g.gameClock || "",
+      period: g.period || 0,
+      sides: [
+        { name: g.awayTeam.teamCity + " " + g.awayTeam.teamName, abbr: String(g.awayTeam.teamTricode || "").toUpperCase(), score: g.awayTeam.score ?? null, home: false },
+        { name: g.homeTeam.teamCity + " " + g.homeTeam.teamName, abbr: String(g.homeTeam.teamTricode || "").toUpperCase(), score: g.homeTeam.score ?? null, home: true },
+      ],
+    };
+  }
+
+  return null;
+}
+
+/* ---- merge ---- */
+async function fetchLive(m) {
+  const lg = detectLeague(m);
+  if (!lg) return null;
+  const codes = teamCodes(m.id).map((c) => c.toUpperCase());
+
+  const [a, b] = await Promise.allSettled([espnGame(lg, m, codes), officialGame(lg, codes)]);
+  const espn = a.status === "fulfilled" ? a.value : null;
+  const off = b.status === "fulfilled" ? b.value : null;
+  const errs = [a, b].filter((x) => x.status === "rejected").map((x) => String(x.reason && x.reason.message));
+
+  if (!espn && !off) return { league: lg.label, none: true, errs };
+
+  // The league's own feed wins on score and clock; ESPN supplies the rest.
+  const primary = off || espn;
+  const sides = primary.sides;
+  const sources = [espn, off].filter(Boolean).map((x) => ({
+    name: x.source,
+    line: (x.sides || []).map((sd) => sd.abbr + " " + (sd.score ?? "-")).join(" "),
+  }));
+
+  let disagree = false;
+  if (espn && off && espn.sides && off.sides) {
+    const key = (arr) => arr.slice().sort((p, q) => p.abbr.localeCompare(q.abbr))
+      .map((sd) => sd.abbr + ":" + (sd.score ?? "-")).join("|");
+    disagree = key(espn.sides) !== key(off.sides);
+  }
+
+  // Which side is this contract on? Match the outcome name to a competitor.
+  let sideIdx = -1, bestS = 0;
+  sides.forEach((sd, i) => {
+    const sc = Math.max(overlap(m.name || "", sd.name), sd.abbr && codes.length ? (codes[0] === sd.abbr ? 1 : 0) : 0);
+    if (sc > bestS) { bestS = sc; sideIdx = i; }
+  });
+  const mySide = sideIdx >= 0 && bestS > 0.3 ? sides[sideIdx] : null;
+
+  let impliedCents = null;
+  if (espn && espn.homeWinPct != null && mySide) {
+    impliedCents = mySide.home ? espn.homeWinPct : 100 - espn.homeWinPct;
+  }
+
+  return {
+    league: lg.label,
+    name: (espn && espn.name) || (sides.map((sd) => sd.name).join(" vs ")),
+    state: primary.state,
+    detail: primary.detail || (espn && espn.detail) || "",
+    clock: primary.clock || (espn && espn.clock) || "",
+    period: primary.period || (espn && espn.period) || 0,
+    sides,
+    extra: primary.extra || "",
+    lastPlay: espn && espn.lastPlay,
+    odds: espn && espn.odds,
+    homeWinPct: espn && espn.homeWinPct,
+    mySide, impliedCents, disagree, sources, errs,
+    fetched: Date.now(),
+  };
+}
+
+function liveSummary(l) {
+  if (!l || l.none || !l.sides) return "";
+  const line = l.sides.map((s) => s.name + " " + (s.score ?? "-")).join(" vs ");
+  const phase = l.state === "in" ? "IN PROGRESS" : l.state === "post" ? "FINAL" : "NOT STARTED";
+  let out = "\n\nLIVE GAME STATE (" + l.league + ", " + phase + ", sources: " +
+    l.sources.map((s) => s.name).join(" + ") + "): " + line;
+  if (l.detail) out += " — " + l.detail;
+  if (l.clock && l.state === "in") out += " (" + l.clock + ")";
+  if (l.extra) out += ". " + l.extra;
+  if (l.lastPlay) out += ". Last play: " + l.lastPlay;
+  if (l.homeWinPct != null) {
+    const home = l.sides.find((s) => s.home);
+    out += ". ESPN live win probability: " + (home ? home.name : "home") + " " + l.homeWinPct.toFixed(1) + "%";
+  }
+  if (l.impliedCents != null && l.mySide) {
+    out += ". That puts this contract's side (" + l.mySide.name + ") at " + l.impliedCents.toFixed(1) + "c";
+  }
+  if (l.odds) {
+    out += ". Book line: " + (l.odds.details || "") +
+      (l.odds.overUnder != null ? " O/U " + l.odds.overUnder : "") +
+      (l.odds.homeML != null ? " (home ML " + l.odds.homeML + ")" : "");
+  }
+  if (l.disagree) out += ". WARNING: the feeds disagree on the score — one is stale, so treat the score as uncertain.";
+  out += ". This post-dates anything web search will return; weight it above every other input.";
+  return out;
+}
+
+/* ================= Claude ================= */
+function extractJson(text) {
+  const clean = String(text).replace(/```json/gi, "").replace(/```/g, "").trim();
+  const a = clean.indexOf("{"), b = clean.lastIndexOf("}");
+  if (a === -1 || b <= a) throw new Error("no json");
+  return JSON.parse(clean.slice(a, b + 1));
+}
+
+async function callClaude(prompt, { search = false } = {}) {
+  const body = { model: "claude-sonnet-4-6", max_tokens: 1000, messages: [{ role: "user", content: prompt }] };
+  if (search) body.tools = [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }];
+  const r = await fetch("/api/desk/claude", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error("Analysis request failed (" + r.status + ")");
+  const d = await r.json();
+  const blocks = d.content || [];
+  const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  const sources = [];
+  blocks.forEach((b) => {
+    if (b.type === "web_search_tool_result" && Array.isArray(b.content))
+      b.content.forEach((c) => { if (c.url) sources.push({ url: c.url, title: c.title || c.url }); });
+  });
+  return { text, sources };
+}
+
+const ctx = (m) => `CONTRACT: "${m.question}"
+OUTCOME BEING PRICED: ${m.name}
+CURRENT MARKET PRICE FOR YES: ${m.price.toFixed(1)}c (implied ${m.price.toFixed(1)}% chance)
+RESOLUTION DATE: ${m.close || "unknown"}
+${m.rules ? "RESOLUTION RULES: " + m.rules : ""}`;
+
+function researchPrompt(items, m, live) {
+  const defs = items.map((p) =>
+    `${p.n}. ${p.name}\n   Method: ${p.method}${p.sources && p.sources !== "—" ? "\n   Preferred sources: " + p.sources : ""}`
+  ).join("\n");
+  return `Today is ${today()}. You are researching a live ${m.venue} prediction market contract.
+
+${ctx(m)}${live || ""}
+
+Work through ONLY these analysis frameworks, following each stated method:
+${defs}
+
+Rules:
+- Search for current, dated evidence. Prefer the listed sources and other primary ones.
+- If you cannot find real data for a framework, say so plainly and set signal NEUTRAL and strength 0. Never invent numbers, polls, lines or forecasts.
+- "implied" = the probability in percent (0-100) that this framework alone suggests for YES, or null if it gives no probability read.
+- signal: "YES" if the evidence argues the market underprices YES, "NO" if it overprices YES, "NEUTRAL" if it doesn't move the needle.
+- strength: 0 (no data) to 3 (strong, well-sourced).
+
+Return ONLY this JSON, no preamble, no markdown:
+{"pillars":[{"n":<number>,"finding":"<max 45 words, concrete, with figures and dates where found>","signal":"YES|NO|NEUTRAL","strength":0-3,"implied":<number or null>}]}`;
+}
+
+function contrarianPrompt(item, m, found, live) {
+  return `Today is ${today()}. Act as the desk's risk officer on a live ${m.venue} contract.
+
+${ctx(m)}${live || ""}
+
+The research team concluded:
+${found}
+
+Your job is framework ${item.n}: ${item.name}.
+Method: ${item.method}
+
+Argue against the emerging consensus. Search for what the team likely missed: stale data, resolution-criteria traps, crowded positioning, sampling bias, base-rate neglect, or a mechanism that makes the market price correct after all.
+
+Return ONLY this JSON:
+{"pillars":[{"n":${item.n},"finding":"<max 55 words, the strongest specific counter-argument>","signal":"YES|NO|NEUTRAL","strength":0-3,"implied":<number or null>}]}`;
+}
+
+function synthPrompt(m, found, extra) {
+  return `Today is ${today()}. You are pricing a ${m.venue} binary contract.
+
+${ctx(m)}
+${extra || ""}
+
+Framework findings:
+${found}
+
+Produce a calibrated fair value. Be disciplined: prediction markets are usually close to right, so only deviate from the market price where the evidence is specific and strong. Weight frameworks by their strength and stated weight. Strength 0 carries no weight. If evidence is thin or contradictory, fair value should sit near the market price.
+
+Return ONLY this JSON:
+{"fairValue":<0-100>,"confidence":"LOW|MEDIUM|HIGH","thesis":"<2-3 sentences>","drivers":["<3-4 findings that moved the estimate most>"],"risks":["<2-3 things that would break this call>"],"resolution":"<1 sentence on any resolution-criteria subtlety>"}`;
+}
+
+function guessCategory(text) {
+  const t = (text || "").toLowerCase();
+  const hit = (ws) => ws.some((w) => t.includes(w));
+  if (hit(["temperature", "rainfall", "snow", "hurricane", "storm", "weather", "degrees", "precipitation", "tornado"])) return "weather";
+  if (hit(["election", "president", "senate", "congress", "governor", "nominee", "primary", "parliament", "prime minister", "impeach", "cabinet", "supreme court", "shutdown", "speaker"])) return "politics";
+  if (hit(["nfl", "nba", "mlb", "nhl", "premier league", "super bowl", "world cup", "ncaa", "ufc", " vs ", "playoff", "olympic", "grand slam"])) return "sports";
+  if (hit(["fed ", "cpi", "inflation", "gdp", "s&p", "nasdaq", "bitcoin", "ethereum", "earnings", "stock", "rate cut", "interest rate", "unemployment", "recession", "ipo"])) return "finance";
+  return "general";
+}
+
+/* ================= app ================= */
+function App() {
+  const [tab, setTab] = useState("analyze");
+  const [fw, setFw] = useState(buildFrameworks);
+  const [ledger, setLedger] = useState([]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/desk/frameworks");
+        const d = await r.json();
+        if (d.frameworks && d.frameworks.general) setFw(d.frameworks);
+      } catch { /* defaults stand */ }
+      try {
+        const r = await fetch("/api/desk/ledger");
+        const d = await r.json();
+        setLedger(d.entries || []);
+      } catch { /* empty ledger */ }
+    })();
+  }, []);
+
+  async function saveFw(next) {
+    setFw(next);
+    try { await fetch("/api/desk/frameworks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) }); } catch { /* keeps working in memory */ }
+  }
+  async function saveEntry(entry) {
+    setLedger((L) => [entry, ...L.filter((x) => x.id !== entry.id)]);
+    try { await fetch("/api/desk/ledger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry) }); } catch { /* in memory only */ }
+  }
+
+  const [pending, setPending] = useState(null); // market handed over from Browse
+
+  return (
+    <div className="cd">
+      <style>{CSS}</style>
+      <div className="cd-wrap">
+        <header className="cd-head">
+          <div>
+            <div className="eyebrow">Kalshi · Polymarket</div>
+            <h1 className="cd-title">Contract <span>Desk</span></h1>
+            <p className="help" style={{ maxWidth: 460 }}>
+              Pick a market, and I'll research it nine ways and tell you whether the price looks wrong.
+            </p>
+          </div>
+          <div className="eyebrow">{today()}</div>
+        </header>
+
+        <nav className="tabs">
+          {[["analyze", "Analyze a market"], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "How I'm doing"]].map(([k, l]) => (
+            <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
+          ))}
+        </nav>
+
+        {tab === "analyze" && <Analyze fw={fw} onSave={saveEntry} pending={pending} clearPending={() => setPending(null)} />}
+        {tab === "browse" && <Browse onPick={(m) => { setPending(m); setTab("analyze"); }} />}
+        {tab === "frameworks" && <Frameworks fw={fw} save={saveFw} ledger={ledger} reset={() => saveFw(buildFrameworks())} />}
+        {tab === "ledger" && <Ledger ledger={ledger} setLedger={setLedger} fw={fw} />}
+
+        <p className="foot">
+          These are estimates, not predictions with a proven record — the "How I'm doing" tab is where you find out
+          whether they're any good. Checks that turn up no real data count for nothing. Prediction markets are usually
+          priced about right, so a big gap usually means I'm missing a fact rather than that you've found free money.
+          The decisions are yours.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Analyze ---------------- */
+function Analyze({ fw, onSave, pending, clearPending }) {
+  const [url, setUrl] = useState("");
+  const [phase, setPhase] = useState("idle");
+  const [error, setError] = useState(null);
+  const [book, setBook] = useState(null);
+  const [market, setMarket] = useState(null);
+  const [cat, setCat] = useState("general");
+  const [findings, setFindings] = useState({});
+  const [result, setResult] = useState(null);
+  const [sources, setSources] = useState([]);
+  const [depth, setDepth] = useState(null);
+  const [size, setSize] = useState(100);
+  const [xp, setXp] = useState(null);
+  const [live, setLive] = useState(null);
+  const runId = useRef(0);
+
+  useEffect(() => {
+    if (!pending) return;
+    setBook({ venue: pending.venue, event: pending.question, markets: [pending], source: "live API" });
+    setMarket(pending);
+    setCat(guessCategory(pending.question + " " + pending.name));
+    setUrl(pending.link || "");
+    setResult(null); setFindings({}); setSources([]); setXp(null); setDepth(null); setLive(null);
+    setPhase("ready");
+    clearPending();
+  }, [pending]);
+
+  useEffect(() => {
+    if (!market) return;
+    let alive = true;
+    fetchBook(market).then((b) => { if (alive) setDepth(b); });
+    return () => { alive = false; };
+  }, [market]);
+
+  // Live score, refreshed every 30s while the game is actually in progress.
+  useEffect(() => {
+    if (!market) return;
+    let alive = true, timer = null;
+    const tick = async () => {
+      const l = await fetchLive(market);
+      if (!alive) return;
+      setLive(l);
+      if (l && l.sides && !l.none && !l.error) setCat((c) => (c === "general" ? "sports" : c));
+      if (l && l.state === "in") timer = setTimeout(tick, 20000);
+    };
+    tick();
+    return () => { alive = false; if (timer) clearTimeout(timer); };
+  }, [market]);
+
+  const busy = ["fetching", "researching", "contrarian", "synthesizing"].includes(phase);
+  const conf = fw[cat];
+
+  async function loadBook(inputUrl) {
+    const target = (inputUrl != null ? inputUrl : url).trim();
+    setError(null); setBook(null); setMarket(null); setResult(null);
+    setFindings({}); setSources([]); setXp(null); setDepth(null); setLive(null);
+    const p = parseUrl(target);
+    if (p.error) { setError(p.error); setPhase("idle"); return; }
+    setPhase("fetching");
+    try {
+      const b = p.venue === "Polymarket" ? await fetchPolymarket(p) : await fetchKalshi(p);
+      setBook(b);
+      setCat(guessCategory(b.event + " " + b.markets.map((m) => m.name).join(" ")));
+      if (b.markets.length === 1) { setMarket(b.markets[0]); setPhase("ready"); }
+      else setPhase("choosing");
+    } catch (e) {
+      setError(p.venue + " didn't return data: " + e.message + ". Check the URL is a market page and try again.");
+      setPhase("idle");
+    }
+  }
+
+  async function crossPlatform(m) {
+    const other = m.venue === "Kalshi" ? "Polymarket" : "Kalshi";
+    setXp({ status: "searching" });
+    try {
+      let candidates = [];
+      if (other === "Kalshi") {
+        const r = await fetch(px("https://api.elections.kalshi.com/trade-api/v2/markets?status=open&limit=200"));
+        const d = await r.json();
+        candidates = (d.markets || []).map(kaMarket).filter((x) => x.price !== null);
+      } else {
+        const r = await fetch(px("https://gamma-api.polymarket.com/events?closed=false&limit=120&order=volume24hr&ascending=false"));
+        const d = await r.json();
+        (Array.isArray(d) ? d : []).forEach((ev) =>
+          (ev.markets || []).forEach((mm) => {
+            const p = pmMarket(mm, ev);
+            if (p.price !== null) candidates.push(p);
+          })
+        );
+      }
+      const target = m.question + " " + m.name;
+      const top = candidates
+        .map((c) => ({ c, s: overlap(target, c.question + " " + c.name) }))
+        .filter((x) => x.s > 0.1)
+        .sort((a, b) => b.s - a.s)
+        .slice(0, 30);
+      if (!top.length) { setXp({ status: "none" }); return; }
+      const list = top.map((x, i) => i + ". " + x.c.question + " | " + x.c.name + " | " + x.c.price.toFixed(1) + "c").join("\n");
+      const r = await callClaude(`A trader holds this contract on ${m.venue}:
+"${m.question}" — outcome: ${m.name}, priced ${m.price.toFixed(1)}c.
+
+Here are open ${other} contracts. Pick the one that resolves on the SAME underlying event with the SAME direction, or none if there is no true equivalent. Being strict matters more than finding a match: different resolution dates, thresholds or sources mean it is NOT equivalent.
+
+${list}
+
+Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution-criteria difference, or 'criteria appear identical'>"}`);
+      const j = extractJson(r.text);
+      if (j.index === null || j.index === undefined || !top[j.index]) { setXp({ status: "none" }); return; }
+      const match = top[j.index].c;
+      setXp({ status: "found", match, gap: match.price - m.price, caveat: j.caveat || "" });
+    } catch (e) {
+      setXp({ status: "error", msg: e.message });
+    }
+  }
+
+  async function analyze(m0, c0) {
+    const m = m0 || market, c = c0 || cat;
+    if (!m) return;
+    const id = ++runId.current;
+    setError(null); setResult(null); setFindings({}); setSources([]);
+    setPhase("researching");
+    const lib = fw[c];
+    const active = lib.items.filter((p) => p.enabled);
+    const byN = Object.fromEntries(lib.items.map((p) => [p.n, p]));
+    const collected = {};
+    const allSources = [];
+
+    const absorb = (res) => {
+      if (!res) return;
+      (res.sources || []).forEach((s) => allSources.push(s));
+      try {
+        extractJson(res.text).pillars.forEach((p) => { if (p && p.n) collected[p.n] = p; });
+      } catch { /* other batches still stand */ }
+    };
+
+    const groups = lib.groups.map((g) => g.map((n) => byN[n]).filter((p) => p && p.enabled)).filter((g) => g.length);
+    const liveLine = liveSummary(live);
+    const batches = await Promise.allSettled(groups.map((g) => callClaude(researchPrompt(g, m, liveLine), { search: true })));
+    if (id !== runId.current) return;
+    batches.forEach((b, i) => {
+      if (b.status === "fulfilled") absorb(b.value);
+      else groups[i].forEach((p) => {
+        collected[p.n] = { n: p.n, finding: "Research request failed — left out of the estimate.", signal: "NEUTRAL", strength: 0, implied: null };
+      });
+    });
+    setFindings({ ...collected });
+    setSources([...allSources]);
+
+    const summarize = (ns) => ns.map((n) => {
+      const p = collected[n], d = byN[n];
+      if (!d) return "";
+      return n + ". " + d.name + " (weight " + d.weight + ") [" + (p ? p.signal : "SKIPPED") +
+        ", strength " + (p ? p.strength : 0) + "]: " + (p ? p.finding : "not run");
+    }).filter(Boolean).join("\n");
+
+    const contra = byN[9] && byN[9].enabled ? byN[9] : null;
+    const firstEight = active.filter((p) => p.n !== 9).map((p) => p.n);
+    if (contra) {
+      setPhase("contrarian");
+      try {
+        const cr = await callClaude(contrarianPrompt(contra, m, summarize(firstEight), liveLine), { search: true });
+        if (id !== runId.current) return;
+        absorb(cr);
+      } catch {
+        collected[9] = { n: 9, finding: "Contrarian pass failed — treat confidence as optimistic.", signal: "NEUTRAL", strength: 0, implied: null };
+      }
+      setFindings({ ...collected });
+      setSources([...allSources]);
+    }
+
+    setPhase("synthesizing");
+    try {
+      let extra = liveSummary(live);
+      if (depth && depth.asks.length) {
+        const w = walkBook(depth.asks, size);
+        if (w) extra = `\nORDER BOOK: buying ${size} ${depth.unit} fills at an average of ${w.avg.toFixed(1)}c against a quoted ${m.price.toFixed(1)}c.`;
+      }
+      if (xp && xp.status === "found") extra += `\nCROSS-PLATFORM: the equivalent contract on ${xp.match.venue} trades at ${xp.match.price.toFixed(1)}c.`;
+
+      const sr = await callClaude(synthPrompt(m, summarize(active.map((p) => p.n)), extra));
+      if (id !== runId.current) return;
+      const j = extractJson(sr.text);
+      const fair = clamp(Number(j.fairValue), 0.5, 99.5);
+      const c1 = m.price / 100, p1 = fair / 100;
+      const edge = fair - m.price;
+      const side = edge > 0 ? "YES" : "NO";
+      const kelly = edge > 0 ? (p1 - c1) / (1 - c1) : (c1 - p1) / c1;
+      const stake = clamp((kelly / 2) * 100, 0, 25);
+      const strong = Object.values(collected).filter((p) => p && p.strength >= 2).length;
+      const call = Math.abs(edge) < 3 || strong < 3 ? "PASS" : "BUY " + side;
+      const res = { fair, edge, call, side, stake, confidence: j.confidence || "LOW",
+        thesis: j.thesis || "", drivers: j.drivers || [], risks: j.risks || [],
+        resolution: j.resolution || "", strong };
+      setResult(res);
+      setPhase("done");
+
+      onSave({
+        id: uid(), ts: Date.now(), venue: m.venue, marketId: m.id, slug: m.slug || null,
+        question: m.question, name: m.name, category: c, price: m.price, fair,
+        edge: Math.round(edge * 10) / 10, call, confidence: res.confidence,
+        close: m.close, link: m.link, status: "open", outcome: null,
+        pillars: active.map((p) => {
+          const f = collected[p.n] || {};
+          return { n: p.n, name: p.name, signal: f.signal || "NEUTRAL", strength: f.strength || 0, implied: f.implied ?? null };
+        }),
+      });
+    } catch (e) {
+      setError("Couldn't build the final estimate: " + e.message + ". The findings below still stand — re-run to retry.");
+      setPhase("done");
+    }
+  }
+
+  const pos = (v) => clamp(v, 0, 100);
+  const railColor = result ? (result.edge > 0 ? "var(--amber)" : "var(--rose)") : "var(--dim)";
+  const callColor = !result ? "var(--bone)" : result.call === "PASS" ? "var(--dim)" : result.side === "YES" ? "var(--amber)" : "var(--rose)";
+  const fill = depth && depth.asks.length ? walkBook(depth.asks, size) : null;
+
+  return (
+    <>
+      <div className="bar">
+        <input value={url} onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !busy) loadBook(); }}
+          placeholder="https://polymarket.com/event/…   or   https://kalshi.com/markets/…"
+          aria-label="Market URL" />
+        <button className="btn" onClick={() => loadBook()} disabled={busy}>
+          {phase === "fetching" ? "Loading" : "Load market"}
+        </button>
+      </div>
+
+      {error && <div className="panel err">{error}</div>}
+
+      {!book && !error && phase === "idle" && (
+        <div className="panel">
+          <p className="sect">How this works</p>
+          <p className="help">Three steps, about a minute of waiting on the third.</p>
+          <div className="start">
+            <span className="n">1</span>
+            <span className="t">
+              <b>Give me a market.</b> Paste a link from Kalshi or Polymarket in the box above, or open
+              <b> Find a market</b> and pick one from the list.
+            </span>
+            <span className="n">2</span>
+            <span className="t">
+              <b>I research it nine ways.</b> Polls, injuries, weather models, order books — whichever nine fit the
+              topic. You can see and edit all of them under <b>What I check</b>.
+            </span>
+            <span className="n">3</span>
+            <span className="t">
+              <b>You get a price and a verdict.</b> What I think the contract is worth, how that compares to what
+              it costs, and how much of that gap I'd actually trust.
+            </span>
+          </div>
+          <p className="help" style={{ marginTop: 18 }}>Try one of these:</p>
+          <button className="example" onClick={() => { setUrl("https://polymarket.com/event/will-the-us-invade-iran-before-2027"); loadBook("https://polymarket.com/event/will-the-us-invade-iran-before-2027"); }}>
+            polymarket.com/event/will-the-us-invade-iran-before-2027
+          </button>
+          <p className="help" style={{ marginTop: 14 }}>
+            Each analysis costs roughly 20–30 cents in API credit and takes about a minute.
+          </p>
+        </div>
+      )}
+
+      {book && phase === "choosing" && (
+        <div className="panel">
+          <div className="eyebrow">{book.venue} · {book.markets.length} contracts on this event</div>
+          <p className="q" style={{ marginBottom: 16 }}>{book.event}</p>
+          {book.markets.slice(0, 30).map((m) => (
+            <button key={m.id} className="sel" onClick={() => { setMarket(m); setPhase("ready"); }}>
+              <span>
+                {m.name === m.question ? m.question : m.question + " — " + m.name}
+                <span className="sub">
+                  {m.volume ? "vol " + Math.round(m.volume).toLocaleString() : "no volume"}
+                  {m.close ? " · closes " + String(m.close).slice(0, 10) : ""}
+                </span>
+              </span>
+              <span className="px">{m.price.toFixed(0)}c</span>
+            </button>
+          ))}
+          <div className="eyebrow" style={{ marginTop: 10 }}>Pick the outcome you want priced</div>
+        </div>
+      )}
+
+      {market && phase !== "choosing" && (
+        <div className="panel">
+          <div className="eyebrow">{market.venue} · {book.source} · {market.id}</div>
+          <p className="q">{market.question}</p>
+          {market.name !== market.question && <div className="eyebrow" style={{ marginTop: 8 }}>Outcome: {market.name}</div>}
+
+          <div className="meta">
+            <div><span className="k">Costs now</span><span className="v" style={{ color: "var(--cyan)" }}>{market.price.toFixed(1)}c</span></div>
+            {market.bid != null && <div><span className="k">Bid / ask</span><span className="v">{market.bid}–{market.ask}</span></div>}
+            <div><span className="k">Volume</span><span className="v">{market.volume ? "$" + Math.round(market.volume).toLocaleString() : "—"}</span></div>
+            <div><span className="k">Settles</span><span className="v">{market.close ? String(market.close).slice(0, 10) : "—"}</span></div>
+          </div>
+
+          {live && !live.error && !live.none && live.sides && (
+            <div className="live">
+              <div className="live-top">
+                {live.state === "in" && <span className="pulse" />}
+                <span className="eyebrow" style={{ color: live.state === "in" ? "var(--rose)" : "var(--dim)" }}>
+                  {live.state === "in" ? "Live now" : live.state === "post" ? "Final" : "Scheduled"} · {live.league}
+                </span>
+                <span className="eyebrow" style={{ color: "var(--dim)" }}>
+                  {live.detail}{live.state === "in" && live.clock ? " · " + live.clock : ""}
+                </span>
+              </div>
+              {live.sides.map((sd, i) => {
+                const best = Math.max.apply(null, live.sides.map((x) => Number(x.score) || 0));
+                const lead = (Number(sd.score) || 0) === best && best > 0;
+                return (
+                  <div key={i} className={"score-row" + (lead ? " lead" : "")}>
+                    <span className="who">{sd.name}{sd.home ? "" : " (away)"}</span>
+                    <span className="pts">{sd.score ?? "–"}</span>
+                  </div>
+                );
+              })}
+              {live.extra && <div className="eyebrow" style={{ marginTop: 4 }}>{live.extra}</div>}
+
+              {live.impliedCents != null && live.mySide && (
+                <div className="wp">
+                  <div className="eyebrow" style={{ marginBottom: 6 }}>
+                    ESPN win probability · {live.mySide.name} {live.impliedCents.toFixed(1)}%
+                    <span style={{ color: Math.abs(live.impliedCents - market.price) > 4 ? "var(--amber)" : "var(--dim)" }}>
+                      {"  vs market " + market.price.toFixed(0) + "c ("}
+                      {live.impliedCents - market.price > 0 ? "+" : ""}
+                      {(live.impliedCents - market.price).toFixed(1)}c{")"}
+                    </span>
+                  </div>
+                  <div className="wp-bar"><div className="wp-fill" style={{ width: clamp(live.impliedCents, 0, 100) + "%" }} /></div>
+                </div>
+              )}
+
+              {live.lastPlay && <div className="play">{live.lastPlay}</div>}
+
+              {live.odds && (
+                <div className="eyebrow" style={{ marginTop: 11 }}>
+                  {live.odds.provider}: {live.odds.details || "no line"}
+                  {live.odds.overUnder != null ? " · O/U " + live.odds.overUnder : ""}
+                  {live.odds.homeML != null ? " · home ML " + live.odds.homeML : ""}
+                </div>
+              )}
+
+              <div className="live-foot">
+                {live.sources.map((sv) => (
+                  <span key={sv.name} className={"srcchip" + (live.disagree ? " bad" : " ok")}>
+                    {sv.name} · {sv.line}
+                  </span>
+                ))}
+                {live.state === "in" && <span className="srcchip">refreshing every 20s</span>}
+              </div>
+
+              {live.disagree && (
+                <p className="thesis" style={{ color: "var(--rose)", marginTop: 10, fontSize: 13 }}>
+                  The feeds disagree on the score. One is lagging — check the broadcast before acting on this.
+                </p>
+              )}
+            </div>
+          )}
+          {live && live.none && (
+            <div className="eyebrow" style={{ marginTop: 14 }}>
+              {live.league}: no matching game on today's scoreboard
+            </div>
+          )}
+
+          <div className="rail-box">
+            <div className="rail">
+              {[25, 50, 75].map((t) => <div key={t} className="rail-tick" style={{ left: t + "%" }} />)}
+              {busy && <div className="sweep" />}
+              {result && (
+                <div className={"rail-band" + (result.edge < 0 ? " neg" : "")}
+                  style={{ left: pos(Math.min(market.price, result.fair)) + "%", width: Math.abs(result.fair - market.price) + "%" }} />
+              )}
+              <div className="rail-mark" style={{ left: pos(market.price) + "%", background: "var(--cyan)" }}>
+                <span className="lbl top" style={{ background: "var(--cyan)", color: "#1B202B" }}>MARKET {market.price.toFixed(1)}c</span>
+              </div>
+              {xp && xp.status === "found" && (
+                <div className="rail-mark" style={{ left: pos(xp.match.price) + "%", background: "var(--moss)", width: 1 }}>
+                  <span className="lbl top" style={{ background: "var(--moss)", color: "#1B202B", opacity: .9 }}>{xp.match.venue.slice(0, 4).toUpperCase()} {xp.match.price.toFixed(0)}c</span>
+                </div>
+              )}
+              {live && live.impliedCents != null && (
+                <div className="rail-mark" style={{ left: pos(live.impliedCents) + "%", background: "var(--violet)", width: 1 }}>
+                  <span className="lbl top" style={{ background: "var(--violet)", color: "#1B202B", opacity: .92 }}>
+                    WIN PROB {live.impliedCents.toFixed(0)}c
+                  </span>
+                </div>
+              )}
+              {result && (
+                <div className="rail-mark" style={{ left: pos(result.fair) + "%", background: railColor }}>
+                  <span className="lbl bot" style={{ background: railColor, color: "#1B202B" }}>FAIR {result.fair.toFixed(1)}c</span>
+                </div>
+              )}
+            </div>
+            <div className="rail-scale"><span>0c</span><span>25c</span><span>50c</span><span>75c</span><span>100c</span></div>
+            <p className="help">
+              A contract pays 100c if it happens, nothing if it doesn't — so the price is roughly the market's
+              odds. {market.price.toFixed(0)}c means about a {market.price.toFixed(0)}% chance.
+              {result ? " The shaded band is the gap between that price and what I think it's worth." : ""}
+            </p>
+          </div>
+
+          {(phase === "ready" || phase === "done") && (
+            <>
+              <div className="chips">
+                <span className="chip static">Topic</span>
+                {Object.keys(fw).map((k) => (
+                  <button key={k} className={"chip" + (k === cat ? " on" : "")} onClick={() => setCat(k)}>{fw[k].label}</button>
+                ))}
+                <span className="chip static">{conf.items.filter((p) => p.enabled).length} of 9 checks on</span>
+              </div>
+              <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button className="btn" onClick={() => analyze()} disabled={busy}>
+                  {result ? "Run it again" : "Analyze this market"}
+                </button>
+                <button className="btn btn-ghost" onClick={() => crossPlatform(market)} disabled={busy}>
+                  Check the other exchange
+                </button>
+                {book.markets.length > 1 && <button className="btn btn-ghost" onClick={() => setPhase("choosing")}>Change outcome</button>}
+              </div>
+            </>
+          )}
+
+          {xp && (
+            <details className="fold" open>
+              <summary>The other exchange</summary>
+              {xp.status === "searching" && <p className="pwait"><span className="dots">matching contracts on the other venue</span></p>}
+              {xp.status === "none" && <p className="thesis" style={{ color: "var(--dim)" }}>No equivalent contract found on the other venue. Treat this as a single-venue read.</p>}
+              {xp.status === "error" && <p className="thesis" style={{ color: "var(--rose)" }}>Match failed: {xp.msg}</p>}
+              {xp.status === "found" && (
+                <p className="thesis">
+                  <strong>{xp.match.venue}</strong> prices the same event at{" "}
+                  <span className="mono" style={{ color: "var(--moss)" }}>{xp.match.price.toFixed(1)}c</span>, a gap of{" "}
+                  <span className="mono" style={{ color: Math.abs(xp.gap) > 3 ? "var(--amber)" : "var(--dim)" }}>
+                    {xp.gap > 0 ? "+" : ""}{xp.gap.toFixed(1)}c
+                  </span>. {xp.caveat}
+                </p>
+              )}
+              <p className="help">
+                The same event often trades at different prices on the two exchanges. A wide gap is either free
+                money or a sign the two contracts don't settle on quite the same thing.
+              </p>
+            </details>
+          )}
+
+          {depth && depth.asks.length > 0 && (
+            <details className="fold">
+              <summary>What your order would actually cost</summary>
+              <div className="meta" style={{ marginTop: 10, alignItems: "flex-end" }}>
+                <div>
+                  <span className="k">How many</span>
+                  <input className="srch" type="number" min="1" value={size} style={{ width: 110, padding: "7px 9px", flex: "none" }}
+                    onChange={(e) => setSize(Math.max(1, Number(e.target.value) || 1))} />
+                </div>
+                <div><span className="k">Best ask</span><span className="v">{depth.asks[0][0].toFixed(1)}c</span></div>
+                <div><span className="k">Avg fill</span><span className="v" style={{ color: "var(--amber)" }}>{fill ? fill.avg.toFixed(1) + "c" : "—"}</span></div>
+                <div><span className="k">Slippage</span><span className="v">{fill ? (fill.avg - depth.asks[0][0]).toFixed(2) + "c" : "—"}</span></div>
+                {fill && fill.short > 0 && <div><span className="k">Can't fill</span><span className="v" style={{ color: "var(--rose)" }}>{fill.short}</span></div>}
+              </div>
+              <p className="help">
+                The screen price is only for the first few contracts. Buy more and you pay worse prices as you eat
+                through the order book — that difference is the slippage.
+              </p>
+            </details>
+          )}
+
+          {result && (
+            <>
+              <div className="verdict">
+                <div>
+                  <div className="label" style={{ marginBottom: 6 }}>My call</div>
+                  <h2 style={{ color: callColor }}>{result.call}</h2>
+                </div>
+              </div>
+
+              <p className="answer">
+                {result.call === "PASS" ? (
+                  <>
+                    I'd <strong>sit this one out</strong>. It trades at {market.price.toFixed(0)}c and I make it worth{" "}
+                    {result.fair.toFixed(0)}c — {Math.abs(result.edge) < 3 ? "too close to call" : "but too few checks found solid evidence to lean on"}.
+                  </>
+                ) : (
+                  <>
+                    I'd <strong>buy {result.side}</strong>. It costs {result.side === "YES" ? market.price.toFixed(0) : (100 - market.price).toFixed(0)}c
+                    and I make it worth {result.side === "YES" ? result.fair.toFixed(0) : (100 - result.fair).toFixed(0)}c,
+                    so there's about <strong>{Math.abs(result.edge).toFixed(0)}c of value</strong> per contract —
+                    if I'm right.
+                  </>
+                )}
+              </p>
+              {result.thesis && <p className="thesis">{result.thesis}</p>}
+
+              <div className="figures">
+                <div className="fig">
+                  <span className="big" style={{ color: callColor }}>
+                    {result.edge > 0 ? "+" : ""}{result.edge.toFixed(1)}c
+                  </span>
+                  <span className="cap">Value vs price</span>
+                  <span className="sub">What I think it's worth, minus what it costs</span>
+                </div>
+                <div className="fig">
+                  <span className="big">{result.confidence}</span>
+                  <span className="cap">How sure I am</span>
+                  <span className="sub">Based on how strong the evidence was</span>
+                </div>
+                <div className="fig">
+                  <span className="big">{result.stake.toFixed(1)}%</span>
+                  <span className="cap">Suggested size</span>
+                  <span className="sub">Share of your betting money, half-Kelly</span>
+                </div>
+                <div className="fig">
+                  <span className="big">{result.strong}<span style={{ color: "var(--dim)" }}>/9</span></span>
+                  <span className="cap">Checks with real data</span>
+                  <span className="sub">The rest found nothing and were ignored</span>
+                </div>
+              </div>
+
+              {result.call === "PASS" && (
+                <p className="help" style={{ marginTop: 14 }}>
+                  Passing is a real answer. Most contracts are priced about right, and no trade beats a bad one.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {(busy || result) && market && phase !== "choosing" && (
+        <div className="panel">
+          <p className="sect">The nine checks</p>
+          <p className="help" style={{ marginBottom: 10 }}>
+            Each one searches the web for a specific kind of evidence. YES means it argues the contract is
+            underpriced, NO means overpriced, and the number is how solid the evidence was out of 3.
+          </p>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>
+            {conf.label} ·{" "}
+            {phase === "researching" ? <span className="dots">{live && live.state === "in" ? "searching, with the live score in hand" : "searching in parallel"}</span>
+              : phase === "contrarian" ? <span className="dots">risk officer arguing the other side</span>
+              : phase === "synthesizing" ? <span className="dots">pricing fair value</span> : "complete"}
+          </div>
+          {conf.items.map((p) => {
+            const f = findings[p.n];
+            const col = !f ? "var(--dim)" : f.signal === "YES" ? "var(--amber)" : f.signal === "NO" ? "var(--rose)" : "var(--dim)";
+            return (
+              <div key={p.n} className={"pillar" + (f ? " arrive" : "") + (p.n === 9 ? " contra" : "") + (p.enabled ? "" : " off")}>
+                <div className="pnum">{String(p.n).padStart(2, "0")}</div>
+                <div>
+                  <div className="pname">{p.name}{p.n === 9 ? " ↺" : ""}</div>
+                  <div className="pdesc">{p.method}</div>
+                  {!p.enabled ? <div className="pwait">turned off in Frameworks</div>
+                    : f ? <div className="pfind">{f.finding}</div>
+                    : <div className="pwait"><span className="dots">searching</span></div>}
+                </div>
+                {f && p.enabled && (
+                  <div className="sig" style={{ color: col, borderColor: col }}>
+                    {f.signal} · {f.strength}/3{f.implied != null ? " · " + Number(f.implied).toFixed(0) + "c" : ""}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {result && (result.drivers.length > 0 || result.risks.length > 0) && (
+        <div className="panel">
+          {result.drivers.length > 0 && (
+            <>
+              <p className="sect">What convinced me</p>
+              <ul className="lst" style={{ marginTop: 10 }}>{result.drivers.map((d, i) => <li key={i}>{d}</li>)}</ul>
+            </>
+          )}
+          {result.risks.length > 0 && (
+            <>
+              <p className="sect" style={{ marginTop: 20, color: "var(--rose)" }}>What would prove me wrong</p>
+              <ul className="lst" style={{ marginTop: 10 }}>{result.risks.map((d, i) => <li key={i}>{d}</li>)}</ul>
+            </>
+          )}
+          {result.resolution && (
+            <>
+              <p className="sect" style={{ marginTop: 20 }}>Read the fine print</p>
+              <p className="thesis" style={{ marginTop: 8 }}>{result.resolution}</p>
+            </>
+          )}
+          {sources.length > 0 && (
+            <>
+              <p className="sect" style={{ marginTop: 20 }}>Where this came from ({sources.length} sources)</p>
+              <div className="src">
+                {Array.from(new Map(sources.map((s) => [s.url, s])).values()).slice(0, 24).map((s, i) => (
+                  <a key={i} href={s.url} target="_blank" rel="noreferrer">{(s.title || s.url).slice(0, 46)}</a>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ---------------- Browse ---------------- */
+function Browse({ onPick }) {
+  const [rows, setRows] = useState([]);
+  const [state, setState] = useState("idle");
+  const [err, setErr] = useState(null);
+  const [counts, setCounts] = useState({ Kalshi: 0, Polymarket: 0 });
+  const [qy, setQy] = useState("");
+  const [venue, setVenue] = useState("all");
+
+  async function load() {
+    setState("loading"); setErr(null);
+    const out = [];
+    const problems = [];
+
+    // Kalshi returns 200 at a time behind a cursor. One page is an arbitrary
+    // slice of the exchange, so walk several pages to get a real picture.
+    const kalshi = async () => {
+      const root = "https://api.elections.kalshi.com/trade-api/v2";
+      let raw = 0, sample = null, kept = 0;
+
+      const take = (ms) => {
+        ms.forEach((m) => {
+          if (!sample && m && m.ticker) sample = m;
+          const km = kaMarket(m);
+          if (km.price !== null) { out.push(km); kept++; }
+        });
+      };
+
+      // Paged market list.
+      let cursor = "", pages = 0;
+      while (pages < 6) {
+        const r = await fetch(px(root + "/markets?status=open&limit=200" + (cursor ? "&cursor=" + cursor : "")));
+        if (!r.ok) { problems.push("Kalshi /markets returned " + r.status); break; }
+        const d = await r.json();
+        const ms = d.markets || [];
+        raw += ms.length;
+        take(ms);
+        cursor = d.cursor || "";
+        pages++;
+        if (!cursor || !ms.length) break;
+      }
+
+      // Active events carry the contracts people are actually trading, which the
+      // raw market list buries under thousands of dormant combo contracts.
+      try {
+        const r = await fetch(px(root + "/events?status=open&with_nested_markets=true&limit=200"));
+        if (r.ok) {
+          const d = await r.json();
+          const ms = (d.events || []).flatMap((e) => e.markets || []);
+          raw += ms.length;
+          take(ms);
+        }
+      } catch { /* the market list above is the primary source */ }
+
+      if (raw && !kept) {
+        problems.push(
+          "Kalshi sent " + raw + " markets, none with a price field I recognise. Fields on the first record: " +
+          (sample ? Object.keys(sample).join(", ") : "none")
+        );
+      }
+      if (!raw) problems.push("Kalshi sent 0 markets.");
+    };
+
+    const poly = async () => {
+      const r = await fetch(px("https://gamma-api.polymarket.com/events?closed=false&limit=100&order=volume24hr&ascending=false"));
+      if (!r.ok) { problems.push("Polymarket returned " + r.status); return; }
+      const d = await r.json();
+      (Array.isArray(d) ? d : []).forEach((ev) => {
+        const ms = (ev.markets || []).map((m) => pmMarket(m, ev)).filter((m) => m.price !== null);
+        if (ms.length) out.push(ms.sort((a, b) => b.volume - a.volume)[0]);
+      });
+    };
+
+    const res = await Promise.allSettled([kalshi(), poly()]);
+    res.forEach((x) => { if (x.status === "rejected") problems.push(String(x.reason && x.reason.message || x.reason)); });
+
+    const seen = new Set();
+    const uniq = out.filter((m) => { const k = m.venue + m.id; if (seen.has(k)) return false; seen.add(k); return true; });
+    out.length = 0; uniq.forEach((m) => out.push(m));
+
+    const c = { Kalshi: 0, Polymarket: 0 };
+    out.forEach((m) => { c[m.venue] = (c[m.venue] || 0) + 1; });
+    setCounts(c);
+
+    if (!out.length) {
+      setErr("Neither venue returned markets. " + (problems.join(" · ") || "No error reported — check /api/desk/diag."));
+      setState("idle");
+      return;
+    }
+    if (problems.length) setErr(problems.join(" · "));
+    setRows(out.sort((a, b) => (b.quoted === a.quoted ? 0 : b.quoted ? 1 : -1) || (b.volume - a.volume)));
+    setState("done");
+  }
+
+  useEffect(() => { load(); }, []);
+
+  const shown = useMemo(() => rows.filter((m) => {
+    if (venue !== "all" && m.venue !== venue) return false;
+    if (!qy.trim()) return true;
+    // Ticker matters: a WTA contract is titled by player, not by "tennis".
+    const t = (m.question + " " + m.name + " " + m.id).toLowerCase();
+    return qy.toLowerCase().split(/\s+/).every((w) => t.includes(w));
+  }).slice(0, 120), [rows, qy, venue]);
+
+  return (
+    <>
+      <div className="bar">
+        <input className="srch" value={qy} onChange={(e) => setQy(e.target.value)}
+          placeholder="Filter by keyword or ticker — wta, fed, lakers, kxhigh…" aria-label="Filter markets" />
+        <button className="btn btn-ghost" onClick={load} disabled={state === "loading"}>
+          {state === "loading" ? "Loading" : "Refresh"}
+        </button>
+      </div>
+      <p className="help" style={{ marginTop: 12 }}>
+        Everything trading right now on both exchanges, busiest first. Tap one to analyze it.
+      </p>
+      <div className="chips">
+        {["all", "Polymarket", "Kalshi"].map((v) => (
+          <button key={v} className={"chip" + (venue === v ? " on" : "")} onClick={() => setVenue(v)}>{v}</button>
+        ))}
+        <span className="chip static">Kalshi {counts.Kalshi} · Polymarket {counts.Polymarket} · {shown.length} shown</span>
+      </div>
+
+      {err && <div className="panel err">{err}</div>}
+
+      <div className="panel">
+        {state === "loading" && <p className="pwait"><span className="dots">loading markets from both exchanges</span></p>}
+        {state === "done" && shown.length === 0 && (
+          <p className="thesis" style={{ color: "var(--dim)" }}>
+            {rows.length
+              ? "No contract matches \"" + qy + "\". Kalshi titles name the player or number, not the sport — try a ticker fragment like wta or kxhigh, or clear the filter."
+              : "Nothing loaded. Hit Refresh."}
+          </p>
+        )}
+        {shown.map((m) => (
+          <button key={m.venue + m.id} className="sel" onClick={() => onPick(m)}>
+            <span>
+              {m.name === m.question ? m.question : m.question + " — " + m.name}
+              <span className="sub">{m.venue} · {m.id} · vol {Math.round(m.volume).toLocaleString()}{m.close ? " · " + String(m.close).slice(0, 10) : ""}</span>
+            </span>
+            <span className="px">{m.quoted === false ? "—" : m.price.toFixed(0) + "c"}</span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/* ---------------- Frameworks ---------------- */
+function Frameworks({ fw, save, ledger, reset }) {
+  const [cat, setCat] = useState("politics");
+  const lib = fw[cat];
+
+  const reliability = useMemo(() => {
+    const acc = {};
+    ledger.filter((e) => e.status === "resolved" && e.outcome !== null).forEach((e) => {
+      if (e.category !== cat) return;
+      (e.pillars || []).forEach((p) => {
+        if (!p.signal || p.signal === "NEUTRAL" || (p.strength || 0) < 1) return;
+        acc[p.n] = acc[p.n] || { hit: 0, n: 0 };
+        acc[p.n].n++;
+        const said = p.signal === "YES" ? 1 : 0;
+        if (said === e.outcome) acc[p.n].hit++;
+      });
+    });
+    return acc;
+  }, [ledger, cat]);
+
+  function edit(n, key, value) {
+    const next = { ...fw, [cat]: { ...lib, items: lib.items.map((p) => (p.n === n ? { ...p, [key]: value } : p)) } };
+    save(next);
+  }
+
+  return (
+    <>
+      <div className="chips" style={{ marginTop: 0 }}>
+        {Object.keys(fw).map((k) => (
+          <button key={k} className={"chip" + (k === cat ? " on" : "")} onClick={() => setCat(k)}>{fw[k].label}</button>
+        ))}
+      </div>
+
+      <div className="panel">
+        <p className="sect">The nine checks for {lib.label.toLowerCase()}</p>
+        <p className="help" style={{ marginBottom: 18 }}>
+          Each box is an instruction I follow when researching. Reword one and my analysis changes — these go to the
+          model exactly as written. Switch one off and it stops running, which also makes each analysis cheaper. The
+          percentage is how often that check pointed the right way on markets you have already seen settle.
+        </p>
+
+        {lib.items.map((p) => {
+          const r = reliability[p.n];
+          return (
+            <div key={p.n} className="fw">
+              <div className="fw-top">
+                <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0 }}>
+                  <span className="pnum">{String(p.n).padStart(2, "0")}</span>
+                  <input type="text" value={p.name} onChange={(e) => edit(p.n, "name", e.target.value)}
+                    style={{ marginTop: 0, fontWeight: 600, fontSize: 13.5 }} aria-label="Framework name" />
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flex: "0 0 auto" }}>
+                  <span className="rel" style={{ color: r ? (r.hit / r.n >= 0.6 ? "var(--moss)" : r.hit / r.n < 0.4 ? "var(--rose)" : "var(--dim)") : "var(--dim)" }}>
+                    {r ? Math.round((r.hit / r.n) * 100) + "% · n" + r.n : "no data"}
+                  </span>
+                  <button className={"sw" + (p.enabled ? " on" : "")} onClick={() => edit(p.n, "enabled", !p.enabled)}
+                    aria-label={p.enabled ? "Turn off" : "Turn on"}><i /></button>
+                </div>
+              </div>
+              <textarea rows={2} value={p.method} onChange={(e) => edit(p.n, "method", e.target.value)} aria-label="Method" />
+              <div style={{ display: "flex", gap: 10, marginTop: 7, flexWrap: "wrap" }}>
+                <input type="text" value={p.sources} onChange={(e) => edit(p.n, "sources", e.target.value)}
+                  placeholder="Preferred sources" style={{ flex: "1 1 200px", marginTop: 0, fontSize: 11.5 }} aria-label="Preferred sources" />
+                <label className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  Weight
+                  <input type="number" min="0" max="3" step="0.5" value={p.weight}
+                    onChange={(e) => edit(p.n, "weight", Number(e.target.value))}
+                    style={{ width: 60, marginTop: 0 }} aria-label="Weight" />
+                </label>
+              </div>
+            </div>
+          );
+        })}
+
+        <button className="btn btn-ghost btn-sm" style={{ marginTop: 10 }} onClick={reset}>
+          Put everything back the way it was
+        </button>
+      </div>
+    </>
+  );
+}
+
+/* ---------------- Ledger ---------------- */
+function Ledger({ ledger, setLedger, fw }) {
+  const [checking, setChecking] = useState(false);
+  const [note, setNote] = useState(null);
+
+  async function checkResolutions() {
+    setChecking(true); setNote(null);
+    const open = ledger.filter((e) => e.status === "open");
+    const updates = [];
+    for (const e of open) {
+      try {
+        let outcome = null;
+        if (e.venue === "Kalshi") {
+          const r = await fetch(px("https://api.elections.kalshi.com/trade-api/v2/markets/" + e.marketId));
+          const d = await r.json();
+          const m = d.market;
+          if (m && m.result === "yes") outcome = 1;
+          else if (m && m.result === "no") outcome = 0;
+        } else if (e.slug) {
+          const r = await fetch(px("https://gamma-api.polymarket.com/events?slug=" + encodeURIComponent(e.slug)));
+          const d = await r.json();
+          const ev = Array.isArray(d) ? d[0] : d;
+          const m = ev && (ev.markets || []).find((x) => (x.conditionId || String(x.id)) === e.marketId);
+          if (m && m.closed) {
+            const pxs = jparse(m.outcomePrices).map(Number);
+            const outs = jparse(m.outcomes);
+            const yi = Math.max(0, outs.findIndex((o) => String(o).toLowerCase() === "yes"));
+            if (pxs[yi] >= 0.99) outcome = 1;
+            else if (pxs[yi] <= 0.01) outcome = 0;
+          }
+        }
+        if (outcome !== null) updates.push({ ...e, status: "resolved", outcome, resolvedAt: Date.now() });
+      } catch { /* leave it open, try again later */ }
+    }
+    if (updates.length) {
+      setLedger((L) => L.map((e) => updates.find((u) => u.id === e.id) || e));
+      try { await fetch("/api/desk/ledger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) }); } catch { /* in memory */ }
+    }
+    setNote(updates.length ? updates.length + " market" + (updates.length === 1 ? "" : "s") + " resolved and scored."
+      : open.length ? "Nothing has settled yet. " + open.length + " still open." : "No open calls to check.");
+    setChecking(false);
+  }
+
+  const done = ledger.filter((e) => e.status === "resolved" && e.outcome !== null);
+  const stats = useMemo(() => {
+    if (!done.length) return null;
+    const brier = (p, o) => Math.pow(p / 100 - o, 2);
+    const model = done.reduce((s, e) => s + brier(e.fair, e.outcome), 0) / done.length;
+    const mkt = done.reduce((s, e) => s + brier(e.price, e.outcome), 0) / done.length;
+    const acted = done.filter((e) => e.call !== "PASS");
+    const wins = acted.filter((e) => (e.call === "BUY YES" ? 1 : 0) === e.outcome).length;
+    return { n: done.length, model, mkt, acted: acted.length, wins,
+      hit: acted.length ? wins / acted.length : null };
+  }, [done]);
+
+  async function clearAll() {
+    setLedger([]);
+    try { await fetch("/api/desk/ledger", { method: "DELETE" }); } catch { /* in memory */ }
+    setNote("Ledger cleared.");
+  }
+
+  return (
+    <>
+      <div className="panel">
+        <p className="sect">Am I any good at this?</p>
+        <p className="help" style={{ marginBottom: 4 }}>
+          Every analysis gets logged. When a market settles, I score what I said against what happened —
+          and against what the market’s own price would have scored.
+        </p>
+        {!stats ? (
+          <p className="thesis" style={{ color: "var(--dim)", marginTop: 10 }}>
+            Nothing has settled yet. Run some analyses, come back after those markets resolve, and hit
+            "Check for results" — this fills in then. Until it does, treat every call you see as unproven.
+          </p>
+        ) : (
+          <div className="scorecard" style={{ marginTop: 16 }}>
+            <div>
+              <span className="k eyebrow">Settled</span>
+              <div className="n">{stats.n}</div>
+            </div>
+            <div>
+              <span className="k eyebrow">My score</span>
+              <div className="n" style={{ color: stats.model < stats.mkt ? "var(--moss)" : "var(--rose)" }}>{stats.model.toFixed(3)}</div>
+            </div>
+            <div>
+              <span className="k eyebrow">Market score</span>
+              <div className="n" style={{ color: "var(--dim)" }}>{stats.mkt.toFixed(3)}</div>
+            </div>
+            <div>
+              <span className="k eyebrow">Calls I got right</span>
+              <div className="n">{stats.hit === null ? "—" : Math.round(stats.hit * 100) + "%"}</div>
+              <span className="eyebrow">{stats.wins}/{stats.acted} acted</span>
+            </div>
+          </div>
+        )}
+        {stats && (
+          <p className="thesis" style={{ marginTop: 16, color: "var(--dim)" }}>
+            These scores measure how close a probability landed to what actually happened — lower is better, and the
+            comparison is the whole point. {stats.model < stats.mkt
+              ? "Right now I score better than the market's own prices. Don't read much into it yet; a few dozen calls prove nothing."
+              : "Right now the market's prices score better than mine. Until that flips, treat every gap I show you as noise."}
+          </p>
+        )}
+        <div style={{ marginTop: 18, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button className="btn btn-sm" onClick={checkResolutions} disabled={checking}>
+            {checking ? "Checking" : "Check for results"}
+          </button>
+          {ledger.length > 0 && <button className="btn btn-ghost btn-sm" onClick={clearAll}>Clear ledger</button>}
+        </div>
+        {note && <p className="thesis" style={{ marginTop: 12 }}>{note}</p>}
+      </div>
+
+      <div className="panel">
+        <p className="sect">Every call I have made ({ledger.length})</p>
+        {ledger.length === 0 ? (
+          <p className="thesis" style={{ color: "var(--dim)", marginTop: 10 }}>
+            Nothing yet. Analyze a market and it lands here so you can hold me to it later.
+          </p>
+        ) : (
+          <table className="tbl">
+            <thead>
+              <tr><th>Market</th><th>I said</th><th>Price → my price</th><th>Topic</th><th>Happened?</th></tr>
+            </thead>
+            <tbody>
+              {ledger.slice(0, 80).map((e) => (
+                <tr key={e.id}>
+                  <td>
+                    {e.name === e.question ? e.question : e.question + " — " + e.name}
+                    <span className="sub eyebrow" style={{ display: "block", marginTop: 3 }}>
+                      {e.venue} · {new Date(e.ts).toISOString().slice(0, 10)}
+                    </span>
+                  </td>
+                  <td className="m" style={{ color: e.call === "PASS" ? "var(--dim)" : e.call === "BUY YES" ? "var(--amber)" : "var(--rose)" }}>
+                    {e.call}
+                  </td>
+                  <td className="m">{e.price.toFixed(0)}→{e.fair.toFixed(0)}c</td>
+                  <td className="m" style={{ color: "var(--dim)" }}>{(fw[e.category] || {}).label || e.category}</td>
+                  <td className="m">
+                    {e.status === "open" ? <span style={{ color: "var(--dim)" }}>open</span>
+                      : <span style={{ color: e.outcome === 1 ? "var(--moss)" : "var(--rose)" }}>{e.outcome === 1 ? "YES" : "NO"}</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);

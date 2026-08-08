@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Contract Desk</title>
+
+<!-- iPhone: Share -> Add to Home Screen gives a full-screen app -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Desk" />
+<meta name="theme-color" content="#232A38" />
+<meta name="robots" content="noindex" />
+<link rel="manifest" href="/desk/manifest.json" />
+<link rel="apple-touch-icon" href="/desk/icon.svg" />
+
+<style>
+  html, body { margin:0; padding:0; background:#1B202B; min-height:100%; }
+  #root { min-height:100vh; }
+  #boot { color:#939CB0; font:13px/1.5 ui-monospace, monospace; padding:40px 20px; text-align:center; }
+</style>
+</head>
+<body>
+  <div id="root"><div id="boot">Starting Contract Desk…</div></div>
+
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+  <script type="text/babel" data-presets="react" src="/desk/app.jsx"></script>
+</body>
+</html>
