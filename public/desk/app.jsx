@@ -1492,12 +1492,13 @@ function App() {
         </header>
 
         <nav className="tabs">
-          {[["analyze", "Analyze a market"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "How I'm doing"]].map(([k, l]) => (
+          {[["analyze", "Analyze a market"], ["parlay", "Parlays"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "How I'm doing"]].map(([k, l]) => (
             <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
           ))}
         </nav>
 
         {tab === "analyze" && <Analyze fw={fw} onSave={saveEntry} pending={pending} clearPending={() => setPending(null)} ledger={ledger} />}
+        {tab === "parlay" && <Parlay onPick={(m) => { setPending(m); setTab("analyze"); }} />}
         {tab === "positions" && <Positions ledger={ledger} save={saveEntry} reopen={reopen} reload={reloadLedger} />}
         {tab === "browse" && <Browse onPick={(m) => { setPending(m); setTab("analyze"); }} />}
         {tab === "frameworks" && <Frameworks fw={fw} save={saveFw} ledger={ledger} reset={() => saveFw(buildFrameworks())} />}
@@ -2736,6 +2737,305 @@ function Positions({ ledger, save, reopen, reload }) {
           </p>
         </div>
       )}
+    </>
+  );
+}
+
+/* ---------------- Parlay scanner ----------------
+   Free, quantitative edge screen for game markets: compare each contract's
+   price to the de-vigged sportsbook moneyline for that game. No LLM calls,
+   so it can sweep every open game on both venues for pennies of bandwidth. */
+// Run an async fn over items with bounded concurrency (keeps the ESPN
+// summary fan-out polite and fast).
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  const worker = async () => { while (i < items.length) { const idx = i++; out[idx] = await fn(items[idx]); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+async function espnGamesForLeague(lg) {
+  let events = [];
+  try {
+    const d = await getJson("https://site.api.espn.com/apis/site/v2/sports/" + lg.path + "/scoreboard");
+    events = d.events || [];
+  } catch { return []; }
+  return events.map((ev) => {
+    const comp = (ev.competitions && ev.competitions[0]) || {};
+    const comps = comp.competitors || [];
+    const home = comps.find((c) => c.homeAway === "home");
+    const away = comps.find((c) => c.homeAway === "away");
+    return {
+      eventId: ev.id, path: lg.path, abbrs: comps.map(competitorAbbr),
+      homeAbbr: home ? competitorAbbr(home) : null, awayAbbr: away ? competitorAbbr(away) : null,
+      state: (ev.status && ev.status.type && ev.status.type.state) || "pre",
+      name: ev.name || ev.shortName || "",
+    };
+  });
+}
+
+// De-vigged moneyline for one game, from the summary endpoint's pickcenter.
+async function espnDevig(game) {
+  try {
+    const sm = await getJson("https://site.api.espn.com/apis/site/v2/sports/" + game.path + "/summary?event=" + game.eventId);
+    const pc = sm.pickcenter || sm.odds || [];
+    const od = pc.find((o) => o && o.homeTeamOdds && o.awayTeamOdds &&
+      o.homeTeamOdds.moneyLine != null && o.awayTeamOdds.moneyLine != null);
+    if (!od) return null;
+    const nv = noVigMoneyline(od.homeTeamOdds.moneyLine, od.awayTeamOdds.moneyLine);
+    if (!nv) return null;
+    const probByAbbr = {};
+    if (game.homeAbbr) probByAbbr[game.homeAbbr] = nv.home;
+    if (game.awayAbbr) probByAbbr[game.awayAbbr] = nv.away;
+    return probByAbbr;
+  } catch { return null; }
+}
+
+async function scanEdges() {
+  const root = "https://api.elections.kalshi.com/trade-api/v2";
+  // Pull open markets, then keep quoted contracts we can tie to a league.
+  const raw = [];
+  let cursor = "", pages = 0;
+  while (pages < 6) {
+    let r;
+    try { r = await fetch(px(root + "/markets?status=open&limit=200" + (cursor ? "&cursor=" + cursor : ""))); }
+    catch { break; }
+    if (!r.ok) break;
+    const d = await r.json();
+    (d.markets || []).forEach((m) => raw.push(m));
+    cursor = d.cursor || ""; pages++;
+    if (!cursor || !(d.markets || []).length) break;
+  }
+  const games = raw.map(kaMarket).filter((m) => m.price != null && detectLeague(m));
+
+  const byLeague = {};
+  games.forEach((m) => {
+    const lg = detectLeague(m);
+    (byLeague[lg.path] = byLeague[lg.path] || { lg, ms: [] }).ms.push(m);
+  });
+
+  const picks = [];
+  for (const { lg, ms } of Object.values(byLeague)) {
+    const gs = await espnGamesForLeague(lg);
+    if (!gs.length) continue;
+
+    // Match each market to a game by team codes.
+    const matched = [];
+    for (const m of ms) {
+      const codes = teamCodes(m.id);
+      if (!codes.length) continue;
+      let best = null, bestS = 0;
+      gs.forEach((g) => { const s = codeHit(codes, g.abbrs); if (s > bestS) { bestS = s; best = g; } });
+      if (best && bestS >= 1) matched.push({ m, g: best, codes });
+    }
+    if (!matched.length) continue;
+
+    // Fetch the de-vig line once per distinct matched game.
+    const distinct = [];
+    const seenG = new Set();
+    matched.forEach(({ g }) => { if (!seenG.has(g.eventId)) { seenG.add(g.eventId); distinct.push(g); } });
+    const devigs = await mapLimit(distinct, 6, espnDevig);
+    const gmap = {};
+    distinct.forEach((g, i) => { gmap[g.eventId] = devigs[i]; });
+
+    for (const { m, g, codes } of matched) {
+      const probByAbbr = gmap[g.eventId];
+      if (!probByAbbr) continue;
+      const myCode = codes[0];
+      let modelProb = null;
+      for (const [ab, p] of Object.entries(probByAbbr)) {
+        if (ab === myCode || ab.startsWith(myCode) || myCode.startsWith(ab)) { modelProb = p; break; }
+      }
+      if (modelProb == null) continue;
+      const entry = m.ask != null ? m.ask : m.price;
+      picks.push({
+        id: m.id, market: m, modelProb, entry, edge: modelProb - entry,
+        league: lg.label, state: g.state, game: g.name, codes,
+      });
+    }
+  }
+  const seen = new Set();
+  return picks.filter((p) => (seen.has(p.id) ? false : seen.add(p.id)))
+    .sort((a, b) => b.edge - a.edge);
+}
+
+// Combined economics of a parlay. Independence is assumed for the model
+// probability — correlated legs (same game) are flagged separately.
+function parlayMath(slip) {
+  if (!slip.length) return null;
+  let mkt = 1, model = 1, mult = 1;
+  slip.forEach((l) => {
+    const e = clamp(l.entry, 1, 99);
+    mkt *= e / 100;
+    model *= clamp(l.modelProb, 1, 99) / 100;
+    mult *= 100 / e;
+  });
+  return { legs: slip.length, mktProb: mkt * 100, modelProb: model * 100, mult, ev: model * mult - 1 };
+}
+
+// Two legs are correlated if they belong to the same game (shared team code).
+function parlayConflicts(slip) {
+  const bad = new Set();
+  for (let i = 0; i < slip.length; i++) {
+    for (let j = i + 1; j < slip.length; j++) {
+      const a = slip[i].codes || [], b = slip[j].codes || [];
+      if (a.some((c) => b.includes(c))) { bad.add(slip[i].id); bad.add(slip[j].id); }
+    }
+  }
+  return bad;
+}
+
+function Parlay({ onPick }) {
+  const [picks, setPicks] = useState([]);
+  const [state, setState] = useState("idle");
+  const [err, setErr] = useState(null);
+  const [slip, setSlip] = useState([]);
+  const [view, setView] = useState("value"); // value | locks
+  const [minEdge, setMinEdge] = useState(3);
+
+  async function run() {
+    setState("loading"); setErr(null);
+    try {
+      const p = await scanEdges();
+      setPicks(p);
+      setState("done");
+      if (!p.length) setErr("No game markets with a sportsbook line to compare right now. This scanner covers live and upcoming games (where a de-vigged moneyline exists); try again nearer game time.");
+    } catch (e) {
+      setErr("Scan failed: " + e.message);
+      setState("idle");
+    }
+  }
+  useEffect(() => { run(); }, []);
+
+  const inSlip = (id) => slip.some((l) => l.id === id);
+  const toggle = (p) => setSlip((s) => inSlip(p.id) ? s.filter((l) => l.id !== p.id)
+    : s.length >= 8 ? s : [...s, { id: p.id, market: p.market, modelProb: p.modelProb, entry: p.entry, codes: p.codes, game: p.game }]);
+
+  const shown = useMemo(() => {
+    const list = picks.slice();
+    if (view === "value") return list.filter((p) => p.edge >= minEdge).slice(0, 25);
+    return list.filter((p) => p.modelProb >= 70).sort((a, b) => b.modelProb - a.modelProb).slice(0, 25);
+  }, [picks, view, minEdge]);
+
+  const pm = parlayMath(slip);
+  const conflicts = parlayConflicts(slip);
+
+  return (
+    <>
+      <div className="panel">
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
+          <p className="sect" style={{ margin: 0 }}>Build a parlay</p>
+          <button className="btn btn-ghost btn-sm" onClick={run} disabled={state === "loading"}>
+            {state === "loading" ? "Scanning" : "Rescan"}
+          </button>
+        </div>
+        <p className="help" style={{ marginTop: 6 }}>
+          Every open game is checked against the sportsbook's de-vigged line — a fair, free read on who's really
+          favored. Tap picks to stack them; the slip works out the combined odds and whether the parlay is a good bet.
+          This scan costs nothing.
+        </p>
+        <div className="chips" style={{ marginTop: 12 }}>
+          <button className={"chip" + (view === "value" ? " on" : "")} onClick={() => setView("value")}>Best value (edge)</button>
+          <button className={"chip" + (view === "locks" ? " on" : "")} onClick={() => setView("locks")}>Strongest favorites</button>
+          {view === "value" && (
+            <span className="chip static">
+              min edge{" "}
+              <input type="number" min="0" max="20" value={minEdge} onChange={(e) => setMinEdge(Math.max(0, Number(e.target.value) || 0))}
+                style={{ width: 44, marginLeft: 6, background: "rgba(0,0,0,.22)", border: "1px solid var(--slate-600)", borderRadius: 6, color: "var(--bone)", padding: "2px 6px", fontFamily: "'JetBrains Mono',monospace" }} />c
+            </span>
+          )}
+          {picks.length ? <span className="chip static">{picks.length} games priced</span> : null}
+        </div>
+      </div>
+
+      {err && <div className="panel err">{err}</div>}
+
+      {slip.length > 0 && pm && (
+        <div className="panel" style={{ borderColor: "rgba(242,179,61,.4)" }}>
+          <p className="sect">Your parlay · {pm.legs} leg{pm.legs === 1 ? "" : "s"}</p>
+          {slip.map((l) => (
+            <div key={l.id} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
+              <span className="who" style={{ fontSize: 13.5 }}>
+                {l.market.name === l.market.question ? l.market.question : l.market.name}
+                {conflicts.has(l.id) && <span className="srcchip bad" style={{ marginLeft: 8 }}>same game</span>}
+              </span>
+              <span className="pts" style={{ fontSize: 15 }}>
+                {l.entry.toFixed(0)}c
+                <button className="chip" style={{ marginLeft: 8 }} onClick={() => setSlip((s) => s.filter((x) => x.id !== l.id))}>remove</button>
+              </span>
+            </div>
+          ))}
+          <div className="figures" style={{ marginTop: 16 }}>
+            <div className="fig">
+              <span className="big" style={{ color: "var(--amber)" }}>{pm.mult.toFixed(1)}×</span>
+              <span className="cap">Payout multiplier</span>
+              <span className="sub">$100 returns ${(pm.mult * 100).toFixed(0)} if every leg hits</span>
+            </div>
+            <div className="fig">
+              <span className="big">{pm.modelProb.toFixed(pm.modelProb < 10 ? 1 : 0)}%</span>
+              <span className="cap">Model win chance</span>
+              <span className="sub">All legs hitting, per the sportsbook lines</span>
+            </div>
+            <div className="fig">
+              <span className="big" style={{ color: pm.ev > 0 ? "var(--moss)" : "var(--rose)" }}>
+                {pm.ev > 0 ? "+" : ""}{(pm.ev * 100).toFixed(0)}%
+              </span>
+              <span className="cap">Expected value</span>
+              <span className="sub">Per $1 staked, on these probabilities</span>
+            </div>
+            <div className="fig">
+              <span className="big">{pm.mktProb.toFixed(pm.mktProb < 10 ? 1 : 0)}%</span>
+              <span className="cap">Priced-in chance</span>
+              <span className="sub">What the combined ticket costs implies</span>
+            </div>
+          </div>
+          <p className="help" style={{ marginTop: 12, color: pm.ev > 0 ? "var(--moss)" : "var(--dim)" }}>
+            {conflicts.size > 0
+              ? "Two legs are from the same game — those aren't independent, so the real win chance is off. Swap one out for a clean parlay."
+              : pm.ev > 0
+                ? "Positive expected value: the lines say this combo pays more than the risk. Parlays still lose most of the time — the multiplier is the point, not the hit rate."
+                : "Negative expected value on these lines — the payout doesn't cover the combined risk. Fewer legs or bigger edges fix that."}
+          </p>
+          <button className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setSlip([])}>Clear slip</button>
+        </div>
+      )}
+
+      <div className="panel">
+        {state === "loading" && <p className="pwait"><span className="dots">pricing every game against the book</span></p>}
+        {state === "done" && shown.length === 0 && !err && (
+          <p className="thesis" style={{ color: "var(--dim)" }}>
+            {view === "value" ? "No games clear a " + minEdge + "c edge right now. Lower the threshold or check the favorites view."
+              : "No strong favorites priced right now."}
+          </p>
+        )}
+        {shown.map((p) => (
+          <div key={p.id} className="sel" style={{ cursor: "default", borderColor: inSlip(p.id) ? "var(--amber)" : undefined }}>
+            <span style={{ minWidth: 0 }}>
+              {p.market.name === p.market.question ? p.market.question : p.market.name}
+              <span className="sub">
+                {p.league} · {p.state === "in" ? "live" : p.state === "post" ? "final" : "upcoming"} ·
+                book {p.modelProb.toFixed(0)}% vs price {p.entry.toFixed(0)}c
+              </span>
+            </span>
+            <span style={{ display: "flex", gap: 10, alignItems: "center", flex: "0 0 auto" }}>
+              <span className="sig" style={{ color: p.edge >= 4 ? "var(--moss)" : "var(--dim)", borderColor: p.edge >= 4 ? "var(--moss)" : "var(--slate-600)" }}>
+                {p.edge > 0 ? "+" : ""}{p.edge.toFixed(0)}c
+              </span>
+              <button className={"chip" + (inSlip(p.id) ? " on" : "")} onClick={() => toggle(p)}>
+                {inSlip(p.id) ? "added" : "add"}
+              </button>
+              <button className="chip" onClick={() => onPick(p.market)}>analyze</button>
+            </span>
+          </div>
+        ))}
+        {state === "done" && shown.length > 0 && (
+          <p className="help" style={{ marginTop: 12 }}>
+            "Edge" is how many cents cheaper the contract is than the sportsbook's fair price. A positive edge means
+            the market may be underpricing that side. Tap <b>analyze</b> for the full nine-way read on any pick.
+          </p>
+        )}
+      </div>
     </>
   );
 }
