@@ -587,6 +587,114 @@ async function fetchKalshi(p) {
   };
 }
 
+/* ---- price history ----
+   What a market did over the last week tells you whether the news is
+   already in the price — the single most common way naive edges die. */
+async function fetchHistory(m) {
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const weekAgo = now - 7 * 86400;
+    let points = [];
+    if (m.venue === "Kalshi") {
+      const series = String(m.id).split("-")[0];
+      const r = await fetch(px("https://api.elections.kalshi.com/trade-api/v2/series/" + series +
+        "/markets/" + m.id + "/candlesticks?start_ts=" + weekAgo + "&end_ts=" + now + "&period_interval=60"));
+      if (!r.ok) return null;
+      const d = await r.json();
+      points = (d.candlesticks || []).map((c) => {
+        const pr = c.price || {};
+        const v = pr.close != null ? pr.close : pr.mean != null ? pr.mean : (c.yes_bid && c.yes_bid.close);
+        return v == null ? null : { t: Number(c.end_period_ts), p: Number(v) };
+      }).filter((x) => x && Number.isFinite(x.p));
+    } else {
+      if (!m.token) return null;
+      const r = await fetch(px("https://clob.polymarket.com/prices-history?market=" +
+        encodeURIComponent(m.token) + "&interval=1w&fidelity=120"));
+      if (!r.ok) return null;
+      const d = await r.json();
+      points = (d.history || []).map((h) => ({ t: Number(h.t), p: Number(h.p) * 100 }))
+        .filter((x) => Number.isFinite(x.p));
+    }
+    if (points.length < 2) return null;
+    // Some payloads quote dollars, others cents — normalise to cents.
+    if (Math.max.apply(null, points.map((pt) => pt.p)) <= 1.001) points = points.map((pt) => ({ t: pt.t, p: pt.p * 100 }));
+    points.sort((a, b) => a.t - b.t);
+    const at = (secsAgo) => {
+      const target = now - secsAgo;
+      let best = points[0];
+      for (const pt of points) if (Math.abs(pt.t - target) < Math.abs(best.t - target)) best = pt;
+      return best.p;
+    };
+    const last = points[points.length - 1].p;
+    return { points, last, change24h: last - at(86400), change7d: last - points[0].p };
+  } catch { return null; }
+}
+
+const histSummary = (h) => !h ? "" :
+  "\nPRICE HISTORY: 7d change " + (h.change7d >= 0 ? "+" : "") + h.change7d.toFixed(1) +
+  "c, 24h change " + (h.change24h >= 0 ? "+" : "") + h.change24h.toFixed(1) +
+  "c. A market that already moved may have priced in the news — judge what is genuinely new versus already absorbed.";
+
+const marketSpread = (m) => (m.ask != null && m.bid != null ? m.ask - m.bid : null);
+const isThin = (m) => {
+  const s = marketSpread(m);
+  return (s != null && s > 8) || (m.volume != null && m.volume > 0 && m.volume < 1000);
+};
+
+/* ---- open positions: quotes and stay/sell advice ---- */
+async function fetchCurrentPrice(e) {
+  try {
+    if (e.venue === "Kalshi") {
+      const r = await fetch(px("https://api.elections.kalshi.com/trade-api/v2/markets/" + e.marketId));
+      if (!r.ok) return null;
+      const d = await r.json();
+      if (d.market) return kaPrice(d.market).price;
+    } else if (e.slug) {
+      const r = await fetch(px("https://gamma-api.polymarket.com/events?slug=" + encodeURIComponent(e.slug)));
+      if (!r.ok) return null;
+      const d = await r.json();
+      const ev = Array.isArray(d) ? d[0] : d;
+      const m = ev && (ev.markets || []).find((x) => (x.conditionId || String(x.id)) === e.marketId);
+      if (m) return pmMarket(m, ev).price;
+    }
+  } catch { /* quote later */ }
+  return null;
+}
+
+// Deterministic stay/sell guidance — free to compute, honest about its
+// source. During a live game the win-probability model outranks the desk's
+// own (possibly hours-old) fair value.
+function positionAdvice(e, cur, live) {
+  const side = e.taken.side;
+  const fairSide = side === "YES" ? e.fair : 100 - e.fair;
+  const curSide = side === "YES" ? cur : 100 - cur;
+  const pnl = curSide - e.taken.entryPrice;
+  let eff = fairSide, src = "my last analysis";
+  if (live && live.impliedCents != null && live.state === "in" && !live.disagree) {
+    eff = side === "YES" ? live.impliedCents : 100 - live.impliedCents;
+    src = "the live win probability";
+  }
+  if (live && live.state === "post") {
+    return { act: "SETTLING", why: "The game is final. This resolves shortly — nothing left to decide." };
+  }
+  const exitFee = takerFee(e.venue, curSide);
+  const rem = eff - curSide;
+  if (rem <= -2) return { act: "SELL",
+    why: "By " + src + " your side is worth about " + eff.toFixed(0) + "c but sells for " + curSide.toFixed(0) +
+      "c — you're holding an overpriced position. Selling costs roughly " + exitFee.toFixed(1) + "c in fees." };
+  if (rem <= 1.5) return { act: "TAKE PROFIT",
+    why: "The market has caught up to " + src + " (" + eff.toFixed(0) + "c vs " + curSide.toFixed(0) + "c). The edge is captured — " +
+      (pnl >= 0 ? "you're up " + pnl.toFixed(0) + "c a contract, and " : "") + "holding on adds risk without expected reward." };
+  if (src === "my last analysis" && Math.abs(cur - e.price) >= 10) return { act: "RE-CHECK",
+    why: "The market moved " + (cur - e.price > 0 ? "+" : "") + (cur - e.price).toFixed(0) +
+      "c since the analysis — something changed. Run a full re-analysis before trusting the old fair value." };
+  return { act: "HOLD",
+    why: "About " + rem.toFixed(0) + "c of edge left by " + src + ". " +
+      (pnl >= 0 ? "Up " : "Down ") + Math.abs(pnl).toFixed(0) + "c a contract so far." };
+}
+
+const ADVICE_COLORS = { HOLD: "var(--moss)", "TAKE PROFIT": "var(--amber)", SELL: "var(--rose)", "RE-CHECK": "var(--cyan)", SETTLING: "var(--dim)" };
+
 /* ---- order book + slippage ---- */
 async function fetchBook(m) {
   try {
@@ -930,10 +1038,17 @@ const MODELS = { research: "claude-sonnet-4-6", judge: "claude-opus-4-8" };
 async function callClaude(prompt, { search = false, model = MODELS.research, maxTokens = 1600 } = {}) {
   const body = { model, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] };
   if (search) body.tools = [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }];
-  const r = await fetch("/api/desk/claude", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error("Analysis request failed (" + r.status + ")");
+  // One automatic retry on rate limits and transient server errors, so a
+  // single hiccup doesn't cost a whole framework group.
+  let r;
+  for (let attempt = 0; ; attempt++) {
+    r = await fetch("/api/desk/claude", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }).catch((e) => ({ ok: false, status: 0, _err: e }));
+    if (r.ok || attempt >= 1 || ![0, 429, 500, 502, 503, 529].includes(r.status)) break;
+    await new Promise((res) => setTimeout(res, 2500));
+  }
+  if (!r.ok) throw new Error("Analysis request failed (" + (r.status || "network") + ")");
   const d = await r.json();
   const blocks = d.content || [];
   const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n");
@@ -1150,7 +1265,29 @@ function App() {
     try { await fetch("/api/desk/ledger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry) }); } catch { /* in memory only */ }
   }
 
-  const [pending, setPending] = useState(null); // market handed over from Browse
+  const [pending, setPending] = useState(null); // market handed over from Browse or My trades
+
+  // Re-open a past call in Analyze with a freshly fetched market record.
+  async function reopen(e) {
+    try {
+      if (e.venue === "Kalshi") {
+        const r = await fetch(px("https://api.elections.kalshi.com/trade-api/v2/markets/" + e.marketId));
+        const d = await r.json();
+        if (d.market) { setPending(kaMarket(d.market)); setTab("analyze"); return; }
+      } else if (e.slug) {
+        const r = await fetch(px("https://gamma-api.polymarket.com/events?slug=" + encodeURIComponent(e.slug)));
+        const d = await r.json();
+        const ev = Array.isArray(d) ? d[0] : d;
+        const m = ev && (ev.markets || []).find((x) => (x.conditionId || String(x.id)) === e.marketId);
+        if (m) { setPending(pmMarket(m, ev)); setTab("analyze"); return; }
+      }
+    } catch { /* fall back to what the ledger knows */ }
+    setPending({ venue: e.venue, id: e.marketId, slug: e.slug || null, name: e.name, question: e.question,
+      price: e.price, close: e.close || null, link: e.link || "", rules: "" });
+    setTab("analyze");
+  }
+
+  const openTrades = ledger.filter((e) => e.taken && e.status === "open").length;
 
   return (
     <div className="cd">
@@ -1168,12 +1305,13 @@ function App() {
         </header>
 
         <nav className="tabs">
-          {[["analyze", "Analyze a market"], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "How I'm doing"]].map(([k, l]) => (
+          {[["analyze", "Analyze a market"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "How I'm doing"]].map(([k, l]) => (
             <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
           ))}
         </nav>
 
         {tab === "analyze" && <Analyze fw={fw} onSave={saveEntry} pending={pending} clearPending={() => setPending(null)} ledger={ledger} />}
+        {tab === "positions" && <Positions ledger={ledger} save={saveEntry} reopen={reopen} />}
         {tab === "browse" && <Browse onPick={(m) => { setPending(m); setTab("analyze"); }} />}
         {tab === "frameworks" && <Frameworks fw={fw} save={saveFw} ledger={ledger} reset={() => saveFw(buildFrameworks())} />}
         {tab === "ledger" && <Ledger ledger={ledger} setLedger={setLedger} fw={fw} />}
@@ -1190,8 +1328,28 @@ function App() {
 }
 
 /* ---------------- Analyze ---------------- */
+function Spark({ points, w = 120, h = 26 }) {
+  if (!points || points.length < 2) return null;
+  const ps = points.map((pt) => pt.p);
+  const min = Math.min.apply(null, ps), max = Math.max.apply(null, ps);
+  const span = Math.max(1e-6, max - min);
+  const d = points.map((pt, i) => {
+    const x = (i / (points.length - 1)) * w;
+    const y = h - ((pt.p - min) / span) * (h - 4) - 2;
+    return (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+  }).join(" ");
+  const up = ps[ps.length - 1] >= ps[0];
+  return (
+    <svg width={w} height={h} style={{ display: "block", marginTop: 3 }} aria-hidden="true">
+      <path d={d} fill="none" stroke={up ? "var(--moss)" : "var(--rose)"} strokeWidth="1.5" />
+    </svg>
+  );
+}
+
 function Analyze({ fw, onSave, pending, clearPending, ledger }) {
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState(() => {
+    try { return localStorage.getItem("cd:lastUrl") || ""; } catch { return ""; }
+  });
   const [phase, setPhase] = useState("idle");
   const [error, setError] = useState(null);
   const [book, setBook] = useState(null);
@@ -1205,10 +1363,15 @@ function Analyze({ fw, onSave, pending, clearPending, ledger }) {
   const [xp, setXp] = useState(null);
   const [live, setLive] = useState(null);
   const [audit, setAudit] = useState(null);
+  const [hist, setHist] = useState(null);
+  const [lastSaved, setLastSaved] = useState(null);
+  const [tkPrice, setTkPrice] = useState("");
+  const [tkN, setTkN] = useState("100");
   const runId = useRef(0);
   // Freshest live feed, readable mid-analysis: a running pipeline reads this
   // at every stage instead of the score from when the run started.
   const liveRef = useRef(null);
+  const histRef = useRef(null);
 
   useEffect(() => {
     if (!pending) return;
@@ -1224,7 +1387,9 @@ function Analyze({ fw, onSave, pending, clearPending, ledger }) {
   useEffect(() => {
     if (!market) return;
     let alive = true;
+    setHist(null); histRef.current = null;
     fetchBook(market).then((b) => { if (alive) setDepth(b); });
+    fetchHistory(market).then((h) => { if (alive) { setHist(h); histRef.current = h; } });
     return () => { alive = false; };
   }, [market]);
 
@@ -1256,6 +1421,7 @@ function Analyze({ fw, onSave, pending, clearPending, ledger }) {
     setPhase("fetching");
     try {
       const b = p.venue === "Polymarket" ? await fetchPolymarket(p) : await fetchKalshi(p);
+      try { localStorage.setItem("cd:lastUrl", target); } catch { /* private mode */ }
       setBook(b);
       setCat(guessCategory(b.event + " " + b.markets.map((m) => m.name).join(" ")));
       if (b.markets.length === 1) { setMarket(b.markets[0]); setPhase("ready"); }
@@ -1319,7 +1485,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
     const m = m0 || market, c = c0 || cat;
     if (!m) return;
     const id = ++runId.current;
-    setError(null); setResult(null); setFindings({}); setSources([]); setAudit(null);
+    setError(null); setResult(null); setFindings({}); setSources([]); setAudit(null); setLastSaved(null);
     const lib = fw[c];
     const active = lib.items.filter((p) => p.enabled);
     const byN = Object.fromEntries(lib.items.map((p) => [p.n, p]));
@@ -1348,7 +1514,24 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
     // freshest state again at each later stage — a game moves during the
     // minute this analysis takes.
     const livePromise = fetchLive(m).catch(() => null);
-    const liveNow = () => liveSummary(liveRef.current);
+
+    // Standing context assembled once per stage read: live state, price
+    // history, sibling outcomes, and how liquid the market really is.
+    let sibLine = "";
+    if (book && book.markets && book.markets.length > 1) {
+      const sibs = book.markets.filter((x) => x.id !== m.id).slice(0, 6);
+      if (sibs.length) sibLine = "\nOTHER OUTCOMES ON THIS EVENT: " +
+        sibs.map((s) => s.name + " " + s.price.toFixed(1) + "c").join(", ") +
+        ". The full set behaves like a probability distribution — check this outcome's price for consistency with its rivals.";
+    }
+    const spread = marketSpread(m);
+    const thin = isThin(m);
+    const liqLine = (spread != null || m.volume)
+      ? "\nLIQUIDITY: " + (spread != null ? "bid-ask spread " + spread.toFixed(0) + "c" : "") +
+        (m.volume ? (spread != null ? ", " : "") + "volume $" + Math.round(m.volume).toLocaleString() : "") +
+        (thin ? ". This market is thin — prices are noisier and fills are worse; demand more edge." : ".")
+      : "";
+    const liveNow = () => liveSummary(liveRef.current) + histSummary(histRef.current) + sibLine + liqLine;
 
     // Step 0: read the fine print before researching, so every later step
     // prices the contract that actually exists rather than the headline.
@@ -1430,6 +1613,12 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
       if (xpNow && xpNow.status === "found") {
         extra += `\nCROSS-PLATFORM: the equivalent contract on ${xpNow.match.venue} trades at ${xpNow.match.price.toFixed(1)}c. ${xpNow.caveat || ""}`;
       }
+      // If this market has been analyzed before, the synthesis (only) sees
+      // the old call — the researchers stay blind to it to avoid anchoring.
+      const prev = (ledger || []).find((e) => e.marketId === m.id && e.venue === m.venue);
+      if (prev) {
+        extra += `\nPRIOR ANALYSIS (${new Date(prev.ts).toISOString().slice(0, 10)}): the desk priced this at ${prev.fair}c when the market was ${prev.price}c (call: ${prev.call}). Weigh what has actually changed since.`;
+      }
 
       const sr = await callClaude(synthPrompt(m, summarize(active.map((p) => p.n)), extra, anchor, auditLine), { model: MODELS.judge, maxTokens: 1400 });
       if (id !== runId.current) return;
@@ -1459,8 +1648,8 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
       const vetoed = !!(contraF && (contraF.strength || 0) >= 2 &&
         ((side === "YES" && contraF.signal === "NO") || (side === "NO" && contraF.signal === "YES")));
       // Trade bar: price-scaled minimum, +4c when our own risk officer
-      // found solid evidence for the other side.
-      const bar = minNetEdge(m.price) + (vetoed ? 4 : 0);
+      // found solid evidence for the other side, +2c in thin markets.
+      const bar = minNetEdge(m.price) + (vetoed ? 4 : 0) + (thin ? 2 : 0);
 
       let call = netEdge >= bar && strong >= 3 ? "BUY " + side : "PASS";
       let confidence = j.confidence || "LOW";
@@ -1489,12 +1678,12 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
 
       const res = { fair, anchor, edge, netEdge, entry, fee, bar, call, side, stake, confidence,
         thesis: j.thesis || "", drivers: j.drivers || [], risks: j.risks || [],
-        resolution: j.resolution || "", strong, verify, vetoed };
+        resolution: j.resolution || "", strong, verify, vetoed, thin };
       setResult(res);
       setSources([...allSources]);
       setPhase("done");
 
-      onSave({
+      const saved = {
         id: uid(), ts: Date.now(), venue: m.venue, marketId: m.id, slug: m.slug || null,
         question: m.question, name: m.name, category: c, price: m.price, fair,
         edge: Math.round(edge * 10) / 10, netEdge: Math.round(netEdge * 10) / 10,
@@ -1505,7 +1694,11 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
           const f = collected[p.n] || {};
           return { n: p.n, name: p.name, signal: f.signal || "NEUTRAL", strength: f.strength || 0, implied: f.implied ?? null };
         }),
-      });
+      };
+      onSave(saved);
+      setLastSaved(saved);
+      setTkPrice(res.entry.toFixed(1));
+      setTkN(String(size));
     } catch (e) {
       setError("Couldn't build the final estimate: " + e.message + ". The findings below still stand — re-run to retry.");
       setPhase("done");
@@ -1593,7 +1786,37 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
             {market.bid != null && <div><span className="k">Bid / ask</span><span className="v">{market.bid}–{market.ask}</span></div>}
             <div><span className="k">Volume</span><span className="v">{market.volume ? "$" + Math.round(market.volume).toLocaleString() : "—"}</span></div>
             <div><span className="k">Settles</span><span className="v">{market.close ? String(market.close).slice(0, 10) : "—"}</span></div>
+            {hist && (
+              <div>
+                <span className="k">24h move</span>
+                <span className="v" style={{ color: hist.change24h > 0.5 ? "var(--moss)" : hist.change24h < -0.5 ? "var(--rose)" : "var(--dim)" }}>
+                  {hist.change24h >= 0 ? "+" : ""}{hist.change24h.toFixed(1)}c
+                </span>
+              </div>
+            )}
+            {hist && <div><span className="k">Last 7 days</span><Spark points={hist.points} /></div>}
+            {isThin(market) && (
+              <div><span className="k">Liquidity</span><span className="v" style={{ color: "var(--amber)" }}>thin</span></div>
+            )}
           </div>
+
+          {audit && !result && (
+            <p className="help" style={{ marginTop: 12 }}>
+              <strong style={{ color: "var(--bone)" }}>Fine print:</strong> {audit.summary}
+              {audit.traps && audit.traps.length > 0 ? <span style={{ color: "var(--amber)" }}> · {audit.traps[0]}</span> : null}
+            </p>
+          )}
+
+          {!result && !busy && (() => {
+            const prev = (ledger || []).find((e) => e.marketId === market.id && e.venue === market.venue);
+            return prev ? (
+              <p className="help" style={{ marginTop: 12 }}>
+                I've priced this one before ({new Date(prev.ts).toISOString().slice(0, 10)}): said{" "}
+                <span className="mono">{prev.call}</span> with fair {Number(prev.fair).toFixed(0)}c against a{" "}
+                {Number(prev.price).toFixed(0)}c price. Re-running shows what's changed.
+              </p>
+            ) : null;
+          })()}
 
           {live && !live.error && !live.none && live.sides && (
             <div className="live">
@@ -1815,7 +2038,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                     {result.netEdge > 0 ? "+" : ""}{result.netEdge.toFixed(1)}c
                   </span>
                   <span className="cap">Value after costs</span>
-                  <span className="sub">Fair value minus the real fill price and fees{result.call === "PASS" ? " — needed " + result.bar.toFixed(1) + "c to trade" : ""}</span>
+                  <span className="sub">Fair value minus the real fill price and fees{result.call === "PASS" ? " — needed " + result.bar.toFixed(1) + "c to trade" : ""}{result.thin ? " · thin market raised the bar" : ""}</span>
                 </div>
                 <div className="fig">
                   <span className="big">{result.anchor.toFixed(0)}c</span>
@@ -1843,6 +2066,38 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                 <p className="help" style={{ marginTop: 14 }}>
                   Passing is a real answer. Most contracts are priced about right, and no trade beats a bad one.
                 </p>
+              )}
+
+              {result.call !== "PASS" && lastSaved && (
+                lastSaved.taken ? (
+                  <p className="help" style={{ marginTop: 16, color: "var(--moss)" }}>
+                    Tracking this position — open <b>My trades</b> for live stay-or-sell feedback.
+                  </p>
+                ) : (
+                  <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                    <div>
+                      <span className="k eyebrow" style={{ display: "block", marginBottom: 4 }}>Your fill (c)</span>
+                      <input className="srch" type="number" step="0.1" value={tkPrice} onChange={(e) => setTkPrice(e.target.value)}
+                        style={{ width: 100, padding: "8px 10px", flex: "none" }} aria-label="Fill price in cents" />
+                    </div>
+                    <div>
+                      <span className="k eyebrow" style={{ display: "block", marginBottom: 4 }}>Contracts</span>
+                      <input className="srch" type="number" min="1" value={tkN} onChange={(e) => setTkN(e.target.value)}
+                        style={{ width: 100, padding: "8px 10px", flex: "none" }} aria-label="Number of contracts" />
+                    </div>
+                    <button className="btn btn-sm" onClick={() => {
+                      if (!lastSaved || !result) return;
+                      const upd = { ...lastSaved, taken: {
+                        side: result.side, entryPrice: Number(tkPrice) || result.entry,
+                        contracts: Math.max(1, Math.round(Number(tkN) || 1)), at: Date.now() } };
+                      onSave(upd);
+                      setLastSaved(upd);
+                    }}>I took this trade</button>
+                    <span className="help" style={{ flexBasis: "100%", marginTop: 2 }}>
+                      Mark it, and <b>My trades</b> will watch the price and the game and tell you when to stay or get out.
+                    </span>
+                  </div>
+                )
               )}
             </>
           )}
@@ -1934,6 +2189,158 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
   );
 }
 
+/* ---------------- My trades ---------------- */
+function Positions({ ledger, save, reopen }) {
+  const open = ledger.filter((e) => e.taken && e.status === "open");
+  const settled = ledger.filter((e) => e.taken && e.status === "resolved" && e.outcome !== null);
+  const candidates = ledger.filter((e) => !e.taken && e.status === "open" && e.call !== "PASS").slice(0, 8);
+  const [q, setQ] = useState({});
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function refresh() {
+    if (!open.length) return;
+    setRefreshing(true);
+    const out = {};
+    await Promise.all(open.map(async (e) => {
+      const [price, live] = await Promise.all([
+        fetchCurrentPrice(e),
+        fetchLive({ id: e.marketId, question: e.question, name: e.name }).catch(() => null),
+      ]);
+      out[e.id] = { price, live, at: Date.now() };
+    }));
+    setQ(out);
+    setRefreshing(false);
+  }
+
+  // Refresh on open and every 30 seconds while the tab is showing.
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 30000);
+    return () => clearInterval(t);
+  }, [ledger.length]);
+
+  const settledPnl = settled.reduce((s, e) => {
+    const won = (e.taken.side === "YES" ? 1 : 0) === e.outcome;
+    return s + ((won ? 100 : 0) - e.taken.entryPrice) * e.taken.contracts / 100;
+  }, 0);
+
+  return (
+    <>
+      <div className="panel">
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
+          <p className="sect" style={{ margin: 0 }}>Positions I'm watching ({open.length})</p>
+          <button className="btn btn-ghost btn-sm" onClick={refresh} disabled={refreshing || !open.length}>
+            {refreshing ? "Refreshing" : "Refresh now"}
+          </button>
+        </div>
+        <p className="help" style={{ marginTop: 6 }}>
+          Live prices and game feeds against what each position is worth. Advice updates every 30 seconds while
+          you're on this tab — and it's free, no analysis credits.
+        </p>
+
+        {open.length === 0 && (
+          <p className="thesis" style={{ color: "var(--dim)", marginTop: 14 }}>
+            Nothing tracked yet. When an analysis says BUY and you take it, hit <b>I took this trade</b> on the
+            result — or mark one of your recent calls below.
+          </p>
+        )}
+
+        {open.map((e) => {
+          const qq = q[e.id] || {};
+          const cur = qq.price != null ? qq.price : null;
+          const live = qq.live && !qq.live.none && qq.live.sides ? qq.live : null;
+          const adv = cur != null ? positionAdvice(e, cur, live) : null;
+          const curSide = cur != null ? (e.taken.side === "YES" ? cur : 100 - cur) : null;
+          const pnlC = curSide != null ? curSide - e.taken.entryPrice : null;
+          const pnlD = pnlC != null ? (pnlC * e.taken.contracts) / 100 : null;
+          const col = adv ? ADVICE_COLORS[adv.act] || "var(--dim)" : "var(--dim)";
+          return (
+            <div key={e.id} className="fw" style={{ marginTop: 12 }}>
+              <div className="fw-top">
+                <div style={{ minWidth: 0 }}>
+                  <div className="pname">{e.name === e.question ? e.question : e.question + " — " + e.name}</div>
+                  <div className="pdesc">
+                    {e.venue} · {e.taken.contracts} × {e.taken.side} at {Number(e.taken.entryPrice).toFixed(1)}c ·
+                    my fair value {Number(e.fair).toFixed(0)}c
+                  </div>
+                </div>
+                {adv && <span className="sig" style={{ color: col, borderColor: col }}>{adv.act}</span>}
+              </div>
+              <div className="meta" style={{ marginTop: 10 }}>
+                <div><span className="k">Market now</span><span className="v">{cur != null ? cur.toFixed(1) + "c" : "…"}</span></div>
+                <div><span className="k">Your side</span><span className="v">{curSide != null ? curSide.toFixed(1) + "c" : "…"}</span></div>
+                <div>
+                  <span className="k">Profit / loss</span>
+                  <span className="v" style={{ color: pnlC == null ? "var(--dim)" : pnlC >= 0 ? "var(--moss)" : "var(--rose)" }}>
+                    {pnlC == null ? "…" : (pnlC >= 0 ? "+" : "") + pnlC.toFixed(1) + "c · " + (pnlD >= 0 ? "+$" : "-$") + Math.abs(pnlD).toFixed(2)}
+                  </span>
+                </div>
+                {live && (
+                  <div>
+                    <span className="k">{live.state === "in" ? "Live now" : live.state === "post" ? "Final" : "Game"}</span>
+                    <span className="v">
+                      {live.sides.map((s) => (s.abbr || s.name.slice(0, 3)) + " " + (s.sets && s.sets.length ? s.sets.join(" ") : (s.score != null ? s.score : "-"))).join(" · ")}
+                      {live.state === "in" && live.clock ? " · " + live.clock : ""}
+                    </span>
+                  </div>
+                )}
+                {live && live.impliedCents != null && (
+                  <div>
+                    <span className="k">Win prob (your side)</span>
+                    <span className="v" style={{ color: "var(--violet)" }}>
+                      {(e.taken.side === "YES" ? live.impliedCents : 100 - live.impliedCents).toFixed(0)}%
+                    </span>
+                  </div>
+                )}
+              </div>
+              {adv && <p className="help" style={{ marginTop: 8 }}>{adv.why}</p>}
+              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => reopen(e)}>Full re-analysis</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => save({ ...e, taken: null })}>Stop tracking</button>
+                {e.link && <a className="srcchip" href={e.link} target="_blank" rel="noreferrer">open market ↗</a>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {candidates.length > 0 && (
+        <div className="panel">
+          <p className="sect">Recent BUY calls you haven't marked</p>
+          <p className="help" style={{ marginBottom: 10 }}>
+            If you actually placed one of these, tap it and I'll start watching it (assumes 100 contracts at the
+            analysis fill price — the advice is the same either way).
+          </p>
+          {candidates.map((e) => (
+            <button key={e.id} className="sel" onClick={() => save({ ...e, taken: {
+              side: e.call.replace("BUY ", ""), entryPrice: e.entry != null ? e.entry : e.price,
+              contracts: 100, at: Date.now() } })}>
+              <span>
+                {e.name === e.question ? e.question : e.question + " — " + e.name}
+                <span className="sub">{e.venue} · {e.call} · analyzed {new Date(e.ts).toISOString().slice(0, 10)}</span>
+              </span>
+              <span className="px">track</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {settled.length > 0 && (
+        <div className="panel">
+          <p className="sect">Settled positions</p>
+          <p className="thesis" style={{ marginTop: 8 }}>
+            {settled.length} tracked position{settled.length === 1 ? "" : "s"} settled so far:{" "}
+            <span className="mono" style={{ color: settledPnl >= 0 ? "var(--moss)" : "var(--rose)" }}>
+              {settledPnl >= 0 ? "+$" : "-$"}{Math.abs(settledPnl).toFixed(2)}
+            </span>{" "}
+            at the fills you recorded. The full call-by-call record lives in <b>How I'm doing</b>.
+          </p>
+        </div>
+      )}
+    </>
+  );
+}
+
 /* ---------------- Browse ---------------- */
 function Browse({ onPick }) {
   const [rows, setRows] = useState([]);
@@ -1942,6 +2349,7 @@ function Browse({ onPick }) {
   const [counts, setCounts] = useState({ Kalshi: 0, Polymarket: 0 });
   const [qy, setQy] = useState("");
   const [venue, setVenue] = useState("all");
+  const [catF, setCatF] = useState("all");
 
   async function load() {
     setState("loading"); setErr(null);
@@ -2032,11 +2440,12 @@ function Browse({ onPick }) {
 
   const shown = useMemo(() => rows.filter((m) => {
     if (venue !== "all" && m.venue !== venue) return false;
+    if (catF !== "all" && guessCategory(m.question + " " + m.name + " " + m.id) !== catF) return false;
     if (!qy.trim()) return true;
     // Ticker matters: a WTA contract is titled by player, not by "tennis".
     const t = (m.question + " " + m.name + " " + m.id).toLowerCase();
     return qy.toLowerCase().split(/\s+/).every((w) => t.includes(w));
-  }).slice(0, 120), [rows, qy, venue]);
+  }).slice(0, 120), [rows, qy, venue, catF]);
 
   return (
     <>
@@ -2053,6 +2462,10 @@ function Browse({ onPick }) {
       <div className="chips">
         {["all", "Polymarket", "Kalshi"].map((v) => (
           <button key={v} className={"chip" + (venue === v ? " on" : "")} onClick={() => setVenue(v)}>{v}</button>
+        ))}
+        {["sports", "politics", "finance", "weather"].map((k) => (
+          <button key={k} className={"chip" + (catF === k ? " on" : "")}
+            onClick={() => setCatF(catF === k ? "all" : k)}>{k}</button>
         ))}
         <span className="chip static">Kalshi {counts.Kalshi} · Polymarket {counts.Polymarket} · {shown.length} shown</span>
       </div>
@@ -2168,6 +2581,17 @@ function Frameworks({ fw, save, ledger, reset }) {
 function Ledger({ ledger, setLedger, fw }) {
   const [checking, setChecking] = useState(false);
   const [note, setNote] = useState(null);
+
+  // Check for settled markets automatically when the tab opens, at most
+  // once an hour — reliability scores stay fresh without anyone remembering.
+  useEffect(() => {
+    let last = 0;
+    try { last = Number(localStorage.getItem("cd:lastResCheck") || 0); } catch { /* fine */ }
+    if (ledger.some((e) => e.status === "open") && Date.now() - last > 3600000) {
+      try { localStorage.setItem("cd:lastResCheck", String(Date.now())); } catch { /* fine */ }
+      checkResolutions();
+    }
+  }, []);
 
   async function checkResolutions() {
     setChecking(true); setNote(null);
