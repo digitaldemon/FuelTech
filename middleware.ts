@@ -6,7 +6,10 @@ export async function middleware(req: NextRequest) {
   const token = req.cookies.get(COOKIE_NAME)?.value;
 
   if (!token || !(await verifySession(token))) {
-    return NextResponse.redirect(new URL("/login", req.url));
+    // Remember where the visitor was headed so login can send them back.
+    const login = new URL("/login", req.url);
+    login.searchParams.set("next", req.nextUrl.pathname);
+    return NextResponse.redirect(login);
   }
 
   // Redirect expired members to the renewal page — no DB hit needed,

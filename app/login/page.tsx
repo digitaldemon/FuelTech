@@ -19,7 +19,9 @@ export default function LoginPage() {
         body: JSON.stringify({ username, password }),
       });
       if (res.ok) {
-        window.location.href = '/chat';
+        // Return to the page that sent us here; only same-site paths allowed.
+        const next = new URLSearchParams(window.location.search).get('next');
+        window.location.href = next && next.startsWith('/') && !next.startsWith('//') ? next : '/chat';
       } else {
         const data = await res.json();
         if (data.expired) {
