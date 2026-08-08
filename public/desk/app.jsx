@@ -239,6 +239,10 @@ details.fold > summary:hover { color:var(--bone); }
   color:var(--dim); min-width:46px; text-align:right; font-variant-numeric:tabular-nums; }
 .sb-row.lead .sb-name { color:var(--bone); }
 .sb-row.lead .sb-score { color:var(--amber); text-shadow:0 0 22px rgba(242,179,61,.35); }
+.sb-call { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; padding:11px 16px;
+  border-top:1px solid rgba(65,75,99,.35); font-size:13.5px; color:var(--dim); }
+.sb-call b { font-family:'JetBrains Mono',monospace; font-size:15px; }
+.sb-call .who { font-weight:700; color:var(--bone); }
 .sb-sit { padding:2px 16px 10px; font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--cyan); }
 .sb-play { margin:2px 16px 12px; font-size:12.5px; line-height:1.5; color:#C9C4B8;
   border-left:2px solid var(--amber); padding:2px 0 2px 10px; }
@@ -766,6 +770,29 @@ function positionAdvice(e, cur, live) {
 }
 
 const ADVICE_COLORS = { HOLD: "var(--moss)", "TAKE PROFIT": "var(--amber)", "CUT LOSS": "var(--rose)", SELL: "var(--rose)", "RE-CHECK": "var(--cyan)", SETTLING: "var(--dim)" };
+
+// Who's going to win? The live model first, the final score when the game
+// is over, else the market's own price for the named outcome.
+function likelyWinner(live, fallbackName, fallbackProb) {
+  if (live && live.sides && live.state === "post") {
+    const byScore = live.sides.slice().sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+    if (byScore[0] && (Number(byScore[0].score) || 0) > (Number(byScore[1] && byScore[1].score) || 0)) {
+      return { name: byScore[0].name, pct: 100, final: true };
+    }
+  }
+  if (live && live.homeWinPct != null && live.sides) {
+    const home = live.sides.find((s) => s.home) || live.sides[1];
+    const away = live.sides.find((s) => !s.home) || live.sides[0];
+    const p = live.homeWinPct;
+    if (home && away) {
+      return p >= 50 ? { name: home.name, pct: p } : { name: away.name, pct: 100 - p };
+    }
+  }
+  if (fallbackProb != null && fallbackName && fallbackProb >= 50) {
+    return { name: fallbackName, pct: fallbackProb, market: true };
+  }
+  return null;
+}
 
 /* ---- order book + slippage ---- */
 async function fetchBook(m) {
@@ -1958,6 +1985,25 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                 );
               })}
 
+              {(() => {
+                const w = likelyWinner(live, market.name, market.price);
+                if (!w) return null;
+                const col = w.final ? "var(--moss)" : w.pct >= 65 ? "var(--amber)" : "var(--dim)";
+                return (
+                  <div className="sb-call">
+                    <span className="who" style={{ color: col }}>{w.name}</span>
+                    {w.final ? <span>wins — final</span> : (
+                      <>
+                        <span>projected to win</span>
+                        <b style={{ color: col }}>{w.pct.toFixed(0)}%</b>
+                        {w.pct < 58 && <span>— close to a coin flip</span>}
+                        {w.market ? <span className="srcchip">market price</span> : <span className="srcchip">live model</span>}
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
+
               {(live.extra || live.downDistance) && (
                 <div className="sb-sit">
                   {live.downDistance || ""}
@@ -2312,11 +2358,17 @@ function Positions({ ledger, save, reopen, reload }) {
   const candidates = ledger.filter((e) => !e.taken && e.status === "open" && e.call !== "PASS").slice(0, 8);
   const [q, setQ] = useState({});
   const [refreshing, setRefreshing] = useState(false);
+  const [kal, setKal] = useState(null);
   const anyLiveRef = useRef(false);
 
   async function refresh() {
-    // Sync the trade list from the server first, so marks made elsewhere
-    // (your phone, or added for you) appear here within one cycle.
+    // Pull the real Kalshi account first (if connected), then re-sync the
+    // trade list, so positions opened or closed on kalshi.com just appear.
+    try {
+      const kr = await fetch("/api/desk/kalshi");
+      const kd = await kr.json().catch(() => null);
+      setKal(kd && kd.configured ? kd : null);
+    } catch { /* sync is best-effort */ }
     if (reload) await reload();
     if (!open.length) return;
     setRefreshing(true);
@@ -2366,6 +2418,18 @@ function Positions({ ledger, save, reopen, reload }) {
           Live prices and game feeds against what each position is worth. Updates every 15 seconds while a game
           is live, every 30 otherwise — and it's free, no analysis credits.
         </p>
+        {kal && !kal.error && (
+          <div className="chips" style={{ marginTop: 8 }}>
+            <span className="chip static" style={{ color: "var(--moss)", borderColor: "rgba(127,185,139,.5)" }}>
+              Kalshi account connected · {kal.synced} position{kal.synced === 1 ? "" : "s"} synced
+            </span>
+          </div>
+        )}
+        {kal && kal.error && (
+          <p className="help" style={{ marginTop: 8, color: "var(--rose)" }}>
+            Kalshi sync hit a snag: {String(kal.error).slice(0, 140)}
+          </p>
+        )}
 
         {open.length === 0 && (
           <p className="thesis" style={{ color: "var(--dim)", marginTop: 14 }}>
@@ -2422,6 +2486,20 @@ function Positions({ ledger, save, reopen, reload }) {
                   </div>
                 )}
               </div>
+              {(() => {
+                const w = likelyWinner(live, e.name, cur);
+                if (!w) return null;
+                const mine = overlap(w.name, e.name) > 0.3;
+                const col = mine ? "var(--moss)" : "var(--rose)";
+                return (
+                  <p className="help" style={{ marginTop: 8 }}>
+                    {w.final ? "Final: " : "Projected winner: "}
+                    <strong style={{ color: col }}>{w.name}</strong>
+                    {w.final ? "" : " (" + w.pct.toFixed(0) + "%)"}
+                    {" — "}{mine ? "that's your side." : "that's against your position."}
+                  </p>
+                );
+              })()}
               {adv && <p className="help" style={{ marginTop: 8 }}>{adv.why}</p>}
               <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
                 <button className="btn btn-ghost btn-sm" onClick={() => reopen(e)}>Full re-analysis</button>
