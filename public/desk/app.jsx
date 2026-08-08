@@ -674,6 +674,16 @@ const getJson = async (url) => {
 };
 
 /* ---- source 1: ESPN scoreboard + summary ---- */
+// Individual sports have athletes, not teams — derive a matchable code from
+// the athlete's surname so tennis and UFC tickers (…SWIRAD) still pair up.
+function competitorAbbr(c) {
+  const team = String((c.team && c.team.abbreviation) || "").toUpperCase();
+  if (team) return team;
+  const name = (c.athlete && c.athlete.displayName) || "";
+  const last = name.trim().split(/\s+/).pop() || "";
+  return last.slice(0, 3).toUpperCase();
+}
+
 async function espnGame(lg, m, codes) {
   const d = await getJson("https://site.api.espn.com/apis/site/v2/sports/" + lg.path + "/scoreboard");
   const events = d.events || [];
@@ -681,10 +691,10 @@ async function espnGame(lg, m, codes) {
   const target = (m.question || "") + " " + (m.name || "");
   const scored = events.map((ev) => {
     const comp = (ev.competitions && ev.competitions[0]) || {};
-    const abbrs = (comp.competitors || []).map((c) => String((c.team && c.team.abbreviation) || "").toUpperCase());
+    const abbrs = (comp.competitors || []).map(competitorAbbr);
     return { ev, s: overlap(target, (ev.name || "") + " " + (ev.shortName || "")) + codeHit(codes, abbrs) * 0.8 };
   }).sort((a, b) => b.s - a.s)[0];
-  if (!scored || scored.s < 0.5) return null;
+  if (!scored || scored.s < 0.4) return null;
 
   const ev = scored.ev;
   const comp = (ev.competitions && ev.competitions[0]) || {};
@@ -692,7 +702,7 @@ async function espnGame(lg, m, codes) {
   const type = st.type || {};
   const sides = (comp.competitors || []).map((c) => ({
     name: (c.team && (c.team.displayName || c.team.name)) || (c.athlete && c.athlete.displayName) || "—",
-    abbr: String((c.team && c.team.abbreviation) || "").toUpperCase(),
+    abbr: competitorAbbr(c),
     score: c.score != null && c.score !== "" ? Number(c.score) : null,
     home: c.homeAway === "home",
   }));
@@ -897,8 +907,13 @@ function extractJson(text) {
   return JSON.parse(clean.slice(a, b + 1));
 }
 
-async function callClaude(prompt, { search = false } = {}) {
-  const body = { model: "claude-sonnet-4-6", max_tokens: 1000, messages: [{ role: "user", content: prompt }] };
+// Research runs on Sonnet (fast, cheap searching); the judgment calls —
+// resolution audit, final pricing, trade verification — run on Opus, which
+// is markedly better calibrated on probability estimates.
+const MODELS = { research: "claude-sonnet-4-6", judge: "claude-opus-4-8" };
+
+async function callClaude(prompt, { search = false, model = MODELS.research, maxTokens = 1600 } = {}) {
+  const body = { model, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] };
   if (search) body.tools = [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }];
   const r = await fetch("/api/desk/claude", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -915,38 +930,121 @@ async function callClaude(prompt, { search = false } = {}) {
   return { text, sources };
 }
 
-const ctx = (m) => `CONTRACT: "${m.question}"
+/* ---- pricing math ---- */
+const logit = (p) => Math.log(p / (100 - p));
+const unlogit = (x) => 100 / (1 + Math.exp(-x));
+
+// Evidence-weighted aggregation in log-odds space. The market price enters
+// as a prior worth two strong frameworks, so thin evidence barely moves the
+// number and only strong, consistent evidence can pull it far. This is the
+// anchor the synthesis model must price around — it keeps the LLM's weakly
+// calibrated point estimates on a leash.
+function anchorFair(price, collected, byN, relMult) {
+  const MARKET_W = 6;
+  let sum = MARKET_W * logit(clamp(price, 1, 99));
+  let tot = MARKET_W;
+  for (const p of Object.values(collected)) {
+    if (!p || p.implied == null) continue;
+    const d = byN[p.n];
+    if (!d || !d.enabled) continue;
+    const s = clamp(Number(p.strength) || 0, 0, 3);
+    if (s < 1) continue;
+    const w = s * (Number(d.weight) || 1) * (relMult[p.n] || 1);
+    if (w <= 0) continue;
+    sum += w * logit(clamp(Number(p.implied), 1, 99));
+    tot += w;
+  }
+  return unlogit(sum / tot);
+}
+
+// How often each framework pointed the right way on markets you've already
+// seen settle, per category. Kicks in after 5 resolved samples, capped at
+// 0.5x-1.5x so one hot streak can't dominate.
+function reliabilityMultipliers(ledger, category) {
+  const acc = {};
+  (ledger || []).forEach((e) => {
+    if (e.status !== "resolved" || e.outcome === null || e.category !== category) return;
+    (e.pillars || []).forEach((p) => {
+      if (!p.signal || p.signal === "NEUTRAL" || (p.strength || 0) < 1) return;
+      acc[p.n] = acc[p.n] || { hit: 0, n: 0 };
+      acc[p.n].n++;
+      if ((p.signal === "YES" ? 1 : 0) === e.outcome) acc[p.n].hit++;
+    });
+  });
+  const mult = {};
+  for (const [n, r] of Object.entries(acc)) {
+    if (r.n >= 5) mult[n] = clamp(2 * (r.hit / r.n), 0.5, 1.5);
+  }
+  return mult;
+}
+
+// Kalshi's taker fee is about 7 x p x (1-p) cents per contract (1.75c at
+// 50c, less at the extremes); Polymarket charges no per-trade fee.
+const takerFee = (venue, priceCents) =>
+  venue === "Kalshi" ? 7 * (priceCents / 100) * (1 - priceCents / 100) : 0;
+
+// Minimum net edge (after real fill price and fees) before a trade is worth
+// calling. Higher mid-range where estimate noise is largest; never below 3c,
+// which near the extremes forces roughly 2x the market's odds — the
+// favourite-longshot bias punishes fading the tails on model say-so.
+const minNetEdge = (priceCents) => 3 + 0.06 * Math.min(priceCents, 100 - priceCents);
+
+const daysToClose = (m) => {
+  if (!m.close) return null;
+  const d = (new Date(m.close) - Date.now()) / 86400000;
+  return Number.isFinite(d) ? Math.max(0, d) : null;
+};
+
+const ctx = (m) => {
+  const dd = daysToClose(m);
+  const when = dd == null ? "" : dd < 1 ? " (resolves within a day)" : " (" + Math.round(dd) + " days away)";
+  return `CONTRACT: "${m.question}"
 OUTCOME BEING PRICED: ${m.name}
 CURRENT MARKET PRICE FOR YES: ${m.price.toFixed(1)}c (implied ${m.price.toFixed(1)}% chance)
-RESOLUTION DATE: ${m.close || "unknown"}
+RESOLUTION DATE: ${m.close || "unknown"}${when}
 ${m.rules ? "RESOLUTION RULES: " + m.rules : ""}`;
+};
 
-function researchPrompt(items, m, live) {
+function auditPrompt(m) {
+  return `Today is ${today()}. Read this prediction market contract's terms the way a lawyer paid to find the catch would.
+
+${ctx(m)}
+
+Work out what actually settles this contract: the source of truth, the deadline and timezone, the exact threshold, and any wording ("by" vs "on", "official", "announced", "average") that could make it resolve differently from what a casual reader of the headline expects.
+
+severity: HIGH means casual readers will likely misprice this contract because of its terms; LOW means the terms match the headline.
+
+Return ONLY this JSON, no preamble, no markdown:
+{"summary":"<max 30 words: exactly what it takes to resolve YES>","traps":["<0-3 specific gotchas, max 20 words each>"],"severity":"LOW|MEDIUM|HIGH"}`;
+}
+
+function researchPrompt(items, m, live, audit) {
   const defs = items.map((p) =>
     `${p.n}. ${p.name}\n   Method: ${p.method}${p.sources && p.sources !== "—" ? "\n   Preferred sources: " + p.sources : ""}`
   ).join("\n");
   return `Today is ${today()}. You are researching a live ${m.venue} prediction market contract.
 
-${ctx(m)}${live || ""}
+${ctx(m)}${audit ? "\nRESOLUTION AUDIT (what actually settles this): " + audit : ""}${live || ""}
 
 Work through ONLY these analysis frameworks, following each stated method:
 ${defs}
 
 Rules:
 - Search for current, dated evidence. Prefer the listed sources and other primary ones.
+- State the date of every figure you rely on. For contracts resolving within days, evidence more than a week old is weak — cap its strength at 1.
 - If you cannot find real data for a framework, say so plainly and set signal NEUTRAL and strength 0. Never invent numbers, polls, lines or forecasts.
-- "implied" = the probability in percent (0-100) that this framework alone suggests for YES, or null if it gives no probability read.
+- "implied" = the probability in percent (0-100) that this framework alone suggests for the contract resolving YES under its EXACT resolution rules${audit ? " (see the resolution audit)" : ""}, or null if it gives no probability read.
 - signal: "YES" if the evidence argues the market underprices YES, "NO" if it overprices YES, "NEUTRAL" if it doesn't move the needle.
-- strength: 0 (no data) to 3 (strong, well-sourced).
+- strength rubric: 0 = no real data found; 1 = a single, indirect or stale source; 2 = solid but incomplete evidence; 3 = multiple independent, current, primary sources that agree. Never claim 3 unless you actually saw them.
 
 Return ONLY this JSON, no preamble, no markdown:
 {"pillars":[{"n":<number>,"finding":"<max 45 words, concrete, with figures and dates where found>","signal":"YES|NO|NEUTRAL","strength":0-3,"implied":<number or null>}]}`;
 }
 
-function contrarianPrompt(item, m, found, live) {
+function contrarianPrompt(item, m, found, live, audit) {
   return `Today is ${today()}. Act as the desk's risk officer on a live ${m.venue} contract.
 
-${ctx(m)}${live || ""}
+${ctx(m)}${audit ? "\nRESOLUTION AUDIT (what actually settles this): " + audit : ""}${live || ""}
 
 The research team concluded:
 ${found}
@@ -960,19 +1058,41 @@ Return ONLY this JSON:
 {"pillars":[{"n":${item.n},"finding":"<max 55 words, the strongest specific counter-argument>","signal":"YES|NO|NEUTRAL","strength":0-3,"implied":<number or null>}]}`;
 }
 
-function synthPrompt(m, found, extra) {
-  return `Today is ${today()}. You are pricing a ${m.venue} binary contract.
+function synthPrompt(m, found, extra, anchor, audit) {
+  return `Today is ${today()}. You run a prediction-market trading desk and are pricing a ${m.venue} binary contract.
 
-${ctx(m)}
+${ctx(m)}${audit ? "\nRESOLUTION AUDIT (what actually settles this): " + audit : ""}
 ${extra || ""}
 
 Framework findings:
 ${found}
 
-Produce a calibrated fair value. Be disciplined: prediction markets are usually close to right, so only deviate from the market price where the evidence is specific and strong. Weight frameworks by their strength and stated weight. Strength 0 carries no weight. If evidence is thin or contradictory, fair value should sit near the market price.
+A mechanical aggregation — the market price as a prior, plus every framework's implied probability weighted by evidence strength and its historical hit rate — prices this contract at ${anchor.toFixed(1)}c. That number is your anchor.
+
+Produce a calibrated fair value. Discipline:
+- Prediction markets are usually close to right. Deviate from the market only where the evidence is specific, current and strong.
+- Stay within 10c of the anchor. Move off the anchor only when one decisive fact outweighs the mechanical weighting (say so in the thesis), otherwise land on it.
+- Price the EXACT resolution rules, not the headline. If the audit flags a trap, your fair value must account for it.
+- Mind the favourite-longshot bias: cheap contracts are usually cheap for a reason and expensive ones usually win. Fading the market near the extremes demands the strongest evidence.
+- If the evidence is thin or contradictory, land on the market price and say so.
 
 Return ONLY this JSON:
 {"fairValue":<0-100>,"confidence":"LOW|MEDIUM|HIGH","thesis":"<2-3 sentences>","drivers":["<3-4 findings that moved the estimate most>"],"risks":["<2-3 things that would break this call>"],"resolution":"<1 sentence on any resolution-criteria subtlety>"}`;
+}
+
+function verifyPrompt(m, side, entry, fairSide, thesis, live) {
+  return `Today is ${today()}. You are the final check before real money goes down on a ${m.venue} contract.
+
+${ctx(m)}${live || ""}
+
+The desk wants to BUY ${side} at ${entry.toFixed(1)}c, believing that side is worth ${fairSide.toFixed(1)}c. Its thesis: ${thesis}
+
+Try to kill this trade. Search for: news from the last 48 hours the desk may have missed, any mismatch between the thesis and the exact resolution rules, and the strongest reason the current market price is right. The market has real money behind it — someone is taking the other side of this trade; work out what they know.
+
+verdict: REFUTE if you found something that materially undermines the trade, CONFIRM only if you actively looked and found nothing, UNCERTAIN if you could not check properly.
+
+Return ONLY this JSON:
+{"verdict":"CONFIRM|REFUTE|UNCERTAIN","reason":"<max 40 words, the decisive fact or the strongest surviving risk>"}`;
 }
 
 function guessCategory(text) {
@@ -1038,7 +1158,7 @@ function App() {
           ))}
         </nav>
 
-        {tab === "analyze" && <Analyze fw={fw} onSave={saveEntry} pending={pending} clearPending={() => setPending(null)} />}
+        {tab === "analyze" && <Analyze fw={fw} onSave={saveEntry} pending={pending} clearPending={() => setPending(null)} ledger={ledger} />}
         {tab === "browse" && <Browse onPick={(m) => { setPending(m); setTab("analyze"); }} />}
         {tab === "frameworks" && <Frameworks fw={fw} save={saveFw} ledger={ledger} reset={() => saveFw(buildFrameworks())} />}
         {tab === "ledger" && <Ledger ledger={ledger} setLedger={setLedger} fw={fw} />}
@@ -1055,7 +1175,7 @@ function App() {
 }
 
 /* ---------------- Analyze ---------------- */
-function Analyze({ fw, onSave, pending, clearPending }) {
+function Analyze({ fw, onSave, pending, clearPending, ledger }) {
   const [url, setUrl] = useState("");
   const [phase, setPhase] = useState("idle");
   const [error, setError] = useState(null);
@@ -1069,6 +1189,7 @@ function Analyze({ fw, onSave, pending, clearPending }) {
   const [size, setSize] = useState(100);
   const [xp, setXp] = useState(null);
   const [live, setLive] = useState(null);
+  const [audit, setAudit] = useState(null);
   const runId = useRef(0);
 
   useEffect(() => {
@@ -1077,7 +1198,7 @@ function Analyze({ fw, onSave, pending, clearPending }) {
     setMarket(pending);
     setCat(guessCategory(pending.question + " " + pending.name));
     setUrl(pending.link || "");
-    setResult(null); setFindings({}); setSources([]); setXp(null); setDepth(null); setLive(null);
+    setResult(null); setFindings({}); setSources([]); setXp(null); setDepth(null); setLive(null); setAudit(null);
     setPhase("ready");
     clearPending();
   }, [pending]);
@@ -1104,13 +1225,13 @@ function Analyze({ fw, onSave, pending, clearPending }) {
     return () => { alive = false; if (timer) clearTimeout(timer); };
   }, [market]);
 
-  const busy = ["fetching", "researching", "contrarian", "synthesizing"].includes(phase);
+  const busy = ["fetching", "auditing", "researching", "contrarian", "synthesizing", "verifying"].includes(phase);
   const conf = fw[cat];
 
   async function loadBook(inputUrl) {
     const target = (inputUrl != null ? inputUrl : url).trim();
     setError(null); setBook(null); setMarket(null); setResult(null);
-    setFindings({}); setSources([]); setXp(null); setDepth(null); setLive(null);
+    setFindings({}); setSources([]); setXp(null); setDepth(null); setLive(null); setAudit(null);
     const p = parseUrl(target);
     if (p.error) { setError(p.error); setPhase("idle"); return; }
     setPhase("fetching");
@@ -1126,6 +1247,8 @@ function Analyze({ fw, onSave, pending, clearPending }) {
     }
   }
 
+  // Runs the other-venue price hunt and returns the result as well as
+  // setting UI state, so analyze() can feed it into synthesis directly.
   async function crossPlatform(m) {
     const other = m.venue === "Kalshi" ? "Polymarket" : "Kalshi";
     setXp({ status: "searching" });
@@ -1151,7 +1274,7 @@ function Analyze({ fw, onSave, pending, clearPending }) {
         .filter((x) => x.s > 0.1)
         .sort((a, b) => b.s - a.s)
         .slice(0, 30);
-      if (!top.length) { setXp({ status: "none" }); return; }
+      if (!top.length) { setXp({ status: "none" }); return null; }
       const list = top.map((x, i) => i + ". " + x.c.question + " | " + x.c.name + " | " + x.c.price.toFixed(1) + "c").join("\n");
       const r = await callClaude(`A trader holds this contract on ${m.venue}:
 "${m.question}" — outcome: ${m.name}, priced ${m.price.toFixed(1)}c.
@@ -1160,13 +1283,16 @@ Here are open ${other} contracts. Pick the one that resolves on the SAME underly
 
 ${list}
 
-Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution-criteria difference, or 'criteria appear identical'>"}`);
+Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution-criteria difference, or 'criteria appear identical'>"}`, { maxTokens: 400 });
       const j = extractJson(r.text);
-      if (j.index === null || j.index === undefined || !top[j.index]) { setXp({ status: "none" }); return; }
+      if (j.index === null || j.index === undefined || !top[j.index]) { setXp({ status: "none" }); return null; }
       const match = top[j.index].c;
-      setXp({ status: "found", match, gap: match.price - m.price, caveat: j.caveat || "" });
+      const found = { status: "found", match, gap: match.price - m.price, caveat: j.caveat || "" };
+      setXp(found);
+      return found;
     } catch (e) {
       setXp({ status: "error", msg: e.message });
+      return null;
     }
   }
 
@@ -1174,8 +1300,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
     const m = m0 || market, c = c0 || cat;
     if (!m) return;
     const id = ++runId.current;
-    setError(null); setResult(null); setFindings({}); setSources([]);
-    setPhase("researching");
+    setError(null); setResult(null); setFindings({}); setSources([]); setAudit(null);
     const lib = fw[c];
     const active = lib.items.filter((p) => p.enabled);
     const byN = Object.fromEntries(lib.items.map((p) => [p.n, p]));
@@ -1186,13 +1311,40 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
       if (!res) return;
       (res.sources || []).forEach((s) => allSources.push(s));
       try {
-        extractJson(res.text).pillars.forEach((p) => { if (p && p.n) collected[p.n] = p; });
+        extractJson(res.text).pillars.forEach((p) => {
+          if (!p || !p.n) return;
+          p.strength = clamp(Math.round(Number(p.strength) || 0), 0, 3);
+          const iv = p.implied == null ? NaN : Number(p.implied);
+          p.implied = Number.isFinite(iv) ? clamp(iv, 1, 99) : null;
+          collected[p.n] = p;
+        });
       } catch { /* other batches still stand */ }
     };
 
+    // The other venue's price is the single best free sanity check — hunt for
+    // it automatically while the research runs.
+    const xpPromise = crossPlatform(m).catch(() => null);
+
+    // Step 0: read the fine print before researching, so every later step
+    // prices the contract that actually exists rather than the headline.
+    let auditJ = null;
+    if (m.rules) {
+      setPhase("auditing");
+      try {
+        const ar = await callClaude(auditPrompt(m), { model: MODELS.judge, maxTokens: 600 });
+        if (id !== runId.current) return;
+        auditJ = extractJson(ar.text);
+        setAudit(auditJ);
+      } catch { /* research can proceed without it */ }
+    }
+    const auditLine = auditJ
+      ? (auditJ.summary || "") + ((auditJ.traps || []).length ? " Watch for: " + auditJ.traps.join(" | ") : "")
+      : "";
+
+    setPhase("researching");
     const groups = lib.groups.map((g) => g.map((n) => byN[n]).filter((p) => p && p.enabled)).filter((g) => g.length);
     const liveLine = liveSummary(live);
-    const batches = await Promise.allSettled(groups.map((g) => callClaude(researchPrompt(g, m, liveLine), { search: true })));
+    const batches = await Promise.allSettled(groups.map((g) => callClaude(researchPrompt(g, m, liveLine, auditLine), { search: true })));
     if (id !== runId.current) return;
     batches.forEach((b, i) => {
       if (b.status === "fulfilled") absorb(b.value);
@@ -1215,7 +1367,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
     if (contra) {
       setPhase("contrarian");
       try {
-        const cr = await callClaude(contrarianPrompt(contra, m, summarize(firstEight), liveLine), { search: true });
+        const cr = await callClaude(contrarianPrompt(contra, m, summarize(firstEight), liveLine, auditLine), { search: true });
         if (id !== runId.current) return;
         absorb(cr);
       } catch {
@@ -1227,34 +1379,90 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
 
     setPhase("synthesizing");
     try {
+      // Deterministic anchor: market prior + strength-weighted framework
+      // reads, adjusted by each framework's track record in this category.
+      const relMult = reliabilityMultipliers(ledger, c);
+      const anchor = anchorFair(m.price, collected, byN, relMult);
+
       let extra = liveSummary(live);
       if (depth && depth.asks.length) {
         const w = walkBook(depth.asks, size);
-        if (w) extra = `\nORDER BOOK: buying ${size} ${depth.unit} fills at an average of ${w.avg.toFixed(1)}c against a quoted ${m.price.toFixed(1)}c.`;
+        if (w) extra += `\nORDER BOOK: buying ${size} ${depth.unit} fills at an average of ${w.avg.toFixed(1)}c against a quoted ${m.price.toFixed(1)}c.`;
       }
-      if (xp && xp.status === "found") extra += `\nCROSS-PLATFORM: the equivalent contract on ${xp.match.venue} trades at ${xp.match.price.toFixed(1)}c.`;
+      const xpNow = await xpPromise;
+      if (xpNow && xpNow.status === "found") {
+        extra += `\nCROSS-PLATFORM: the equivalent contract on ${xpNow.match.venue} trades at ${xpNow.match.price.toFixed(1)}c. ${xpNow.caveat || ""}`;
+      }
 
-      const sr = await callClaude(synthPrompt(m, summarize(active.map((p) => p.n)), extra));
+      const sr = await callClaude(synthPrompt(m, summarize(active.map((p) => p.n)), extra, anchor, auditLine), { model: MODELS.judge, maxTokens: 1400 });
       if (id !== runId.current) return;
       const j = extractJson(sr.text);
-      const fair = clamp(Number(j.fairValue), 0.5, 99.5);
-      const c1 = m.price / 100, p1 = fair / 100;
+      let fair = Number(j.fairValue);
+      if (!Number.isFinite(fair)) fair = anchor;
+      // The model can argue with the anchor, but only within 10c of it.
+      fair = clamp(clamp(fair, anchor - 10, anchor + 10), 0.5, 99.5);
+
       const edge = fair - m.price;
       const side = edge > 0 ? "YES" : "NO";
-      const kelly = edge > 0 ? (p1 - c1) / (1 - c1) : (c1 - p1) / c1;
-      const stake = clamp((kelly / 2) * 100, 0, 25);
+
+      // What entry would actually cost: walk the book at the chosen size when
+      // we have one, else take the quoted ask (YES) or implied NO price.
+      let entry = side === "YES" ? (m.ask != null ? m.ask : m.price) : 100 - (m.bid != null ? m.bid : m.price);
+      if (depth) {
+        if (side === "YES" && depth.asks.length) { const w = walkBook(depth.asks, size); if (w) entry = w.avg; }
+        if (side === "NO" && depth.bids.length) { const w = walkBook(depth.bids, size); if (w) entry = 100 - w.avg; }
+      }
+      entry = clamp(entry, 0.5, 99.5);
+      const fee = takerFee(m.venue, entry);
+      const fairSide = side === "YES" ? fair : 100 - fair;
+      const netEdge = fairSide - entry - fee;
+
       const strong = Object.values(collected).filter((p) => p && p.strength >= 2).length;
-      const call = Math.abs(edge) < 3 || strong < 3 ? "PASS" : "BUY " + side;
-      const res = { fair, edge, call, side, stake, confidence: j.confidence || "LOW",
+      const contraF = collected[9];
+      const vetoed = !!(contraF && (contraF.strength || 0) >= 2 &&
+        ((side === "YES" && contraF.signal === "NO") || (side === "NO" && contraF.signal === "YES")));
+      // Trade bar: price-scaled minimum, +4c when our own risk officer
+      // found solid evidence for the other side.
+      const bar = minNetEdge(m.price) + (vetoed ? 4 : 0);
+
+      let call = netEdge >= bar && strong >= 3 ? "BUY " + side : "PASS";
+      let confidence = j.confidence || "LOW";
+      if (auditJ && auditJ.severity === "HIGH" && confidence === "HIGH") confidence = "MEDIUM";
+
+      // Final red-team pass: a trade only stands if it survives an active
+      // attempt to refute it with fresh searches.
+      let verify = null;
+      if (call !== "PASS") {
+        setPhase("verifying");
+        try {
+          const vr = await callClaude(verifyPrompt(m, side, entry, fairSide, j.thesis || "", liveSummary(live)), { search: true, maxTokens: 1200 });
+          if (id !== runId.current) return;
+          (vr.sources || []).forEach((s) => allSources.push(s));
+          verify = extractJson(vr.text);
+        } catch { verify = { verdict: "UNCERTAIN", reason: "The verification call failed, so this trade is unchecked." }; }
+        if (verify.verdict === "REFUTE") call = "PASS";
+        else if (verify.verdict === "UNCERTAIN") confidence = "LOW";
+      }
+
+      // Half-Kelly on the fee-adjusted real entry, capped by confidence.
+      const cCost = clamp(entry + fee, 0.5, 99.5) / 100;
+      const kelly = Math.max(0, (fairSide / 100 - cCost) / (1 - cCost));
+      const cap = confidence === "HIGH" ? 20 : confidence === "MEDIUM" ? 12 : 5;
+      const stake = call === "PASS" ? 0 : clamp((kelly / 2) * 100, 0, cap);
+
+      const res = { fair, anchor, edge, netEdge, entry, fee, bar, call, side, stake, confidence,
         thesis: j.thesis || "", drivers: j.drivers || [], risks: j.risks || [],
-        resolution: j.resolution || "", strong };
+        resolution: j.resolution || "", strong, verify, vetoed };
       setResult(res);
+      setSources([...allSources]);
       setPhase("done");
 
       onSave({
         id: uid(), ts: Date.now(), venue: m.venue, marketId: m.id, slug: m.slug || null,
         question: m.question, name: m.name, category: c, price: m.price, fair,
-        edge: Math.round(edge * 10) / 10, call, confidence: res.confidence,
+        edge: Math.round(edge * 10) / 10, netEdge: Math.round(netEdge * 10) / 10,
+        entry: Math.round(entry * 10) / 10, anchor: Math.round(anchor * 10) / 10,
+        verify: verify ? verify.verdict : null, call, confidence: res.confidence,
         close: m.close, link: m.link, status: "open", outcome: null,
         pillars: active.map((p) => {
           const f = collected[p.n] || {};
@@ -1298,13 +1506,13 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
             </span>
             <span className="n">2</span>
             <span className="t">
-              <b>I research it nine ways.</b> Polls, injuries, weather models, order books — whichever nine fit the
-              topic. You can see and edit all of them under <b>What I check</b>.
+              <b>I read the fine print, then research it nine ways.</b> Polls, injuries, weather models, order
+              books — whichever nine fit the topic. You can see and edit all of them under <b>What I check</b>.
             </span>
             <span className="n">3</span>
             <span className="t">
-              <b>You get a price and a verdict.</b> What I think the contract is worth, how that compares to what
-              it costs, and how much of that gap I'd actually trust.
+              <b>You get a price and a verdict.</b> What the contract is worth versus what it really costs to
+              fill after fees — and anything I'd actually buy has to survive a final attempt to knock it down first.
             </span>
           </div>
           <p className="help" style={{ marginTop: 18 }}>Try one of these:</p>
@@ -1312,7 +1520,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
             polymarket.com/event/will-the-us-invade-iran-before-2027
           </button>
           <p className="help" style={{ marginTop: 14 }}>
-            Each analysis costs roughly 20–30 cents in API credit and takes about a minute.
+            Each analysis costs roughly 30–50 cents in API credit and takes a minute or two.
           </p>
         </div>
       )}
@@ -1533,26 +1741,41 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                 {result.call === "PASS" ? (
                   <>
                     I'd <strong>sit this one out</strong>. It trades at {market.price.toFixed(0)}c and I make it worth{" "}
-                    {result.fair.toFixed(0)}c — {Math.abs(result.edge) < 3 ? "too close to call" : "but too few checks found solid evidence to lean on"}.
+                    {result.fair.toFixed(0)}c —{" "}
+                    {result.verify && result.verify.verdict === "REFUTE" ? "the final check killed the trade."
+                      : result.strong < 3 ? "but too few checks found solid evidence to lean on."
+                      : result.vetoed ? "and my own risk officer found solid evidence for the other side."
+                      : "after the real fill price and fees, that gap isn't worth paying for."}
                   </>
                 ) : (
                   <>
-                    I'd <strong>buy {result.side}</strong>. It costs {result.side === "YES" ? market.price.toFixed(0) : (100 - market.price).toFixed(0)}c
-                    and I make it worth {result.side === "YES" ? result.fair.toFixed(0) : (100 - result.fair).toFixed(0)}c,
-                    so there's about <strong>{Math.abs(result.edge).toFixed(0)}c of value</strong> per contract —
-                    if I'm right.
+                    I'd <strong>buy {result.side}</strong>. Filling actually costs about {result.entry.toFixed(0)}c
+                    {result.fee > 0.05 ? " plus " + result.fee.toFixed(1) + "c in fees" : ""}, I make that side worth{" "}
+                    {(result.side === "YES" ? result.fair : 100 - result.fair).toFixed(0)}c, and the trade survived a final
+                    attempt to knock it down — about <strong>{result.netEdge.toFixed(0)}c of value</strong> per contract
+                    after costs, if I'm right.
                   </>
                 )}
               </p>
               {result.thesis && <p className="thesis">{result.thesis}</p>}
+              {result.verify && (
+                <p className="thesis" style={{ color: result.verify.verdict === "CONFIRM" ? "var(--moss)" : "var(--rose)" }}>
+                  Final check ({result.verify.verdict.toLowerCase()}): {result.verify.reason}
+                </p>
+              )}
 
               <div className="figures">
                 <div className="fig">
                   <span className="big" style={{ color: callColor }}>
-                    {result.edge > 0 ? "+" : ""}{result.edge.toFixed(1)}c
+                    {result.netEdge > 0 ? "+" : ""}{result.netEdge.toFixed(1)}c
                   </span>
-                  <span className="cap">Value vs price</span>
-                  <span className="sub">What I think it's worth, minus what it costs</span>
+                  <span className="cap">Value after costs</span>
+                  <span className="sub">Fair value minus the real fill price and fees{result.call === "PASS" ? " — needed " + result.bar.toFixed(1) + "c to trade" : ""}</span>
+                </div>
+                <div className="fig">
+                  <span className="big">{result.anchor.toFixed(0)}c</span>
+                  <span className="cap">Weighted anchor</span>
+                  <span className="sub">Market price + every check's read, weighted by evidence and track record</span>
                 </div>
                 <div className="fig">
                   <span className="big">{result.confidence}</span>
@@ -1562,7 +1785,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                 <div className="fig">
                   <span className="big">{result.stake.toFixed(1)}%</span>
                   <span className="cap">Suggested size</span>
-                  <span className="sub">Share of your betting money, half-Kelly</span>
+                  <span className="sub">Share of your betting money, half-Kelly on the net edge</span>
                 </div>
                 <div className="fig">
                   <span className="big">{result.strong}<span style={{ color: "var(--dim)" }}>/9</span></span>
@@ -1590,9 +1813,11 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
           </p>
           <div className="eyebrow" style={{ marginBottom: 4 }}>
             {conf.label} ·{" "}
-            {phase === "researching" ? <span className="dots">{live && live.state === "in" ? "searching, with the live score in hand" : "searching in parallel"}</span>
+            {phase === "auditing" ? <span className="dots">reading the fine print</span>
+              : phase === "researching" ? <span className="dots">{live && live.state === "in" ? "searching, with the live score in hand" : "searching in parallel"}</span>
               : phase === "contrarian" ? <span className="dots">risk officer arguing the other side</span>
-              : phase === "synthesizing" ? <span className="dots">pricing fair value</span> : "complete"}
+              : phase === "synthesizing" ? <span className="dots">pricing fair value</span>
+              : phase === "verifying" ? <span className="dots">trying to kill the trade before you pay for it</span> : "complete"}
           </div>
           {conf.items.map((p) => {
             const f = findings[p.n];
@@ -1632,10 +1857,20 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
               <ul className="lst" style={{ marginTop: 10 }}>{result.risks.map((d, i) => <li key={i}>{d}</li>)}</ul>
             </>
           )}
-          {result.resolution && (
+          {(result.resolution || audit) && (
             <>
-              <p className="sect" style={{ marginTop: 20 }}>Read the fine print</p>
-              <p className="thesis" style={{ marginTop: 8 }}>{result.resolution}</p>
+              <p className="sect" style={{ marginTop: 20 }}>
+                Read the fine print{audit && audit.severity === "HIGH" ? " — it bites on this one" : ""}
+              </p>
+              {audit && audit.summary && (
+                <p className="thesis" style={{ marginTop: 8 }}><strong>Settles when:</strong> {audit.summary}</p>
+              )}
+              {audit && (audit.traps || []).length > 0 && (
+                <ul className="lst" style={{ marginTop: 8 }}>
+                  {audit.traps.map((t, i) => <li key={i} style={{ color: "var(--amber)" }}>{t}</li>)}
+                </ul>
+              )}
+              {result.resolution && <p className="thesis" style={{ marginTop: 8 }}>{result.resolution}</p>}
             </>
           )}
           {sources.length > 0 && (
