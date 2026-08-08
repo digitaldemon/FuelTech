@@ -682,9 +682,15 @@ function positionAdvice(e, cur, live) {
   if (rem <= -2) return { act: "SELL",
     why: "By " + src + " your side is worth about " + eff.toFixed(0) + "c but sells for " + curSide.toFixed(0) +
       "c — you're holding an overpriced position. Selling costs roughly " + exitFee.toFixed(1) + "c in fees." };
-  if (rem <= 1.5) return { act: "TAKE PROFIT",
-    why: "The market has caught up to " + src + " (" + eff.toFixed(0) + "c vs " + curSide.toFixed(0) + "c). The edge is captured — " +
-      (pnl >= 0 ? "you're up " + pnl.toFixed(0) + "c a contract, and " : "") + "holding on adds risk without expected reward." };
+  if (rem <= 1.5) {
+    if (pnl >= 0) return { act: "TAKE PROFIT",
+      why: "The market has caught up to " + src + " (" + eff.toFixed(0) + "c vs " + curSide.toFixed(0) + "c). The edge is captured — you're up " +
+        pnl.toFixed(0) + "c a contract, and holding on adds risk without expected reward." };
+    return { act: "CUT LOSS",
+      why: "By " + src + " your side is worth about " + eff.toFixed(0) + "c and it sells for " + curSide.toFixed(0) +
+        "c — there's no edge left in holding. You're down " + Math.abs(pnl).toFixed(0) +
+        "c a contract; selling salvages what's left instead of gambling the rest on variance." };
+  }
   if (src === "my last analysis" && Math.abs(cur - e.price) >= 10) return { act: "RE-CHECK",
     why: "The market moved " + (cur - e.price > 0 ? "+" : "") + (cur - e.price).toFixed(0) +
       "c since the analysis — something changed. Run a full re-analysis before trusting the old fair value." };
@@ -693,7 +699,7 @@ function positionAdvice(e, cur, live) {
       (pnl >= 0 ? "Up " : "Down ") + Math.abs(pnl).toFixed(0) + "c a contract so far." };
 }
 
-const ADVICE_COLORS = { HOLD: "var(--moss)", "TAKE PROFIT": "var(--amber)", SELL: "var(--rose)", "RE-CHECK": "var(--cyan)", SETTLING: "var(--dim)" };
+const ADVICE_COLORS = { HOLD: "var(--moss)", "TAKE PROFIT": "var(--amber)", "CUT LOSS": "var(--rose)", SELL: "var(--rose)", "RE-CHECK": "var(--cyan)", SETTLING: "var(--dim)" };
 
 /* ---- order book + slippage ---- */
 async function fetchBook(m) {
