@@ -206,6 +206,52 @@ details.fold > summary:hover { color:var(--bone); }
 .play { margin-top:10px; font-size:12.5px; line-height:1.5; color:#C9C4B8;
   border-left:2px solid var(--slate-600); padding-left:10px; }
 
+/* broadcast-style scoreboard */
+.sb { margin-top:16px; border:1px solid var(--slate-600); border-radius:14px; overflow:hidden;
+  background:linear-gradient(180deg, rgba(111,179,210,.07), rgba(0,0,0,0) 60%), var(--slate-800);
+  box-shadow:0 6px 18px rgba(0,0,0,.22); }
+.sb-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 16px;
+  border-bottom:1px solid rgba(65,75,99,.5); }
+.sb-badge { display:inline-flex; align-items:center; gap:7px; font-family:'JetBrains Mono',monospace;
+  font-size:9.5px; font-weight:700; letter-spacing:.16em; padding:4px 11px; border-radius:999px;
+  border:1px solid var(--slate-600); color:var(--dim); }
+.sb-badge.live { border-color:rgba(228,112,126,.6); color:var(--rose); background:rgba(228,112,126,.09); }
+.sb-detail { font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--dim); letter-spacing:.05em; }
+.sb-row { display:grid; grid-template-columns:46px minmax(0,1fr) auto auto; gap:12px; align-items:center;
+  padding:13px 16px; animation:sbflash .9s ease-out; }
+.sb-row + .sb-row { border-top:1px solid rgba(65,75,99,.35); }
+@keyframes sbflash { 0% { background:rgba(242,179,61,.16); } 100% { background:transparent; } }
+.sb-abbr { font-family:'JetBrains Mono',monospace; font-weight:700; font-size:12px; width:46px; height:32px;
+  display:flex; align-items:center; justify-content:center; border-radius:9px;
+  background:rgba(0,0,0,.26); border:1px solid rgba(65,75,99,.5); color:var(--dim); }
+.sb-row.lead .sb-abbr { color:#1B202B; background:linear-gradient(180deg,#FFC95A,#F2A83D); border-color:transparent; }
+.sb-name { font-size:14.5px; font-weight:600; color:var(--dim); min-width:0; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
+.sb-home { font-style:normal; font-family:'JetBrains Mono',monospace; font-size:8.5px; letter-spacing:.12em;
+  color:var(--dim); margin-left:8px; text-transform:uppercase; border:1px solid rgba(65,75,99,.6);
+  padding:2px 7px; border-radius:999px; }
+.sb-sets { display:flex; gap:4px; }
+.sb-sets b { font-family:'JetBrains Mono',monospace; font-weight:500; font-size:12px; min-width:23px; height:23px;
+  display:flex; align-items:center; justify-content:center; border-radius:6px;
+  background:rgba(0,0,0,.26); color:var(--dim); padding:0 4px; }
+.sb-sets b:last-child { color:var(--bone); background:rgba(255,255,255,.08); }
+.sb-score { font-family:'JetBrains Mono',monospace; font-size:29px; font-weight:700; letter-spacing:-.02em;
+  color:var(--dim); min-width:46px; text-align:right; font-variant-numeric:tabular-nums; }
+.sb-row.lead .sb-name { color:var(--bone); }
+.sb-row.lead .sb-score { color:var(--amber); text-shadow:0 0 22px rgba(242,179,61,.35); }
+.sb-sit { padding:2px 16px 10px; font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--cyan); }
+.sb-play { margin:2px 16px 12px; font-size:12.5px; line-height:1.5; color:#C9C4B8;
+  border-left:2px solid var(--amber); padding:2px 0 2px 10px; }
+.sb-wp { padding:2px 16px 12px; }
+.sb-foot { display:flex; gap:7px; flex-wrap:wrap; align-items:center; padding:11px 16px 14px;
+  border-top:1px solid rgba(65,75,99,.35); }
+@media (max-width:560px) {
+  .sb-row { grid-template-columns:38px minmax(0,1fr) auto auto; gap:8px; padding:11px 12px; }
+  .sb-abbr { width:38px; height:28px; font-size:10.5px; }
+  .sb-score { font-size:24px; }
+  .sb-name { font-size:13px; }
+}
+
 .lst { margin:0; padding-left:17px; }
 .lst li { font-size:13px; line-height:1.6; margin-bottom:6px; color:#DAD5C9; }
 .src { display:flex; gap:6px; flex-wrap:wrap; margin-top:12px; }
@@ -1447,10 +1493,16 @@ function Analyze({ fw, onSave, pending, clearPending, ledger }) {
       setLive(l);
       liveRef.current = l;
       if (l && l.sides && !l.none && !l.error) setCat((c) => (c === "general" ? "sports" : c));
-      if (l && l.state === "in") timer = setTimeout(tick, 20000);
+      // Live games poll every 10 seconds; scheduled ones check every 45 so
+      // the board flips to live on its own at first pitch or tip-off.
+      if (l && l.state === "in") timer = setTimeout(tick, 10000);
+      else if (l && l.state === "pre") timer = setTimeout(tick, 45000);
     };
     tick();
-    return () => { alive = false; if (timer) clearTimeout(timer); };
+    // Coming back to the tab refreshes the board immediately.
+    const onVis = () => { if (!document.hidden) { if (timer) clearTimeout(timer); tick(); } };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { alive = false; if (timer) clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); };
   }, [market]);
 
   const busy = ["fetching", "auditing", "researching", "contrarian", "synthesizing", "verifying"].includes(phase);
@@ -1863,39 +1915,51 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
           })()}
 
           {live && !live.error && !live.none && live.sides && (
-            <div className="live">
-              <div className="live-top">
-                {live.state === "in" && <span className="pulse" />}
-                <span className="eyebrow" style={{ color: live.state === "in" ? "var(--rose)" : "var(--dim)" }}>
-                  {live.state === "in" ? "Live now" : live.state === "post" ? "Final" : "Scheduled"} · {live.league}
+            <div className="sb">
+              <div className="sb-head">
+                <span className={"sb-badge" + (live.state === "in" ? " live" : "")}>
+                  {live.state === "in" && <span className="pulse" />}
+                  {live.state === "in" ? "LIVE" : live.state === "post" ? "FINAL" : "UPCOMING"}
                 </span>
-                <span className="eyebrow" style={{ color: "var(--dim)" }}>
-                  {live.detail}{live.state === "in" && live.clock ? " · " + live.clock : ""}
+                <span className="sb-detail">
+                  {live.league}{live.detail ? " · " + live.detail : ""}
+                  {live.state === "in" && live.clock ? " · " + live.clock : ""}
                 </span>
               </div>
+
               {live.sides.map((sd, i) => {
                 const best = Math.max.apply(null, live.sides.map((x) => Number(x.score) || 0));
                 const lead = (Number(sd.score) || 0) === best && best > 0;
                 return (
-                  <div key={i} className={"score-row" + (lead ? " lead" : "")}>
-                    <span className="who">{sd.name}{sd.home ? "" : " (away)"}</span>
-                    <span className="pts">
-                      {sd.sets && sd.sets.length ? sd.sets.join("  ") : (sd.score ?? "–")}
+                  // Keyed on the score so a scoring play re-mounts the row and
+                  // fires the amber flash animation.
+                  <div key={i + ":" + (sd.score ?? "-") + ":" + ((sd.sets || []).join(","))}
+                    className={"sb-row" + (lead ? " lead" : "")}>
+                    <span className="sb-abbr">{sd.abbr || sd.name.slice(0, 3).toUpperCase()}</span>
+                    <span className="sb-name">
+                      {sd.name}
+                      {sd.home ? <i className="sb-home">home</i> : null}
                     </span>
+                    {sd.sets && sd.sets.length > 0 ? (
+                      <span className="sb-sets">{sd.sets.map((v, j) => <b key={j}>{v}</b>)}</span>
+                    ) : <span />}
+                    <span className="sb-score">{sd.score ?? "–"}</span>
                   </div>
                 );
               })}
-              {live.extra && <div className="eyebrow" style={{ marginTop: 4 }}>{live.extra}</div>}
-              {live.downDistance && (
-                <div className="eyebrow" style={{ marginTop: 4 }}>
-                  {live.downDistance}{live.possession ? " · ball: " + live.possession : ""}
+
+              {(live.extra || live.downDistance) && (
+                <div className="sb-sit">
+                  {live.downDistance || ""}
+                  {live.possession ? (live.downDistance ? " · " : "") + "ball: " + live.possession : ""}
+                  {live.extra ? ((live.downDistance || live.possession) ? " · " : "") + live.extra : ""}
                 </div>
               )}
 
               {live.impliedCents != null && live.mySide && (
-                <div className="wp">
+                <div className="sb-wp">
                   <div className="eyebrow" style={{ marginBottom: 6 }}>
-                    ESPN win probability · {live.mySide.name} {live.impliedCents.toFixed(1)}%
+                    Win probability · {live.mySide.name} {live.impliedCents.toFixed(1)}%
                     <span style={{ color: Math.abs(live.impliedCents - market.price) > 4 ? "var(--amber)" : "var(--dim)" }}>
                       {"  vs market " + market.price.toFixed(0) + "c ("}
                       {live.impliedCents - market.price > 0 ? "+" : ""}
@@ -1906,28 +1970,26 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                 </div>
               )}
 
-              {live.lastPlay && <div className="play">{live.lastPlay}</div>}
+              {live.lastPlay && <div className="sb-play">{live.lastPlay}</div>}
 
-              {live.odds && (
-                <div className="eyebrow" style={{ marginTop: 11 }}>
-                  {live.odds.provider}: {live.odds.details || "no line"}
-                  {live.odds.overUnder != null ? " · O/U " + live.odds.overUnder : ""}
-                  {live.odds.homeML != null ? " · home ML " + live.odds.homeML : ""}
-                </div>
-              )}
-
-              <div className="live-foot">
+              <div className="sb-foot">
+                {live.odds && (
+                  <span className="srcchip" style={{ color: "var(--cyan)", borderColor: "rgba(111,179,210,.45)" }}>
+                    {live.odds.provider}: {live.odds.details || "no line"}
+                    {live.odds.overUnder != null ? " · O/U " + live.odds.overUnder : ""}
+                  </span>
+                )}
                 {live.sources.map((sv) => (
                   <span key={sv.name} className={"srcchip" + (live.disagree ? " bad" : " ok")}>
                     {sv.name} · {sv.line}
                   </span>
                 ))}
                 <span className="srcchip">as of {new Date(live.fetched).toLocaleTimeString()}</span>
-                {live.state === "in" && <span className="srcchip">refreshing every 20s</span>}
+                {live.state === "in" && <span className="srcchip" style={{ color: "var(--rose)", borderColor: "rgba(228,112,126,.45)" }}>updating every 10s</span>}
               </div>
 
               {live.disagree && (
-                <p className="thesis" style={{ color: "var(--rose)", marginTop: 10, fontSize: 13 }}>
+                <p className="thesis" style={{ color: "var(--rose)", margin: "0 16px 14px", fontSize: 13 }}>
                   The feeds disagree on the score. One is lagging — check the broadcast before acting on this.
                 </p>
               )}
@@ -2240,6 +2302,7 @@ function Positions({ ledger, save, reopen }) {
   const candidates = ledger.filter((e) => !e.taken && e.status === "open" && e.call !== "PASS").slice(0, 8);
   const [q, setQ] = useState({});
   const [refreshing, setRefreshing] = useState(false);
+  const anyLiveRef = useRef(false);
 
   async function refresh() {
     if (!open.length) return;
@@ -2253,14 +2316,23 @@ function Positions({ ledger, save, reopen }) {
       out[e.id] = { price, live, at: Date.now() };
     }));
     setQ(out);
+    anyLiveRef.current = Object.values(out).some((x) => x.live && x.live.state === "in");
     setRefreshing(false);
   }
 
-  // Refresh on open and every 30 seconds while the tab is showing.
+  // Refresh on open, then every 15 seconds while any game is live and
+  // every 30 otherwise. Returning to the tab refreshes immediately.
   useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 30000);
-    return () => clearInterval(t);
+    let alive = true, timer = null;
+    const loop = async () => {
+      await refresh();
+      if (!alive) return;
+      timer = setTimeout(loop, anyLiveRef.current ? 15000 : 30000);
+    };
+    loop();
+    const onVis = () => { if (!document.hidden) { if (timer) clearTimeout(timer); loop(); } };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { alive = false; if (timer) clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); };
   }, [ledger.length]);
 
   const settledPnl = settled.reduce((s, e) => {
@@ -2278,8 +2350,8 @@ function Positions({ ledger, save, reopen }) {
           </button>
         </div>
         <p className="help" style={{ marginTop: 6 }}>
-          Live prices and game feeds against what each position is worth. Advice updates every 30 seconds while
-          you're on this tab — and it's free, no analysis credits.
+          Live prices and game feeds against what each position is worth. Updates every 15 seconds while a game
+          is live, every 30 otherwise — and it's free, no analysis credits.
         </p>
 
         {open.length === 0 && (
