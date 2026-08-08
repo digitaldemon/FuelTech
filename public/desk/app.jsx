@@ -2360,7 +2360,31 @@ function Positions({ ledger, save, reopen, reload }) {
   const [q, setQ] = useState({});
   const [refreshing, setRefreshing] = useState(false);
   const [kal, setKal] = useState(null);
+  const [confirmId, setConfirmId] = useState(null); // position awaiting close confirm
+  const [closing, setClosing] = useState(null);      // position id mid-close
+  const [closeNote, setCloseNote] = useState(null);
   const anyLiveRef = useRef(false);
+
+  async function closePosition(e, curSide) {
+    setClosing(e.id); setCloseNote(null); setConfirmId(null);
+    try {
+      const r = await fetch("/api/desk/kalshi/close", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: e.marketId }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setCloseNote({ forId: e.id, ok: true, msg: "Sold " + d.sold + " " + d.side.toUpperCase() + " on " + e.marketId + " at market. Your account will reflect it in a moment." });
+        if (reload) await reload();
+        refresh();
+      } else {
+        setCloseNote({ forId: e.id, ok: false, msg: d.error || "Close failed." });
+      }
+    } catch (err) {
+      setCloseNote({ forId: e.id, ok: false, msg: "Close request failed: " + err.message });
+    }
+    setClosing(null);
+  }
 
   async function refresh() {
     // Pull the real Kalshi account first (if connected), then re-sync the
@@ -2502,7 +2526,35 @@ function Positions({ ledger, save, reopen, reload }) {
                 );
               })()}
               {adv && <p className="help" style={{ marginTop: 8 }}>{adv.why}</p>}
+
+              {confirmId === e.id ? (
+                <div className="panel" style={{ marginTop: 10, background: "rgba(228,112,126,.07)", borderColor: "rgba(228,112,126,.4)" }}>
+                  <p className="thesis" style={{ margin: 0 }}>
+                    Sell all <b>{e.taken.contracts}</b> {e.taken.side} contracts on Kalshi at the market price
+                    {curSide != null ? " (~" + curSide.toFixed(0) + "c each, about $" + ((curSide * e.taken.contracts) / 100).toFixed(2) + " back)" : ""}?
+                    This places a real order and closes the position.
+                  </p>
+                  <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                    <button className="btn btn-sm" style={{ background: "linear-gradient(180deg,#EC8391,#E4707E)", boxShadow: "0 2px 12px rgba(228,112,126,.3)" }}
+                      onClick={() => closePosition(e, curSide)} disabled={closing === e.id}>
+                      {closing === e.id ? "Closing…" : "Yes, sell now"}
+                    </button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => setConfirmId(null)} disabled={closing === e.id}>Keep it</button>
+                  </div>
+                </div>
+              ) : null}
+
+              {closeNote && closeNote.forId === e.id && (
+                <p className="help" style={{ marginTop: 8, color: closeNote.ok ? "var(--moss)" : "var(--rose)" }}>{closeNote.msg}</p>
+              )}
+
               <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
+                {e.taken.source === "kalshi" && confirmId !== e.id && (
+                  <button className="btn btn-sm" style={{ background: "linear-gradient(180deg,#EC8391,#E4707E)", color: "#1B202B", boxShadow: "0 2px 12px rgba(228,112,126,.28)" }}
+                    onClick={() => { setConfirmId(e.id); setCloseNote(null); }} disabled={closing === e.id}>
+                    Close wager
+                  </button>
+                )}
                 <button className="btn btn-ghost btn-sm" onClick={() => reopen(e)}>Full re-analysis</button>
                 <button className="btn btn-ghost btn-sm" onClick={() => save({ ...e, taken: null })}>Stop tracking</button>
                 {e.link && <a className="srcchip" href={e.link} target="_blank" rel="noreferrer">open market ↗</a>}
