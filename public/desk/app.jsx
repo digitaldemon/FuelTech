@@ -762,20 +762,38 @@ function detectLeague(m) {
   return null;
 }
 
-// Trailing capitals in a Kalshi ticker are the two competitors' codes.
+// Trailing capitals in Kalshi ticker segments are competitor codes. A game
+// ticker like KXMLBGAME-26AUG081505ATLNYY-NYY carries both teams in the
+// event segment and the contract's own side as the final segment — that
+// side code goes first so downstream matching knows whose contract this is.
 function teamCodes(ticker) {
-  const tail = String(ticker || "").split("-").pop();
-  const mt = tail.match(/([A-Z]{4,10})$/);
-  if (!mt) return [];
-  const run = mt[1];
-  if (run.length % 2 === 0) return [run.slice(0, run.length / 2), run.slice(run.length / 2)];
-  return [run];
+  const segs = String(ticker || "").toUpperCase().split("-");
+  const out = [];
+  const push = (c) => { if (c && !out.includes(c)) out.push(c); };
+  for (let i = segs.length - 1; i >= 1; i--) {
+    const mt = segs[i].match(/([A-Z]{2,10})$/);
+    if (!mt) continue;
+    const run = mt[1];
+    if (run.length <= 4) push(run);
+    if (run.length >= 4 && run.length % 2 === 0) {
+      push(run.slice(0, run.length / 2));
+      push(run.slice(run.length / 2));
+    }
+  }
+  return out;
 }
 
 const codeHit = (codes, abbrs) =>
   codes.filter((c) => abbrs.some((a) => a && (a === c || a.startsWith(c) || c.startsWith(a)))).length;
 
+// Sports feeds load straight from the browser first: ESPN 403s datacenter
+// IPs (which is where the proxy lives) but sends open CORS headers, so the
+// user's own connection is the reliable path. The proxy stays as fallback.
 const getJson = async (url) => {
+  try {
+    const r = await fetch(url);
+    if (r.ok) return r.json();
+  } catch { /* CORS or network — fall through to the server proxy */ }
   const r = await fetch(px(url));
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
