@@ -747,29 +747,30 @@ function positionAdvice(e, cur, live) {
   if (live && live.state === "post") {
     return { act: "SETTLING", why: "The game is final. This resolves shortly — nothing left to decide." };
   }
-  const exitFee = takerFee(e.venue, curSide);
+  // Entry price is sunk — decisions are forward-looking only. Selling pays
+  // fees and crosses the spread; holding to resolution is free. So exiting
+  // is only right when the market pays MORE than the position is worth.
+  const exitCost = takerFee(e.venue, curSide) + 0.5;
   const rem = eff - curSide;
-  if (rem <= -2) return { act: "SELL",
-    why: "By " + src + " your side is worth about " + eff.toFixed(0) + "c but sells for " + curSide.toFixed(0) +
-      "c — you're holding an overpriced position. Selling costs roughly " + exitFee.toFixed(1) + "c in fees." };
-  if (rem <= 1.5) {
-    if (pnl >= 0) return { act: "TAKE PROFIT",
-      why: "The market has caught up to " + src + " (" + eff.toFixed(0) + "c vs " + curSide.toFixed(0) + "c). The edge is captured — you're up " +
-        pnl.toFixed(0) + "c a contract, and holding on adds risk without expected reward." };
-    return { act: "CUT LOSS",
-      why: "By " + src + " your side is worth about " + eff.toFixed(0) + "c and it sells for " + curSide.toFixed(0) +
-        "c — there's no edge left in holding. You're down " + Math.abs(pnl).toFixed(0) +
-        "c a contract; selling salvages what's left instead of gambling the rest on variance." };
+  if (rem <= -(2 + exitCost)) {
+    return { act: pnl >= 0 ? "TAKE PROFIT" : "SELL NOW",
+      why: "By " + src + " your side is worth about " + eff.toFixed(0) + "c but the market pays " + curSide.toFixed(0) +
+        "c — selling collects more than the position is worth, even after ~" + exitCost.toFixed(1) + "c in exit costs." };
   }
+  if (rem >= 2) return { act: "HOLD",
+    why: "About " + rem.toFixed(0) + "c of edge left by " + src + ". " +
+      (pnl >= 0 ? "Up " : "Down ") + Math.abs(pnl).toFixed(0) + "c a contract so far." };
   if (src === "my last analysis" && Math.abs(cur - e.price) >= 10) return { act: "RE-CHECK",
     why: "The market moved " + (cur - e.price > 0 ? "+" : "") + (cur - e.price).toFixed(0) +
       "c since the analysis — something changed. Run a full re-analysis before trusting the old fair value." };
   return { act: "HOLD",
-    why: "About " + rem.toFixed(0) + "c of edge left by " + src + ". " +
-      (pnl >= 0 ? "Up " : "Down ") + Math.abs(pnl).toFixed(0) + "c a contract so far." };
+    why: "Priced about right by " + src + ": worth ~" + eff.toFixed(0) + "c, sells for " + curSide.toFixed(0) +
+      "c. Selling costs ~" + exitCost.toFixed(1) + "c in fees and spread; holding to resolution costs nothing and wins " +
+      eff.toFixed(0) + "% of the time. What you paid (" + Number(e.taken.entryPrice).toFixed(0) +
+      "c) is already spent — it shouldn't drive this decision." };
 }
 
-const ADVICE_COLORS = { HOLD: "var(--moss)", "TAKE PROFIT": "var(--amber)", "CUT LOSS": "var(--rose)", SELL: "var(--rose)", "RE-CHECK": "var(--cyan)", SETTLING: "var(--dim)" };
+const ADVICE_COLORS = { HOLD: "var(--moss)", "TAKE PROFIT": "var(--amber)", "SELL NOW": "var(--rose)", "RE-CHECK": "var(--cyan)", SETTLING: "var(--dim)" };
 
 // Who's going to win? The live model first, the final score when the game
 // is over, else the market's own price for the named outcome.
