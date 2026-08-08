@@ -736,33 +736,52 @@ async function fetchCurrentPrice(e) {
 // own (possibly hours-old) fair value.
 function positionAdvice(e, cur, live) {
   const side = e.taken.side;
-  const fairSide = side === "YES" ? e.fair : 100 - e.fair;
   const curSide = side === "YES" ? cur : 100 - cur;
   const pnl = curSide - e.taken.entryPrice;
-  let eff = fairSide, src = "my last analysis";
-  if (live && live.impliedCents != null && live.state === "in" && !live.disagree) {
-    eff = side === "YES" ? live.impliedCents : 100 - live.impliedCents;
-    src = "the live win probability";
-  }
-  if (live && live.state === "post") {
+
+  if (live && live.sides && live.state === "post") {
     return { act: "SETTLING", why: "The game is final. This resolves shortly — nothing left to decide." };
   }
+
+  // Choose the best CURRENT estimate of what the side is worth. Order of
+  // trust: a live in-game win probability, then a genuinely recent analysis
+  // (only when no game is in progress — a pre-game fair value is meaningless
+  // once the game starts), then the market itself. Critically, never let a
+  // stale fair value declare a position mispriced: if there's no fresh
+  // independent read, the market price IS the fair estimate.
+  const inGame = !!(live && live.sides && !live.none);
+  const liveProb = (live && live.impliedCents != null && live.state === "in" && !live.disagree)
+    ? (side === "YES" ? live.impliedCents : 100 - live.impliedCents) : null;
+  const hasAnalysis = Array.isArray(e.pillars) && e.pillars.length > 0 && e.call !== "SYNCED";
+  const freshAnalysis = hasAnalysis && (Date.now() - (e.ts || 0) < 3 * 3600 * 1000);
+  const fairSide = side === "YES" ? e.fair : 100 - e.fair;
+
+  let eff, src, independent;
+  if (liveProb != null) { eff = liveProb; src = "the live win probability"; independent = true; }
+  else if (freshAnalysis && !inGame) { eff = fairSide; src = "my recent analysis"; independent = true; }
+  else { eff = curSide; src = "the market price"; independent = false; }
+
   // Entry price is sunk — decisions are forward-looking only. Selling pays
   // fees and crosses the spread; holding to resolution is free. So exiting
-  // is only right when the market pays MORE than the position is worth.
+  // is only right when an INDEPENDENT read says the market overpays.
   const exitCost = takerFee(e.venue, curSide) + 0.5;
   const rem = eff - curSide;
-  if (rem <= -(2 + exitCost)) {
+
+  if (independent && rem <= -(2 + exitCost)) {
     return { act: pnl >= 0 ? "TAKE PROFIT" : "SELL NOW",
       why: "By " + src + " your side is worth about " + eff.toFixed(0) + "c but the market pays " + curSide.toFixed(0) +
         "c — selling collects more than the position is worth, even after ~" + exitCost.toFixed(1) + "c in exit costs." };
   }
-  if (rem >= 2) return { act: "HOLD",
+  if (independent && rem >= 2) return { act: "HOLD",
     why: "About " + rem.toFixed(0) + "c of edge left by " + src + ". " +
       (pnl >= 0 ? "Up " : "Down ") + Math.abs(pnl).toFixed(0) + "c a contract so far." };
-  if (src === "my last analysis" && Math.abs(cur - e.price) >= 10) return { act: "RE-CHECK",
-    why: "The market moved " + (cur - e.price > 0 ? "+" : "") + (cur - e.price).toFixed(0) +
-      "c since the analysis — something changed. Run a full re-analysis before trusting the old fair value." };
+
+  if (!independent) return { act: "HOLD",
+    why: "No fresh independent read right now, so the market price is the best estimate — it already reflects a " +
+      curSide.toFixed(0) + "% chance, which is what your side is worth. Selling pays ~" + exitCost.toFixed(1) +
+      "c in fees and spread; holding to resolution is free and wins that " + curSide.toFixed(0) +
+      "% of the time. What you paid (" + Number(e.taken.entryPrice).toFixed(0) + "c) is already spent and shouldn't drive this." };
+
   return { act: "HOLD",
     why: "Priced about right by " + src + ": worth ~" + eff.toFixed(0) + "c, sells for " + curSide.toFixed(0) +
       "c. Selling costs ~" + exitCost.toFixed(1) + "c in fees and spread; holding to resolution costs nothing and wins " +
