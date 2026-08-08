@@ -705,6 +705,8 @@ async function espnGame(lg, m, codes) {
     abbr: competitorAbbr(c),
     score: c.score != null && c.score !== "" ? Number(c.score) : null,
     home: c.homeAway === "home",
+    // Tennis and other set/period sports: the per-set line score.
+    sets: (c.linescores || []).map((ls) => (ls.displayValue != null ? ls.displayValue : ls.value)).filter((v) => v != null && v !== ""),
   }));
 
   const base = {
@@ -741,7 +743,14 @@ async function espnGame(lg, m, codes) {
       };
     }
     const sit = sm.situation || (sm.header && sm.header.competitions && sm.header.competitions[0].situation);
-    if (sit && sit.lastPlay && sit.lastPlay.text) base.lastPlay = String(sit.lastPlay.text).slice(0, 180);
+    if (sit) {
+      if (sit.lastPlay && sit.lastPlay.text) base.lastPlay = String(sit.lastPlay.text).slice(0, 180);
+      // Football: down, distance and who has the ball.
+      if (sit.downDistanceText) base.downDistance = sit.downDistanceText;
+      if (sit.possessionText) base.possessionText = sit.possessionText;
+      // Baseball: the count and outs.
+      if (sit.balls != null) base.extra = sit.balls + "-" + sit.strikes + " count, " + (sit.outs != null ? sit.outs : "?") + " out";
+    }
   } catch { /* scoreboard alone is still usable */ }
 
   return base;
@@ -863,7 +872,9 @@ async function fetchLive(m) {
     clock: primary.clock || (espn && espn.clock) || "",
     period: primary.period || (espn && espn.period) || 0,
     sides,
-    extra: primary.extra || "",
+    extra: primary.extra || (espn && espn.extra) || "",
+    downDistance: espn && espn.downDistance,
+    possession: espn && espn.possessionText,
     lastPlay: espn && espn.lastPlay,
     odds: espn && espn.odds,
     homeWinPct: espn && espn.homeWinPct,
@@ -876,10 +887,14 @@ function liveSummary(l) {
   if (!l || l.none || !l.sides) return "";
   const line = l.sides.map((s) => s.name + " " + (s.score ?? "-")).join(" vs ");
   const phase = l.state === "in" ? "IN PROGRESS" : l.state === "post" ? "FINAL" : "NOT STARTED";
-  let out = "\n\nLIVE GAME STATE (" + l.league + ", " + phase + ", sources: " +
+  const asOf = l.fetched ? new Date(l.fetched).toISOString().slice(11, 19) + " UTC" : "now";
+  let out = "\n\nLIVE GAME STATE (" + l.league + ", " + phase + ", fetched " + asOf + ", sources: " +
     l.sources.map((s) => s.name).join(" + ") + "): " + line;
   if (l.detail) out += " — " + l.detail;
   if (l.clock && l.state === "in") out += " (" + l.clock + ")";
+  const withSets = l.sides.filter((s) => s.sets && s.sets.length);
+  if (withSets.length) out += ". Set/period scores: " + withSets.map((s) => s.name + " [" + s.sets.join(" ") + "]").join(", ");
+  if (l.downDistance) out += ". " + l.downDistance + (l.possession ? ", ball: " + l.possession : "");
   if (l.extra) out += ". " + l.extra;
   if (l.lastPlay) out += ". Last play: " + l.lastPlay;
   if (l.homeWinPct != null) {
@@ -1191,6 +1206,9 @@ function Analyze({ fw, onSave, pending, clearPending, ledger }) {
   const [live, setLive] = useState(null);
   const [audit, setAudit] = useState(null);
   const runId = useRef(0);
+  // Freshest live feed, readable mid-analysis: a running pipeline reads this
+  // at every stage instead of the score from when the run started.
+  const liveRef = useRef(null);
 
   useEffect(() => {
     if (!pending) return;
@@ -1218,6 +1236,7 @@ function Analyze({ fw, onSave, pending, clearPending, ledger }) {
       const l = await fetchLive(market);
       if (!alive) return;
       setLive(l);
+      liveRef.current = l;
       if (l && l.sides && !l.none && !l.error) setCat((c) => (c === "general" ? "sports" : c));
       if (l && l.state === "in") timer = setTimeout(tick, 20000);
     };
@@ -1325,6 +1344,12 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
     // it automatically while the research runs.
     const xpPromise = crossPlatform(m).catch(() => null);
 
+    // Force a fresh live-feed read at the start of every run, and read the
+    // freshest state again at each later stage — a game moves during the
+    // minute this analysis takes.
+    const livePromise = fetchLive(m).catch(() => null);
+    const liveNow = () => liveSummary(liveRef.current);
+
     // Step 0: read the fine print before researching, so every later step
     // prices the contract that actually exists rather than the headline.
     let auditJ = null;
@@ -1341,10 +1366,13 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
       ? (auditJ.summary || "") + ((auditJ.traps || []).length ? " Watch for: " + auditJ.traps.join(" | ") : "")
       : "";
 
+    const lFresh = await livePromise;
+    if (lFresh) { setLive(lFresh); liveRef.current = lFresh; }
+    if (id !== runId.current) return;
+
     setPhase("researching");
     const groups = lib.groups.map((g) => g.map((n) => byN[n]).filter((p) => p && p.enabled)).filter((g) => g.length);
-    const liveLine = liveSummary(live);
-    const batches = await Promise.allSettled(groups.map((g) => callClaude(researchPrompt(g, m, liveLine, auditLine), { search: true })));
+    const batches = await Promise.allSettled(groups.map((g) => callClaude(researchPrompt(g, m, liveNow(), auditLine), { search: true })));
     if (id !== runId.current) return;
     batches.forEach((b, i) => {
       if (b.status === "fulfilled") absorb(b.value);
@@ -1367,7 +1395,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
     if (contra) {
       setPhase("contrarian");
       try {
-        const cr = await callClaude(contrarianPrompt(contra, m, summarize(firstEight), liveLine, auditLine), { search: true });
+        const cr = await callClaude(contrarianPrompt(contra, m, summarize(firstEight), liveNow(), auditLine), { search: true });
         if (id !== runId.current) return;
         absorb(cr);
       } catch {
@@ -1381,10 +1409,19 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
     try {
       // Deterministic anchor: market prior + strength-weighted framework
       // reads, adjusted by each framework's track record in this category.
+      // During a live game, ESPN's win-probability model joins the pool as a
+      // heavyweight input — no web search can beat a live quantitative feed.
       const relMult = reliabilityMultipliers(ledger, c);
-      const anchor = anchorFair(m.price, collected, byN, relMult);
+      const lNow = liveRef.current;
+      const anchorInputs = { ...collected };
+      const anchorByN = { ...byN };
+      if (lNow && lNow.impliedCents != null && lNow.state !== "pre" && !lNow.disagree) {
+        anchorInputs[99] = { n: 99, strength: 3, implied: clamp(lNow.impliedCents, 1, 99) };
+        anchorByN[99] = { n: 99, enabled: true, weight: 1.5 };
+      }
+      const anchor = anchorFair(m.price, anchorInputs, anchorByN, relMult);
 
-      let extra = liveSummary(live);
+      let extra = liveNow();
       if (depth && depth.asks.length) {
         const w = walkBook(depth.asks, size);
         if (w) extra += `\nORDER BOOK: buying ${size} ${depth.unit} fills at an average of ${w.avg.toFixed(1)}c against a quoted ${m.price.toFixed(1)}c.`;
@@ -1435,7 +1472,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
       if (call !== "PASS") {
         setPhase("verifying");
         try {
-          const vr = await callClaude(verifyPrompt(m, side, entry, fairSide, j.thesis || "", liveSummary(live)), { search: true, maxTokens: 1200 });
+          const vr = await callClaude(verifyPrompt(m, side, entry, fairSide, j.thesis || "", liveNow()), { search: true, maxTokens: 1200 });
           if (id !== runId.current) return;
           (vr.sources || []).forEach((s) => allSources.push(s));
           verify = extractJson(vr.text);
@@ -1575,11 +1612,18 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                 return (
                   <div key={i} className={"score-row" + (lead ? " lead" : "")}>
                     <span className="who">{sd.name}{sd.home ? "" : " (away)"}</span>
-                    <span className="pts">{sd.score ?? "–"}</span>
+                    <span className="pts">
+                      {sd.sets && sd.sets.length ? sd.sets.join("  ") : (sd.score ?? "–")}
+                    </span>
                   </div>
                 );
               })}
               {live.extra && <div className="eyebrow" style={{ marginTop: 4 }}>{live.extra}</div>}
+              {live.downDistance && (
+                <div className="eyebrow" style={{ marginTop: 4 }}>
+                  {live.downDistance}{live.possession ? " · ball: " + live.possession : ""}
+                </div>
+              )}
 
               {live.impliedCents != null && live.mySide && (
                 <div className="wp">
@@ -1611,6 +1655,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                     {sv.name} · {sv.line}
                   </span>
                 ))}
+                <span className="srcchip">as of {new Date(live.fetched).toLocaleTimeString()}</span>
                 {live.state === "in" && <span className="srcchip">refreshing every 20s</span>}
               </div>
 
