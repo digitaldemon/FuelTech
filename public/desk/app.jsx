@@ -1346,6 +1346,16 @@ function App() {
     })();
   }, []);
 
+  // Re-pull the ledger from the server, so positions marked on another
+  // device (or added for you) show up without a full page reload.
+  async function reloadLedger() {
+    try {
+      const r = await fetch("/api/desk/ledger");
+      const d = await r.json();
+      if (Array.isArray(d.entries)) setLedger(d.entries);
+    } catch { /* keep what we have */ }
+  }
+
   async function saveFw(next) {
     setFw(next);
     try { await fetch("/api/desk/frameworks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) }); } catch { /* keeps working in memory */ }
@@ -1401,7 +1411,7 @@ function App() {
         </nav>
 
         {tab === "analyze" && <Analyze fw={fw} onSave={saveEntry} pending={pending} clearPending={() => setPending(null)} ledger={ledger} />}
-        {tab === "positions" && <Positions ledger={ledger} save={saveEntry} reopen={reopen} />}
+        {tab === "positions" && <Positions ledger={ledger} save={saveEntry} reopen={reopen} reload={reloadLedger} />}
         {tab === "browse" && <Browse onPick={(m) => { setPending(m); setTab("analyze"); }} />}
         {tab === "frameworks" && <Frameworks fw={fw} save={saveFw} ledger={ledger} reset={() => saveFw(buildFrameworks())} />}
         {tab === "ledger" && <Ledger ledger={ledger} setLedger={setLedger} fw={fw} />}
@@ -2296,7 +2306,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
 }
 
 /* ---------------- My trades ---------------- */
-function Positions({ ledger, save, reopen }) {
+function Positions({ ledger, save, reopen, reload }) {
   const open = ledger.filter((e) => e.taken && e.status === "open");
   const settled = ledger.filter((e) => e.taken && e.status === "resolved" && e.outcome !== null);
   const candidates = ledger.filter((e) => !e.taken && e.status === "open" && e.call !== "PASS").slice(0, 8);
@@ -2305,6 +2315,9 @@ function Positions({ ledger, save, reopen }) {
   const anyLiveRef = useRef(false);
 
   async function refresh() {
+    // Sync the trade list from the server first, so marks made elsewhere
+    // (your phone, or added for you) appear here within one cycle.
+    if (reload) await reload();
     if (!open.length) return;
     setRefreshing(true);
     const out = {};
