@@ -1256,6 +1256,46 @@ const takerFee = (venue, priceCents) =>
 // favourite-longshot bias punishes fading the tails on model say-so.
 const minNetEdge = (priceCents) => 3 + 0.06 * Math.min(priceCents, 100 - priceCents);
 
+// American moneyline -> implied probability (still carries the book's vig).
+function mlImplied(american) {
+  const a = Number(american);
+  if (!Number.isFinite(a) || a === 0) return null;
+  return a > 0 ? 100 / (a + 100) : -a / (-a + 100);
+}
+// Two-way no-vig: strip the book's margin so the pair sums to 100%. A
+// sharp de-vigged moneyline is one of the best probability estimates that
+// exists for a game, independent of any web search.
+function noVigMoneyline(homeML, awayML) {
+  const h = mlImplied(homeML), a = mlImplied(awayML);
+  if (h == null || a == null) return null;
+  const s = h + a;
+  if (s <= 0) return null;
+  return { home: (h / s) * 100, away: (a / s) * 100 };
+}
+
+// Empirical calibration from settled calls: if the desk's fair values have
+// scored worse than the market's own prices, pull future estimates toward
+// the market. Needs a real sample (>=20) before it does anything, and never
+// pulls more than 70% of the way in — it corrects over-confidence, it
+// doesn't surrender to the market.
+function calibrationFactor(ledger) {
+  const done = (ledger || []).filter((e) => e.status === "resolved" && e.outcome !== null &&
+    typeof e.fair === "number" && typeof e.price === "number");
+  if (done.length < 20) return { k: 1, n: done.length, active: false };
+  const brier = (p, o) => Math.pow(p / 100 - o, 2);
+  const model = done.reduce((s, e) => s + brier(e.fair, e.outcome), 0) / done.length;
+  const mkt = done.reduce((s, e) => s + brier(e.price, e.outcome), 0) / done.length;
+  let k = 1;
+  if (model > mkt && mkt > 0) k = clamp(1 - (model - mkt) / mkt, 0.3, 1);
+  return { k, n: done.length, active: k < 0.995 };
+}
+
+const median = (arr) => {
+  const s = arr.slice().sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
 const daysToClose = (m) => {
   if (!m.close) return null;
   const d = (new Date(m.close) - Date.now()) / 86400000;
@@ -1751,11 +1791,32 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
       const lNow = liveRef.current;
       const anchorInputs = { ...collected };
       const anchorByN = { ...byN };
+      // Independent hard signals — a live win-probability model and a
+      // de-vigged sportsbook moneyline — join the anchor as heavyweight
+      // inputs. Both are quantitative and independent of the web-search
+      // frameworks, so they earn full weight.
+      const signals = []; // {label, prob} for display and disagreement checks
       if (lNow && lNow.impliedCents != null && lNow.state !== "pre" && !lNow.disagree) {
         anchorInputs[99] = { n: 99, strength: 3, implied: clamp(lNow.impliedCents, 1, 99) };
         anchorByN[99] = { n: 99, enabled: true, weight: 1.5 };
+        signals.push({ label: "Live win prob", prob: lNow.impliedCents });
+      }
+      let bookProb = null;
+      if (lNow && lNow.odds && lNow.mySide && lNow.odds.homeML != null && lNow.odds.awayML != null) {
+        const nv = noVigMoneyline(lNow.odds.homeML, lNow.odds.awayML);
+        if (nv) bookProb = lNow.mySide.home ? nv.home : nv.away;
+      }
+      if (bookProb != null) {
+        anchorInputs[98] = { n: 98, strength: 3, implied: clamp(bookProb, 1, 99) };
+        anchorByN[98] = { n: 98, enabled: true, weight: 1.5 };
+        signals.push({ label: "No-vig book line", prob: bookProb });
       }
       const anchor = anchorFair(m.price, anchorInputs, anchorByN, relMult);
+
+      // How far apart the independent signals sit — used to temper confidence.
+      const signalSpread = signals.length >= 2
+        ? Math.max.apply(null, signals.map((s) => s.prob)) - Math.min.apply(null, signals.map((s) => s.prob))
+        : 0;
 
       let extra = liveNow();
       if (depth && depth.asks.length) {
@@ -1773,13 +1834,40 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
         extra += `\nPRIOR ANALYSIS (${new Date(prev.ts).toISOString().slice(0, 10)}): the desk priced this at ${prev.fair}c when the market was ${prev.price}c (call: ${prev.call}). Weigh what has actually changed since.`;
       }
 
-      const sr = await callClaude(synthPrompt(m, summarize(active.map((p) => p.n)), extra, anchor, auditLine), { model: MODELS.judge, maxTokens: 1400 });
+      // Self-consistency: price the contract three independent times and take
+      // the median. A single LLM estimate is noisy; the median of several
+      // collapses that variance and is markedly better calibrated.
+      const prompt = synthPrompt(m, summarize(active.map((p) => p.n)), extra, anchor, auditLine);
+      const runs = await Promise.allSettled(
+        [0, 1, 2].map(() => callClaude(prompt, { model: MODELS.judge, maxTokens: 1400 }))
+      );
       if (id !== runId.current) return;
-      const j = extractJson(sr.text);
-      let fair = Number(j.fairValue);
-      if (!Number.isFinite(fair)) fair = anchor;
-      // The model can argue with the anchor, but only within 10c of it.
-      fair = clamp(clamp(fair, anchor - 10, anchor + 10), 0.5, 99.5);
+      const samples = [];
+      runs.forEach((r) => {
+        if (r.status !== "fulfilled") return;
+        try {
+          const parsed = extractJson(r.value.text);
+          if (Number.isFinite(Number(parsed.fairValue))) samples.push(parsed);
+        } catch { /* skip an unparseable sample */ }
+      });
+      if (!samples.length) throw new Error("the pricing step returned no usable estimate");
+
+      // Each sample clamped to the anchor, then take the median fair value;
+      // keep the narrative from whichever sample sits closest to that median.
+      const fairs = samples.map((s) => clamp(clamp(Number(s.fairValue), anchor - 10, anchor + 10), 0.5, 99.5));
+      let fair = median(fairs);
+      const sampleSpread = Math.max.apply(null, fairs) - Math.min.apply(null, fairs);
+      let j = samples[0], bestGap = Infinity;
+      samples.forEach((s, i) => {
+        const g = Math.abs(fairs[i] - fair);
+        if (g < bestGap) { bestGap = g; j = s; }
+      });
+
+      // Empirical calibration: once enough calls have settled, pull the
+      // estimate toward the market if the desk has historically been
+      // over-confident.
+      const calib = calibrationFactor(ledger);
+      if (calib.active) fair = clamp(m.price + calib.k * (fair - m.price), 0.5, 99.5);
 
       const edge = fair - m.price;
       const side = edge > 0 ? "YES" : "NO";
@@ -1807,6 +1895,11 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
       let call = netEdge >= bar && strong >= 3 ? "BUY " + side : "PASS";
       let confidence = j.confidence || "LOW";
       if (auditJ && auditJ.severity === "HIGH" && confidence === "HIGH") confidence = "MEDIUM";
+      // Independent signals or the pricing samples disagreeing is a real
+      // uncertainty signal — don't let the model claim more than it earned.
+      const step = (cf) => cf === "HIGH" ? "MEDIUM" : cf === "MEDIUM" ? "LOW" : "LOW";
+      if (signalSpread > 12 || sampleSpread > 10) confidence = step(confidence);
+      if (calib.active && calib.k <= 0.6 && confidence === "HIGH") confidence = "MEDIUM";
 
       // Final red-team pass: a trade only stands if it survives an active
       // attempt to refute it with fresh searches.
@@ -1831,7 +1924,8 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
 
       const res = { fair, anchor, edge, netEdge, entry, fee, bar, call, side, stake, confidence,
         thesis: j.thesis || "", drivers: j.drivers || [], risks: j.risks || [],
-        resolution: j.resolution || "", strong, verify, vetoed, thin };
+        resolution: j.resolution || "", strong, verify, vetoed, thin,
+        signals, signalSpread, sampleSpread, calib };
       setResult(res);
       setSources([...allSources]);
       setPhase("done");
@@ -2243,6 +2337,32 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                   <span className="sub">The rest found nothing and were ignored</span>
                 </div>
               </div>
+
+              {((result.signals && result.signals.length) || result.sampleSpread > 0 || (result.calib && result.calib.active)) && (
+                <details className="fold">
+                  <summary>How the price was built</summary>
+                  <div className="meta" style={{ marginTop: 10 }}>
+                    <div><span className="k">Market</span><span className="v">{market.price.toFixed(0)}c</span></div>
+                    {(result.signals || []).map((s, i) => (
+                      <div key={i}>
+                        <span className="k">{s.label}</span>
+                        <span className="v" style={{ color: "var(--violet)" }}>{s.prob.toFixed(0)}%</span>
+                      </div>
+                    ))}
+                    <div><span className="k">Weighted anchor</span><span className="v">{result.anchor.toFixed(0)}c</span></div>
+                    <div><span className="k">Fair (median of 3)</span><span className="v" style={{ color: "var(--amber)" }}>{result.fair.toFixed(0)}c</span></div>
+                  </div>
+                  <p className="help" style={{ marginTop: 10 }}>
+                    Fair value is the median of three independent pricings, anchored to the market plus every
+                    signal above weighted by evidence and track record.
+                    {result.sampleSpread > 0 ? " The three landed within " + result.sampleSpread.toFixed(0) + "c of each other" +
+                      (result.sampleSpread > 10 ? " — wide enough that I trimmed the confidence." : ".") : ""}
+                    {result.signalSpread > 12 ? " The independent signals disagree by " + result.signalSpread.toFixed(0) + "c, so confidence is tempered." : ""}
+                    {result.calib && result.calib.active ? " Calibration from " + result.calib.n + " settled calls pulled the estimate " +
+                      Math.round((1 - result.calib.k) * 100) + "% toward the market." : ""}
+                  </p>
+                </details>
+              )}
 
               {result.call === "PASS" && (
                 <p className="help" style={{ marginTop: 14 }}>
