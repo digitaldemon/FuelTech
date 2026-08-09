@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-09.odds-visible";
+const BUILD = "2026-08-09.parlay-aware";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -557,6 +557,12 @@ function kaMarket(m) {
     quoted: price !== null && price > 0,
     bid, ask,
     status: m.status || null,
+    result: m.result || null,
+    // Multivariate (parlay) markets carry their exact legs — without them
+    // the title ("yes Milwaukee,yes New York") names no sport or opponent.
+    legs: Array.isArray(m.mve_selected_legs) && m.mve_selected_legs.length
+      ? m.mve_selected_legs.map((l) => ({ ticker: l.market_ticker, side: (l.side || "yes").toUpperCase() }))
+      : null,
     volume: num(m.volume) || num(m.volume_fp) || num(m.volume_24h_fp),
     liquidity: num(m.open_interest) || num(m.open_interest_fp) || num(m.liquidity_dollars),
     close: m.close_time || null,
@@ -775,7 +781,7 @@ async function fetchCurrentPrice(e) {
 // Deterministic stay/sell guidance — free to compute, honest about its
 // source. During a live game the win-probability model outranks the desk's
 // own (possibly hours-old) fair value.
-function positionAdvice(e, cur, live, quote) {
+function positionAdvice(e, cur, live, quote, cmb) {
   const side = e.taken.side;
   const curSide = side === "YES" ? cur : 100 - cur;
   const pnl = curSide - e.taken.entryPrice;
@@ -785,6 +791,18 @@ function positionAdvice(e, cur, live, quote) {
   const ask = quote && quote.ask != null ? quote.ask : null;
   const sellAt = side === "YES" ? (bid != null ? bid : curSide - 0.5)
     : (ask != null ? 100 - ask : curSide - 0.5);
+
+  // A parlay with a lost leg is decided, whatever the combo still quotes.
+  if (cmb && cmb.dead) {
+    const salvage = (side === "YES" ? sellAt : 100 - sellAt) - takerFee(e.venue, clamp(sellAt, 0.5, 99.5));
+    const doomed = side === "YES"; // YES on the combo needs every leg
+    if (doomed) {
+      return salvage >= 2
+        ? { act: "SELL NOW", why: "A leg has LOST — the parlay can only resolve NO now. Selling salvages ~" + salvage.toFixed(0) + "c a contract; holding returns nothing." }
+        : { act: "SETTLING", why: "A leg has lost, so this parlay resolves NO. No bid worth hitting — it settles at zero." };
+    }
+    return { act: "SETTLING", why: "A leg has lost, so the parlay resolves NO — your NO side wins at settlement. Holding to resolution collects the full 100c." };
+  }
 
   if (live && live.sides && live.state === "post") {
     return { act: "SETTLING", why: "The game is final. This resolves shortly — nothing left to decide." };
@@ -804,7 +822,14 @@ function positionAdvice(e, cur, live, quote) {
   const fairSide = side === "YES" ? e.fair : 100 - e.fair;
 
   let eff, src, independent;
-  if (liveProb != null) { eff = liveProb; src = "the live win probability"; independent = true; }
+  if (cmb) {
+    // The legs' combined read prices the combo better than its own thin
+    // quote ever can — and it's live whenever any leg's game is.
+    eff = side === "YES" ? cmb.prob : 100 - cmb.prob;
+    src = cmb.live ? "the legs' live win odds" : "the legs' own market prices";
+    independent = true;
+  }
+  else if (liveProb != null) { eff = liveProb; src = "the live win probability"; independent = true; }
   else if (freshAnalysis && !inGame) { eff = fairSide; src = "my recent analysis"; independent = true; }
   else { eff = curSide; src = "the market price"; independent = false; }
 
@@ -887,6 +912,130 @@ function likelyWinner(live, fallbackName, fallbackProb) {
     return { name: fallbackName, pct: fallbackProb, market: true };
   }
   return null;
+}
+
+/* ---- parlay legs ----
+   A combo market's own title names no sport, no opponent and no date. The
+   legs' real markets do. Everything downstream (research prompts, live
+   feeds, advice) must run on the LEGS, never on a guess from the title. */
+async function resolveLegs(m) {
+  if (!m.legs || !m.legs.length) return null;
+  try {
+    const r = await fetch(px("https://api.elections.kalshi.com/trade-api/v2/markets?tickers=" +
+      encodeURIComponent(m.legs.map((l) => l.ticker).join(","))));
+    if (!r.ok) return null;
+    const d = await r.json();
+    const byT = {};
+    (d.markets || []).forEach((raw) => { byT[raw.ticker] = raw; });
+    const out = m.legs.map((l) => {
+      const raw = byT[l.ticker];
+      const km = raw ? kaMarket(raw) : null;
+      const lg = detectLeague({ id: l.ticker, question: km ? km.question : "", name: km ? km.name : "" });
+      return {
+        ticker: l.ticker, side: l.side,
+        name: km ? km.name : l.ticker, question: km ? km.question : l.ticker,
+        price: km ? km.price : null, result: km ? km.result : null,
+        league: lg ? lg.label : null, date: tickerDate(l.ticker),
+      };
+    });
+    return out.every((l) => l) ? out : null;
+  } catch { return null; }
+}
+
+const legsText = (legs) => legs.map((l, i) =>
+  "Leg " + (i + 1) + ": " + l.side + " on \"" + l.name + "\" in " + (l.league || "?") +
+  " game \"" + l.question + "\"" + (l.date ? " (game date " + l.date + " ET)" : "") +
+  (l.price != null ? " — this leg's own market trades at " + l.price.toFixed(0) + "c" : "") +
+  (l.result ? " — SETTLED " + l.result.toUpperCase() : "")
+).join("\n");
+
+// Combined worth of a parlay right now: product over legs of the best read
+// on each leg (settled result > live win prob > final score > leg price).
+function legsCombined(legs, legLiveArr) {
+  if (!legs || !legs.length) return null;
+  let prod = 1, liveCount = 0, dead = false, priced = 0;
+  const parts = [];
+  legs.forEach((l, i) => {
+    const ll = legLiveArr && legLiveArr[i] && !legLiveArr[i].none ? legLiveArr[i] : null;
+    let p = null, src = "price";
+    if (l.result === "yes" || l.result === "no") {
+      const won = (l.result === "yes") === (l.side === "YES");
+      p = won ? 100 : 0; src = "settled";
+      if (!won) dead = true;
+    } else if (ll && ll.impliedCents != null && ll.state === "in" && !ll.disagree) {
+      p = l.side === "YES" ? ll.impliedCents : 100 - ll.impliedCents;
+      src = "live"; liveCount++;
+    } else if (ll && ll.state === "post") {
+      const w = likelyWinner(ll, l.name, null);
+      if (w && w.final) {
+        const won = overlap(w.name, l.name) > 0.3;
+        p = won ? 100 : 0; src = "final";
+        if (!won) dead = true;
+      }
+    }
+    if (p == null && l.price != null) { p = l.side === "YES" ? l.price : 100 - l.price; src = "price"; }
+    if (p == null) { p = 50; src = "unknown"; }
+    else priced++;
+    prod *= clamp(p, 0, 100) / 100;
+    parts.push({ p, src });
+  });
+  return { prob: 100 * prod, live: liveCount > 0, dead, priced, parts };
+}
+
+// Per-leg live state for the research prompts.
+function legsLiveSummary(legs, legLiveArr) {
+  if (!legs || !legs.length) return "";
+  const cmb = legsCombined(legs, legLiveArr);
+  let out = "\n\nTHIS CONTRACT IS A PARLAY — it resolves YES only if EVERY leg below hits. " +
+    "The named teams and sports are EXACT; do not substitute other teams that share a city name.\n" + legsText(legs);
+  (legLiveArr || []).forEach((ll, i) => {
+    const s = liveSummary(ll);
+    if (s) out += "\nLeg " + (i + 1) + " live state:" + s.replace(/^\n+/, " ");
+  });
+  if (cmb) out += "\nDETERMINISTIC COMBINED READ: the legs multiply to about " + cmb.prob.toFixed(1) +
+    "c for the parlay" + (cmb.dead ? " — a leg has LOST, the parlay is dead and resolves NO." : ".");
+  return out;
+}
+
+/* ---- event board: who wins, and every bet on this event ----
+   Deterministic and free: pairs each sibling outcome with the live model /
+   book consensus, nets out entry cost and fees, and names the best pick. */
+function eventBoard(book, live) {
+  if (!book || !book.markets || !live || live.none || !live.sides) return null;
+  const ob = live.oddsBook;
+  const sideFor = (name) => {
+    let bi = -1, bs = 0, ss = 0;
+    live.sides.forEach((sd, i) => {
+      const sc = overlap(name || "", sd.name);
+      if (sc > bs) { ss = bs; bs = sc; bi = i; } else if (sc > ss) ss = sc;
+    });
+    return bi >= 0 && bs > 0.3 && bs - ss > 0.12 ? live.sides[bi] : null;
+  };
+  const rows = book.markets.slice(0, 8).map((mm) => {
+    let prob = null, src = null;
+    const sd = sideFor(mm.name);
+    if (sd && live.homeWinPct != null && live.state === "in") {
+      prob = sd.home ? live.homeWinPct : 100 - live.homeWinPct; src = "live model";
+    } else if (sd && ob) {
+      prob = sd.home ? ob.home : ob.away; src = ob.books + " books";
+    } else if (/\btie\b|\bdraw\b/i.test(mm.name || "") && ob && ob.draw != null) {
+      prob = ob.draw; src = ob.books + " books";
+    }
+    const entry = mm.ask != null ? mm.ask : mm.price;
+    const fee = entry != null ? takerFee(mm.venue, entry) : 0;
+    const net = prob != null && entry != null ? prob - entry - fee : null;
+    return { m: mm, prob, src, entry, net };
+  });
+  const withNet = rows.filter((r) => r.net != null);
+  const best = withNet.length ? withNet.reduce((b, r) => (r.net > b.net ? r : b)) : null;
+  let winner = likelyWinner(live, null, null);
+  if (!winner && ob) {
+    const home = live.sides.find((s) => s.home), away = live.sides.find((s) => !s.home);
+    if (home && away) winner = ob.home >= ob.away
+      ? { name: home.name, pct: ob.home, book: true }
+      : { name: away.name, pct: ob.away, book: true };
+  }
+  return { rows, best, winner };
 }
 
 /* ---- order book + slippage ---- */
@@ -1312,12 +1461,17 @@ async function fetchLive(m) {
   }
 
   // Which side is this contract on? Match the outcome name to a competitor.
-  let sideIdx = -1, bestS = 0;
+  // A market named after the QUESTION ("Will the Aces beat the Liberty?")
+  // mentions both teams — if the two sides score nearly the same, matching
+  // would be a coin flip that silently shows the OTHER team's numbers.
+  // Refusing to pick is strictly better than flipping.
+  let sideIdx = -1, bestS = 0, secondS = 0;
   sides.forEach((sd, i) => {
     const sc = Math.max(overlap(m.name || "", sd.name), sd.abbr && codes.length ? (codes[0] === sd.abbr ? 1 : 0) : 0);
-    if (sc > bestS) { bestS = sc; sideIdx = i; }
+    if (sc > bestS) { secondS = bestS; bestS = sc; sideIdx = i; }
+    else if (sc > secondS) secondS = sc;
   });
-  const mySide = sideIdx >= 0 && bestS > 0.3 ? sides[sideIdx] : null;
+  const mySide = sideIdx >= 0 && bestS > 0.3 && bestS - secondS > 0.12 ? sides[sideIdx] : null;
 
   let impliedCents = null;
   if (espn && espn.homeWinPct != null && mySide) {
@@ -1589,7 +1743,11 @@ const ctx = (m) => {
 OUTCOME BEING PRICED: ${m.name}
 CURRENT MARKET PRICE FOR YES: ${m.price.toFixed(1)}c (implied ${m.price.toFixed(1)}% chance)
 RESOLUTION DATE: ${m.close || "unknown"}${when}
-${m.rules ? "RESOLUTION RULES: " + m.rules : ""}`;
+${m.rules ? "RESOLUTION RULES: " + m.rules : ""}${m.legsInfo
+  ? "\nTHIS IS A PARLAY. It resolves YES only if EVERY leg hits. The exact legs (teams, sports, dates) are:\n" +
+    legsText(m.legsInfo) +
+    "\nPrice EXACTLY these legs. Do NOT substitute any other team that shares a city name."
+  : ""}`;
 };
 
 function auditPrompt(m) {
@@ -1841,6 +1999,10 @@ function Analyze({ fw, onSave, pending, clearPending, ledger }) {
   // at every stage instead of the score from when the run started.
   const liveRef = useRef(null);
   const histRef = useRef(null);
+  const [legs, setLegs] = useState(null);       // parlay legs, resolved
+  const [legLive, setLegLive] = useState(null); // per-leg live states
+  const legsRef = useRef(null);
+  const legLiveRef = useRef(null);
 
   useEffect(() => {
     if (!pending) return;
@@ -1882,6 +2044,26 @@ function Analyze({ fw, onSave, pending, clearPending, ledger }) {
     const onVis = () => { if (!document.hidden) { if (timer) clearTimeout(timer); tick(); } };
     document.addEventListener("visibilitychange", onVis);
     return () => { alive = false; if (timer) clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); };
+  }, [market]);
+
+  // Parlay legs: resolve once per market, then poll every leg's own live
+  // game — the combo's title carries none of this.
+  useEffect(() => {
+    setLegs(null); setLegLive(null); legsRef.current = null; legLiveRef.current = null;
+    if (!market || !market.legs) return;
+    let alive = true, timer = null;
+    const tick = async () => {
+      const ls = await resolveLegs(market);
+      if (!alive || !ls) return;
+      setLegs(ls); legsRef.current = ls;
+      const lv = await Promise.all(ls.map((l) =>
+        fetchLive({ id: l.ticker, question: l.question, name: l.name }).catch(() => null)));
+      if (!alive) return;
+      setLegLive(lv); legLiveRef.current = lv;
+      timer = setTimeout(tick, lv.some((x) => x && x.state === "in") ? 12000 : 45000);
+    };
+    tick();
+    return () => { alive = false; if (timer) clearTimeout(timer); };
   }, [market]);
 
   const busy = ["fetching", "auditing", "researching", "contrarian", "synthesizing", "verifying"].includes(phase);
@@ -1946,7 +2128,21 @@ ${list}
 Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution-criteria difference, or 'criteria appear identical'>"}`, { maxTokens: 400 });
       const j = extractJson(r.text);
       if (j.index === null || j.index === undefined || !top[j.index]) { setXp({ status: "none" }); return null; }
-      const match = top[j.index].c;
+      let match = top[j.index].c;
+      // Direction guard: on a two-sided event the matcher can pick the
+      // OTHER team's contract, which flips every displayed number. If a
+      // sibling outcome of the same matched event names OUR outcome
+      // better, take the sibling instead.
+      if (m.name) {
+        const sibs = top.filter((x) => x.c.question === match.question && x.c.id !== match.id);
+        const mine = overlap(m.name, match.name || "");
+        let bestSib = null, bestSibS = mine;
+        sibs.forEach((x) => {
+          const s = overlap(m.name, x.c.name || "");
+          if (s > bestSibS + 0.1) { bestSibS = s; bestSib = x.c; }
+        });
+        if (bestSib) match = bestSib;
+      }
       const found = { status: "found", match, gap: match.price - m.price, caveat: j.caveat || "" };
       setXp(found);
       return found;
@@ -2006,12 +2202,22 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
         (m.volume ? (spread != null ? ", " : "") + "volume $" + Math.round(m.volume).toLocaleString() : "") +
         (thin ? ". This market is thin — prices are noisier and fills are worse; demand more edge." : ".")
       : "";
-    const liveNow = () => liveSummary(liveRef.current) + histSummary(histRef.current) + sibLine + liqLine;
+    const liveNow = () => liveSummary(liveRef.current) +
+      legsLiveSummary(legsRef.current, legLiveRef.current) +
+      histSummary(histRef.current) + sibLine + liqLine;
+
+    // A parlay's title names no sports or opponents — resolve its legs
+    // FIRST so every prompt prices the actual teams, not a guess.
+    if (m.legs) {
+      const ls = legsRef.current || await resolveLegs(m);
+      if (id !== runId.current) return;
+      if (ls) { legsRef.current = ls; m.legsInfo = ls; setLegs(ls); }
+    }
 
     // Step 0: read the fine print before researching, so every later step
     // prices the contract that actually exists rather than the headline.
     let auditJ = null;
-    if (m.rules) {
+    if (m.rules || m.legsInfo) {
       setPhase("auditing");
       try {
         const ar = await callClaude(auditPrompt(m), { model: MODELS.judge, maxTokens: 600 });
@@ -2111,6 +2317,17 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
         anchorInputs[98] = { n: 98, strength: 3, implied: clamp(bookProb, 1, 99) };
         anchorByN[98] = { n: 98, enabled: true, weight: 1.5 };
         signals.push({ label: "Book line (" + bookN + (bookN === 1 ? " book" : " books") + (bookLive ? ", in-play)" : ")"), prob: bookProb });
+      }
+      // Parlay: the product of each leg's own best read (settled result,
+      // live win prob, else the leg's market price) is deterministic and
+      // beats anything a web search can produce for a combo.
+      if (m.legsInfo) {
+        const cmb = legsCombined(legsRef.current || m.legsInfo, legLiveRef.current);
+        if (cmb && cmb.priced >= m.legsInfo.length) {
+          anchorInputs[97] = { n: 97, strength: 3, implied: clamp(cmb.prob, 1, 99) };
+          anchorByN[97] = { n: 97, enabled: true, weight: 2 };
+          signals.push({ label: "Legs combined (" + m.legsInfo.length + " legs" + (cmb.live ? ", live" : "") + ")", prob: cmb.prob });
+        }
       }
       const anchor = anchorFair(m.price, anchorInputs, anchorByN, relMult);
 
@@ -2479,6 +2696,45 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
             </div>
           )}
 
+          {legs && (
+            <div className="panel" style={{ marginTop: 14, background: "rgba(0,0,0,.14)" }}>
+              <p className="sect" style={{ margin: 0 }}>Parlay legs — every one must hit</p>
+              {legs.map((l, i) => {
+                const ll = legLive && legLive[i] && !legLive[i].none ? legLive[i] : null;
+                const part = legsCombined(legs, legLive);
+                const pp = part && part.parts[i];
+                const scoreLine = ll && ll.sides
+                  ? ll.sides.map((s) => (s.abbr || s.name.slice(0, 3)) + " " + (s.score != null ? s.score : "-")).join(" · ") +
+                    (ll.state === "in" ? " · LIVE" + (ll.clock ? " " + ll.clock : "") : ll.state === "post" ? " · FINAL" : " · upcoming")
+                  : "no live feed yet";
+                return (
+                  <div key={l.ticker} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
+                    <span className="who" style={{ fontSize: 13.5 }}>
+                      {l.side} · <b>{l.name}</b>
+                      <span className="sub" style={{ display: "block" }}>{(l.league || "?") + " · " + l.question + " · " + scoreLine}</span>
+                    </span>
+                    <span className="pts" style={{ fontSize: 14, color: pp && pp.src === "live" ? "var(--violet)" : undefined }}>
+                      {pp ? pp.p.toFixed(0) + "%" : "…"}
+                      <span className="sub" style={{ display: "block" }}>{pp ? pp.src : ""}</span>
+                    </span>
+                  </div>
+                );
+              })}
+              {(() => {
+                const cmb = legsCombined(legs, legLive);
+                if (!cmb) return null;
+                return (
+                  <p className="help" style={{ marginTop: 10, color: cmb.dead ? "var(--rose)" : undefined }}>
+                    {cmb.dead
+                      ? "A leg has LOST — this parlay can no longer win."
+                      : "Multiplying the legs: the parlay is worth about " + cmb.prob.toFixed(0) + "c right now" +
+                        (cmb.live ? " (using live win odds)" : " (using each leg's own market price)") + "."}
+                  </p>
+                );
+              })()}
+            </div>
+          )}
+
           <div className="cmp-box">
             {(() => {
               const rows = [{ label: "Market price", v: market.price, color: "var(--cyan)", note: "what it costs now" }];
@@ -2497,6 +2753,11 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                 const bp = live.mySide.home ? live.bookProb.home : live.bookProb.away;
                 const nb = live.bookProb.books || 1;
                 rows.push({ label: "Sportsbooks", v: bp, color: "var(--moss)", note: nb + " book" + (nb === 1 ? "" : "s") + " via ESPN, vig removed" });
+              }
+              if (legs) {
+                const cmb = legsCombined(legs, legLive);
+                if (cmb) rows.push({ label: "Legs combined", v: cmb.prob, color: "var(--violet)",
+                  note: legs.length + " legs multiplied" + (cmb.live ? ", live" : "") + (cmb.dead ? " — a leg LOST" : "") });
               }
               if (xp && xp.status === "found") {
                 rows.push({ label: xp.match.venue, v: xp.match.price, color: "var(--moss)", note: "same bet, other exchange" });
@@ -2542,6 +2803,49 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
               </p>
             )}
           </div>
+
+          {(() => {
+            if (legs) return null; // parlays get the legs panel instead
+            const eb = eventBoard(book, live);
+            if (!eb || (!eb.winner && !eb.rows.some((r) => r.prob != null))) return null;
+            return (
+              <div className="panel" style={{ marginTop: 14, background: "rgba(0,0,0,.14)" }}>
+                <p className="sect" style={{ margin: 0 }}>Who wins — and the best bet on this event</p>
+                {eb.winner && (
+                  <p className="thesis" style={{ marginTop: 8 }}>
+                    {eb.winner.final ? "Final: " : "Most likely winner: "}
+                    <strong style={{ color: "var(--amber)" }}>{eb.winner.name}</strong>
+                    {eb.winner.final ? "" : " (" + eb.winner.pct.toFixed(0) + "%" +
+                      (eb.winner.book ? ", by the books" : eb.winner.market ? ", by the market" : ", live model") + ")"}
+                  </p>
+                )}
+                {eb.rows.map((r) => {
+                  const isBest = eb.best && r === eb.best && r.net > 0;
+                  return (
+                    <div key={r.m.id} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
+                      <span className="who" style={{ fontSize: 13.5 }}>
+                        {r.m.name}
+                        {isBest && <span className="srcchip" style={{ marginLeft: 8, color: "var(--moss)", borderColor: "rgba(127,185,139,.5)" }}>BEST PICK</span>}
+                        <span className="sub" style={{ display: "block" }}>
+                          {r.prob != null ? "true odds ~" + r.prob.toFixed(0) + "% (" + r.src + ")" : "no model read"}
+                          {r.entry != null ? " · costs " + r.entry.toFixed(0) + "c" : ""}
+                        </span>
+                      </span>
+                      <span className="pts" style={{ fontSize: 14, color: r.net == null ? "var(--dim)" : r.net > 0 ? "var(--moss)" : "var(--dim)" }}>
+                        {r.net == null ? "—" : (r.net > 0 ? "+" : "") + r.net.toFixed(1) + "c"}
+                        <span className="sub" style={{ display: "block" }}>edge after fees</span>
+                      </span>
+                    </div>
+                  );
+                })}
+                <p className="help" style={{ marginTop: 10 }}>
+                  {eb.best && eb.best.net > 0
+                    ? "Positive edge after fees on " + eb.best.m.name + " — that's the wager this event offers. Run the full analysis to stress-test it."
+                    : "No side of this event is underpriced right now — the favorite is priced like the favorite. Betting the winner here pays fair odds at best."}
+                </p>
+              </div>
+            );
+          })()}
 
           {(phase === "ready" || phase === "done") && (
             <>
@@ -2862,6 +3166,7 @@ function Positions({ ledger, save, reopen, reload }) {
   const [closeNote, setCloseNote] = useState(null);
   const [wsOn, setWsOn] = useState(false);           // realtime feed connected
   const anyLiveRef = useRef(false);
+  const legsCacheRef = useRef({});                   // combo marketId -> leg tickers
   const openRef = useRef(open);
   openRef.current = open;
 
@@ -2934,10 +3239,31 @@ function Positions({ ledger, save, reopen, reload }) {
         fetchCurrentPrice(e),
         fetchLive({ id: e.marketId, question: e.question, name: e.name }).catch(() => null),
       ]);
-      out[e.id] = { quote, price: quote ? quote.price : null, live, at: Date.now() };
+      // A parlay position tracks each LEG's game, not a (nonexistent)
+      // single game for the combo.
+      let legsInfo = null, legLiveArr = null;
+      if (e.venue === "Kalshi" && /^KXMVE/i.test(e.marketId)) {
+        let legTks = legsCacheRef.current[e.marketId];
+        if (legTks === undefined) {
+          try {
+            const r = await fetch(px("https://api.elections.kalshi.com/trade-api/v2/markets/" + e.marketId));
+            const d = r.ok ? await r.json() : null;
+            const km = d && d.market ? kaMarket(d.market) : null;
+            legTks = km && km.legs ? km.legs : null;
+          } catch { legTks = null; }
+          legsCacheRef.current[e.marketId] = legTks;
+        }
+        if (legTks) {
+          legsInfo = await resolveLegs({ legs: legTks });
+          if (legsInfo) legLiveArr = await Promise.all(legsInfo.map((l) =>
+            fetchLive({ id: l.ticker, question: l.question, name: l.name }).catch(() => null)));
+        }
+      }
+      out[e.id] = { quote, price: quote ? quote.price : null, live, legs: legsInfo, legLive: legLiveArr, at: Date.now() };
     }));
     setQ(out);
-    anyLiveRef.current = Object.values(out).some((x) => x.live && x.live.state === "in");
+    anyLiveRef.current = Object.values(out).some((x) => (x.live && x.live.state === "in") ||
+      (x.legLive || []).some((l) => l && l.state === "in"));
     setRefreshing(false);
   }
 
@@ -3011,7 +3337,8 @@ function Positions({ ledger, save, reopen, reload }) {
           const qq = q[e.id] || {};
           const cur = qq.price != null ? qq.price : null;
           const live = qq.live && !qq.live.none && qq.live.sides ? qq.live : null;
-          const adv = cur != null ? positionAdvice(e, cur, live, qq.quote) : null;
+          const cmb = qq.legs ? legsCombined(qq.legs, qq.legLive) : null;
+          const adv = cur != null ? positionAdvice(e, cur, live, qq.quote, cmb) : null;
           const curSide = cur != null ? (e.taken.side === "YES" ? cur : 100 - cur) : null;
           const pnlC = curSide != null ? curSide - e.taken.entryPrice : null;
           const pnlD = pnlC != null ? (pnlC * e.taken.contracts) / 100 : null;
@@ -3055,7 +3382,39 @@ function Positions({ ledger, save, reopen, reload }) {
                   </div>
                 )}
               </div>
+              {qq.legs && (
+                <div style={{ marginTop: 10 }}>
+                  {qq.legs.map((l, i) => {
+                    const ll = qq.legLive && qq.legLive[i] && !qq.legLive[i].none ? qq.legLive[i] : null;
+                    const pp = cmb && cmb.parts[i];
+                    const scoreLine = ll && ll.sides
+                      ? ll.sides.map((s) => (s.abbr || s.name.slice(0, 3)) + " " + (s.score != null ? s.score : "-")).join(" · ") +
+                        (ll.state === "in" ? " · LIVE" + (ll.clock ? " " + ll.clock : "") : ll.state === "post" ? " · FINAL" : "")
+                      : "upcoming";
+                    return (
+                      <div key={l.ticker} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
+                        <span className="who" style={{ fontSize: 13 }}>
+                          Leg {i + 1}: {l.side} <b>{l.name}</b>
+                          <span className="sub" style={{ display: "block" }}>{(l.league || "?") + " · " + scoreLine}</span>
+                        </span>
+                        <span className="pts" style={{ fontSize: 13.5,
+                          color: pp && pp.p >= 99.5 ? "var(--moss)" : pp && pp.p <= 0.5 ? "var(--rose)" : pp && pp.src === "live" ? "var(--violet)" : undefined }}>
+                          {pp ? (pp.p >= 99.5 ? "WON" : pp.p <= 0.5 ? "LOST" : pp.p.toFixed(0) + "%") : "…"}
+                          <span className="sub" style={{ display: "block" }}>{pp ? pp.src : ""}</span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {cmb && (
+                    <p className="help" style={{ marginTop: 6, color: cmb.dead ? "var(--rose)" : undefined }}>
+                      {cmb.dead ? "A leg has lost — the parlay can't win."
+                        : "Parlay worth now ≈ " + cmb.prob.toFixed(0) + "c (legs multiplied" + (cmb.live ? ", live" : "") + ")."}
+                    </p>
+                  )}
+                </div>
+              )}
               {(() => {
+                if (qq.legs) return null;
                 const w = likelyWinner(live, e.name, cur);
                 if (!w) return null;
                 const mine = overlap(w.name, e.name) > 0.3;

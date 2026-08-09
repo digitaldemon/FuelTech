@@ -20,6 +20,8 @@ const code = [
   slice("const STOP = new Set(", "\n}"), // STOP + toks + overlap
   slice("const takerFee =", ": 0;"),
   slice("function matchOddsEvent(", "\n}"),
+  slice("function likelyWinner(", "\n}"),
+  slice("function legsCombined(", "\n}"),
   slice("function positionAdvice(", "\n}"),
   slice("function mlImplied(", "\n}"),
   slice("function shinDevig(", "\n}"),
@@ -34,8 +36,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -116,6 +118,21 @@ ok(positionAdvice(pos({ ts: Date.now() - 5 * 3600 * 1000 }), 60, null, { price: 
   "stale analysis, no live read -> HOLD (market is the estimate)");
 ok(positionAdvice(pos(), 60, { sides: [{}, {}], state: "post" }, { price: 60, bid: 59, ask: 60 }).act === "SETTLING",
   "game final -> SETTLING");
+
+// Parlay legs math
+const legs2 = [
+  { side: "YES", name: "Milwaukee", price: 60, result: null },
+  { side: "YES", name: "New York", price: 70, result: null },
+];
+const ll2 = [{ sides: [{}], state: "in", impliedCents: 80, disagree: false }, null];
+const c2 = legsCombined(legs2, ll2);
+ok(Math.abs(c2.prob - 56) < 0.01 && c2.live, "parlay combine: live 80% x leg price 70c = 56c");
+const c3 = legsCombined([{ side: "YES", name: "A", price: 60, result: "no" }, legs2[1]], null);
+ok(c3.dead && c3.prob === 0, "settled-lost leg kills the parlay");
+ok(positionAdvice(pos(), 66, null, { price: 66, bid: 0, ask: 100 }, { prob: 30, live: true, dead: false }).act === "HOLD",
+  "parlay slipping but empty bid -> HOLD (selling collects nothing)");
+ok(positionAdvice(pos(), 66, null, { price: 66, bid: 0, ask: 100 }, { prob: 0, live: false, dead: true }).act === "SETTLING",
+  "dead parlay with no bid -> SETTLING at zero");
 
 console.log(fail ? fail + " FAILURES" : "ALL TESTS PASSED");
 process.exit(fail ? 1 : 0);
