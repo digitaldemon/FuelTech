@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-09.clear-compare";
+const BUILD = "2026-08-09.odds-feed-realtime";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -1017,6 +1017,98 @@ const getJson = async (url) => {
   return r.json();
 };
 
+/* ---- The Odds API: wide multi-book consensus (incl. sharp EU books) ----
+   Served through /api/desk/odds so the key never reaches the browser. Each
+   bookmaker is de-vigged independently with Shin and averaged — the same
+   construction as the ESPN consensus but across a much deeper book pool,
+   and it keeps quoting in-play, which ESPN's pregame lines don't. */
+const ODDS_SPORT = {
+  "basketball/nba": "basketball_nba",
+  "basketball/wnba": "basketball_wnba",
+  "baseball/mlb": "baseball_mlb",
+  "football/nfl": "americanfootball_nfl",
+  "hockey/nhl": "icehockey_nhl",
+  "football/college-football": "americanfootball_ncaaf",
+  "basketball/mens-college-basketball": "basketball_ncaab",
+  "tennis/atp": "tennis_atp",
+  "tennis/wta": "tennis_wta",
+  "mma/ufc": "mma_mixed_martial_arts",
+  "soccer/eng.1": "soccer_epl",
+  "soccer/usa.1": "soccer_usa_mls",
+  "soccer/uefa.champions": "soccer_uefa_champs_league",
+  "soccer/esp.1": "soccer_spain_la_liga",
+  "soccer/ita.1": "soccer_italy_serie_a",
+  "soccer/ger.1": "soccer_germany_bundesliga",
+};
+const ODDS_FRESH_MS = 10 * 60 * 1000; // a quote older than this is not "live"
+let oddsQuota = null;                 // {remaining, at} for the UI chip
+let oddsOffUntil = 0;                 // back off when no key is configured
+const oddsSportCache = new Map();     // sport -> {at, events}
+
+async function fetchOddsEvents(path) {
+  const sport = ODDS_SPORT[path];
+  if (!sport || Date.now() < oddsOffUntil) return null;
+  const hit = oddsSportCache.get(sport);
+  if (hit && Date.now() - hit.at < 4 * 60 * 1000) return hit.events;
+  try {
+    const r = await fetch("/api/desk/odds?sport=" + sport);
+    if (!r.ok) { oddsSportCache.set(sport, { at: Date.now(), events: null }); return null; }
+    const d = await r.json();
+    if (d.configured === false) { oddsOffUntil = Date.now() + 10 * 60 * 1000; return null; }
+    if (d.remaining != null) oddsQuota = { remaining: d.remaining, at: Date.now() };
+    const events = Array.isArray(d.events) ? d.events : null;
+    oddsSportCache.set(sport, { at: Date.now(), events });
+    return events;
+  } catch { return null; }
+}
+
+function oddsEventConsensus(ev) {
+  if (!ev || !Array.isArray(ev.bookmakers)) return null;
+  const books = [];
+  let updated = 0;
+  ev.bookmakers.forEach((bk) => {
+    const m = (bk.markets || []).find((x) => x.key === "h2h");
+    if (!m || !Array.isArray(m.outcomes)) return;
+    const imp = (name) => {
+      const o = m.outcomes.find((x) => x.name === name);
+      return o ? mlImplied(o.price) : null;
+    };
+    const rh = imp(ev.home_team), ra = imp(ev.away_team), rd = imp("Draw");
+    if (rh == null || ra == null) return;
+    const dv = shinDevig(rd != null ? [rh, rd, ra] : [rh, ra]);
+    if (!dv) return;
+    books.push({ home: dv[0] * 100, away: dv[dv.length - 1] * 100,
+      draw: dv.length === 3 ? dv[1] * 100 : null });
+    const t = Date.parse(m.last_update || bk.last_update || "");
+    if (Number.isFinite(t) && t > updated) updated = t;
+  });
+  if (!books.length) return null;
+  const mean = (k) => books.reduce((s, b) => s + (b[k] || 0), 0) / books.length;
+  const home = mean("home"), away = mean("away");
+  const withDraw = books.filter((b) => b.draw != null);
+  const draw = withDraw.length ? withDraw.reduce((s, b) => s + b.draw, 0) / withDraw.length : null;
+  const disp = books.length > 1
+    ? Math.sqrt(books.reduce((s, b) => s + Math.pow(b.home - home, 2), 0) / books.length) : 0;
+  return { home, away, draw, books: books.length, disp, updated };
+}
+
+// Find this game among the sport's events by team/player name overlap.
+function matchOddsEvent(events, nameText) {
+  if (!events || !events.length || !nameText) return null;
+  let best = null, bestS = 0;
+  events.forEach((ev) => {
+    const s = overlap(nameText, (ev.home_team || "") + " " + (ev.away_team || ""));
+    if (s > bestS) { bestS = s; best = ev; }
+  });
+  return bestS >= 0.5 ? best : null;
+}
+
+async function oddsConsensusFor(path, nameText) {
+  const events = await fetchOddsEvents(path);
+  const ev = matchOddsEvent(events, nameText);
+  return ev ? oddsEventConsensus(ev) : null;
+}
+
 /* ---- source 1: ESPN scoreboard + summary ---- */
 // Individual sports have athletes, not teams — derive a matchable code from
 // the athlete's surname so tennis and UFC tickers (…SWIRAD) still pair up.
@@ -1217,6 +1309,13 @@ async function fetchLive(m) {
     impliedCents = mySide.home ? espn.homeWinPct : 100 - espn.homeWinPct;
   }
 
+  // Wide-book consensus from The Odds API (cached; no-op without a key).
+  let oddsBook = null;
+  try {
+    oddsBook = await oddsConsensusFor(lg.path,
+      (espn && espn.name) || sides.map((sd) => sd.name).join(" "));
+  } catch { /* optional signal */ }
+
   return {
     league: lg.label,
     name: (espn && espn.name) || (sides.map((sd) => sd.name).join(" vs ")),
@@ -1231,6 +1330,7 @@ async function fetchLive(m) {
     lastPlay: espn && espn.lastPlay,
     odds: espn && espn.odds,
     bookProb: espn && espn.bookProb,
+    oddsBook,
     homeWinPct: espn && espn.homeWinPct,
     mySide, impliedCents, disagree, sources, errs,
     fetched: Date.now(),
@@ -1968,25 +2068,34 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
         anchorByN[99] = { n: 99, enabled: true, weight: 1.5 };
         signals.push({ label: "Live win prob", prob: lNow.impliedCents });
       }
-      // The sportsbook line only feeds the anchor when it's current — i.e.
-      // pregame, or live when we have no live win-probability. Once a live
-      // model exists, the frozen pregame line is stale and would drag the
-      // estimate backward, so it's dropped.
+      // The sportsbook line only feeds the anchor when it's current: The
+      // Odds API consensus (widest pool, and its in-play quotes stay fresh
+      // during a game) first, then ESPN's pregame consensus — but a frozen
+      // pregame line NEVER enters mid-game, and any book line is dropped
+      // once a live win-probability model exists.
       const liveWinPresent = !!(lNow && lNow.impliedCents != null && lNow.state === "in" && !lNow.disagree);
-      let bookProb = null;
-      if (!liveWinPresent) {
-        if (lNow && lNow.bookProb && lNow.mySide) {
-          bookProb = lNow.mySide.home ? lNow.bookProb.home : lNow.bookProb.away;
-        } else if (lNow && lNow.odds && lNow.mySide && lNow.odds.homeML != null && lNow.odds.awayML != null) {
-          const nv = noVigMoneyline(lNow.odds.homeML, lNow.odds.awayML);
-          if (nv) bookProb = lNow.mySide.home ? nv.home : nv.away;
+      let bookProb = null, bookN = 1, bookLive = false;
+      if (!liveWinPresent && lNow && lNow.mySide) {
+        const inGame = lNow.state === "in";
+        const ob = lNow.oddsBook;
+        const obFresh = !!(ob && ob.updated && Date.now() - ob.updated < ODDS_FRESH_MS);
+        if (ob && (!inGame || obFresh)) {
+          bookProb = lNow.mySide.home ? ob.home : ob.away;
+          bookN = ob.books; bookLive = inGame;
+        } else if (!inGame) {
+          if (lNow.bookProb) {
+            bookProb = lNow.mySide.home ? lNow.bookProb.home : lNow.bookProb.away;
+            bookN = lNow.bookProb.books || 1;
+          } else if (lNow.odds && lNow.odds.homeML != null && lNow.odds.awayML != null) {
+            const nv = noVigMoneyline(lNow.odds.homeML, lNow.odds.awayML);
+            if (nv) bookProb = lNow.mySide.home ? nv.home : nv.away;
+          }
         }
       }
       if (bookProb != null) {
         anchorInputs[98] = { n: 98, strength: 3, implied: clamp(bookProb, 1, 99) };
         anchorByN[98] = { n: 98, enabled: true, weight: 1.5 };
-        const nbooks = lNow.bookProb && lNow.bookProb.books ? lNow.bookProb.books : 1;
-        signals.push({ label: "Book line" + (nbooks > 1 ? " (" + nbooks + " books)" : ""), prob: bookProb });
+        signals.push({ label: "Book line (" + bookN + (bookN === 1 ? " book" : " books") + (bookLive ? ", in-play)" : ")"), prob: bookProb });
       }
       const anchor = anchorFair(m.price, anchorInputs, anchorByN, relMult);
 
@@ -2695,16 +2804,66 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
 
 /* ---------------- My trades ---------------- */
 function Positions({ ledger, save, reopen, reload }) {
-  const open = ledger.filter((e) => e.taken && e.status === "open");
+  // One card per actual market position. A re-analysis plus a Kalshi sync
+  // can both end up flagged "taken" for the same market — show the entry
+  // that carries a real analysis (else the newest) and ignore the shadow.
+  const open = useMemo(() => {
+    const byMkt = {};
+    ledger.filter((e) => e.taken && e.status === "open").forEach((e) => {
+      const k = e.venue + ":" + e.marketId;
+      const cur = byMkt[k];
+      if (!cur) { byMkt[k] = e; return; }
+      const analyzed = (x) => (x.pillars || []).length > 0;
+      const better = analyzed(e) !== analyzed(cur) ? analyzed(e) : (e.ts || 0) > (cur.ts || 0);
+      if (better) byMkt[k] = e;
+    });
+    return Object.values(byMkt);
+  }, [ledger]);
   const settled = ledger.filter((e) => e.taken && e.status === "resolved" && e.outcome !== null);
-  const candidates = ledger.filter((e) => !e.taken && e.status === "open" && e.call !== "PASS").slice(0, 8);
+  const trackedKeys = new Set(open.map((e) => e.venue + ":" + e.marketId));
+  const candidates = ledger.filter((e) => !e.taken && e.status === "open" && e.call !== "PASS" &&
+    !trackedKeys.has(e.venue + ":" + e.marketId)).slice(0, 8);
   const [q, setQ] = useState({});
   const [refreshing, setRefreshing] = useState(false);
   const [kal, setKal] = useState(null);
   const [confirmId, setConfirmId] = useState(null); // position awaiting close confirm
   const [closing, setClosing] = useState(null);      // position id mid-close
   const [closeNote, setCloseNote] = useState(null);
+  const [wsOn, setWsOn] = useState(false);           // realtime feed connected
   const anyLiveRef = useRef(false);
+  const openRef = useRef(open);
+  openRef.current = open;
+
+  // Realtime Kalshi quotes: the server relays the authenticated Kalshi
+  // WebSocket as a server-sent-event stream, so prices tick the moment the
+  // market trades — the polling refresh below stays as the game-feed and
+  // fallback path. EventSource reconnects on its own when the stream ends.
+  useEffect(() => {
+    const tickers = open.filter((e) => e.venue === "Kalshi").map((e) => e.marketId);
+    if (!tickers.length || typeof EventSource === "undefined") return;
+    const es = new EventSource("/api/desk/kalshi/stream?tickers=" + encodeURIComponent(tickers.join(",")));
+    es.onopen = () => setWsOn(true);
+    es.onerror = () => setWsOn(false);
+    es.onmessage = (evM) => {
+      try {
+        const d = JSON.parse(evM.data);
+        const m = d.msg || {};
+        const tk = m.market_ticker || m.ticker;
+        if (!tk) return;
+        const cents = (v, dv) => (v != null ? Number(v) : dv != null ? Number(dv) * 100 : null);
+        const bid = cents(m.yes_bid, m.yes_bid_dollars);
+        const ask = cents(m.yes_ask, m.yes_ask_dollars);
+        let price = cents(m.price, m.price_dollars);
+        if (price == null && bid != null && ask != null) price = (bid + ask) / 2;
+        if (price == null || !Number.isFinite(price)) return;
+        const ent = openRef.current.find((x) => x.venue === "Kalshi" && x.marketId === tk);
+        if (!ent) return;
+        setQ((prev) => ({ ...prev, [ent.id]: {
+          ...(prev[ent.id] || {}), quote: { price, bid, ask }, price, at: Date.now() } }));
+      } catch { /* malformed frame */ }
+    };
+    return () => { es.close(); setWsOn(false); };
+  }, [ledger.length]);
 
   async function closePosition(e, curSide) {
     setClosing(e.id); setCloseNote(null); setConfirmId(null);
@@ -2786,16 +2945,24 @@ function Positions({ ledger, save, reopen, reload }) {
           </button>
         </div>
         <p className="help" style={{ marginTop: 6 }}>
-          Live prices and game feeds against what each position is worth. Updates every 15 seconds while a game
-          is live, every 30 otherwise — and it's free, no analysis credits.
+          Live prices and game feeds against what each position is worth. Kalshi prices tick in realtime over a
+          live feed; scores and advice refresh every 15 seconds during games, every 30 otherwise. All free — no
+          analysis credits.
         </p>
-        {kal && !kal.error && (
+        {(kal && !kal.error) || wsOn ? (
           <div className="chips" style={{ marginTop: 8 }}>
-            <span className="chip static" style={{ color: "var(--moss)", borderColor: "rgba(127,185,139,.5)" }}>
-              Kalshi account connected · {kal.synced} position{kal.synced === 1 ? "" : "s"} synced
-            </span>
+            {kal && !kal.error && (
+              <span className="chip static" style={{ color: "var(--moss)", borderColor: "rgba(127,185,139,.5)" }}>
+                Kalshi account connected · {kal.synced} position{kal.synced === 1 ? "" : "s"} synced
+              </span>
+            )}
+            {wsOn && (
+              <span className="chip static" style={{ color: "var(--cyan)", borderColor: "rgba(111,179,210,.5)" }}>
+                ● realtime prices
+              </span>
+            )}
           </div>
-        )}
+        ) : null}
         {kal && kal.error && (
           <p className="help" style={{ marginTop: 8, color: "var(--rose)" }}>
             Kalshi sync hit a snag: {String(kal.error).slice(0, 140)}
@@ -3023,29 +3190,41 @@ function homeProbObj(home, game, extra) {
   return { probByAbbr, home, away: 100 - home, books: 1, disp: 0, ...extra };
 }
 
+// Odds API consensus -> the scanner's probByAbbr shape.
+function oddsProbObj(odds, game, src) {
+  const probByAbbr = {};
+  if (game.homeAbbr) probByAbbr[game.homeAbbr] = clamp(odds.home, 0.5, 99.5);
+  if (game.awayAbbr) probByAbbr[game.awayAbbr] = clamp(odds.away, 0.5, 99.5);
+  if (odds.draw != null) { probByAbbr.TIE = odds.draw; probByAbbr.DRAW = odds.draw; }
+  return { probByAbbr, home: odds.home, away: odds.away, books: odds.books, disp: odds.disp, src };
+}
+
 // Best available probability for one game, honest about its source.
-//  • In progress: the live win-probability model — NOT blended with the
-//    frozen pregame line, which would drag a live read back toward stale.
-//    Sports with no live model (tennis/soccer/UFC) fall back to the line
-//    but flag it stale so it isn't trusted as a true live read.
-//  • Upcoming: Shin-de-vigged consensus across every book, falling back to
-//    ESPN's own matchup projection when no line is posted yet.
-async function espnDevig(game) {
+//  • In progress: the live win-probability model first; else a FRESH
+//    in-play book consensus from The Odds API (books keep quoting live);
+//    a frozen pregame line is flagged stale and never trusted as live.
+//  • Upcoming: The Odds API multi-book Shin consensus when 2+ books quote,
+//    else ESPN's pickcenter consensus, else ESPN's matchup projection.
+async function espnDevig(game, odds) {
   try {
     const sm = await getJson("https://site.api.espn.com/apis/site/v2/sports/" + game.path + "/summary?event=" + game.eventId);
+    const oddsFresh = odds && odds.updated && Date.now() - odds.updated < ODDS_FRESH_MS;
 
     if (game.state === "in") {
       const wp = sm.winprobability;
       if (Array.isArray(wp) && wp.length && wp[wp.length - 1].homeWinPercentage != null) {
         return homeProbObj(Number(wp[wp.length - 1].homeWinPercentage) * 100, game, { src: "live" });
       }
+      if (odds && oddsFresh) return oddsProbObj(odds, game, "live-books");
       const cons = consensusDevig(sm.pickcenter || sm.odds || [], game.homeAbbr, game.awayAbbr);
       if (cons) return { ...cons, src: "pregame-line", stale: true };
       return null;
     }
 
+    if (odds && odds.books >= 2) return oddsProbObj(odds, game, "book");
     const cons = consensusDevig(sm.pickcenter || sm.odds || [], game.homeAbbr, game.awayAbbr);
     if (cons) return { ...cons, src: "book" };
+    if (odds) return oddsProbObj(odds, game, "book");
     const proj = sm.predictor && sm.predictor.homeTeam && Number(sm.predictor.homeTeam.gameProjection);
     if (Number.isFinite(proj)) return homeProbObj(proj, game, { src: "model" });
     return null;
@@ -3109,7 +3288,13 @@ async function scanEdges() {
     const seenG = new Set();
     matched.forEach(({ g }) => { if (!seenG.has(g.eventId)) { seenG.add(g.eventId); distinct.push(g); } });
     gamesFound += distinct.length;
-    const devigs = await mapLimit(distinct, 6, espnDevig);
+    // One Odds API request per sport (cached server + client side); each
+    // game gets its matched event's consensus alongside the ESPN read.
+    const oddsEvents = await fetchOddsEvents(path);
+    const devigs = await mapLimit(distinct, 6, (g) => {
+      const ev = matchOddsEvent(oddsEvents, g.name);
+      return espnDevig(g, ev ? oddsEventConsensus(ev) : null);
+    });
     const gmap = {};
     distinct.forEach((g, i) => { gmap[g.eventId] = devigs[i]; if (devigs[i] && devigs[i].probByAbbr) gamesPriced++; });
 
@@ -3178,9 +3363,9 @@ function pickDecision(p) {
   if (p.src === "pregame-line") {
     return { tag: "stale line — no live read, skip", color: "var(--dim)", bet: false };
   }
-  // A firmly-sourced read is a live model or a two-plus-book pregame
-  // consensus; ESPN's model-only projection is softer.
-  const firm = p.src === "live" || (p.src === "book" && p.books >= 2);
+  // A firmly-sourced read is a live model, a fresh in-play book consensus,
+  // or a two-plus-book pregame consensus; a model-only projection is softer.
+  const firm = p.src === "live" || p.src === "live-books" || (p.src === "book" && p.books >= 2);
   // Judge the edge net of the taker fee actually paid on entry.
   const net = p.edge - (p.fee || 0);
   if (net >= 5 && firm) return { tag: "STRONG BET", color: "var(--moss)", bet: true };
@@ -3367,6 +3552,7 @@ function Parlay({ onPick }) {
             </span>
           )}
           {scanInfo && scanInfo.gamesPriced ? <span className="chip static">{scanInfo.gamesPriced} games priced</span> : null}
+          {oddsQuota && <span className="chip static" title="The Odds API request credits left this month">odds feed · {oddsQuota.remaining} credits</span>}
         </div>
       </div>
 
@@ -3583,6 +3769,7 @@ function Parlay({ onPick }) {
                 {p.state === "in" ? <b style={{ color: "var(--rose)" }}>● LIVE</b> : null}
                 {p.state === "in" ? " " : ""}{p.league} · {p.state === "in" ? "in progress" : p.state === "post" ? "final" : "upcoming"} ·
                 {p.src === "live" ? " live win prob"
+                  : p.src === "live-books" ? " in-play books"
                   : p.src === "pregame-line" ? " pregame line (no live model)"
                   : p.src === "model" ? " model projection"
                   : " " + (p.books > 1 ? p.books + " books" : "1 book")} {p.modelProb.toFixed(0)}% vs price {p.entry.toFixed(0)}c

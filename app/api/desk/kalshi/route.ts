@@ -151,13 +151,22 @@ export async function GET(req: Request) {
     let created = 0, updated = 0, cleared = 0;
 
     for (const p of positions) {
-      const e = ledger.find((x) => x.venue === "Kalshi" && x.marketId === p.ticker);
+      // A market can have several ledger entries (a sync stub plus later
+      // re-analyses). The one with a real analysis carries the position;
+      // any other entry for the same market must NOT keep a stale `taken`
+      // or the trades tab shows the position twice.
+      const matches = ledger.filter((x) => x.venue === "Kalshi" && x.marketId === p.ticker);
+      const e = matches.find((x) => Array.isArray(x.pillars) && x.pillars.length > 0) || matches[0];
       const entryPrice = p.avg !== null ? Math.round(p.avg * 100) / 100
         : e && e.taken && e.taken.entryPrice != null ? e.taken.entryPrice
         : p.price !== null ? Math.round(p.price * 10) / 10 : 50;
       const taken = { side: p.side, entryPrice, contracts: Math.round(p.contracts * 100) / 100,
         at: e && e.taken ? e.taken.at : now, source: "kalshi" };
-      if (e) { e.taken = taken; updated++; }
+      if (e) {
+        e.taken = taken;
+        matches.forEach((x) => { if (x !== e && x.taken) x.taken = null; });
+        updated++;
+      }
       else {
         const price = p.price !== null ? Math.round(p.price * 10) / 10 : entryPrice;
         ledger.unshift({
