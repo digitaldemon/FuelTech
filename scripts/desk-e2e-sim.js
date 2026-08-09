@@ -31,6 +31,7 @@ const code = [
   slice("function pickDecision(", "\n}"),
   slice("const ODDS_FRESH_MS =", ";"),
   slice("function oddsSideMarket(", "\n}"),
+  slice("const BOOK_WEIGHT = {", "};"),
   slice("function oddsEventConsensus(", "\n}"),
   slice("function matchOddsEvent(", "\n}"),
   slice("function homeProbObj(", "\n}"),
