@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-08.live-accuracy";
+const BUILD = "2026-08-08.game-links";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -454,6 +454,28 @@ function parseUrl(raw) {
 
 const jparse = (v) => { try { return typeof v === "string" ? JSON.parse(v) : v || []; } catch { return []; } };
 
+// Kalshi web URLs for a specific game are /markets/{series}/{series-slug}/
+// {event-ticker}. These slugs are the slugified series titles (fetched from
+// the API); without them a link only reaches the whole series, not the game.
+const SERIES_SLUG = {
+  KXNBAGAME: "pro-basketball-game", KXWNBAGAME: "womens-pro-basketball-game",
+  KXMLBGAME: "professional-baseball-game", KXNFLGAME: "professional-football-game",
+  KXNHLGAME: "nhl-game", KXCFBGAME: "college-football-game", KXNCAAFGAME: "college-football-game",
+  KXCBBGAME: "college-basketball-game", KXNCAABGAME: "college-basketball-game",
+  KXATPMATCH: "atp-tennis-match", KXWTAMATCH: "wta-tennis-match", KXUFCFIGHT: "ufc-fight",
+  KXEPLGAME: "english-premier-league-game", KXMLSGAME: "major-league-soccer-game",
+  KXUCLGAME: "uefa-champions-league-game", KXLALIGAGAME: "la-liga-game",
+  KXSERIEAGAME: "serie-a-game", KXBUNDESLIGAGAME: "bundesliga-game",
+};
+function kalshiEventLink(ticker) {
+  const parts = String(ticker || "").split("-");
+  const series = parts[0];
+  const base = "https://kalshi.com/markets/" + series.toLowerCase();
+  const slug = SERIES_SLUG[series];
+  if (!slug || parts.length < 2) return base;
+  return base + "/" + slug + "/" + parts.slice(0, -1).join("-").toLowerCase();
+}
+
 function pmMarket(m, ev) {
   const outs = jparse(m.outcomes), pxs = jparse(m.outcomePrices).map(Number);
   const yi = Math.max(0, outs.findIndex((o) => String(o).toLowerCase() === "yes"));
@@ -536,7 +558,7 @@ function kaMarket(m) {
     close: m.close_time || null,
     rules: String(m.rules_primary || "").slice(0, 900),
     venue: "Kalshi",
-    link: "https://kalshi.com/markets/" + String(m.ticker).split("-")[0].toLowerCase(),
+    link: kalshiEventLink(m.ticker),
   };
 }
 
