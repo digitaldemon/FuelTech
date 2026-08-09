@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-08.parlay+shin";
+const BUILD = "2026-08-08.parlay-dates";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -2815,10 +2815,35 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-async function espnGamesForLeague(lg) {
+// The Kalshi game series we can price. Each maps to an ESPN sport path.
+const GAME_SERIES = [
+  ["KXNBAGAME", "basketball/nba", "NBA"],
+  ["KXWNBAGAME", "basketball/wnba", "WNBA"],
+  ["KXMLBGAME", "baseball/mlb", "MLB"],
+  ["KXNFLGAME", "football/nfl", "NFL"],
+  ["KXNHLGAME", "hockey/nhl", "NHL"],
+  ["KXCFBGAME", "football/college-football", "NCAAF"],
+  ["KXNCAAFGAME", "football/college-football", "NCAAF"],
+  ["KXEPLGAME", "soccer/eng.1", "EPL"],
+  ["KXMLSGAME", "soccer/usa.1", "MLS"],
+];
+
+// A Kalshi game ticker embeds the date: …-26AUG112210KCLAD-LAD -> 20260811
+// (some series carry a time after the day, some don't).
+function tickerDate(ticker) {
+  const m = String(ticker || "").match(/-(\d{2})([A-Z]{3})(\d{2})/);
+  if (!m) return null;
+  const mo = { JAN: "01", FEB: "02", MAR: "03", APR: "04", MAY: "05", JUN: "06",
+    JUL: "07", AUG: "08", SEP: "09", OCT: "10", NOV: "11", DEC: "12" }[m[2]];
+  return mo ? "20" + m[1] + mo + m[3] : null;
+}
+
+// ESPN games for a sport on a specific date (YYYYMMDD). Defaults to today.
+async function espnGamesForLeague(path, date) {
   let events = [];
   try {
-    const d = await getJson("https://site.api.espn.com/apis/site/v2/sports/" + lg.path + "/scoreboard");
+    const d = await getJson("https://site.api.espn.com/apis/site/v2/sports/" + path +
+      "/scoreboard" + (date ? "?dates=" + date : ""));
     events = d.events || [];
   } catch { return []; }
   return events.map((ev) => {
@@ -2827,7 +2852,7 @@ async function espnGamesForLeague(lg) {
     const home = comps.find((c) => c.homeAway === "home");
     const away = comps.find((c) => c.homeAway === "away");
     return {
-      eventId: ev.id, path: lg.path, abbrs: comps.map(competitorAbbr),
+      eventId: ev.id, path, abbrs: comps.map(competitorAbbr),
       homeAbbr: home ? competitorAbbr(home) : null, awayAbbr: away ? competitorAbbr(away) : null,
       state: (ev.status && ev.status.type && ev.status.type.state) || "pre",
       name: ev.name || ev.shortName || "",
@@ -2861,50 +2886,58 @@ async function espnDevig(game) {
 
 async function scanEdges() {
   const root = "https://api.elections.kalshi.com/trade-api/v2";
-  // Pull open markets, then keep quoted contracts we can tie to a league.
-  const raw = [];
-  let cursor = "", pages = 0;
-  while (pages < 6) {
-    let r;
-    try { r = await fetch(px(root + "/markets?status=open&limit=200" + (cursor ? "&cursor=" + cursor : ""))); }
-    catch { break; }
-    if (!r.ok) break;
-    const d = await r.json();
-    (d.markets || []).forEach((m) => raw.push(m));
-    cursor = d.cursor || ""; pages++;
-    if (!cursor || !(d.markets || []).length) break;
-  }
-  const games = raw.map(kaMarket).filter((m) => m.price != null && detectLeague(m));
 
-  const byLeague = {};
-  games.forEach((m) => {
-    const lg = detectLeague(m);
-    (byLeague[lg.path] = byLeague[lg.path] || { lg, ms: [] }).ms.push(m);
+  // Pull open markets for each game series directly (the general market list
+  // buries games behind thousands of other contracts, and only a page of it
+  // ever loaded). Dedupe leagues that share a sport path.
+  const seriesByPath = {};
+  GAME_SERIES.forEach(([ticker, path, label]) => {
+    (seriesByPath[path] = seriesByPath[path] || { path, label, tickers: [] }).tickers.push(ticker);
+  });
+
+  const marketsByPath = {};
+  await mapLimit(GAME_SERIES, 6, async ([ticker, path]) => {
+    try {
+      const r = await fetch(px(root + "/markets?series_ticker=" + ticker + "&status=open&limit=200"));
+      if (!r.ok) return;
+      const d = await r.json();
+      const ms = (d.markets || []).map(kaMarket).filter((m) => m.price != null);
+      (marketsByPath[path] = marketsByPath[path] || []).push(...ms);
+    } catch { /* skip this series */ }
   });
 
   const picks = [];
-  for (const { lg, ms } of Object.values(byLeague)) {
-    const gs = await espnGamesForLeague(lg);
+  let gamesFound = 0, gamesPriced = 0;
+  for (const { path, label } of Object.values(seriesByPath)) {
+    const ms = marketsByPath[path] || [];
+    if (!ms.length) continue;
+
+    // Attach each market its game date; group the dates we need to look up.
+    const dated = ms.map((m) => ({ m, codes: teamCodes(m.id), date: tickerDate(m.id) }))
+      .filter((x) => x.codes.length);
+    const dates = [...new Set(dated.map((x) => x.date).filter(Boolean))].slice(0, 8);
+    if (!dates.length) dates.push(null); // fall back to today's slate
+
+    // One scoreboard per (path, date); pool all their games.
+    const slates = await mapLimit(dates, 4, (date) => espnGamesForLeague(path, date));
+    const gs = [].concat(...slates);
     if (!gs.length) continue;
 
-    // Match each market to a game by team codes.
     const matched = [];
-    for (const m of ms) {
-      const codes = teamCodes(m.id);
-      if (!codes.length) continue;
+    for (const { m, codes } of dated) {
       let best = null, bestS = 0;
       gs.forEach((g) => { const s = codeHit(codes, g.abbrs); if (s > bestS) { bestS = s; best = g; } });
       if (best && bestS >= 1) matched.push({ m, g: best, codes });
     }
     if (!matched.length) continue;
 
-    // Fetch the de-vig line once per distinct matched game.
     const distinct = [];
     const seenG = new Set();
     matched.forEach(({ g }) => { if (!seenG.has(g.eventId)) { seenG.add(g.eventId); distinct.push(g); } });
+    gamesFound += distinct.length;
     const devigs = await mapLimit(distinct, 6, espnDevig);
     const gmap = {};
-    distinct.forEach((g, i) => { gmap[g.eventId] = devigs[i]; });
+    distinct.forEach((g, i) => { gmap[g.eventId] = devigs[i]; if (devigs[i] && devigs[i].probByAbbr) gamesPriced++; });
 
     for (const { m, g, codes } of matched) {
       const dv = gmap[g.eventId];
@@ -2918,14 +2951,14 @@ async function scanEdges() {
       const entry = m.ask != null ? m.ask : m.price;
       picks.push({
         id: m.id, market: m, modelProb, entry, edge: modelProb - entry,
-        league: lg.label, state: g.state, game: g.name, codes,
+        league: label, state: g.state, game: g.name, codes,
         src: dv.src, books: dv.books || 1, disp: dv.disp || 0,
       });
     }
   }
   const seen = new Set();
-  return picks.filter((p) => (seen.has(p.id) ? false : seen.add(p.id)))
-    .sort((a, b) => b.edge - a.edge);
+  const uniq = picks.filter((p) => (seen.has(p.id) ? false : seen.add(p.id))).sort((a, b) => b.edge - a.edge);
+  return { picks: uniq, gamesFound, gamesPriced };
 }
 
 // Combined economics of a parlay. Independence is assumed for the model
@@ -2966,13 +2999,20 @@ function Parlay({ onPick }) {
   const [view, setView] = useState("value"); // value | locks
   const [minEdge, setMinEdge] = useState(3);
 
+  const [scanInfo, setScanInfo] = useState(null);
   async function run() {
     setState("loading"); setErr(null);
     try {
-      const p = await scanEdges();
+      const { picks: p, gamesFound, gamesPriced } = await scanEdges();
       setPicks(p);
+      setScanInfo({ gamesFound, gamesPriced });
       setState("done");
-      if (!p.length) setErr("No game markets with a sportsbook line to compare right now. This scanner covers live and upcoming games (where a de-vigged moneyline exists); try again nearer game time.");
+      if (!p.length) {
+        setErr(gamesFound === 0
+          ? "No open game markets to scan right now — the next slate isn't listed on Kalshi yet. Check back closer to game day."
+          : "Found " + gamesFound + " upcoming game" + (gamesFound === 1 ? "" : "s") + ", but sportsbooks haven't posted lines for " +
+            (gamesPriced === 0 ? "them" : "most") + " yet. Betting lines appear roughly a day before game time — rescan then and picks will fill in.");
+      }
     } catch (e) {
       setErr("Scan failed: " + e.message);
       setState("idle");
@@ -3017,7 +3057,7 @@ function Parlay({ onPick }) {
                 style={{ width: 44, marginLeft: 6, background: "rgba(0,0,0,.22)", border: "1px solid var(--slate-600)", borderRadius: 6, color: "var(--bone)", padding: "2px 6px", fontFamily: "'JetBrains Mono',monospace" }} />c
             </span>
           )}
-          {picks.length ? <span className="chip static">{picks.length} games priced</span> : null}
+          {scanInfo && scanInfo.gamesPriced ? <span className="chip static">{scanInfo.gamesPriced} games priced</span> : null}
         </div>
       </div>
 
