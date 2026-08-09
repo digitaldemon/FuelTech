@@ -84,7 +84,8 @@ export async function POST(req: Request) {
     let ld: Record<string, unknown> = {};
     try { ld = JSON.parse(lu.text); } catch { /* handled below */ }
     const market = (ld.market || ld) as Record<string, unknown>;
-    const ticker = String(market.ticker || "");
+    // Lookup returns { event_ticker, market_ticker } for the combined market.
+    const ticker = String(ld.market_ticker || market.ticker || "");
     if (!ticker) {
       return Response.json({ error: "Lookup returned no combined market.", raw: lu.text.slice(0, 400) }, { status: 502 });
     }
