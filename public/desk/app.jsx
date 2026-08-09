@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-08.parlay-suggested";
+const BUILD = "2026-08-08.pick-a-side";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -793,6 +793,22 @@ function positionAdvice(e, cur, live) {
 }
 
 const ADVICE_COLORS = { HOLD: "var(--moss)", "TAKE PROFIT": "var(--amber)", "SELL NOW": "var(--rose)", "RE-CHECK": "var(--cyan)", SETTLING: "var(--dim)" };
+
+// Translate a BUY YES/NO verdict into the plain side to wager on, naming the
+// actual outcome (and the opponent for a game, when we can find it).
+function betSide(result, market, live) {
+  if (!result || result.call === "PASS") return null;
+  const name = market.name || "this outcome";
+  if (result.side === "YES") return { who: name, plain: "betting " + name + " happens" };
+  let opp = null;
+  if (live && live.sides && live.mySide) {
+    const other = live.sides.find((s) => s.name && s.name !== live.mySide.name);
+    if (other) opp = other.name;
+  }
+  return opp
+    ? { who: opp, plain: "backing " + opp + ", the other side" }
+    : { who: "NOT " + name, plain: "betting " + name + " does not happen" };
+}
 
 // Who's going to win? The live model first, the final score when the game
 // is over, else the market's own price for the named outcome.
@@ -2335,12 +2351,19 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
 
           {result && (
             <>
+              {(() => { const bs = betSide(result, market, live); return (
               <div className="verdict">
                 <div>
-                  <div className="label" style={{ marginBottom: 6 }}>My call</div>
-                  <h2 style={{ color: callColor }}>{result.call}</h2>
+                  <div className="label" style={{ marginBottom: 6 }}>{result.call === "PASS" ? "My call" : "Wager on"}</div>
+                  <h2 style={{ color: callColor }}>{result.call === "PASS" ? "Pass — no bet" : bs.who}</h2>
+                  {result.call !== "PASS" && (
+                    <div className="eyebrow" style={{ marginTop: 6 }}>
+                      = {result.call} at {result.entry.toFixed(0)}c · {bs.plain}
+                    </div>
+                  )}
                 </div>
               </div>
+              ); })()}
 
               <p className="answer">
                 {result.call === "PASS" ? (
@@ -2354,7 +2377,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                   </>
                 ) : (
                   <>
-                    I'd <strong>buy {result.side}</strong>. Filling actually costs about {result.entry.toFixed(0)}c
+                    I'd <strong>bet {betSide(result, market, live).who}</strong>. Filling actually costs about {result.entry.toFixed(0)}c
                     {result.fee > 0.05 ? " plus " + result.fee.toFixed(1) + "c in fees" : ""}, I make that side worth{" "}
                     {(result.side === "YES" ? result.fair : 100 - result.fair).toFixed(0)}c, and the trade survived a final
                     attempt to knock it down — about <strong>{result.netEdge.toFixed(0)}c of value</strong> per contract
@@ -3064,12 +3087,24 @@ function Parlay({ onPick }) {
   const liveCount = useMemo(() => new Set(picks.filter((p) => p.state === "in").map((p) => p.game)).size, [picks]);
 
   const shown = useMemo(() => {
-    const list = picks.slice();
-    // Live games get their own view and always show, edge or not — a fairly
-    // priced in-progress game is exactly what a bettor wants to watch.
-    if (view === "live") return list.filter((p) => p.state === "in").sort((a, b) => b.modelProb - a.modelProb).slice(0, 40);
-    if (view === "value") return list.filter((p) => p.edge >= minEdge).slice(0, 25);
-    return list.filter((p) => p.modelProb >= 70).sort((a, b) => b.modelProb - a.modelProb).slice(0, 25);
+    // One row per game — the single side worth betting — so it's never
+    // ambiguous which way to wager. Value/live rank by edge; favorites by
+    // win probability.
+    const dedupe = (arr, better) => {
+      const byGame = {};
+      arr.forEach((p) => { const k = p.game || p.id; if (!byGame[k] || better(p, byGame[k])) byGame[k] = p; });
+      return Object.values(byGame);
+    };
+    if (view === "live") {
+      return dedupe(picks.filter((p) => p.state === "in"), (p, c) => p.edge > c.edge)
+        .sort((a, b) => b.edge - a.edge).slice(0, 40);
+    }
+    if (view === "value") {
+      return dedupe(picks, (p, c) => p.edge > c.edge).filter((p) => p.edge >= minEdge)
+        .sort((a, b) => b.edge - a.edge).slice(0, 25);
+    }
+    return dedupe(picks, (p, c) => p.modelProb > c.modelProb).filter((p) => p.modelProb >= 70)
+      .sort((a, b) => b.modelProb - a.modelProb).slice(0, 25);
   }, [picks, view, minEdge]);
 
   const pm = parlayMath(slip);
@@ -3136,7 +3171,7 @@ function Parlay({ onPick }) {
             <div key={l.id} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
               <span className="who" style={{ fontSize: 13.5 }}>
                 <a href={l.market.link} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>
-                  {l.market.name === l.market.question ? l.market.question : l.market.name} ↗
+                  <span style={{ color: "var(--moss)" }}>Bet </span>{l.market.name === l.market.question ? l.market.question : l.market.name} ↗
                 </a>
               </span>
               <span className="pts" style={{ fontSize: 14 }}>{l.modelProb.toFixed(0)}% @ {l.entry.toFixed(0)}c</span>
@@ -3179,7 +3214,7 @@ function Parlay({ onPick }) {
             <div key={l.id} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
               <span className="who" style={{ fontSize: 13.5 }}>
                 <a href={l.market.link} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>
-                  {l.market.name === l.market.question ? l.market.question : l.market.name} ↗
+                  <span style={{ color: "var(--moss)" }}>Bet </span>{l.market.name === l.market.question ? l.market.question : l.market.name} ↗
                 </a>
                 {conflicts.has(l.id) && <span className="srcchip bad" style={{ marginLeft: 8 }}>same game</span>}
               </span>
@@ -3237,15 +3272,17 @@ function Parlay({ onPick }) {
           <div key={p.id} className="sel" style={{ cursor: "default", borderColor: inSlip(p.id) ? "var(--amber)" : undefined }}>
             <span style={{ minWidth: 0 }}>
               <a href={p.market.link} target="_blank" rel="noreferrer"
-                style={{ color: "var(--bone)", textDecoration: "none" }}
+                style={{ color: "var(--bone)", textDecoration: "none", fontWeight: 600 }}
                 onMouseOver={(e) => { e.currentTarget.style.color = "var(--cyan)"; }}
                 onMouseOut={(e) => { e.currentTarget.style.color = "var(--bone)"; }}>
+                <span style={{ color: p.edge >= 2 ? "var(--moss)" : "var(--dim)" }}>Bet </span>
                 {p.market.name === p.market.question ? p.market.question : p.market.name} ↗
               </a>
               <span className="sub">
                 {p.state === "in" ? <b style={{ color: "var(--rose)" }}>● LIVE</b> : null}
                 {p.state === "in" ? " " : ""}{p.league} · {p.state === "in" ? "in progress" : p.state === "post" ? "final" : "upcoming"} ·
                 {p.src === "live" ? " live win prob" : " " + (p.books > 1 ? p.books + " books" : "1 book")} {p.modelProb.toFixed(0)}% vs price {p.entry.toFixed(0)}c
+                {p.edge >= 2 ? " · has an edge" : " · fairly priced"}
                 {p.disp > 6 ? " · books split" : ""}
               </span>
             </span>
