@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-09.parlay-aware";
+const BUILD = "2026-08-09.daily-picks";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -1852,7 +1852,7 @@ function guessCategory(text) {
 
 /* ================= app ================= */
 function App() {
-  const [tab, setTab] = useState("analyze");
+  const [tab, setTab] = useState("picks");
   const [fw, setFw] = useState(buildFrameworks);
   const [ledger, setLedger] = useState([]);
 
@@ -1930,11 +1930,12 @@ function App() {
         </header>
 
         <nav className="tabs">
-          {[["analyze", "Analyze a market"], ["parlay", "Parlays"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "How I'm doing"]].map(([k, l]) => (
+          {[["picks", "Today's picks"], ["analyze", "Analyze a market"], ["parlay", "Parlays"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "How I'm doing"]].map(([k, l]) => (
             <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
           ))}
         </nav>
 
+        {tab === "picks" && <Picks ledger={ledger} onPick={(m) => { setPending(m); setTab("analyze"); }} />}
         {tab === "analyze" && <Analyze fw={fw} onSave={saveEntry} pending={pending} clearPending={() => setPending(null)} ledger={ledger} />}
         {tab === "parlay" && <Parlay onPick={(m) => { setPending(m); setTab("analyze"); }} />}
         {tab === "positions" && <Positions ledger={ledger} save={saveEntry} reopen={reopen} reload={reloadLedger} />}
@@ -1948,7 +1949,7 @@ function App() {
           priced about right, so a big gap usually means I'm missing a fact rather than that you've found free money.
           The decisions are yours.
         </p>
-        <p className="foot" style={{ opacity: .5, marginTop: 8 }}>Build {BUILD} · 5 tabs incl. Parlays</p>
+        <p className="foot" style={{ opacity: .5, marginTop: 8 }}>Build {BUILD} · Today&apos;s picks first</p>
       </div>
     </div>
   );
@@ -3798,6 +3799,141 @@ function dateLabel(d) {
   if (iso === tmrw) return "Tomorrow";
   try { return new Date(iso + "T12:00:00Z").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }); }
   catch { return iso; }
+}
+
+/* ---------------- Today's picks ----------------
+   The landing board: every live, today's, and upcoming game with the side
+   worth picking — books-consensus true odds, net edge after fees, the
+   scanner's decision, and the full-analysis verdict when one exists. Free
+   to refresh; deep dive hands the market to the Analyze pipeline. */
+function Picks({ ledger, onPick }) {
+  const [picks, setPicks] = useState([]);
+  const [state, setState] = useState("idle");
+  const [err, setErr] = useState(null);
+  const [scanInfo, setScanInfo] = useState(null);
+  const anyLive = useRef(false);
+
+  async function run() {
+    setState("loading"); setErr(null);
+    try {
+      const { picks: p, gamesFound, gamesPriced } = await scanEdges();
+      setPicks(p); setScanInfo({ gamesFound, gamesPriced }); setState("done");
+      anyLive.current = p.some((x) => x.state === "in");
+      if (!p.length) {
+        setErr(gamesFound === 0
+          ? "No open game markets right now — the next slate isn't listed on Kalshi yet."
+          : "Found " + gamesFound + " games, but books haven't posted lines yet. Picks fill in about a day before game time.");
+      }
+    } catch (e) { setErr("Scan failed: " + e.message); setState("idle"); }
+  }
+  // Auto-refresh: every minute while games are live, every 4 minutes
+  // otherwise (the odds feed caches, so this costs almost nothing).
+  useEffect(() => {
+    let alive = true, timer = null;
+    const loop = async () => {
+      await run();
+      if (!alive) return;
+      timer = setTimeout(loop, anyLive.current ? 60000 : 240000);
+    };
+    loop();
+    return () => { alive = false; if (timer) clearTimeout(timer); };
+  }, []);
+
+  const net = (x) => x.edge - (x.fee || 0);
+  const groups = useMemo(() => {
+    // One row per game: the single best side by net edge.
+    const byGame = {};
+    picks.forEach((p) => {
+      const k = p.game || p.id;
+      if (!byGame[k] || net(p) > net(byGame[k])) byGame[k] = p;
+    });
+    const rows = Object.values(byGame);
+    const todayEt = etDate().replace(/-/g, "");
+    const g = { live: [], today: [], soon: [] };
+    rows.forEach((p) => {
+      const d = tickerDate(p.market.id);
+      if (p.state === "in") g.live.push(p);
+      else if (d === todayEt) g.today.push(p);
+      else g.soon.push(p);
+    });
+    g.live.sort((a, b) => net(b) - net(a));
+    g.today.sort((a, b) => net(b) - net(a));
+    g.soon.sort((a, b) => ((tickerDate(a.market.id) || "").localeCompare(tickerDate(b.market.id) || "")) || net(b) - net(a));
+    return g;
+  }, [picks]);
+
+  const analysisFor = (p) => (ledger || []).find((x) =>
+    x.venue === "Kalshi" && x.marketId === p.id && x.call && x.call !== "SYNCED") || null;
+  const bets = [...groups.live, ...groups.today].filter((p) => pickDecision(p).bet);
+
+  const row = (p) => {
+    const dec = pickDecision(p);
+    const an = analysisFor(p);
+    const n = net(p);
+    return (
+      <div key={p.id} className="sel" style={{ cursor: "default", borderColor: dec.tag === "STRONG BET" ? "rgba(127,185,139,.55)" : undefined }}>
+        <span style={{ minWidth: 0 }}>
+          <span style={{ fontWeight: 600 }}>
+            {dec.bet ? <span style={{ color: dec.color }}>Pick: </span> : <span style={{ color: "var(--dim)" }}>Skip: </span>}
+            {p.market.name === p.market.question ? p.market.question : p.market.name}
+          </span>
+          <span className="sub">
+            {p.state === "in" ? <b style={{ color: "var(--rose)" }}>● LIVE </b> : null}
+            {p.league} · {p.game} · true odds {p.modelProb.toFixed(0)}% ({p.src === "live" ? "live model"
+              : p.src === "live-books" ? "in-play books"
+              : p.src === "pregame-line" ? "stale pregame line"
+              : p.src === "model" ? "model projection"
+              : p.books + " book" + (p.books === 1 ? "" : "s")}) · costs {p.entry.toFixed(0)}c
+            {an && <span style={{ color: an.call.indexOf("BUY") === 0 ? "var(--amber)" : "var(--dim)" }}>
+              {" · full analysis: " + an.call + (an.confidence ? " (" + an.confidence.toLowerCase() + ")" : "")}</span>}
+          </span>
+        </span>
+        <span style={{ display: "flex", gap: 10, alignItems: "center", flex: "0 0 auto" }}>
+          <span className="sig" style={{ color: dec.color, borderColor: dec.color }}>
+            {dec.tag}{dec.bet ? " · " + (n > 0 ? "+" : "") + n.toFixed(0) + "c net" : ""}
+          </span>
+          <button className="chip" onClick={() => onPick(p.market)} title="Run every check on this pick">deep dive</button>
+          <a className="chip" href={p.market.link} target="_blank" rel="noreferrer">open ↗</a>
+        </span>
+      </div>
+    );
+  };
+
+  const section = (title, arr, color) => arr.length > 0 && (
+    <div className="panel">
+      <p className="sect" style={{ margin: 0, color }}>{title} ({arr.length})</p>
+      <div style={{ marginTop: 6 }}>{arr.map(row)}</div>
+    </div>
+  );
+
+  return (
+    <>
+      <div className="panel">
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
+          <p className="sect" style={{ margin: 0 }}>Today's picks</p>
+          <button className="btn btn-ghost btn-sm" onClick={run} disabled={state === "loading"}>
+            {state === "loading" ? "Scanning" : "Rescan"}
+          </button>
+        </div>
+        <p className="help" style={{ marginTop: 6 }}>
+          Every game on the board, one line each: the side worth picking by the de-vigged book consensus and live
+          models, net of fees. <b>{bets.length ? bets.length + " pick" + (bets.length === 1 ? "" : "s") + " clear the bar today." : "No picks clear the bar right now — most games are priced fairly."}</b>{" "}
+          Deep dive runs all nine checks on any of them.
+        </p>
+        {scanInfo && (
+          <div className="chips" style={{ marginTop: 8 }}>
+            <span className="chip static">{scanInfo.gamesPriced} of {scanInfo.gamesFound} games priced</span>
+            {oddsQuota && <span className="chip static">odds feed · {oddsQuota.remaining} credits</span>}
+          </div>
+        )}
+        {state === "loading" && picks.length === 0 && <p className="pwait" style={{ marginTop: 10 }}><span className="dots">pricing every game on the board</span></p>}
+        {err && <p className="help" style={{ marginTop: 10, color: "var(--rose)" }}>{err}</p>}
+      </div>
+      {section("● Live now", groups.live, "var(--rose)")}
+      {section("Today", groups.today, undefined)}
+      {section("Coming up", groups.soon, "var(--dim)")}
+    </>
+  );
 }
 
 function Parlay({ onPick }) {
