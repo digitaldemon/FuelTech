@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-08.parlay-links";
+const BUILD = "2026-08-08.parlay-live";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -3019,13 +3019,23 @@ function Parlay({ onPick }) {
     }
   }
   useEffect(() => { run(); }, []);
+  // If a scan turns up live games, jump to that view — it's what you came for.
+  const jumped = useRef(false);
+  useEffect(() => {
+    if (!jumped.current && picks.some((p) => p.state === "in")) { jumped.current = true; setView("live"); }
+  }, [picks]);
 
   const inSlip = (id) => slip.some((l) => l.id === id);
   const toggle = (p) => setSlip((s) => inSlip(p.id) ? s.filter((l) => l.id !== p.id)
     : s.length >= 8 ? s : [...s, { id: p.id, market: p.market, modelProb: p.modelProb, entry: p.entry, codes: p.codes, game: p.game }]);
 
+  const liveCount = useMemo(() => new Set(picks.filter((p) => p.state === "in").map((p) => p.game)).size, [picks]);
+
   const shown = useMemo(() => {
     const list = picks.slice();
+    // Live games get their own view and always show, edge or not — a fairly
+    // priced in-progress game is exactly what a bettor wants to watch.
+    if (view === "live") return list.filter((p) => p.state === "in").sort((a, b) => b.modelProb - a.modelProb).slice(0, 40);
     if (view === "value") return list.filter((p) => p.edge >= minEdge).slice(0, 25);
     return list.filter((p) => p.modelProb >= 70).sort((a, b) => b.modelProb - a.modelProb).slice(0, 25);
   }, [picks, view, minEdge]);
@@ -3048,6 +3058,12 @@ function Parlay({ onPick }) {
           This scan costs nothing.
         </p>
         <div className="chips" style={{ marginTop: 12 }}>
+          {liveCount > 0 && (
+            <button className={"chip" + (view === "live" ? " on" : "")} onClick={() => setView("live")}
+              style={{ borderColor: "rgba(228,112,126,.6)", color: view === "live" ? undefined : "var(--rose)" }}>
+              ● Live now ({liveCount})
+            </button>
+          )}
           <button className={"chip" + (view === "value" ? " on" : "")} onClick={() => setView("value")}>Best value (edge)</button>
           <button className={"chip" + (view === "locks" ? " on" : "")} onClick={() => setView("locks")}>Strongest favorites</button>
           {view === "value" && (
@@ -3119,7 +3135,8 @@ function Parlay({ onPick }) {
         {state === "loading" && <p className="pwait"><span className="dots">pricing every game against the book</span></p>}
         {state === "done" && shown.length === 0 && !err && (
           <p className="thesis" style={{ color: "var(--dim)" }}>
-            {view === "value" ? "No games clear a " + minEdge + "c edge right now. Lower the threshold or check the favorites view."
+            {view === "live" ? "No games are in progress right now."
+              : view === "value" ? "No games clear a " + minEdge + "c edge right now. Lower the threshold or check the favorites view."
               : "No strong favorites priced right now."}
           </p>
         )}
@@ -3133,7 +3150,8 @@ function Parlay({ onPick }) {
                 {p.market.name === p.market.question ? p.market.question : p.market.name} ↗
               </a>
               <span className="sub">
-                {p.league} · {p.state === "in" ? "live" : p.state === "post" ? "final" : "upcoming"} ·
+                {p.state === "in" ? <b style={{ color: "var(--rose)" }}>● LIVE</b> : null}
+                {p.state === "in" ? " " : ""}{p.league} · {p.state === "in" ? "in progress" : p.state === "post" ? "final" : "upcoming"} ·
                 {p.src === "live" ? " live win prob" : " " + (p.books > 1 ? p.books + " books" : "1 book")} {p.modelProb.toFixed(0)}% vs price {p.entry.toFixed(0)}c
                 {p.disp > 6 ? " · books split" : ""}
               </span>
