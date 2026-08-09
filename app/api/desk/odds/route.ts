@@ -11,10 +11,27 @@ const BASE = "https://api.the-odds-api.com/v4";
 
 type OddsCfg = { apiKey: string; regions?: string; markets?: string };
 
-// sport key -> { at, body } ; the sports list caches under "__list".
-const cache = new Map<string, { at: number; body: unknown; remaining: string | null; used: string | null }>();
-const ODDS_TTL = 270 * 1000;   // odds refresh at most every 4.5 minutes
-const LIST_TTL = 3600 * 1000;  // the sports list is free but changes rarely
+// Cache entries persist in Postgres (desk_store) so they survive serverless
+// cold starts and page reloads — module memory alone reset on every new
+// instance, which burned a full-price sweep on each app open. The in-memory
+// map is only a fast path within a warm instance.
+type CacheEntry = { at: number; body: unknown; remaining: string | null; used: string | null };
+const cache = new Map<string, CacheEntry>();
+const LIVE_TTL = 240 * 1000;    // games in progress: refresh every 4 minutes
+const IDLE_TTL = 900 * 1000;    // pregame: 15 minutes is plenty for lines
+const LIST_TTL = 3600 * 1000;   // the sports list is free but changes rarely
+
+async function readCache(sport: string): Promise<CacheEntry | null> {
+  const hit = cache.get(sport);
+  if (hit) return hit;
+  const row = await readStore<CacheEntry | null>("odds_cache_" + sport, null);
+  if (row && row.at) cache.set(sport, row);
+  return row;
+}
+async function writeCache(sport: string, entry: CacheEntry) {
+  cache.set(sport, entry);
+  try { await writeStore("odds_cache_" + sport, entry); } catch { /* memory still works */ }
+}
 
 async function getCfg(): Promise<OddsCfg | null> {
   const stored = await readStore<OddsCfg | null>("odds_api", null);
@@ -65,13 +82,17 @@ export async function GET(req: Request) {
   const cfg = await getCfg();
   if (!cfg) return Response.json({ configured: false });
 
-  const sport = new URL(req.url).searchParams.get("sport");
+  const u = new URL(req.url);
+  const sport = u.searchParams.get("sport");
   if (!sport || !/^[a-z0-9_]+$/.test(sport)) {
     return Response.json({ error: "sport query param required" }, { status: 400 });
   }
+  // The client says whether this sport has a game in progress — live odds
+  // need to be fresher than pregame lines, which barely move.
+  const ttl = u.searchParams.get("live") ? LIVE_TTL : IDLE_TTL;
 
-  const hit = cache.get(sport);
-  if (hit && Date.now() - hit.at < ODDS_TTL) {
+  const hit = await readCache(sport);
+  if (hit && Date.now() - hit.at < ttl) {
     return Response.json({ configured: true, events: hit.body, remaining: hit.remaining, used: hit.used, cached: true });
   }
 
@@ -87,7 +108,7 @@ export async function GET(req: Request) {
       events.push(...(Array.isArray(got.body) ? got.body : []));
       remaining = got.remaining; used = got.used;
     }
-    cache.set(sport, { at: Date.now(), body: events, remaining, used });
+    await writeCache(sport, { at: Date.now(), body: events, remaining, used });
     return Response.json({ configured: true, events, remaining, used });
   } catch (e) {
     const err = e as Error & { remaining?: string | null };
@@ -107,7 +128,8 @@ export async function POST(req: Request) {
   if (!b || !b.apiKey || !/^[a-f0-9]{16,64}$/i.test(b.apiKey.trim())) {
     return Response.json({ error: "apiKey (hex string) is required." }, { status: 400 });
   }
-  await writeStore("odds_api", { apiKey: b.apiKey.trim(), regions: b.regions || "us,eu" });
+  await writeStore("odds_api", { apiKey: b.apiKey.trim(), regions: b.regions || "us,eu",
+    markets: b.markets || "h2h,totals,spreads" });
   cache.clear();
   return Response.json({ ok: true });
 }

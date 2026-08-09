@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-09.live-deciders";
+const BUILD = "2026-08-10.credit-guard";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -1212,13 +1212,16 @@ let oddsQuota = null;                 // {remaining, at} for the UI chip
 let oddsOffUntil = 0;                 // back off when no key is configured
 const oddsSportCache = new Map();     // sport -> {at, events}
 
-async function fetchOddsEvents(path) {
+// `live` = this sport has a game in progress right now. Live odds refresh
+// every ~4 minutes; pregame lines every ~15 — they barely move, and every
+// upstream request costs real API credits.
+async function fetchOddsEvents(path, live) {
   const sport = ODDS_SPORT[path];
   if (!sport || Date.now() < oddsOffUntil) return null;
   const hit = oddsSportCache.get(sport);
-  if (hit && Date.now() - hit.at < 4 * 60 * 1000) return hit.events;
+  if (hit && Date.now() - hit.at < (live ? 4 : 15) * 60 * 1000) return hit.events;
   try {
-    const r = await fetch("/api/desk/odds?sport=" + sport);
+    const r = await fetch("/api/desk/odds?sport=" + sport + (live ? "&live=1" : ""));
     if (!r.ok) { oddsSportCache.set(sport, { at: Date.now(), events: null }); return null; }
     const d = await r.json();
     if (d.configured === false) { oddsOffUntil = Date.now() + 10 * 60 * 1000; return null; }
@@ -1312,8 +1315,8 @@ function matchOddsEvent(events, nameText, dateStr) {
   return bestS >= 0.5 ? best : null;
 }
 
-async function oddsConsensusFor(path, nameText, dateStr) {
-  const events = await fetchOddsEvents(path);
+async function oddsConsensusFor(path, nameText, dateStr, live) {
+  const events = await fetchOddsEvents(path, live);
   const ev = matchOddsEvent(events, nameText, dateStr);
   return ev ? oddsEventConsensus(ev) : null;
 }
@@ -1527,7 +1530,8 @@ async function fetchLive(m) {
   let oddsBook = null;
   try {
     oddsBook = await oddsConsensusFor(lg.path,
-      (espn && espn.name) || sides.map((sd) => sd.name).join(" "), tickerDate(m.id));
+      (espn && espn.name) || sides.map((sd) => sd.name).join(" "),
+      tickerDate(m.id), primary.state === "in");
   } catch { /* optional signal */ }
 
   return {
@@ -1870,10 +1874,10 @@ Return ONLY this JSON:
 {"fairValue":<0-100>,"confidence":"LOW|MEDIUM|HIGH","thesis":"<2-3 sentences>","drivers":["<3-4 findings that moved the estimate most>"],"risks":["<2-3 things that would break this call>"],"resolution":"<1 sentence on any resolution-criteria subtlety>"}`;
 }
 
-function verifyPrompt(m, side, entry, fairSide, thesis, live) {
+function verifyPrompt(m, side, entry, fairSide, thesis, live, audit) {
   return `Today is ${today()}. You are the final check before real money goes down on a ${m.venue} contract.
 
-${ctx(m)}${live || ""}
+${ctx(m)}${audit ? "\nRESOLUTION AUDIT (what actually settles this): " + audit : ""}${live || ""}
 
 The desk wants to BUY ${side} at ${entry.toFixed(1)}c, believing that side is worth ${fairSide.toFixed(1)}c. Its thesis: ${thesis}
 
@@ -2471,7 +2475,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
       if (call !== "PASS") {
         setPhase("verifying");
         try {
-          const vr = await callClaude(verifyPrompt(m, side, entry, fairSide, j.thesis || "", liveNow()), { search: true, maxTokens: 1200 });
+          const vr = await callClaude(verifyPrompt(m, side, entry, fairSide, j.thesis || "", liveNow(), auditLine), { search: true, maxTokens: 1200 });
           if (id !== runId.current) return;
           (vr.sources || []).forEach((s) => allSources.push(s));
           verify = extractJson(vr.text);
@@ -3739,9 +3743,13 @@ async function scanEdges() {
     const seenG = new Set();
     matched.forEach(({ g }) => { if (!seenG.has(g.eventId)) { seenG.add(g.eventId); distinct.push(g); } });
     gamesFound += distinct.length;
-    // One Odds API request per sport (cached server + client side); each
-    // game gets its matched event's consensus alongside the ESPN read.
-    const oddsEvents = await fetchOddsEvents(path);
+    // One Odds API request per sport, and only when a slate is imminent —
+    // books rarely post lines more than a day out, so asking for a slate
+    // 3+ days away burns credits for nothing.
+    const anyLiveGame = distinct.some((g) => g.state === "in");
+    const soonCut = Number(etDate(Date.now() + 36 * 3600 * 1000).replace(/-/g, ""));
+    const imminent = anyLiveGame || distinct.some((g) => g.date && Number(g.date) <= soonCut);
+    const oddsEvents = imminent ? await fetchOddsEvents(path, anyLiveGame) : null;
     const devigs = await mapLimit(distinct, 6, (g) => {
       const ev = matchOddsEvent(oddsEvents, g.name, g.date);
       return espnDevig(g, ev ? oddsEventConsensus(ev) : null);
