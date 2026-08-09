@@ -1,6 +1,9 @@
 /* global React, ReactDOM */
 const { useState, useRef, useEffect, useMemo } = React;
 
+// Bump on every meaningful ship so a stale cache is obvious at a glance.
+const BUILD = "2026-08-08.parlay+shin";
+
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
 const px = (u) => "/api/desk/proxy?url=" + encodeURIComponent(u);
@@ -1563,6 +1566,7 @@ function App() {
           priced about right, so a big gap usually means I'm missing a fact rather than that you've found free money.
           The decisions are yours.
         </p>
+        <p className="foot" style={{ opacity: .5, marginTop: 8 }}>Build {BUILD} · 5 tabs incl. Parlays</p>
       </div>
     </div>
   );
