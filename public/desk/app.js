@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.parlay-odds";
+const BUILD = "2026-08-10.record-labels";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5399,7 +5399,7 @@ function Picks({
         borderColor: "rgba(127,185,139,.45)"
       },
       title: "Every pregame winner call this board makes is logged and graded when the game ends"
-    }, "Winner record: ", wins, "-", scored.length - wins, " (", Math.round(wins / scored.length * 100), "%)"), pending > 0 && /*#__PURE__*/React.createElement("span", {
+    }, "Board's calls: ", wins, "-", scored.length - wins, " (", Math.round(wins / scored.length * 100), "%)"), pending > 0 && /*#__PURE__*/React.createElement("span", {
       className: "chip static",
       title: "Logged pregame calls waiting for their games to finish \u2014 they grade automatically"
     }, pending, " pick", pending === 1 ? "" : "s", " awaiting results"), strong.length > 0 && /*#__PURE__*/React.createElement("span", {
@@ -5436,7 +5436,7 @@ function Picks({
   }, /*#__PURE__*/React.createElement("details", {
     className: "fold",
     open: true
-  }, /*#__PURE__*/React.createElement("summary", null, "Recent graded picks \u2014 how the board's calls turned out"), record.filter(r => r.result === "won" || r.result === "lost").slice(0, 12).map(r => /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("summary", null, "The board's call record \u2014 every pregame pick it made, graded (this is the app's record, not your bets \u2014 those live in My trades)"), record.filter(r => r.result === "won" || r.result === "lost").slice(0, 12).map(r => /*#__PURE__*/React.createElement("div", {
     key: r.id,
     className: "score-row",
     style: {

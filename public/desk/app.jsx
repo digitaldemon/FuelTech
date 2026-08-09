@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.parlay-odds";
+const BUILD = "2026-08-10.record-labels";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -4248,7 +4248,7 @@ function Picks({ ledger, onPick }) {
                 <span className="chip static" style={{ color: wins * 2 >= scored.length ? "var(--moss)" : "var(--rose)",
                   borderColor: "rgba(127,185,139,.45)" }}
                   title="Every pregame winner call this board makes is logged and graded when the game ends">
-                  Winner record: {wins}-{scored.length - wins} ({Math.round((wins / scored.length) * 100)}%)
+                  Board's calls: {wins}-{scored.length - wins} ({Math.round((wins / scored.length) * 100)}%)
                 </span>
               )}
               {pending > 0 && (
@@ -4278,7 +4278,7 @@ function Picks({ ledger, onPick }) {
       {record && record.some((r) => r.result === "won" || r.result === "lost") && (
         <div className="panel">
           <details className="fold" open>
-            <summary>Recent graded picks — how the board's calls turned out</summary>
+            <summary>The board's call record — every pregame pick it made, graded (this is the app's record, not your bets — those live in My trades)</summary>
             {record.filter((r) => r.result === "won" || r.result === "lost").slice(0, 12).map((r) => (
               <div key={r.id} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
                 <span className="who" style={{ fontSize: 13 }}>
