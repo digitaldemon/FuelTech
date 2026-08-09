@@ -16,7 +16,10 @@ function slice(startMarker, endMarker) {
 
 const code = [
   "const clamp = (n,a,b) => Math.max(a, Math.min(b, n));",
+  slice("const etDate =", "});"),
+  slice("const STOP = new Set(", "\n}"), // STOP + toks + overlap
   slice("const takerFee =", ": 0;"),
+  slice("function matchOddsEvent(", "\n}"),
   slice("function positionAdvice(", "\n}"),
   slice("function mlImplied(", "\n}"),
   slice("function shinDevig(", "\n}"),
@@ -31,8 +34,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -52,8 +55,11 @@ ok(mlb && mlb.label === "MLB", "single-sport text still maps (MLB)");
 // Team-code extraction and matching
 const codes = teamCodes("KXMLBGAME-26AUG09SEATEX-SEA");
 ok(codes[0] === "SEA" && codes.includes("TEX"), "teamCodes: own side first + both teams (" + codes.join(",") + ")");
+const oddCodes = teamCodes("KXWNBAGAME-26AUG11PHXLA-LA");
+ok(oddCodes[0] === "LA" && oddCodes.includes("PHX"), "teamCodes: uneven pair PHX+LA extracted (" + oddCodes.join(",") + ")");
 ok(codeHit(["SEA", "TEX"], ["SEA", "TEX"]) === 2, "codeHit exact pair scores 2");
-ok(codeHit(["NY"], ["NYY"]) === 0, "2-char prefix no longer pairs the wrong team (NY vs NYY)");
+ok(codeHit(["NY"], ["NYY", "NYM"]) === 0, "short code matching BOTH teams of a game scores nothing (NY vs NYY+NYM)");
+ok(codeHit(["LA"], ["LAS", "PHX"]) === 0.6, "short code matching exactly one team still pairs (LA vs LAS)");
 ok(codeHit(["KC"], ["KC"]) === 1, "2-char exact still pairs (KC)");
 
 // De-vig math
@@ -83,6 +89,16 @@ ok(Math.abs(takerFee("Kalshi", 50) - 1.75) < 1e-9 && takerFee("Polymarket", 50) 
 
 // Ticker date
 ok(tickerDate("KXNFLGAME-26SEP07DALPHI-DAL") === "20260907", "tickerDate parses game date");
+
+// Odds event matching: both teams must be present in the game name
+const oddsEvents = [
+  { home_team: 'New York Liberty', away_team: 'Las Vegas Aces', commence_time: '2026-08-10T23:00:00Z' },
+  { home_team: 'Los Angeles Sparks', away_team: 'Phoenix Mercury', commence_time: '2026-08-12T02:00:00Z' },
+];
+ok(matchOddsEvent(oddsEvents, 'Las Vegas Aces at New York Liberty') === oddsEvents[0], 'matches the right event');
+ok(matchOddsEvent(oddsEvents, 'New York Liberty at Indiana Fever') === null,
+  'game missing from the odds list does NOT borrow a sibling event sharing one team');
+ok(matchOddsEvent(oddsEvents, 'Phoenix Mercury at Los Angeles Sparks', '20260811') === oddsEvents[1], 'date bonus still finds the right ET-dated event');
 
 // Position advice: hold / buy more / sell off a live independent read
 const pos = (over) => Object.assign({

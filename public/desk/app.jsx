@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-09.odds-feed-realtime";
+const BUILD = "2026-08-09.matching-verified";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -979,27 +979,28 @@ function teamCodes(ticker) {
     if (!mt) continue;
     const run = mt[1];
     if (run.length <= 4) push(run);
-    if (run.length >= 4 && run.length % 2 === 0) {
-      push(run.slice(0, run.length / 2));
-      push(run.slice(run.length / 2));
+    // The event segment glues both team codes together, and they're NOT
+    // always the same length (PHXLA = PHX + LA). Offer every split whose
+    // halves look like team codes; exact-match scoring sorts out the junk.
+    if (run.length >= 4) {
+      for (let k = 2; k <= run.length - 2; k++) {
+        if (k <= 4 && run.length - k <= 4) { push(run.slice(0, k)); push(run.slice(k)); }
+      }
     }
   }
   return out;
 }
 
-// Exact abbreviation matches score full weight; prefix overlaps (different
-// feeds abbreviate differently) score partial, and only when one side is at
-// least 3 characters — two-letter prefixes pair up the wrong teams.
+// Exact abbreviation matches score full weight. Prefix overlaps (different
+// feeds abbreviate differently: LA vs LAS) score partial — but only when
+// exactly ONE of the game's abbreviations matches, so a short code like NY
+// can't pair with either New York team of a Yankees-Mets game.
 const codeHit = (codes, abbrs) => {
   let s = 0;
   for (const c of codes) {
-    let best = 0;
-    for (const a of abbrs) {
-      if (!a) continue;
-      if (a === c) { best = 1; break; }
-      if ((a.length >= 3 && c.length >= 3) && (a.startsWith(c) || c.startsWith(a))) best = Math.max(best, 0.6);
-    }
-    s += best;
+    if (abbrs.some((a) => a === c)) { s += 1; continue; }
+    const pref = abbrs.filter((a) => a && (a.startsWith(c) || c.startsWith(a)));
+    if (pref.length === 1) s += 0.6;
   }
   return s;
 };
@@ -1092,20 +1093,34 @@ function oddsEventConsensus(ev) {
   return { home, away, draw, books: books.length, disp, updated };
 }
 
-// Find this game among the sport's events by team/player name overlap.
-function matchOddsEvent(events, nameText) {
+// Find this game among the sport's events. BOTH competitors must appear in
+// the game's name — plain overlap let a game whose own event wasn't quoted
+// yet borrow a sibling event that shares one team (NY at IND stealing
+// LV at NY's odds). A same-slate-date event wins ties between rematches.
+function matchOddsEvent(events, nameText, dateStr) {
   if (!events || !events.length || !nameText) return null;
+  const nt = toks(nameText);
+  const teamPresent = (team) => {
+    let hit = 0;
+    toks(team).forEach((t) => { if (nt.has(t)) hit++; });
+    return hit >= 1;
+  };
   let best = null, bestS = 0;
   events.forEach((ev) => {
-    const s = overlap(nameText, (ev.home_team || "") + " " + (ev.away_team || ""));
+    if (!teamPresent(ev.home_team || "") || !teamPresent(ev.away_team || "")) return;
+    let s = overlap(nameText, (ev.home_team || "") + " " + (ev.away_team || ""));
+    if (dateStr && ev.commence_time) {
+      const d = Date.parse(ev.commence_time);
+      if (Number.isFinite(d) && etDate(d).replace(/-/g, "") === String(dateStr)) s += 0.5;
+    }
     if (s > bestS) { bestS = s; best = ev; }
   });
   return bestS >= 0.5 ? best : null;
 }
 
-async function oddsConsensusFor(path, nameText) {
+async function oddsConsensusFor(path, nameText, dateStr) {
   const events = await fetchOddsEvents(path);
-  const ev = matchOddsEvent(events, nameText);
+  const ev = matchOddsEvent(events, nameText, dateStr);
   return ev ? oddsEventConsensus(ev) : null;
 }
 
@@ -1313,7 +1328,7 @@ async function fetchLive(m) {
   let oddsBook = null;
   try {
     oddsBook = await oddsConsensusFor(lg.path,
-      (espn && espn.name) || sides.map((sd) => sd.name).join(" "));
+      (espn && espn.name) || sides.map((sd) => sd.name).join(" "), tickerDate(m.id));
   } catch { /* optional signal */ }
 
   return {
@@ -3174,7 +3189,7 @@ async function espnGamesForLeague(path, date) {
     const home = comps.find((c) => c.homeAway === "home");
     const away = comps.find((c) => c.homeAway === "away");
     return {
-      eventId: ev.id, path, abbrs: comps.map(competitorAbbr),
+      eventId: ev.id, path, date: date || null, abbrs: comps.map(competitorAbbr),
       homeAbbr: home ? competitorAbbr(home) : null, awayAbbr: away ? competitorAbbr(away) : null,
       state: (ev.status && ev.status.type && ev.status.type.state) || "pre",
       name: ev.name || ev.shortName || "",
@@ -3277,9 +3292,14 @@ async function scanEdges() {
     if (!gs.length) continue;
 
     const matched = [];
-    for (const { m, codes } of dated) {
+    for (const { m, codes, date } of dated) {
+      // Teams play back-to-back: the codes match every meeting, so the
+      // game from the market's own slate date must win the tie.
       let best = null, bestS = 0;
-      gs.forEach((g) => { const s = codeHit(codes, g.abbrs); if (s > bestS) { bestS = s; best = g; } });
+      gs.forEach((g) => {
+        const s = codeHit(codes, g.abbrs) + (date && g.date === date ? 0.5 : 0);
+        if (s > bestS) { bestS = s; best = g; }
+      });
       if (best && bestS >= 1) matched.push({ m, g: best, codes });
     }
     if (!matched.length) continue;
@@ -3292,7 +3312,7 @@ async function scanEdges() {
     // game gets its matched event's consensus alongside the ESPN read.
     const oddsEvents = await fetchOddsEvents(path);
     const devigs = await mapLimit(distinct, 6, (g) => {
-      const ev = matchOddsEvent(oddsEvents, g.name);
+      const ev = matchOddsEvent(oddsEvents, g.name, g.date);
       return espnDevig(g, ev ? oddsEventConsensus(ev) : null);
     });
     const gmap = {};
