@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-08.kalshi-parlay";
+const BUILD = "2026-08-08.live-accuracy";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -1878,12 +1878,19 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
         anchorByN[99] = { n: 99, enabled: true, weight: 1.5 };
         signals.push({ label: "Live win prob", prob: lNow.impliedCents });
       }
+      // The sportsbook line only feeds the anchor when it's current — i.e.
+      // pregame, or live when we have no live win-probability. Once a live
+      // model exists, the frozen pregame line is stale and would drag the
+      // estimate backward, so it's dropped.
+      const liveWinPresent = !!(lNow && lNow.impliedCents != null && lNow.state === "in" && !lNow.disagree);
       let bookProb = null;
-      if (lNow && lNow.bookProb && lNow.mySide) {
-        bookProb = lNow.mySide.home ? lNow.bookProb.home : lNow.bookProb.away;
-      } else if (lNow && lNow.odds && lNow.mySide && lNow.odds.homeML != null && lNow.odds.awayML != null) {
-        const nv = noVigMoneyline(lNow.odds.homeML, lNow.odds.awayML);
-        if (nv) bookProb = lNow.mySide.home ? nv.home : nv.away;
+      if (!liveWinPresent) {
+        if (lNow && lNow.bookProb && lNow.mySide) {
+          bookProb = lNow.mySide.home ? lNow.bookProb.home : lNow.bookProb.away;
+        } else if (lNow && lNow.odds && lNow.mySide && lNow.odds.homeML != null && lNow.odds.awayML != null) {
+          const nv = noVigMoneyline(lNow.odds.homeML, lNow.odds.awayML);
+          if (nv) bookProb = lNow.mySide.home ? nv.home : nv.away;
+        }
       }
       if (bookProb != null) {
         anchorInputs[98] = { n: 98, strength: 3, implied: clamp(bookProb, 1, 99) };
@@ -2895,9 +2902,21 @@ async function espnGamesForLeague(path, date) {
   });
 }
 
-// Best available probability for one game. In progress: the live win-
-// probability model (more current than any pregame line). Otherwise: the
-// Shin-de-vigged consensus across every book ESPN lists.
+// Build a probByAbbr object from a home-team win percentage.
+function homeProbObj(home, game, extra) {
+  const probByAbbr = {};
+  if (game.homeAbbr) probByAbbr[game.homeAbbr] = clamp(home, 0.5, 99.5);
+  if (game.awayAbbr) probByAbbr[game.awayAbbr] = clamp(100 - home, 0.5, 99.5);
+  return { probByAbbr, home, away: 100 - home, books: 1, disp: 0, ...extra };
+}
+
+// Best available probability for one game, honest about its source.
+//  • In progress: the live win-probability model — NOT blended with the
+//    frozen pregame line, which would drag a live read back toward stale.
+//    Sports with no live model (tennis/soccer/UFC) fall back to the line
+//    but flag it stale so it isn't trusted as a true live read.
+//  • Upcoming: Shin-de-vigged consensus across every book, falling back to
+//    ESPN's own matchup projection when no line is posted yet.
 async function espnDevig(game) {
   try {
     const sm = await getJson("https://site.api.espn.com/apis/site/v2/sports/" + game.path + "/summary?event=" + game.eventId);
@@ -2905,17 +2924,18 @@ async function espnDevig(game) {
     if (game.state === "in") {
       const wp = sm.winprobability;
       if (Array.isArray(wp) && wp.length && wp[wp.length - 1].homeWinPercentage != null) {
-        const home = Number(wp[wp.length - 1].homeWinPercentage) * 100;
-        const probByAbbr = {};
-        if (game.homeAbbr) probByAbbr[game.homeAbbr] = home;
-        if (game.awayAbbr) probByAbbr[game.awayAbbr] = 100 - home;
-        return { probByAbbr, books: 1, disp: 0, src: "live" };
+        return homeProbObj(Number(wp[wp.length - 1].homeWinPercentage) * 100, game, { src: "live" });
       }
+      const cons = consensusDevig(sm.pickcenter || sm.odds || [], game.homeAbbr, game.awayAbbr);
+      if (cons) return { ...cons, src: "pregame-line", stale: true };
+      return null;
     }
 
     const cons = consensusDevig(sm.pickcenter || sm.odds || [], game.homeAbbr, game.awayAbbr);
-    if (!cons) return null;
-    return { ...cons, src: "book" };
+    if (cons) return { ...cons, src: "book" };
+    const proj = sm.predictor && sm.predictor.homeTeam && Number(sm.predictor.homeTeam.gameProjection);
+    if (Number.isFinite(proj)) return homeProbObj(proj, game, { src: "model" });
+    return null;
   } catch { return null; }
 }
 
@@ -3036,7 +3056,10 @@ function parlayConflicts(slip) {
 // real edge confirmed by multiple books (or a live model); LEAN is a smaller
 // edge; otherwise the game is fairly priced and there's no bet.
 function pickDecision(p) {
-  if (p.edge >= 5 && (p.books >= 2 || p.src === "live")) return { tag: "STRONG BET", color: "var(--moss)", bet: true };
+  // A firmly-sourced read is a live model or two-plus books; a stale
+  // pregame line on a live game (or ESPN's model-only projection) is softer.
+  const firm = p.src === "live" || p.books >= 2;
+  if (p.edge >= 5 && firm) return { tag: "STRONG BET", color: "var(--moss)", bet: true };
   if (p.edge >= 2.5) return { tag: "LEAN", color: "var(--amber)", bet: true };
   return { tag: "no edge — skip", color: "var(--dim)", bet: false };
 }
@@ -3427,7 +3450,10 @@ function Parlay({ onPick }) {
               <span className="sub">
                 {p.state === "in" ? <b style={{ color: "var(--rose)" }}>● LIVE</b> : null}
                 {p.state === "in" ? " " : ""}{p.league} · {p.state === "in" ? "in progress" : p.state === "post" ? "final" : "upcoming"} ·
-                {p.src === "live" ? " live win prob" : " " + (p.books > 1 ? p.books + " books" : "1 book")} {p.modelProb.toFixed(0)}% vs price {p.entry.toFixed(0)}c
+                {p.src === "live" ? " live win prob"
+                  : p.src === "pregame-line" ? " pregame line (no live model)"
+                  : p.src === "model" ? " model projection"
+                  : " " + (p.books > 1 ? p.books + " books" : "1 book")} {p.modelProb.toFixed(0)}% vs price {p.entry.toFixed(0)}c
                 {p.edge >= 2 ? " · has an edge" : " · fairly priced"}
                 {p.disp > 6 ? " · books split" : ""}
               </span>
