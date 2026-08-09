@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.credit-guard";
+const BUILD = "2026-08-10.pick-record";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -3397,7 +3397,11 @@ function Positions({ ledger, save, reopen, reload }) {
             <div key={e.id} className="fw" style={{ marginTop: 12 }}>
               <div className="fw-top">
                 <div style={{ minWidth: 0 }}>
-                  <div className="pname">{e.name === e.question ? e.question : e.question + " — " + e.name}</div>
+                  <div className="pname">
+                    {qq.legs
+                      ? "Parlay: " + qq.legs.map((l) => l.name + (l.league ? " (" + l.league + ")" : "")).join(" + ")
+                      : e.name === e.question ? e.question : e.question + " — " + e.name}
+                  </div>
                   <div className="pdesc">
                     {e.venue} · {e.taken.contracts} × {e.taken.side} at {Number(e.taken.entryPrice).toFixed(1)}c ·
                     my fair value {Number(e.fair).toFixed(0)}c
@@ -3774,6 +3778,7 @@ async function scanEdges() {
         src: dv.src, books: dv.books || 1, disp: dv.disp || 0,
         homeAbbr: g.homeAbbr, awayAbbr: g.awayAbbr,
         sides: g.sides || null, detail: g.detail || "",
+        eventId: g.eventId || null, path: g.path || path,
         ou: dv.totals || null, spr: dv.spreads || null,
       });
     }
@@ -3867,23 +3872,122 @@ function dateLabel(d) {
   catch { return iso; }
 }
 
+// Final score -> winning abbreviation ("TIE" on a draw, null if unplayed).
+function gameWinnerAbbr(sides) {
+  if (!sides || sides.length < 2) return null;
+  const byScore = sides.slice().sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+  if (byScore[0].score == null || byScore[1].score == null) return null;
+  if ((Number(byScore[0].score) || 0) === (Number(byScore[1].score) || 0)) return "TIE";
+  return byScore[0].abbr || null;
+}
+
+// Did a recorded pick win, given the final winner's abbreviation?
+const pickWon = (pickCode, winner) => !!pickCode &&
+  (winner === "TIE" ? /TIE|DRAW/i.test(pickCode) : codeHit([pickCode], [winner]) >= 0.6);
+
 /* ---------------- Today's picks ----------------
    The landing board: every live, today's, and upcoming game with the side
    worth picking — books-consensus true odds, net edge after fees, the
    scanner's decision, and the full-analysis verdict when one exists. Free
    to refresh; deep dive hands the market to the Analyze pipeline. */
 function Picks({ ledger, onPick }) {
-  const [picks, setPicks] = useState([]);
+  // Warm start: the last scan renders instantly while a fresh one runs.
+  const [picks, setPicks] = useState(() => {
+    try {
+      const c = JSON.parse(localStorage.getItem("cd:lastPicks") || "null");
+      if (c && Date.now() - c.at < 30 * 60 * 1000) return c.picks || [];
+    } catch { /* cold start */ }
+    return [];
+  });
   const [state, setState] = useState("idle");
   const [err, setErr] = useState(null);
   const [scanInfo, setScanInfo] = useState(null);
+  const [record, setRecord] = useState(null); // graded winner-pick history
+  const recordRef = useRef(null);
   const anyLive = useRef(false);
+
+  // Load the picks record once; reconcile against the current scan when
+  // both sides are ready.
+  const picksRef = useRef(picks);
+  picksRef.current = picks;
+  useEffect(() => {
+    fetch("/api/desk/picks").then((r) => r.json())
+      .then((d) => {
+        recordRef.current = d.record || []; setRecord(recordRef.current);
+        if (picksRef.current.length) reconcileRecord(picksRef.current);
+      })
+      .catch(() => { recordRef.current = []; setRecord([]); });
+  }, []);
+
+  // Log every pregame call the board makes, and grade calls whose games
+  // have finished — the winner-picks track record builds itself.
+  async function reconcileRecord(allPicks) {
+    if (!recordRef.current) return;
+    const rec = recordRef.current.slice();
+    const changed = [];
+    const todayEt = etDate().replace(/-/g, "");
+    const byGame = {};
+    allPicks.forEach((p) => {
+      const k = p.game || p.id;
+      if (!byGame[k] || p.modelProb > byGame[k].modelProb) byGame[k] = p;
+    });
+    Object.values(byGame).forEach((p) => {
+      if (p.state !== "pre" || p.modelProb < 55 || p.src !== "book" || (p.books || 0) < 2 || !p.eventId) return;
+      const id = "pk-" + p.eventId;
+      if (rec.some((r) => r.id === id)) return;
+      const e = { id, at: Date.now(), date: tickerDate(p.market.id), league: p.league, path: p.path,
+        game: p.game, eventId: p.eventId, pick: p.market.name, pickCode: (p.codes || [])[0] || null,
+        prob: Math.round(p.modelProb * 10) / 10, books: p.books, result: null };
+      rec.unshift(e); changed.push(e);
+    });
+    const byEvent = {};
+    allPicks.forEach((p) => { if (p.eventId) byEvent[p.eventId] = p; });
+    rec.forEach((r) => {
+      if (r.result != null) return;
+      const p = byEvent[r.eventId];
+      if (!p || p.state !== "post" || !p.sides) return;
+      const w = gameWinnerAbbr(p.sides);
+      if (!w) return;
+      r.result = pickWon(r.pickCode, w) ? "won" : "lost";
+      r.final = p.sides.map((s) => s.abbr + " " + (s.score != null ? s.score : "-")).join(" ");
+      changed.push(r);
+    });
+    // Games from past days fall off the scan — grade them straight from
+    // the scoreboard, a few per cycle.
+    const stale = rec.filter((r) => r.result == null && r.date && r.date < todayEt).slice(0, 6);
+    for (const r of stale) {
+      try {
+        const gs = await espnGamesForLeague(r.path, r.date);
+        const g = gs.find((x) => x.eventId === r.eventId);
+        if (g && g.state === "post" && g.sides) {
+          const w = gameWinnerAbbr(g.sides);
+          if (w) {
+            r.result = pickWon(r.pickCode, w) ? "won" : "lost";
+            r.final = g.sides.map((s) => s.abbr + " " + (s.score != null ? s.score : "-")).join(" ");
+            changed.push(r);
+          }
+        } else if (Date.now() - (r.at || 0) > 5 * 86400000) {
+          r.result = "void"; changed.push(r); // postponed or untraceable
+        }
+      } catch { /* grade next cycle */ }
+    }
+    recordRef.current = rec;
+    if (changed.length) {
+      setRecord(rec.slice());
+      try {
+        await fetch("/api/desk/picks", { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify(changed) });
+      } catch { /* re-sent next cycle */ }
+    }
+  }
 
   async function run() {
     setState("loading"); setErr(null);
     try {
       const { picks: p, gamesFound, gamesPriced } = await scanEdges();
       setPicks(p); setScanInfo({ gamesFound, gamesPriced, at: Date.now() }); setState("done");
+      try { localStorage.setItem("cd:lastPicks", JSON.stringify({ at: Date.now(), picks: p })); } catch { /* private mode */ }
+      reconcileRecord(p);
       anyLive.current = p.some((x) => x.state === "in");
       if (!p.length) {
         setErr(gamesFound === 0
@@ -4031,14 +4135,32 @@ function Picks({ ledger, onPick }) {
             : "No high-certainty winners on today's card yet."}</b>{" "}
           Deep dive runs all nine checks on any pick.
         </p>
-        {scanInfo && (
-          <div className="chips" style={{ marginTop: 8 }}>
-            <span className="chip static">{scanInfo.gamesPriced} of {scanInfo.gamesFound} games priced</span>
-            {scanInfo.at && <span className="chip static">updated {new Date(scanInfo.at).toLocaleTimeString()}</span>}
-            {anyLive.current && <span className="chip static" style={{ color: "var(--rose)", borderColor: "rgba(228,112,126,.5)" }}>● live — refreshing every 45s</span>}
-            {oddsQuota && <span className="chip static">odds feed · {oddsQuota.remaining} credits</span>}
-          </div>
-        )}
+        {(() => {
+          const scored = (record || []).filter((r) => r.result === "won" || r.result === "lost");
+          const wins = scored.filter((r) => r.result === "won").length;
+          const strong = scored.filter((r) => (r.prob || 0) >= 80);
+          const strongWins = strong.filter((r) => r.result === "won").length;
+          return (scanInfo || scored.length > 0) && (
+            <div className="chips" style={{ marginTop: 8 }}>
+              {scored.length > 0 && (
+                <span className="chip static" style={{ color: wins * 2 >= scored.length ? "var(--moss)" : "var(--rose)",
+                  borderColor: "rgba(127,185,139,.45)" }}
+                  title="Every pregame winner call this board makes is logged and graded when the game ends">
+                  Winner record: {wins}-{scored.length - wins} ({Math.round((wins / scored.length) * 100)}%)
+                </span>
+              )}
+              {strong.length > 0 && (
+                <span className="chip static" title="Calls made at 80%+ certainty">
+                  80%+ tier: {strongWins}-{strong.length - strongWins}
+                </span>
+              )}
+              {scanInfo && <span className="chip static">{scanInfo.gamesPriced} of {scanInfo.gamesFound} games priced</span>}
+              {scanInfo && scanInfo.at && <span className="chip static">updated {new Date(scanInfo.at).toLocaleTimeString()}</span>}
+              {anyLive.current && <span className="chip static" style={{ color: "var(--rose)", borderColor: "rgba(228,112,126,.5)" }}>● live — refreshing every 45s</span>}
+              {oddsQuota && <span className="chip static">odds feed · {oddsQuota.remaining} credits</span>}
+            </div>
+          );
+        })()}
         {state === "loading" && picks.length === 0 && <p className="pwait" style={{ marginTop: 10 }}><span className="dots">reading the books on every game</span></p>}
         {err && <p className="help" style={{ marginTop: 10, color: "var(--rose)" }}>{err}</p>}
       </div>

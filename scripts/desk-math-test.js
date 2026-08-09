@@ -32,6 +32,8 @@ const code = [
   slice("const codeEq = (a, c)", ";"),
   slice("const codeHit = (codes, abbrs) => {", "\n};"),
   slice("function tickerDate(", "\n}"),
+  slice("function gameWinnerAbbr(", "\n}"),
+  slice("const pickWon = (pickCode, winner)", ";"),
   slice("function parlayMath(", "\n}"),
   slice("function pickDecision(", "\n}"),
   slice("const LEAGUES = [", "\n];"),
@@ -39,8 +41,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, gameWinnerAbbr, pickWon } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, gameWinnerAbbr, pickWon })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -128,6 +130,14 @@ const sprEv = {
 };
 const spr = oddsSideMarket(sprEv, "spreads");
 ok(spr && spr.point === -1.5 && Math.abs(spr.a - 50) < 0.01, "spreads: home handicap point, even odds -> 50/50");
+
+// Winner-pick grading from a final score
+ok(gameWinnerAbbr([{ abbr: "MIL", score: 5 }, { abbr: "MIN", score: 3 }]) === "MIL", "final score -> winner abbr");
+ok(gameWinnerAbbr([{ abbr: "ARS", score: 2 }, { abbr: "CHE", score: 2 }]) === "TIE", "level final -> TIE");
+ok(gameWinnerAbbr([{ abbr: "MIL", score: null }, { abbr: "MIN", score: 3 }]) === null, "missing score -> no grade");
+ok(pickWon("MIL", "MIL") === true && pickWon("MIN", "MIL") === false, "pick graded against the winner");
+ok(pickWon("CWS", "CHW") === true, "grading respects cross-feed aliases");
+ok(pickWon("TIE", "TIE") === true && pickWon("MIL", "TIE") === false, "draw pick only wins on a draw");
 
 // Position advice: hold / buy more / sell off a live independent read
 const pos = (over) => Object.assign({
