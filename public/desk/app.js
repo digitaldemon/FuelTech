@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.record-labels";
+const BUILD = "2026-08-10.over-unders";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5021,6 +5021,144 @@ function dateLabel(d) {
   }
 }
 
+/* ---- over/under pipeline ---- */
+// Kalshi totals series (YES = combined score reaches the ticker's number).
+const TOTAL_SERIES = [["KXMLBTOTAL", "baseball/mlb", "MLB"], ["KXWNBATOTAL", "basketball/wnba", "WNBA"], ["KXNFLTOTAL", "football/nfl", "NFL"], ["KXNHLTOTAL", "hockey/nhl", "NHL"], ["KXCFBTOTAL", "football/college-football", "NCAAF"], ["KXNBATOTAL", "basketball/nba", "NBA"]];
+
+// KXMLBTOTAL-26AUG102145HOUSF-9 -> threshold 9 -> the market is "9 or
+// more", i.e. OVER the books' 8.5 line.
+function totalLine(ticker) {
+  const seg = String(ticker || "").split("-").pop();
+  const n = Number(seg);
+  return Number.isFinite(n) ? n - 0.5 : null;
+}
+
+// Deterministic live pace read: total points so far vs how much of the
+// game has elapsed. Rough by design — it's a sanity check on the line,
+// not a model. Returns null when the elapsed fraction can't be parsed.
+function paceProjection(path, detail, sides) {
+  if (!sides || sides.length < 2) return null;
+  const total = sides.reduce((s, x) => s + (Number(x.score) || 0), 0);
+  const d = String(detail || "");
+  let frac = null;
+  if (path === "baseball/mlb") {
+    const m = d.match(/(Top|Bot|Bottom|Mid|End)\w*\s+(\d+)/i);
+    if (m) frac = clamp((Number(m[2]) - 1 + (/bot|end/i.test(m[1]) ? 0.5 : 0)) / 9, 0.05, 1);
+  } else {
+    const q = d.match(/(\d+)(?:st|nd|rd|th)/);
+    const clock = d.match(/(\d+):(\d+)/);
+    if (q) {
+      const perLen = path === "basketball/nba" ? 12 : /hockey/.test(path) ? 20 : /basketball/.test(path) ? 10 : 15;
+      const nQ = /hockey/.test(path) ? 3 : 4;
+      const left = clock ? Number(clock[1]) + Number(clock[2]) / 60 : 0;
+      frac = clamp(((Number(q[1]) - 1) * perLen + (perLen - left)) / (nQ * perLen), 0.05, 1);
+    }
+  }
+  if (frac == null || frac < 0.15) return null;
+  return {
+    total,
+    frac,
+    projected: total / frac
+  };
+}
+
+// Scan Kalshi's totals markets: match each to its game and the books'
+// de-vigged totals consensus. The strike ladder market nearest the books'
+// median line gets the full probability read; off-line gaps are flagged.
+async function scanTotals() {
+  const root = "https://api.elections.kalshi.com/trade-api/v2";
+  const out = [];
+  await mapLimit(TOTAL_SERIES, 4, async ([series, path, label]) => {
+    let d;
+    try {
+      const r = await fetch(px(root + "/markets?series_ticker=" + series + "&status=open&limit=200"));
+      if (!r.ok) return;
+      d = await r.json();
+    } catch {
+      return;
+    }
+    const ms = (d.markets || []).map(kaMarket).filter(m => m.price != null);
+    if (!ms.length) return;
+    const parsed = ms.map(m => ({
+      m,
+      codes: teamCodes(m.id),
+      date: tickerDate(m.id),
+      line: totalLine(m.id)
+    })).filter(x => x.codes.length && x.line != null);
+    const dates = [...new Set(parsed.map(x => x.date).filter(Boolean))].sort().slice(0, 4);
+    if (!dates.length) return;
+    const slates = await mapLimit(dates, 3, dt => espnGamesForLeague(path, dt));
+    const gs = [];
+    const seen = new Set();
+    [].concat(...slates).forEach(g => {
+      if (!seen.has(g.eventId)) {
+        seen.add(g.eventId);
+        gs.push(g);
+      }
+    });
+    if (!gs.length) return;
+    const anyLiveGame = gs.some(g => g.state === "in");
+    const soonCut = Number(etDate(Date.now() + 36 * 3600 * 1000).replace(/-/g, ""));
+    const imminent = anyLiveGame || parsed.some(x => x.date && Number(x.date) <= soonCut);
+    const oddsEvents = imminent ? await fetchOddsEvents(path, anyLiveGame) : null;
+    const byGame = {};
+    parsed.forEach(x => {
+      let best = null,
+        bestS = 0;
+      gs.forEach(g => {
+        const s = codeHit(x.codes, g.abbrs) + (x.date && g.date === x.date ? 0.5 : 0);
+        if (s > bestS) {
+          bestS = s;
+          best = g;
+        }
+      });
+      if (!best || bestS < 1) return;
+      (byGame[best.eventId] = byGame[best.eventId] || {
+        g: best,
+        ladder: []
+      }).ladder.push(x);
+    });
+    for (const {
+      g,
+      ladder
+    } of Object.values(byGame)) {
+      const ev = matchOddsEvent(oddsEvents, g.name, g.date);
+      const tot = ev ? oddsSideMarket(ev, "totals") : null;
+      if (!tot) continue;
+      let pick = null,
+        gap = Infinity;
+      ladder.forEach(x => {
+        const dGap = Math.abs(x.line - tot.point);
+        if (dGap < gap) {
+          gap = dGap;
+          pick = x;
+        }
+      });
+      if (!pick) continue;
+      const exact = gap < 0.01;
+      const pace = g.state === "in" ? paceProjection(path, g.detail, g.sides) : null;
+      out.push({
+        id: pick.m.id,
+        market: pick.m,
+        league: label,
+        game: g.name,
+        state: g.state,
+        sides: g.sides || null,
+        detail: g.detail || "",
+        date: pick.date,
+        line: pick.line,
+        bookLine: tot.point,
+        exact,
+        pOver: tot.a,
+        books: tot.books,
+        entry: pick.m.ask != null ? pick.m.ask : pick.m.price,
+        pace
+      });
+    }
+  });
+  return out.sort((a, b) => Math.abs(b.pOver - 50) - Math.abs(a.pOver - 50));
+}
+
 // Final score -> winning abbreviation ("TIE" on a draw, null if unplayed).
 function gameWinnerAbbr(sides) {
   if (!sides || sides.length < 2) return null;
@@ -5058,6 +5196,7 @@ function Picks({
   const [err, setErr] = useState(null);
   const [scanInfo, setScanInfo] = useState(null);
   const [record, setRecord] = useState(null); // graded winner-pick history
+  const [totals, setTotals] = useState([]); // over/under reads
   const recordRef = useRef(null);
   const anyLive = useRef(false);
 
@@ -5169,12 +5308,13 @@ function Picks({
     setState("loading");
     setErr(null);
     try {
-      const {
+      const [{
         picks: p,
         gamesFound,
         gamesPriced
-      } = await scanEdges();
+      }, tot] = await Promise.all([scanEdges(), scanTotals().catch(() => [])]);
       setPicks(p);
+      setTotals(tot);
       setScanInfo({
         gamesFound,
         gamesPriced,
@@ -5188,7 +5328,7 @@ function Picks({
         }));
       } catch {/* private mode */}
       reconcileRecord(p);
-      anyLive.current = p.some(x => x.state === "in");
+      anyLive.current = p.some(x => x.state === "in") || tot.some(x => x.state === "in");
       if (!p.length) {
         setErr(gamesFound === 0 ? "No open game markets right now — the next slate isn't listed on Kalshi yet." : "Found " + gamesFound + " games, but books haven't posted lines yet. Picks fill in about a day before game time.");
       }
@@ -5431,7 +5571,88 @@ function Picks({
       marginTop: 10,
       color: "var(--rose)"
     }
-  }, err)), section("Top picks today", groups.top, "var(--amber)", true), section("● Live now", groups.live, "var(--rose)"), section("Today — every game", groups.today, undefined), section("Coming up", groups.soon, "var(--dim)"), record && record.some(r => r.result === "won" || r.result === "lost") && /*#__PURE__*/React.createElement("div", {
+  }, err)), section("Top picks today", groups.top, "var(--amber)", true), section("● Live now", groups.live, "var(--rose)"), section("Today — every game", groups.today, undefined), totals.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "panel"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "sect",
+    style: {
+      margin: 0
+    }
+  }, "Over / Unders (", totals.length, ")"), /*#__PURE__*/React.createElement("p", {
+    className: "help",
+    style: {
+      marginTop: 6
+    }
+  }, "Kalshi's total-score markets read against the books' de-vigged totals consensus \u2014 the call is OVER or UNDER at the line, with live scoring pace as a sanity check during games."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6
+    }
+  }, totals.map(t => {
+    const over = t.pOver >= 50;
+    const conf = Math.max(t.pOver, 100 - t.pOver);
+    const cls = conf >= 68 ? "t-strong" : conf >= 55 ? "t-lean" : "";
+    const col = conf >= 68 ? "var(--moss)" : conf >= 55 ? "var(--amber)" : "var(--dim)";
+    const overCost = t.entry,
+      underCost = t.entry != null ? 100 - t.entry : null;
+    return /*#__PURE__*/React.createElement("div", {
+      key: t.id,
+      className: "pick " + cls
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        minWidth: 0,
+        flex: 1
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "who-big",
+      style: {
+        display: "block"
+      }
+    }, t.state === "in" ? /*#__PURE__*/React.createElement("span", {
+      className: "livedot"
+    }) : null, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: col
+      }
+    }, conf >= 55 ? over ? "OVER " : "UNDER " : "Total "), t.line, conf < 55 ? " — coin flip" : ""), /*#__PURE__*/React.createElement("span", {
+      className: "meta-line",
+      style: {
+        display: "block"
+      }
+    }, t.league, " \xB7 ", t.state === "in" && t.sides && t.sides.some(s => s.score != null) ? /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: "var(--bone)"
+      }
+    }, t.sides.map(s => s.abbr + " " + (s.score != null ? s.score : "-")).join(" · ") + (t.detail ? " · " + t.detail : "")) : t.game, " · " + t.books + " book" + (t.books === 1 ? "" : "s"), !t.exact ? " · books' line is " + t.bookLine + " (nearest Kalshi strike shown)" : "", " · over costs " + (overCost != null ? overCost.toFixed(0) + "c" : "—") + ", under " + (underCost != null ? underCost.toFixed(0) + "c" : "—")), t.pace && /*#__PURE__*/React.createElement("span", {
+      className: "meta-line",
+      style: {
+        display: "block"
+      }
+    }, "pace: ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: t.pace.projected > t.line ? "var(--amber)" : "var(--cyan)"
+      }
+    }, t.pace.total, " so far, on pace for ~", t.pace.projected.toFixed(0)), " vs the ", t.line, " line")), /*#__PURE__*/React.createElement("span", {
+      className: "tierbox",
+      style: {
+        color: col,
+        borderColor: col
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "pct"
+    }, conf.toFixed(0), "%"), /*#__PURE__*/React.createElement("span", {
+      className: "lbl"
+    }, conf >= 55 ? over ? "OVER" : "UNDER" : "TOSS-UP")), /*#__PURE__*/React.createElement("span", {
+      className: "pick-actions"
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "chip",
+      onClick: () => onPick(t.market)
+    }, "deep dive"), /*#__PURE__*/React.createElement("a", {
+      className: "chip",
+      href: t.market.link,
+      target: "_blank",
+      rel: "noreferrer"
+    }, "open \u2197")));
+  }))), section("Coming up", groups.soon, "var(--dim)"), record && record.some(r => r.result === "won" || r.result === "lost") && /*#__PURE__*/React.createElement("div", {
     className: "panel"
   }, /*#__PURE__*/React.createElement("details", {
     className: "fold",

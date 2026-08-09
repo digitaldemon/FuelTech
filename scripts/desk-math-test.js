@@ -34,6 +34,8 @@ const code = [
   slice("const codeEq = (a, c)", ";"),
   slice("const codeHit = (codes, abbrs) => {", "\n};"),
   slice("function tickerDate(", "\n}"),
+  slice("function totalLine(", "\n}"),
+  slice("function paceProjection(", "\n}"),
   slice("function gameWinnerAbbr(", "\n}"),
   slice("const pickWon = (pickCode, winner)", ";"),
   slice("function parlayMath(", "\n}"),
@@ -43,8 +45,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -148,6 +150,16 @@ const sprEv = {
 };
 const spr = oddsSideMarket(sprEv, "spreads");
 ok(spr && spr.point === -1.5 && Math.abs(spr.a - 50) < 0.01, "spreads: home handicap point, even odds -> 50/50");
+
+// Over/under helpers
+ok(totalLine("KXMLBTOTAL-26AUG102145HOUSF-9") === 8.5, "MLB total ticker 9 -> line 8.5");
+ok(totalLine("KXWNBATOTAL-26AUG11WSHLV-179") === 178.5, "WNBA total ticker 179 -> line 178.5");
+ok(totalLine("KXMLBGAME-26AUG09SEATEX-SEA") === null, "moneyline ticker -> no total line");
+const mlbPace = paceProjection("baseball/mlb", "Bot 6th", [{ score: 5 }, { score: 3 }]);
+ok(mlbPace && Math.abs(mlbPace.projected - 8 / (5.5 / 9)) < 0.01, "MLB pace: 8 runs through bottom 6th -> ~" + (mlbPace ? mlbPace.projected.toFixed(1) : "?"));
+const wPace = paceProjection("basketball/wnba", "2:12 - 4th", [{ score: 98 }, { score: 87 }]);
+ok(wPace && wPace.projected > 185 && wPace.projected < 200, "WNBA pace: 185 pts with 2:12 left -> ~" + (wPace ? wPace.projected.toFixed(0) : "?"));
+ok(paceProjection("baseball/mlb", "Top 1st", [{ score: 0 }, { score: 0 }]) === null, "too-early game -> no pace read");
 
 // Winner-pick grading from a final score
 ok(gameWinnerAbbr([{ abbr: "MIL", score: 5 }, { abbr: "MIN", score: 3 }]) === "MIL", "final score -> winner abbr");
