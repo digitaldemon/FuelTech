@@ -72,14 +72,26 @@ export async function POST(req: Request) {
   if (tickers.length > 20) {
     return Response.json({ error: "Too many legs." }, { status: 400 });
   }
-  const collection = (b && b.collection) || "KXMVESPORTSMULTIGAMEEXTENDED-R";
   const selected_markets = tickers.map((t) => ({ event_ticker: eventOf(t), market_ticker: t, side: "yes" }));
+  // Same-sport combos live in the sports multigame collection; legs from
+  // different sports need the cross-category one. Try both.
+  const collections = [...new Set([
+    ...(b && b.collection ? [b.collection] : []),
+    "KXMVESPORTSMULTIGAMEEXTENDED-R",
+    "KXMVECROSSCATEGORY-R",
+  ])];
 
   try {
     // Look up / create the single combined market for these legs.
-    const lu = await ksigned(creds, "POST", "/trade-api/v2/multivariate_event_collections/" + collection, { selected_markets });
-    if (lu.status >= 400) {
-      return Response.json({ error: "Parlay lookup failed (" + lu.status + "): " + lu.text.slice(0, 300) }, { status: 502 });
+    let lu: { status: number; text: string } | null = null;
+    const errs: string[] = [];
+    for (const col of collections) {
+      const r = await ksigned(creds, "POST", "/trade-api/v2/multivariate_event_collections/" + col, { selected_markets });
+      if (r.status < 400) { lu = r; break; }
+      errs.push(col + " -> " + r.status + ": " + r.text.slice(0, 140));
+    }
+    if (!lu) {
+      return Response.json({ error: "Parlay lookup failed. " + errs.join(" | ") }, { status: 502 });
     }
     let ld: Record<string, unknown> = {};
     try { ld = JSON.parse(lu.text); } catch { /* handled below */ }

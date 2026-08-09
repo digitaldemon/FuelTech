@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.pick-record";
+const BUILD = "2026-08-10.polish";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -4168,6 +4168,30 @@ function Picks({ ledger, onPick }) {
       {section("● Live now", groups.live, "var(--rose)")}
       {section("Today — every game", groups.today, undefined)}
       {section("Coming up", groups.soon, "var(--dim)")}
+      {record && record.some((r) => r.result === "won" || r.result === "lost") && (
+        <div className="panel">
+          <details className="fold" open>
+            <summary>Recent graded picks — how the board's calls turned out</summary>
+            {record.filter((r) => r.result === "won" || r.result === "lost").slice(0, 12).map((r) => (
+              <div key={r.id} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
+                <span className="who" style={{ fontSize: 13 }}>
+                  {r.pick}
+                  <span className="sub" style={{ display: "block" }}>
+                    {r.league} · {r.game} · called at {r.prob}%{r.final ? " · final " + r.final : ""}
+                  </span>
+                </span>
+                <span className="pts" style={{ fontSize: 13.5, color: r.result === "won" ? "var(--moss)" : "var(--rose)" }}>
+                  {r.result.toUpperCase()}
+                </span>
+              </div>
+            ))}
+            <p className="help" style={{ marginTop: 8 }}>
+              Every pregame call the board makes gets logged and graded automatically. The tiers should win at
+              roughly their stated rates — an 80% call that wins 60% of the time means the reads are off.
+            </p>
+          </details>
+        </div>
+      )}
     </>
   );
 }
