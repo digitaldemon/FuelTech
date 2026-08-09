@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.grade-fast";
+const BUILD = "2026-08-10.parlay-odds";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5472,10 +5472,10 @@ function Parlay({
   const [state, setState] = useState("idle");
   const [err, setErr] = useState(null);
   const [slip, setSlip] = useState([]);
-  const [view, setView] = useState("value"); // value | locks | live
+  const [view, setView] = useState("locks"); // locks | value | live
   const [minEdge, setMinEdge] = useState(3);
   const [sugLegs, setSugLegs] = useState(3);
-  const [sugMode, setSugMode] = useState("value"); // value | safe
+  const [sugMode, setSugMode] = useState("safe"); // safe (most likely) | value
   const [kp, setKp] = useState(null); // Kalshi combined-parlay preview
   const [kpBusy, setKpBusy] = useState(false);
   const [kpCount, setKpCount] = useState(10);
@@ -5665,12 +5665,12 @@ function Parlay({
       color: view === "live" ? undefined : "var(--rose)"
     }
   }, "\u25CF Live now (", liveCount, ")"), /*#__PURE__*/React.createElement("button", {
-    className: "chip" + (view === "value" ? " on" : ""),
-    onClick: () => setView("value")
-  }, "Best value (edge)"), /*#__PURE__*/React.createElement("button", {
     className: "chip" + (view === "locks" ? " on" : ""),
     onClick: () => setView("locks")
-  }, "Strongest favorites"), view === "value" && /*#__PURE__*/React.createElement("span", {
+  }, "Most likely winners"), /*#__PURE__*/React.createElement("button", {
+    className: "chip" + (view === "value" ? " on" : ""),
+    onClick: () => setView("value")
+  }, "Underpriced (for bettors)"), view === "value" && /*#__PURE__*/React.createElement("span", {
     className: "chip static"
   }, "min edge", " ", /*#__PURE__*/React.createElement("input", {
     type: "number",
@@ -5719,12 +5719,12 @@ function Parlay({
       marginTop: 0
     }
   }, /*#__PURE__*/React.createElement("button", {
-    className: "chip" + (sugMode === "value" ? " on" : ""),
-    onClick: () => setSugMode("value")
-  }, "value"), /*#__PURE__*/React.createElement("button", {
     className: "chip" + (sugMode === "safe" ? " on" : ""),
     onClick: () => setSugMode("safe")
-  }, "safe"), [2, 3, 4].map(n => /*#__PURE__*/React.createElement("button", {
+  }, "most likely"), /*#__PURE__*/React.createElement("button", {
+    className: "chip" + (sugMode === "value" ? " on" : ""),
+    onClick: () => setSugMode("value")
+  }, "value"), [2, 3, 4].map(n => /*#__PURE__*/React.createElement("button", {
     key: n,
     className: "chip" + (sugLegs === n ? " on" : ""),
     onClick: () => setSugLegs(n)
@@ -5762,7 +5762,7 @@ function Parlay({
       style: {
         color: dm.ev > 0 ? "var(--moss)" : "var(--dim)"
       }
-    }, legs.length, " legs \xB7 ", dm.mult.toFixed(1), "\xD7 \xB7 ", dm.ev > 0 ? "+" : "", (dm.ev * 100).toFixed(0), "% EV")), legs.map(l => /*#__PURE__*/React.createElement("div", {
+    }, dm.modelProb.toFixed(dm.modelProb < 10 ? 1 : 0), "% chance all ", legs.length, " hit \xB7 pays ", dm.mult.toFixed(1), "\xD7")), legs.map(l => /*#__PURE__*/React.createElement("div", {
       key: l.id,
       className: "score-row",
       style: {
@@ -5790,7 +5790,16 @@ function Parlay({
       style: {
         fontSize: 14
       }
-    }, l.modelProb.toFixed(0), "% @ ", l.entry.toFixed(0), "c"))), /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: l.modelProb >= 68 ? "var(--moss)" : l.modelProb >= 55 ? "var(--amber)" : "var(--dim)"
+      }
+    }, l.modelProb.toFixed(0), "% to win"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "var(--dim)",
+        fontSize: 11
+      }
+    }, " @ ", l.entry.toFixed(0), "c")))), /*#__PURE__*/React.createElement("div", {
       className: "figures",
       style: {
         marginTop: 14
@@ -5800,21 +5809,21 @@ function Parlay({
     }, /*#__PURE__*/React.createElement("span", {
       className: "big",
       style: {
-        color: "var(--amber)"
+        color: dm.modelProb >= 50 ? "var(--moss)" : dm.modelProb >= 25 ? "var(--amber)" : "var(--rose)"
       }
-    }, dm.mult.toFixed(1), "\xD7"), /*#__PURE__*/React.createElement("span", {
+    }, dm.modelProb.toFixed(dm.modelProb < 10 ? 1 : 0), "%"), /*#__PURE__*/React.createElement("span", {
       className: "cap"
-    }, "Payout"), /*#__PURE__*/React.createElement("span", {
+    }, "Chance all ", dm.legs, " hit"), /*#__PURE__*/React.createElement("span", {
       className: "sub"
-    }, "$100 \u2192 $", (dm.mult * 100).toFixed(0))), /*#__PURE__*/React.createElement("div", {
+    }, "By the books' true odds, per leg")), /*#__PURE__*/React.createElement("div", {
       className: "fig"
     }, /*#__PURE__*/React.createElement("span", {
       className: "big"
-    }, dm.modelProb.toFixed(dm.modelProb < 10 ? 1 : 0), "%"), /*#__PURE__*/React.createElement("span", {
+    }, dm.mult.toFixed(1), "\xD7"), /*#__PURE__*/React.createElement("span", {
       className: "cap"
-    }, "Win chance"), /*#__PURE__*/React.createElement("span", {
+    }, "Pays if it hits"), /*#__PURE__*/React.createElement("span", {
       className: "sub"
-    }, "All ", dm.legs, " legs hitting")), /*#__PURE__*/React.createElement("div", {
+    }, "$100 \u2192 $", (dm.mult * 100).toFixed(0))), /*#__PURE__*/React.createElement("div", {
       className: "fig"
     }, /*#__PURE__*/React.createElement("span", {
       className: "big",
@@ -5880,7 +5889,16 @@ function Parlay({
     style: {
       fontSize: 15
     }
-  }, l.entry.toFixed(0), "c", /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: l.modelProb >= 68 ? "var(--moss)" : l.modelProb >= 55 ? "var(--amber)" : "var(--dim)"
+    }
+  }, l.modelProb.toFixed(0), "%"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "var(--dim)",
+      fontSize: 11
+    }
+  }, " @ ", l.entry.toFixed(0), "c"), /*#__PURE__*/React.createElement("button", {
     className: "chip",
     style: {
       marginLeft: 8
@@ -5896,21 +5914,21 @@ function Parlay({
   }, /*#__PURE__*/React.createElement("span", {
     className: "big",
     style: {
-      color: "var(--amber)"
+      color: pm.modelProb >= 50 ? "var(--moss)" : pm.modelProb >= 25 ? "var(--amber)" : "var(--rose)"
     }
-  }, pm.mult.toFixed(1), "\xD7"), /*#__PURE__*/React.createElement("span", {
+  }, pm.modelProb.toFixed(pm.modelProb < 10 ? 1 : 0), "%"), /*#__PURE__*/React.createElement("span", {
     className: "cap"
-  }, "Payout multiplier"), /*#__PURE__*/React.createElement("span", {
+  }, "Chance every leg hits"), /*#__PURE__*/React.createElement("span", {
     className: "sub"
-  }, "$100 returns $", (pm.mult * 100).toFixed(0), " if every leg hits")), /*#__PURE__*/React.createElement("div", {
+  }, "The books' true odds multiplied across your legs")), /*#__PURE__*/React.createElement("div", {
     className: "fig"
   }, /*#__PURE__*/React.createElement("span", {
     className: "big"
-  }, pm.modelProb.toFixed(pm.modelProb < 10 ? 1 : 0), "%"), /*#__PURE__*/React.createElement("span", {
+  }, pm.mult.toFixed(1), "\xD7"), /*#__PURE__*/React.createElement("span", {
     className: "cap"
-  }, "Model win chance"), /*#__PURE__*/React.createElement("span", {
+  }, "Pays if it hits"), /*#__PURE__*/React.createElement("span", {
     className: "sub"
-  }, "All legs hitting, per the sportsbook lines")), /*#__PURE__*/React.createElement("div", {
+  }, "$100 returns $", (pm.mult * 100).toFixed(0), " if every leg wins")), /*#__PURE__*/React.createElement("div", {
     className: "fig"
   }, /*#__PURE__*/React.createElement("span", {
     className: "big",
@@ -6119,33 +6137,33 @@ function Parlay({
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
-      color: p.edge >= 2 ? "var(--moss)" : "var(--dim)"
+      color: p.modelProb >= 68 ? "var(--moss)" : p.modelProb >= 55 ? "var(--amber)" : "var(--dim)"
     }
-  }, "Bet "), p.market.name === p.market.question ? p.market.question : p.market.name, " \u2197"), /*#__PURE__*/React.createElement("span", {
+  }, "Winner: "), p.market.name === p.market.question ? p.market.question : p.market.name, " \u2197"), /*#__PURE__*/React.createElement("span", {
     className: "sub"
   }, p.state === "in" ? /*#__PURE__*/React.createElement("b", {
     style: {
       color: "var(--rose)"
     }
-  }, "\u25CF LIVE") : null, p.state === "in" ? " " : "", p.league, " \xB7 ", p.state === "in" ? "in progress" : p.state === "post" ? "final" : "upcoming", " \xB7", p.src === "live" ? " live win prob" : p.src === "live-books" ? " in-play books" : p.src === "pregame-line" ? " pregame line (no live model)" : p.src === "model" ? " model projection" : " " + (p.books > 1 ? p.books + " books" : "1 book"), " ", p.modelProb.toFixed(0), "% vs price ", p.entry.toFixed(0), "c", p.edge >= 2 ? " · has an edge" : " · fairly priced", p.disp > 6 ? " · books split" : "")), /*#__PURE__*/React.createElement("span", {
+  }, "\u25CF LIVE") : null, p.state === "in" ? " " : "", p.league, " \xB7 ", p.state === "in" ? "in progress" : p.state === "post" ? "final" : "upcoming", " \xB7", p.src === "live" ? " live win prob" : p.src === "live-books" ? " in-play books" : p.src === "pregame-line" ? " pregame line (no live model)" : p.src === "model" ? " model projection" : " " + (p.books > 1 ? p.books + " books" : "1 book"), " \xB7 costs ", p.entry.toFixed(0), "c", p.edge - (p.fee || 0) >= 2.5 ? /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "var(--moss)"
+    }
+  }, " \xB7 also underpriced") : null, p.disp > 6 ? " · books split" : "")), /*#__PURE__*/React.createElement("span", {
     style: {
       display: "flex",
       gap: 10,
       alignItems: "center",
       flex: "0 0 auto"
     }
-  }, (() => {
-    const dec = pickDecision(p);
-    const net = p.edge - (p.fee || 0);
-    return /*#__PURE__*/React.createElement("span", {
-      className: "sig",
-      style: {
-        color: dec.color,
-        borderColor: dec.color
-      },
-      title: "Edge " + p.edge.toFixed(1) + "c gross, " + net.toFixed(1) + "c after the " + (p.fee || 0).toFixed(1) + "c taker fee"
-    }, dec.tag, dec.bet ? " · " + (net > 0 ? "+" : "") + net.toFixed(0) + "c net" : "");
-  })(), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "sig",
+    style: {
+      color: p.modelProb >= 68 ? "var(--moss)" : p.modelProb >= 55 ? "var(--amber)" : "var(--dim)",
+      borderColor: p.modelProb >= 68 ? "var(--moss)" : p.modelProb >= 55 ? "var(--amber)" : "var(--dim)"
+    },
+    title: "True odds " + p.modelProb.toFixed(1) + "% by " + (p.books || 1) + " book(s); contract costs " + p.entry.toFixed(0) + "c"
+  }, p.modelProb.toFixed(0), "% TO WIN"), /*#__PURE__*/React.createElement("button", {
     className: "chip" + (inSlip(p.id) ? " on" : ""),
     onClick: () => toggle(p)
   }, inSlip(p.id) ? "added" : "add"), /*#__PURE__*/React.createElement("button", {
@@ -6162,7 +6180,7 @@ function Parlay({
     style: {
       marginTop: 12
     }
-  }, "\"Edge\" is how many cents cheaper the contract is than the sportsbook's fair price. A positive edge means the market may be underpricing that side. Tap ", /*#__PURE__*/React.createElement("b", null, "analyze"), " for the full nine-way read on any pick.")));
+  }, "The percentage is each side's true chance of winning by the de-vigged book consensus and live models \u2014 stack the ones you believe in. \"Also underpriced\" flags picks that are cheap relative to those odds. Tap ", /*#__PURE__*/React.createElement("b", null, "deep dive"), " for the full nine-way read on any pick.")));
 }
 
 /* ---------------- Browse ---------------- */

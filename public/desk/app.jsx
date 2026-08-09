@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.grade-fast";
+const BUILD = "2026-08-10.parlay-odds";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -4308,10 +4308,10 @@ function Parlay({ onPick }) {
   const [state, setState] = useState("idle");
   const [err, setErr] = useState(null);
   const [slip, setSlip] = useState([]);
-  const [view, setView] = useState("value"); // value | locks | live
+  const [view, setView] = useState("locks"); // locks | value | live
   const [minEdge, setMinEdge] = useState(3);
   const [sugLegs, setSugLegs] = useState(3);
-  const [sugMode, setSugMode] = useState("value"); // value | safe
+  const [sugMode, setSugMode] = useState("safe"); // safe (most likely) | value
   const [kp, setKp] = useState(null);        // Kalshi combined-parlay preview
   const [kpBusy, setKpBusy] = useState(false);
   const [kpCount, setKpCount] = useState(10);
@@ -4440,8 +4440,8 @@ function Parlay({ onPick }) {
               ● Live now ({liveCount})
             </button>
           )}
-          <button className={"chip" + (view === "value" ? " on" : "")} onClick={() => setView("value")}>Best value (edge)</button>
-          <button className={"chip" + (view === "locks" ? " on" : "")} onClick={() => setView("locks")}>Strongest favorites</button>
+          <button className={"chip" + (view === "locks" ? " on" : "")} onClick={() => setView("locks")}>Most likely winners</button>
+          <button className={"chip" + (view === "value" ? " on" : "")} onClick={() => setView("value")}>Underpriced (for bettors)</button>
           {view === "value" && (
             <span className="chip static">
               min edge{" "}
@@ -4461,8 +4461,8 @@ function Parlay({ onPick }) {
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
             <p className="sect" style={{ margin: 0 }}>Best parlay each day</p>
             <div className="chips" style={{ marginTop: 0 }}>
+              <button className={"chip" + (sugMode === "safe" ? " on" : "")} onClick={() => setSugMode("safe")}>most likely</button>
               <button className={"chip" + (sugMode === "value" ? " on" : "")} onClick={() => setSugMode("value")}>value</button>
-              <button className={"chip" + (sugMode === "safe" ? " on" : "")} onClick={() => setSugMode("safe")}>safe</button>
               {[2, 3, 4].map((n) => (
                 <button key={n} className={"chip" + (sugLegs === n ? " on" : "")} onClick={() => setSugLegs(n)}>{n} legs</button>
               ))}
@@ -4482,7 +4482,7 @@ function Parlay({ onPick }) {
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "baseline" }}>
               <p className="sect" style={{ margin: 0 }}>{dateLabel(date)}</p>
               <span className="eyebrow" style={{ color: dm.ev > 0 ? "var(--moss)" : "var(--dim)" }}>
-                {legs.length} legs · {dm.mult.toFixed(1)}× · {dm.ev > 0 ? "+" : ""}{(dm.ev * 100).toFixed(0)}% EV
+                {dm.modelProb.toFixed(dm.modelProb < 10 ? 1 : 0)}% chance all {legs.length} hit · pays {dm.mult.toFixed(1)}×
               </span>
             </div>
             {legs.map((l) => (
@@ -4492,19 +4492,19 @@ function Parlay({ onPick }) {
                     <span style={{ color: "var(--moss)" }}>Bet </span>{l.market.name === l.market.question ? l.market.question : l.market.name} ↗
                   </a>
                 </span>
-                <span className="pts" style={{ fontSize: 14 }}>{l.modelProb.toFixed(0)}% @ {l.entry.toFixed(0)}c</span>
+                <span className="pts" style={{ fontSize: 14 }}><b style={{ color: l.modelProb >= 68 ? "var(--moss)" : l.modelProb >= 55 ? "var(--amber)" : "var(--dim)" }}>{l.modelProb.toFixed(0)}% to win</b><span style={{ color: "var(--dim)", fontSize: 11 }}> @ {l.entry.toFixed(0)}c</span></span>
               </div>
             ))}
             <div className="figures" style={{ marginTop: 14 }}>
               <div className="fig">
-                <span className="big" style={{ color: "var(--amber)" }}>{dm.mult.toFixed(1)}×</span>
-                <span className="cap">Payout</span>
-                <span className="sub">$100 → ${(dm.mult * 100).toFixed(0)}</span>
+                <span className="big" style={{ color: dm.modelProb >= 50 ? "var(--moss)" : dm.modelProb >= 25 ? "var(--amber)" : "var(--rose)" }}>{dm.modelProb.toFixed(dm.modelProb < 10 ? 1 : 0)}%</span>
+                <span className="cap">Chance all {dm.legs} hit</span>
+                <span className="sub">By the books' true odds, per leg</span>
               </div>
               <div className="fig">
-                <span className="big">{dm.modelProb.toFixed(dm.modelProb < 10 ? 1 : 0)}%</span>
-                <span className="cap">Win chance</span>
-                <span className="sub">All {dm.legs} legs hitting</span>
+                <span className="big">{dm.mult.toFixed(1)}×</span>
+                <span className="cap">Pays if it hits</span>
+                <span className="sub">$100 → ${(dm.mult * 100).toFixed(0)}</span>
               </div>
               <div className="fig">
                 <span className="big" style={{ color: dm.ev > 0 ? "var(--moss)" : "var(--rose)" }}>
@@ -4538,21 +4538,22 @@ function Parlay({ onPick }) {
                 {conflicts.has(l.id) && <span className="srcchip bad" style={{ marginLeft: 8 }}>same game</span>}
               </span>
               <span className="pts" style={{ fontSize: 15 }}>
-                {l.entry.toFixed(0)}c
+                <b style={{ color: l.modelProb >= 68 ? "var(--moss)" : l.modelProb >= 55 ? "var(--amber)" : "var(--dim)" }}>{l.modelProb.toFixed(0)}%</b>
+                <span style={{ color: "var(--dim)", fontSize: 11 }}> @ {l.entry.toFixed(0)}c</span>
                 <button className="chip" style={{ marginLeft: 8 }} onClick={() => setSlip((s) => s.filter((x) => x.id !== l.id))}>remove</button>
               </span>
             </div>
           ))}
           <div className="figures" style={{ marginTop: 16 }}>
             <div className="fig">
-              <span className="big" style={{ color: "var(--amber)" }}>{pm.mult.toFixed(1)}×</span>
-              <span className="cap">Payout multiplier</span>
-              <span className="sub">$100 returns ${(pm.mult * 100).toFixed(0)} if every leg hits</span>
+              <span className="big" style={{ color: pm.modelProb >= 50 ? "var(--moss)" : pm.modelProb >= 25 ? "var(--amber)" : "var(--rose)" }}>{pm.modelProb.toFixed(pm.modelProb < 10 ? 1 : 0)}%</span>
+              <span className="cap">Chance every leg hits</span>
+              <span className="sub">The books' true odds multiplied across your legs</span>
             </div>
             <div className="fig">
-              <span className="big">{pm.modelProb.toFixed(pm.modelProb < 10 ? 1 : 0)}%</span>
-              <span className="cap">Model win chance</span>
-              <span className="sub">All legs hitting, per the sportsbook lines</span>
+              <span className="big">{pm.mult.toFixed(1)}×</span>
+              <span className="cap">Pays if it hits</span>
+              <span className="sub">$100 returns ${(pm.mult * 100).toFixed(0)} if every leg wins</span>
             </div>
             <div className="fig">
               <span className="big" style={{ color: pm.ev > 0 ? "var(--moss)" : "var(--rose)" }}>
@@ -4670,7 +4671,7 @@ function Parlay({ onPick }) {
                 style={{ color: "var(--bone)", textDecoration: "none", fontWeight: 600 }}
                 onMouseOver={(e) => { e.currentTarget.style.color = "var(--cyan)"; }}
                 onMouseOut={(e) => { e.currentTarget.style.color = "var(--bone)"; }}>
-                <span style={{ color: p.edge >= 2 ? "var(--moss)" : "var(--dim)" }}>Bet </span>
+                <span style={{ color: p.modelProb >= 68 ? "var(--moss)" : p.modelProb >= 55 ? "var(--amber)" : "var(--dim)" }}>Winner: </span>
                 {p.market.name === p.market.question ? p.market.question : p.market.name} ↗
               </a>
               <span className="sub">
@@ -4680,18 +4681,18 @@ function Parlay({ onPick }) {
                   : p.src === "live-books" ? " in-play books"
                   : p.src === "pregame-line" ? " pregame line (no live model)"
                   : p.src === "model" ? " model projection"
-                  : " " + (p.books > 1 ? p.books + " books" : "1 book")} {p.modelProb.toFixed(0)}% vs price {p.entry.toFixed(0)}c
-                {p.edge >= 2 ? " · has an edge" : " · fairly priced"}
+                  : " " + (p.books > 1 ? p.books + " books" : "1 book")} · costs {p.entry.toFixed(0)}c
+                {p.edge - (p.fee || 0) >= 2.5 ? <span style={{ color: "var(--moss)" }}> · also underpriced</span> : null}
                 {p.disp > 6 ? " · books split" : ""}
               </span>
             </span>
             <span style={{ display: "flex", gap: 10, alignItems: "center", flex: "0 0 auto" }}>
-              {(() => { const dec = pickDecision(p); const net = p.edge - (p.fee || 0); return (
-                <span className="sig" style={{ color: dec.color, borderColor: dec.color }}
-                  title={"Edge " + p.edge.toFixed(1) + "c gross, " + net.toFixed(1) + "c after the " + (p.fee || 0).toFixed(1) + "c taker fee"}>
-                  {dec.tag}{dec.bet ? " · " + (net > 0 ? "+" : "") + net.toFixed(0) + "c net" : ""}
-                </span>
-              ); })()}
+              <span className="sig" style={{
+                color: p.modelProb >= 68 ? "var(--moss)" : p.modelProb >= 55 ? "var(--amber)" : "var(--dim)",
+                borderColor: p.modelProb >= 68 ? "var(--moss)" : p.modelProb >= 55 ? "var(--amber)" : "var(--dim)" }}
+                title={"True odds " + p.modelProb.toFixed(1) + "% by " + (p.books || 1) + " book(s); contract costs " + p.entry.toFixed(0) + "c"}>
+                {p.modelProb.toFixed(0)}% TO WIN
+              </span>
               <button className={"chip" + (inSlip(p.id) ? " on" : "")} onClick={() => toggle(p)}>
                 {inSlip(p.id) ? "added" : "add"}
               </button>
@@ -4702,8 +4703,9 @@ function Parlay({ onPick }) {
         ))}
         {state === "done" && shown.length > 0 && (
           <p className="help" style={{ marginTop: 12 }}>
-            "Edge" is how many cents cheaper the contract is than the sportsbook's fair price. A positive edge means
-            the market may be underpricing that side. Tap <b>analyze</b> for the full nine-way read on any pick.
+            The percentage is each side's true chance of winning by the de-vigged book consensus and live models —
+            stack the ones you believe in. "Also underpriced" flags picks that are cheap relative to those odds.
+            Tap <b>deep dive</b> for the full nine-way read on any pick.
           </p>
         )}
       </div>
