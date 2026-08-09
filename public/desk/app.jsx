@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-08.parlay-dates";
+const BUILD = "2026-08-08.parlay-links";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -3069,7 +3069,9 @@ function Parlay({ onPick }) {
           {slip.map((l) => (
             <div key={l.id} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
               <span className="who" style={{ fontSize: 13.5 }}>
-                {l.market.name === l.market.question ? l.market.question : l.market.name}
+                <a href={l.market.link} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>
+                  {l.market.name === l.market.question ? l.market.question : l.market.name} ↗
+                </a>
                 {conflicts.has(l.id) && <span className="srcchip bad" style={{ marginLeft: 8 }}>same game</span>}
               </span>
               <span className="pts" style={{ fontSize: 15 }}>
@@ -3124,7 +3126,12 @@ function Parlay({ onPick }) {
         {shown.map((p) => (
           <div key={p.id} className="sel" style={{ cursor: "default", borderColor: inSlip(p.id) ? "var(--amber)" : undefined }}>
             <span style={{ minWidth: 0 }}>
-              {p.market.name === p.market.question ? p.market.question : p.market.name}
+              <a href={p.market.link} target="_blank" rel="noreferrer"
+                style={{ color: "var(--bone)", textDecoration: "none" }}
+                onMouseOver={(e) => { e.currentTarget.style.color = "var(--cyan)"; }}
+                onMouseOut={(e) => { e.currentTarget.style.color = "var(--bone)"; }}>
+                {p.market.name === p.market.question ? p.market.question : p.market.name} ↗
+              </a>
               <span className="sub">
                 {p.league} · {p.state === "in" ? "live" : p.state === "post" ? "final" : "upcoming"} ·
                 {p.src === "live" ? " live win prob" : " " + (p.books > 1 ? p.books + " books" : "1 book")} {p.modelProb.toFixed(0)}% vs price {p.entry.toFixed(0)}c
@@ -3139,6 +3146,7 @@ function Parlay({ onPick }) {
                 {inSlip(p.id) ? "added" : "add"}
               </button>
               <button className="chip" onClick={() => onPick(p.market)}>analyze</button>
+              <a className="chip" href={p.market.link} target="_blank" rel="noreferrer">open ↗</a>
             </span>
           </div>
         ))}
