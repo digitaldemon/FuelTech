@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.polish";
+const BUILD = "2026-08-10.combo-links";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -470,6 +470,10 @@ const SERIES_SLUG = {
   KXEPLGAME: "english-premier-league-game", KXMLSGAME: "major-league-soccer-game",
   KXUCLGAME: "uefa-champions-league-game", KXLALIGAGAME: "la-liga-game",
   KXSERIEAGAME: "serie-a-game", KXBUNDESLIGAGAME: "bundesliga-game",
+  // Parlay (multivariate) series — slugs from Kalshi's own series titles,
+  // including their "Mutli" typo.
+  KXMVECROSSCATEGORY: "mve-cross-category",
+  KXMVESPORTSMULTIGAMEEXTENDED: "mve-sport-mutli-game",
 };
 function kalshiEventLink(ticker) {
   const parts = String(ticker || "").split("-");
@@ -4482,6 +4486,16 @@ function Parlay({ onPick }) {
                 <>
                   <div className="meta" style={{ marginTop: 4 }}>
                     <div><span className="k">Kalshi parlay price</span><span className="v" style={{ color: "var(--cyan)" }}>{kp.ask != null ? kp.ask.toFixed(0) + "c" : "—"}</span></div>
+                    {kp.ticker && (
+                      <div>
+                        <span className="k">Combo market</span>
+                        <span className="v">
+                          <a className="srcchip" href={kalshiEventLink(kp.ticker)} target="_blank" rel="noreferrer">
+                            open on Kalshi ↗
+                          </a>
+                        </span>
+                      </div>
+                    )}
                     <div><span className="k">Model win chance</span><span className="v">{pm.modelProb.toFixed(pm.modelProb < 10 ? 1 : 0)}%</span></div>
                     <div>
                       <span className="k">Edge vs Kalshi (after fee)</span>

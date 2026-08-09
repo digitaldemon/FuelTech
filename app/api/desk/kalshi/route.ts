@@ -36,6 +36,26 @@ async function kget(creds: Creds, path: string) {
   return r.json();
 }
 
+// Event-page link, matching the frontend's kalshiEventLink. Only the series
+// synced positions actually land on need slugs here.
+const WEB_SLUG: Record<string, string> = {
+  KXMVECROSSCATEGORY: "mve-cross-category",
+  KXMVESPORTSMULTIGAMEEXTENDED: "mve-sport-mutli-game",
+  KXNBAGAME: "pro-basketball-game", KXWNBAGAME: "womens-pro-basketball-game",
+  KXMLBGAME: "professional-baseball-game", KXNFLGAME: "professional-football-game",
+  KXNHLGAME: "nhl-game", KXCFBGAME: "college-football-game",
+  KXCBBGAME: "college-basketball-game", KXEPLGAME: "english-premier-league-game",
+  KXMLSGAME: "major-league-soccer-game",
+};
+function kalshiWebLink(ticker: string): string {
+  const parts = String(ticker || "").split("-");
+  const series = parts[0];
+  const base = "https://kalshi.com/markets/" + series.toLowerCase();
+  const slug = WEB_SLUG[series];
+  if (!slug || parts.length < 2) return base;
+  return base + "/" + slug + "/" + parts.slice(0, -1).join("-").toLowerCase();
+}
+
 const num = (...vals: unknown[]): number | null => {
   for (const v of vals) {
     if (v === null || v === undefined || v === "") continue;
@@ -173,7 +193,7 @@ export async function GET(req: Request) {
           id: "kalshi-" + p.ticker, ts: now, venue: "Kalshi", marketId: p.ticker, slug: null,
           question: p.title, name: p.name || p.title, category: "sports", price, fair: price,
           edge: 0, call: "SYNCED", confidence: "LOW", close: p.close,
-          link: "https://kalshi.com/markets/" + p.ticker.split("-")[0].toLowerCase(),
+          link: kalshiWebLink(p.ticker),
           status: "open", outcome: null, pillars: [], entry: entryPrice, verify: null, taken,
         });
         created++;
