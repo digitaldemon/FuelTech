@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.combo-links";
+const BUILD = "2026-08-10.combo-links2";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -3518,7 +3518,10 @@ function Positions({ ledger, save, reopen, reload }) {
                 )}
                 <button className="btn btn-ghost btn-sm" onClick={() => reopen(e)}>Full re-analysis</button>
                 <button className="btn btn-ghost btn-sm" onClick={() => save({ ...e, taken: null })}>Stop tracking</button>
-                {e.link && <a className="srcchip" href={e.link} target="_blank" rel="noreferrer">open market ↗</a>}
+                {(e.link || e.venue === "Kalshi") && (
+                  <a className="srcchip" href={e.venue === "Kalshi" ? kalshiEventLink(e.marketId) : e.link}
+                    target="_blank" rel="noreferrer">open market ↗</a>
+                )}
               </div>
             </div>
           );
