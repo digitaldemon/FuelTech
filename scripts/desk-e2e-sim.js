@@ -30,6 +30,7 @@ const code = [
   slice("function tickerDate(", "\n}"),
   slice("function pickDecision(", "\n}"),
   slice("const ODDS_FRESH_MS =", ";"),
+  slice("function oddsSideMarket(", "\n}"),
   slice("function oddsEventConsensus(", "\n}"),
   slice("function matchOddsEvent(", "\n}"),
   slice("function homeProbObj(", "\n}"),

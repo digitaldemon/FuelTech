@@ -9,11 +9,11 @@ import { requireDeskUser, readStore, writeStore } from "../../../../lib/desk";
 
 const BASE = "https://api.the-odds-api.com/v4";
 
-type OddsCfg = { apiKey: string; regions?: string };
+type OddsCfg = { apiKey: string; regions?: string; markets?: string };
 
 // sport key -> { at, body } ; the sports list caches under "__list".
 const cache = new Map<string, { at: number; body: unknown; remaining: string | null; used: string | null }>();
-const ODDS_TTL = 150 * 1000;   // odds refresh at most every 2.5 minutes
+const ODDS_TTL = 270 * 1000;   // odds refresh at most every 4.5 minutes
 const LIST_TTL = 3600 * 1000;  // the sports list is free but changes rarely
 
 async function getCfg(): Promise<OddsCfg | null> {
@@ -25,9 +25,12 @@ async function getCfg(): Promise<OddsCfg | null> {
 
 async function fetchOdds(cfg: OddsCfg, sport: string) {
   const regions = cfg.regions || "us,eu";
+  // totals + spreads ride along for the picks deciders. Credit cost is
+  // markets x regions per request — the longer cache below pays for it.
+  const markets = cfg.markets || "h2h,totals,spreads";
   const url = BASE + "/sports/" + encodeURIComponent(sport) +
     "/odds/?apiKey=" + encodeURIComponent(cfg.apiKey) +
-    "&regions=" + encodeURIComponent(regions) + "&markets=h2h&oddsFormat=american";
+    "&regions=" + encodeURIComponent(regions) + "&markets=" + encodeURIComponent(markets) + "&oddsFormat=american";
   const r = await fetch(url);
   const remaining = r.headers.get("x-requests-remaining");
   const used = r.headers.get("x-requests-used");

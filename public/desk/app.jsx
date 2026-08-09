@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-09.winner-picks";
+const BUILD = "2026-08-09.live-deciders";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -1229,6 +1229,33 @@ async function fetchOddsEvents(path) {
   } catch { return null; }
 }
 
+// Two-sided derivative market (totals: Over/Under; spreads: home/away at a
+// handicap). Books quote different lines — take the median point, de-vig
+// every book quoting that exact point, and average. `a` is Over (totals)
+// or the home side (spreads), as a percentage.
+function oddsSideMarket(ev, key) {
+  if (!ev || !Array.isArray(ev.bookmakers)) return null;
+  const quotes = [];
+  ev.bookmakers.forEach((bk) => {
+    const m = (bk.markets || []).find((x) => x.key === key);
+    if (!m || !Array.isArray(m.outcomes)) return;
+    const oA = m.outcomes.find((o) => (key === "totals" ? o.name === "Over" : o.name === ev.home_team));
+    const oB = m.outcomes.find((o) => (key === "totals" ? o.name === "Under" : o.name === ev.away_team));
+    if (!oA || !oB || oA.point == null) return;
+    const ra = mlImplied(oA.price), rb = mlImplied(oB.price);
+    if (ra == null || rb == null) return;
+    quotes.push({ point: Number(oA.point), ra, rb });
+  });
+  if (!quotes.length) return null;
+  const pts = quotes.map((q) => q.point).sort((x, y) => x - y);
+  const point = pts[Math.floor(pts.length / 2)];
+  const at = quotes.filter((q) => Math.abs(q.point - point) < 1e-9);
+  const dv = at.map((q) => shinDevig([q.ra, q.rb])).filter(Boolean);
+  if (!dv.length) return null;
+  const a = (dv.reduce((s, x) => s + x[0], 0) / dv.length) * 100;
+  return { point, a, b: 100 - a, books: dv.length };
+}
+
 function oddsEventConsensus(ev) {
   if (!ev || !Array.isArray(ev.bookmakers)) return null;
   const books = [];
@@ -1256,7 +1283,8 @@ function oddsEventConsensus(ev) {
   const draw = withDraw.length ? withDraw.reduce((s, b) => s + b.draw, 0) / withDraw.length : null;
   const disp = books.length > 1
     ? Math.sqrt(books.reduce((s, b) => s + Math.pow(b.home - home, 2), 0) / books.length) : 0;
-  return { home, away, draw, books: books.length, disp, updated };
+  return { home, away, draw, books: books.length, disp, updated,
+    totals: oddsSideMarket(ev, "totals"), spreads: oddsSideMarket(ev, "spreads") };
 }
 
 // Find this game among the sport's events. BOTH competitors must appear in
@@ -3591,6 +3619,10 @@ async function espnGamesForLeague(path, date) {
       homeAbbr: home ? competitorAbbr(home) : null, awayAbbr: away ? competitorAbbr(away) : null,
       state: (ev.status && ev.status.type && ev.status.type.state) || "pre",
       name: ev.name || ev.shortName || "",
+      // Live scores + clock so the picks board breathes during games.
+      sides: comps.map((c) => ({ abbr: competitorAbbr(c),
+        score: c.score != null && c.score !== "" ? Number(c.score) : null, home: c.homeAway === "home" })),
+      detail: (ev.status && ev.status.type && (ev.status.type.shortDetail || ev.status.type.detail)) || "",
     };
   });
 }
@@ -3609,7 +3641,8 @@ function oddsProbObj(odds, game, src) {
   if (game.homeAbbr) probByAbbr[game.homeAbbr] = clamp(odds.home, 0.5, 99.5);
   if (game.awayAbbr) probByAbbr[game.awayAbbr] = clamp(odds.away, 0.5, 99.5);
   if (odds.draw != null) { probByAbbr.TIE = odds.draw; probByAbbr.DRAW = odds.draw; }
-  return { probByAbbr, home: odds.home, away: odds.away, books: odds.books, disp: odds.disp, src };
+  return { probByAbbr, home: odds.home, away: odds.away, books: odds.books, disp: odds.disp, src,
+    totals: odds.totals || null, spreads: odds.spreads || null };
 }
 
 // Best available probability for one game, honest about its source.
@@ -3731,6 +3764,9 @@ async function scanEdges() {
         fee: takerFee(m.venue, entry),
         league: label, state: g.state, game: g.name, codes,
         src: dv.src, books: dv.books || 1, disp: dv.disp || 0,
+        homeAbbr: g.homeAbbr, awayAbbr: g.awayAbbr,
+        sides: g.sides || null, detail: g.detail || "",
+        ou: dv.totals || null, spr: dv.spreads || null,
       });
     }
   }
@@ -3839,7 +3875,7 @@ function Picks({ ledger, onPick }) {
     setState("loading"); setErr(null);
     try {
       const { picks: p, gamesFound, gamesPriced } = await scanEdges();
-      setPicks(p); setScanInfo({ gamesFound, gamesPriced }); setState("done");
+      setPicks(p); setScanInfo({ gamesFound, gamesPriced, at: Date.now() }); setState("done");
       anyLive.current = p.some((x) => x.state === "in");
       if (!p.length) {
         setErr(gamesFound === 0
@@ -3848,17 +3884,20 @@ function Picks({ ledger, onPick }) {
       }
     } catch (e) { setErr("Scan failed: " + e.message); setState("idle"); }
   }
-  // Auto-refresh: every minute while games are live, every 4 minutes
-  // otherwise (the odds feed caches, so this costs almost nothing).
+  // Auto-refresh: every 45 seconds while games are live (win probs, scores
+  // and clocks move play by play), every 5 minutes otherwise. The odds feed
+  // is cached server-side, so the fast cadence doesn't burn credits.
   useEffect(() => {
     let alive = true, timer = null;
     const loop = async () => {
       await run();
       if (!alive) return;
-      timer = setTimeout(loop, anyLive.current ? 60000 : 240000);
+      timer = setTimeout(loop, anyLive.current ? 45000 : 300000);
     };
     loop();
-    return () => { alive = false; if (timer) clearTimeout(timer); };
+    const onVis = () => { if (!document.hidden) { if (timer) clearTimeout(timer); loop(); } };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { alive = false; if (timer) clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); };
   }, []);
 
   // WINNER-centric: for each game keep the side the books/models say WINS
@@ -3911,7 +3950,10 @@ function Picks({ ledger, onPick }) {
           </span>
           <span className="sub">
             {p.state === "in" ? <b style={{ color: "var(--rose)" }}>● LIVE </b> : null}
-            {p.league} · {p.game} · {p.src === "live" ? "live model"
+            {p.league} · {p.state === "in" && p.sides && p.sides.some((s) => s.score != null)
+              ? p.sides.map((s) => s.abbr + " " + (s.score != null ? s.score : "-")).join(" · ") + (p.detail ? " · " + p.detail : "")
+              : p.game}
+            {" · "}{p.src === "live" ? "live model"
               : p.src === "live-books" ? "in-play books"
               : p.src === "model" ? "model projection"
               : p.books + " book" + (p.books === 1 ? "" : "s") + " consensus"}
@@ -3921,6 +3963,28 @@ function Picks({ ledger, onPick }) {
             {an && <span style={{ color: an.call.indexOf("BUY") === 0 ? "var(--amber)" : "var(--dim)" }}>
               {" · full analysis: " + an.call + (an.confidence ? " (" + an.confidence.toLowerCase() + ")" : "")}</span>}
           </span>
+          {(p.ou || p.spr) && (
+            <span className="sub" style={{ display: "block", marginTop: 2 }}>
+              {p.ou && <>
+                <span style={{ color: "var(--dim)" }}>O/U {p.ou.point}: </span>
+                <b style={{ color: p.ou.a >= 55 || p.ou.b >= 55 ? "var(--amber)" : "var(--dim)" }}>
+                  {p.ou.a >= 55 ? "OVER (" + p.ou.a.toFixed(0) + "%)"
+                    : p.ou.b >= 55 ? "UNDER (" + p.ou.b.toFixed(0) + "%)"
+                    : "coin flip"}
+                </b>
+                <span style={{ color: "var(--dim)" }}> · {p.ou.books} books</span>
+              </>}
+              {p.spr && <>
+                {p.ou ? <span style={{ color: "var(--dim)" }}> · </span> : null}
+                <span style={{ color: "var(--dim)" }}>spread {(p.homeAbbr || "home")} {p.spr.point > 0 ? "+" : ""}{p.spr.point}: </span>
+                <b style={{ color: p.spr.a >= 55 || p.spr.b >= 55 ? "var(--amber)" : "var(--dim)" }}>
+                  {p.spr.a >= 55 ? (p.homeAbbr || "home") + " covers (" + p.spr.a.toFixed(0) + "%)"
+                    : p.spr.b >= 55 ? (p.awayAbbr || "away") + " covers (" + p.spr.b.toFixed(0) + "%)"
+                    : "coin flip"}
+                </b>
+              </>}
+            </span>
+          )}
         </span>
         <span style={{ display: "flex", gap: 10, alignItems: "center", flex: "0 0 auto" }}>
           <span className="sig" style={{ color: tr.c, borderColor: tr.c }}>
@@ -3962,6 +4026,8 @@ function Picks({ ledger, onPick }) {
         {scanInfo && (
           <div className="chips" style={{ marginTop: 8 }}>
             <span className="chip static">{scanInfo.gamesPriced} of {scanInfo.gamesFound} games priced</span>
+            {scanInfo.at && <span className="chip static">updated {new Date(scanInfo.at).toLocaleTimeString()}</span>}
+            {anyLive.current && <span className="chip static" style={{ color: "var(--rose)", borderColor: "rgba(228,112,126,.5)" }}>● live — refreshing every 45s</span>}
             {oddsQuota && <span className="chip static">odds feed · {oddsQuota.remaining} credits</span>}
           </div>
         )}

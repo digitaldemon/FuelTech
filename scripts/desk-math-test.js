@@ -19,6 +19,7 @@ const code = [
   slice("const etDate =", "});"),
   slice("const STOP = new Set(", "\n}"), // STOP + toks + overlap
   slice("const takerFee =", ": 0;"),
+  slice("function oddsSideMarket(", "\n}"),
   slice("function matchOddsEvent(", "\n}"),
   slice("function likelyWinner(", "\n}"),
   slice("function legsCombined(", "\n}"),
@@ -38,8 +39,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -104,6 +105,29 @@ ok(matchOddsEvent(oddsEvents, 'Las Vegas Aces at New York Liberty') === oddsEven
 ok(matchOddsEvent(oddsEvents, 'New York Liberty at Indiana Fever') === null,
   'game missing from the odds list does NOT borrow a sibling event sharing one team');
 ok(matchOddsEvent(oddsEvents, 'Phoenix Mercury at Los Angeles Sparks', '20260811') === oddsEvents[1], 'date bonus still finds the right ET-dated event');
+
+// Totals/spreads consensus: median line, de-vigged, Over/home share as `a`
+const totEv = {
+  home_team: "Milwaukee Brewers", away_team: "Minnesota Twins",
+  bookmakers: [
+    { markets: [{ key: "totals", outcomes: [
+      { name: "Over", price: -120, point: 8.5 }, { name: "Under", price: 100, point: 8.5 }] }] },
+    { markets: [{ key: "totals", outcomes: [
+      { name: "Over", price: -115, point: 8.5 }, { name: "Under", price: -105, point: 8.5 }] }] },
+    { markets: [{ key: "totals", outcomes: [
+      { name: "Over", price: -110, point: 9 }, { name: "Under", price: -110, point: 9 }] }] },
+  ],
+};
+const tot = oddsSideMarket(totEv, "totals");
+ok(tot && tot.point === 8.5 && tot.books === 2 && Math.abs(tot.a + tot.b - 100) < 1e-9 && tot.a > 51,
+  "totals: median line 8.5, 2 books at it, de-vigged Over lean " + (tot ? tot.a.toFixed(1) : "?") + "%");
+const sprEv = {
+  home_team: "H", away_team: "A",
+  bookmakers: [{ markets: [{ key: "spreads", outcomes: [
+    { name: "H", price: -110, point: -1.5 }, { name: "A", price: -110, point: 1.5 }] }] }],
+};
+const spr = oddsSideMarket(sprEv, "spreads");
+ok(spr && spr.point === -1.5 && Math.abs(spr.a - 50) < 0.01, "spreads: home handicap point, even odds -> 50/50");
 
 // Position advice: hold / buy more / sell off a live independent read
 const pos = (over) => Object.assign({
