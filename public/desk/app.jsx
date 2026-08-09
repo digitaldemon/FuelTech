@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.combo-links2";
+const BUILD = "2026-08-10.portfolio-links";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -470,14 +470,14 @@ const SERIES_SLUG = {
   KXEPLGAME: "english-premier-league-game", KXMLSGAME: "major-league-soccer-game",
   KXUCLGAME: "uefa-champions-league-game", KXLALIGAGAME: "la-liga-game",
   KXSERIEAGAME: "serie-a-game", KXBUNDESLIGAGAME: "bundesliga-game",
-  // Parlay (multivariate) series — slugs from Kalshi's own series titles,
-  // including their "Mutli" typo.
-  KXMVECROSSCATEGORY: "mve-cross-category",
-  KXMVESPORTSMULTIGAMEEXTENDED: "mve-sport-mutli-game",
 };
 function kalshiEventLink(ticker) {
   const parts = String(ticker || "").split("-");
   const series = parts[0];
+  // Combos (KXMVE*) have no public market page — Kalshi only shows them in
+  // the holder's portfolio (verified: event-page URLs redirect to the
+  // homepage). Link where the combo actually lives.
+  if (/^KXMVE/.test(series)) return "https://kalshi.com/portfolio";
   const base = "https://kalshi.com/markets/" + series.toLowerCase();
   const slug = SERIES_SLUG[series];
   if (!slug || parts.length < 2) return base;
@@ -4491,10 +4491,10 @@ function Parlay({ onPick }) {
                     <div><span className="k">Kalshi parlay price</span><span className="v" style={{ color: "var(--cyan)" }}>{kp.ask != null ? kp.ask.toFixed(0) + "c" : "—"}</span></div>
                     {kp.ticker && (
                       <div>
-                        <span className="k">Combo market</span>
+                        <span className="k">After you buy</span>
                         <span className="v">
-                          <a className="srcchip" href={kalshiEventLink(kp.ticker)} target="_blank" rel="noreferrer">
-                            open on Kalshi ↗
+                          <a className="srcchip" href="https://kalshi.com/portfolio" target="_blank" rel="noreferrer">
+                            it shows in your Kalshi portfolio ↗
                           </a>
                         </span>
                       </div>

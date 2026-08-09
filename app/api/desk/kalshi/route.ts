@@ -39,8 +39,6 @@ async function kget(creds: Creds, path: string) {
 // Event-page link, matching the frontend's kalshiEventLink. Only the series
 // synced positions actually land on need slugs here.
 const WEB_SLUG: Record<string, string> = {
-  KXMVECROSSCATEGORY: "mve-cross-category",
-  KXMVESPORTSMULTIGAMEEXTENDED: "mve-sport-mutli-game",
   KXNBAGAME: "pro-basketball-game", KXWNBAGAME: "womens-pro-basketball-game",
   KXMLBGAME: "professional-baseball-game", KXNFLGAME: "professional-football-game",
   KXNHLGAME: "nhl-game", KXCFBGAME: "college-football-game",
@@ -50,6 +48,8 @@ const WEB_SLUG: Record<string, string> = {
 function kalshiWebLink(ticker: string): string {
   const parts = String(ticker || "").split("-");
   const series = parts[0];
+  // Combos have no public market page — they only exist in the portfolio.
+  if (/^KXMVE/.test(series)) return "https://kalshi.com/portfolio";
   const base = "https://kalshi.com/markets/" + series.toLowerCase();
   const slug = WEB_SLUG[series];
   if (!slug || parts.length < 2) return base;
