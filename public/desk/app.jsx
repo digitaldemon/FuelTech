@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-08.full-coverage+decision";
+const BUILD = "2026-08-08.kalshi-parlay";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -3079,6 +3079,11 @@ function Parlay({ onPick }) {
   const [minEdge, setMinEdge] = useState(3);
   const [sugLegs, setSugLegs] = useState(3);
   const [sugMode, setSugMode] = useState("value"); // value | safe
+  const [kp, setKp] = useState(null);        // Kalshi combined-parlay preview
+  const [kpBusy, setKpBusy] = useState(false);
+  const [kpCount, setKpCount] = useState(10);
+  const [kpConfirm, setKpConfirm] = useState(false);
+  const [kpResult, setKpResult] = useState(null);
 
   const [scanInfo, setScanInfo] = useState(null);
   async function run() {
@@ -3109,6 +3114,40 @@ function Parlay({ onPick }) {
   const inSlip = (id) => slip.some((l) => l.id === id);
   const toggle = (p) => setSlip((s) => inSlip(p.id) ? s.filter((l) => l.id !== p.id)
     : s.length >= 8 ? s : [...s, { id: p.id, market: p.market, modelProb: p.modelProb, entry: p.entry, codes: p.codes, game: p.game }]);
+
+  // Reset any Kalshi preview whenever the legs change.
+  useEffect(() => { setKp(null); setKpConfirm(false); setKpResult(null); }, [slip]);
+
+  const allKalshi = slip.length >= 2 && slip.every((l) => l.market.venue === "Kalshi");
+
+  async function previewKalshi() {
+    setKpBusy(true); setKpResult(null); setKpConfirm(false);
+    try {
+      const r = await fetch("/api/desk/kalshi/parlay", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tickers: slip.map((l) => l.market.id), place: false }),
+      });
+      const d = await r.json();
+      setKp(d.error ? { error: d.error } : d);
+    } catch (e) { setKp({ error: e.message }); }
+    setKpBusy(false);
+  }
+
+  async function placeKalshi() {
+    setKpBusy(true); setKpResult(null);
+    try {
+      const r = await fetch("/api/desk/kalshi/parlay", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tickers: slip.map((l) => l.market.id), count: kpCount, place: true }),
+      });
+      const d = await r.json();
+      setKpResult(d.ok
+        ? { ok: true, msg: "Parlay placed on Kalshi — bought " + d.count + " contracts. Check My trades / your Kalshi account." }
+        : { ok: false, msg: d.error || "Order failed." });
+      setKpConfirm(false);
+    } catch (e) { setKpResult({ ok: false, msg: e.message }); }
+    setKpBusy(false);
+  }
 
   const liveCount = useMemo(() => new Set(picks.filter((p) => p.state === "in").map((p) => p.game)).size, [picks]);
 
@@ -3301,7 +3340,68 @@ function Parlay({ onPick }) {
                 ? "Positive expected value: the lines say this combo pays more than the risk. Parlays still lose most of the time — the multiplier is the point, not the hit rate."
                 : "Negative expected value on these lines — the payout doesn't cover the combined risk. Fewer legs or bigger edges fix that."}
           </p>
-          <button className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setSlip([])}>Clear slip</button>
+
+          {/* Place as a real Kalshi parlay (native combo market) */}
+          {allKalshi && conflicts.size === 0 && (
+            <div className="panel" style={{ marginTop: 14, background: "rgba(0,0,0,.14)" }}>
+              <p className="label" style={{ marginBottom: 6 }}>Place this on Kalshi as one parlay</p>
+              {!kp && (
+                <button className="btn btn-sm" onClick={previewKalshi} disabled={kpBusy}>
+                  {kpBusy ? "Building…" : "Get Kalshi's parlay price"}
+                </button>
+              )}
+              {kp && kp.error && <p className="help" style={{ color: "var(--rose)" }}>Kalshi couldn't build this parlay: {kp.error}</p>}
+              {kp && !kp.error && (
+                <>
+                  <div className="meta" style={{ marginTop: 4 }}>
+                    <div><span className="k">Kalshi parlay price</span><span className="v" style={{ color: "var(--cyan)" }}>{kp.ask != null ? kp.ask.toFixed(0) + "c" : "—"}</span></div>
+                    <div><span className="k">Model win chance</span><span className="v">{pm.modelProb.toFixed(pm.modelProb < 10 ? 1 : 0)}%</span></div>
+                    <div>
+                      <span className="k">Edge vs Kalshi</span>
+                      <span className="v" style={{ color: kp.ask != null && pm.modelProb - kp.ask > 2 ? "var(--moss)" : "var(--dim)" }}>
+                        {kp.ask != null ? (pm.modelProb - kp.ask > 0 ? "+" : "") + (pm.modelProb - kp.ask).toFixed(0) + "c" : "—"}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, marginTop: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+                    <div>
+                      <span className="k eyebrow" style={{ display: "block", marginBottom: 4 }}>Contracts</span>
+                      <input className="srch" type="number" min="1" value={kpCount}
+                        onChange={(e) => setKpCount(Math.max(1, Math.round(Number(e.target.value) || 1)))}
+                        style={{ width: 100, padding: "8px 10px", flex: "none" }} />
+                    </div>
+                    <div><span className="k">Approx cost</span><span className="v">{kp.ask != null ? "$" + ((kp.ask * kpCount) / 100).toFixed(2) : "—"}</span></div>
+                    <div><span className="k">Pays if it hits</span><span className="v" style={{ color: "var(--moss)" }}>${(kpCount).toFixed(2)}</span></div>
+                  </div>
+
+                  {!kpConfirm ? (
+                    <button className="btn btn-sm" style={{ marginTop: 12 }} onClick={() => setKpConfirm(true)} disabled={kp.ask == null || kp.ask >= 99}>
+                      Place parlay on Kalshi
+                    </button>
+                  ) : (
+                    <div className="panel" style={{ marginTop: 12, background: "rgba(228,112,126,.07)", borderColor: "rgba(228,112,126,.4)" }}>
+                      <p className="thesis" style={{ margin: 0 }}>
+                        Buy <b>{kpCount}</b> contracts of this <b>{pm.legs}-leg parlay</b> at market
+                        (~{kp.ask != null ? kp.ask.toFixed(0) : "?"}c, about ${kp.ask != null ? ((kp.ask * kpCount) / 100).toFixed(2) : "?"}).
+                        This places a real order on your Kalshi account. It pays ${kpCount.toFixed(2)} only if <b>all {pm.legs} legs</b> win.
+                      </p>
+                      <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                        <button className="btn btn-sm" style={{ background: "linear-gradient(180deg,#EC8391,#E4707E)" }}
+                          onClick={placeKalshi} disabled={kpBusy}>{kpBusy ? "Placing…" : "Yes, place it"}</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setKpConfirm(false)} disabled={kpBusy}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+              {kpResult && <p className="help" style={{ marginTop: 8, color: kpResult.ok ? "var(--moss)" : "var(--rose)" }}>{kpResult.msg}</p>}
+              <p className="help" style={{ marginTop: 8 }}>
+                This builds Kalshi's native combo market for your exact legs — one all-or-nothing ticket, not separate bets.
+              </p>
+            </div>
+          )}
+
+          <button className="btn btn-ghost btn-sm" style={{ marginTop: 12 }} onClick={() => setSlip([])}>Clear slip</button>
         </div>
       )}
 
