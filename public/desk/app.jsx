@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-08.parlay-by-day";
+const BUILD = "2026-08-08.full-coverage+decision";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -1331,8 +1331,11 @@ function consensusDevig(oddsArray, homeAbbr, awayAbbr) {
     if (!o || !o.homeTeamOdds || !o.awayTeamOdds) return;
     const rh = mlImplied(o.homeTeamOdds.moneyLine), ra = mlImplied(o.awayTeamOdds.moneyLine);
     if (rh == null || ra == null) return;
-    const dv = shinDevig([rh, ra]);
-    if (dv) books.push({ home: dv[0] * 100, away: dv[1] * 100 });
+    // Soccer prices a draw as a third outcome — de-vig all three so a
+    // "team to win" probability isn't inflated by ignoring the draw.
+    const rd = o.drawOdds ? mlImplied(o.drawOdds.moneyLine) : null;
+    const dv = shinDevig(rd != null ? [rh, rd, ra] : [rh, ra]);
+    if (dv) books.push({ home: dv[0] * 100, away: dv[dv.length - 1] * 100 });
   });
   if (!books.length) return null;
   const mean = (k) => books.reduce((s, b) => s + b[k], 0) / books.length;
@@ -2847,8 +2850,17 @@ const GAME_SERIES = [
   ["KXNHLGAME", "hockey/nhl", "NHL"],
   ["KXCFBGAME", "football/college-football", "NCAAF"],
   ["KXNCAAFGAME", "football/college-football", "NCAAF"],
+  ["KXCBBGAME", "basketball/mens-college-basketball", "NCAAB"],
+  ["KXNCAABGAME", "basketball/mens-college-basketball", "NCAAB"],
+  ["KXATPMATCH", "tennis/atp", "ATP"],
+  ["KXWTAMATCH", "tennis/wta", "WTA"],
+  ["KXUFCFIGHT", "mma/ufc", "UFC"],
   ["KXEPLGAME", "soccer/eng.1", "EPL"],
   ["KXMLSGAME", "soccer/usa.1", "MLS"],
+  ["KXUCLGAME", "soccer/uefa.champions", "UCL"],
+  ["KXLALIGAGAME", "soccer/esp.1", "La Liga"],
+  ["KXSERIEAGAME", "soccer/ita.1", "Serie A"],
+  ["KXBUNDESLIGAGAME", "soccer/ger.1", "Bundesliga"],
 ];
 
 // A Kalshi game ticker embeds the date: …-26AUG112210KCLAD-LAD -> 20260811
@@ -2919,14 +2931,20 @@ async function scanEdges() {
   });
 
   const marketsByPath = {};
-  await mapLimit(GAME_SERIES, 6, async ([ticker, path]) => {
-    try {
-      const r = await fetch(px(root + "/markets?series_ticker=" + ticker + "&status=open&limit=200"));
-      if (!r.ok) return;
+  await mapLimit(GAME_SERIES, 8, async ([ticker, path]) => {
+    // Page through the whole series so nothing is missed on a busy slate.
+    let cursor = "", pages = 0;
+    while (pages < 5) {
+      let r;
+      try { r = await fetch(px(root + "/markets?series_ticker=" + ticker + "&status=open&limit=200" + (cursor ? "&cursor=" + cursor : ""))); }
+      catch { break; }
+      if (!r.ok) break;
       const d = await r.json();
       const ms = (d.markets || []).map(kaMarket).filter((m) => m.price != null);
       (marketsByPath[path] = marketsByPath[path] || []).push(...ms);
-    } catch { /* skip this series */ }
+      cursor = d.cursor || ""; pages++;
+      if (!cursor || !(d.markets || []).length) break;
+    }
   });
 
   const picks = [];
@@ -2938,7 +2956,7 @@ async function scanEdges() {
     // Attach each market its game date; group the dates we need to look up.
     const dated = ms.map((m) => ({ m, codes: teamCodes(m.id), date: tickerDate(m.id) }))
       .filter((x) => x.codes.length);
-    const dates = [...new Set(dated.map((x) => x.date).filter(Boolean))].slice(0, 8);
+    const dates = [...new Set(dated.map((x) => x.date).filter(Boolean))].sort().slice(0, 14);
     if (!dates.length) dates.push(null); // fall back to today's slate
 
     // One scoreboard per (path, date); pool all their games.
@@ -3012,6 +3030,15 @@ function parlayConflicts(slip) {
     }
   }
   return bad;
+}
+
+// Turn a pick's signals into a firm decision + conviction. STRONG needs a
+// real edge confirmed by multiple books (or a live model); LEAN is a smaller
+// edge; otherwise the game is fairly priced and there's no bet.
+function pickDecision(p) {
+  if (p.edge >= 5 && (p.books >= 2 || p.src === "live")) return { tag: "STRONG BET", color: "var(--moss)", bet: true };
+  if (p.edge >= 2.5) return { tag: "LEAN", color: "var(--amber)", bet: true };
+  return { tag: "no edge — skip", color: "var(--dim)", bet: false };
 }
 
 // Auto-build a suggested parlay from the day's priced games: the best
@@ -3306,13 +3333,15 @@ function Parlay({ onPick }) {
               </span>
             </span>
             <span style={{ display: "flex", gap: 10, alignItems: "center", flex: "0 0 auto" }}>
-              <span className="sig" style={{ color: p.edge >= 4 ? "var(--moss)" : "var(--dim)", borderColor: p.edge >= 4 ? "var(--moss)" : "var(--slate-600)" }}>
-                {p.edge > 0 ? "+" : ""}{p.edge.toFixed(0)}c
-              </span>
+              {(() => { const dec = pickDecision(p); return (
+                <span className="sig" style={{ color: dec.color, borderColor: dec.color }} title={"Edge " + p.edge.toFixed(1) + "c"}>
+                  {dec.tag}{dec.bet ? " · " + (p.edge > 0 ? "+" : "") + p.edge.toFixed(0) + "c" : ""}
+                </span>
+              ); })()}
               <button className={"chip" + (inSlip(p.id) ? " on" : "")} onClick={() => toggle(p)}>
                 {inSlip(p.id) ? "added" : "add"}
               </button>
-              <button className="chip" onClick={() => onPick(p.market)}>analyze</button>
+              <button className="chip" onClick={() => onPick(p.market)} title="Full nine-way analysis and a firm wager decision">deep dive</button>
               <a className="chip" href={p.market.link} target="_blank" rel="noreferrer">open ↗</a>
             </span>
           </div>
