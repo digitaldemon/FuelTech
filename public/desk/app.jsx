@@ -977,7 +977,8 @@ async function espnGame(lg, m, codes) {
       const v = Number(sm.predictor.homeTeam.gameProjection);
       if (Number.isFinite(v)) base.homeWinPct = v;
     }
-    const od = (sm.odds || sm.pickcenter || [])[0];
+    const oddsArr = sm.pickcenter || sm.odds || [];
+    const od = oddsArr[0];
     if (od) {
       base.odds = {
         provider: (od.provider && od.provider.name) || "book",
@@ -987,6 +988,11 @@ async function espnGame(lg, m, codes) {
         awayML: od.awayTeamOdds && od.awayTeamOdds.moneyLine,
       };
     }
+    // Shin-de-vigged consensus across every book, for the analysis anchor.
+    const homeAbbr = (sides.find((s) => s.home) || {}).abbr;
+    const awayAbbr = (sides.find((s) => !s.home) || {}).abbr;
+    const cons = consensusDevig(oddsArr, homeAbbr, awayAbbr);
+    if (cons) base.bookProb = { home: cons.home, away: cons.away, books: cons.books, disp: cons.disp };
     const sit = sm.situation || (sm.header && sm.header.competitions && sm.header.competitions[0].situation);
     if (sit) {
       if (sit.lastPlay && sit.lastPlay.text) base.lastPlay = String(sit.lastPlay.text).slice(0, 180);
@@ -1122,6 +1128,7 @@ async function fetchLive(m) {
     possession: espn && espn.possessionText,
     lastPlay: espn && espn.lastPlay,
     odds: espn && espn.odds,
+    bookProb: espn && espn.bookProb,
     homeWinPct: espn && espn.homeWinPct,
     mySide, impliedCents, disagree, sources, errs,
     fetched: Date.now(),
@@ -1256,21 +1263,67 @@ const takerFee = (venue, priceCents) =>
 // favourite-longshot bias punishes fading the tails on model say-so.
 const minNetEdge = (priceCents) => 3 + 0.06 * Math.min(priceCents, 100 - priceCents);
 
-// American moneyline -> implied probability (still carries the book's vig).
+// American moneyline -> raw implied probability (still carries the book's
+// vig; the two sides sum to >1 by the overround).
 function mlImplied(american) {
   const a = Number(american);
   if (!Number.isFinite(a) || a === 0) return null;
   return a > 0 ? 100 / (a + 100) : -a / (-a + 100);
 }
-// Two-way no-vig: strip the book's margin so the pair sums to 100%. A
-// sharp de-vigged moneyline is one of the best probability estimates that
-// exists for a game, independent of any web search.
+
+// Shin's method: strip the book's margin AND its favourite-longshot bias.
+// It models the fraction z of informed ("insider") money the book defends
+// against; solving for z that makes the true probabilities sum to 1 gives
+// estimates that beat naive proportional de-vig, especially on longshots.
+// Falls back to proportional if the numerics misbehave.
+function shinDevig(raws) {
+  const rs = raws.filter((x) => x != null && x > 0);
+  if (rs.length < 2) return null;
+  const B = rs.reduce((s, x) => s + x, 0);
+  if (B <= 1.00001) return rs.map((x) => x / B); // no vig — just normalise
+  const pAt = (z) => rs.map((r) => (Math.sqrt(z * z + 4 * (1 - z) * r * r / B) - z) / (2 * (1 - z)));
+  const sumAt = (z) => pAt(z).reduce((s, x) => s + x, 0);
+  // sum decreases monotonically in z; sum(0)=sqrt(B)>1. Bisect for sum=1.
+  let lo = 0, hi = 0.9;
+  if (sumAt(hi) > 1) return rs.map((x) => x / B); // vig too large — fall back
+  for (let i = 0; i < 80; i++) { const mid = (lo + hi) / 2; if (sumAt(mid) > 1) lo = mid; else hi = mid; }
+  const probs = pAt((lo + hi) / 2);
+  const t = probs.reduce((s, x) => s + x, 0);
+  if (!(t > 0) || !probs.every((x) => x >= 0 && x <= 1)) return rs.map((x) => x / B);
+  return probs.map((x) => x / t);
+}
+
+// Two-way de-vig kept as a thin wrapper (Shin under the hood) so older call
+// sites keep working.
 function noVigMoneyline(homeML, awayML) {
   const h = mlImplied(homeML), a = mlImplied(awayML);
   if (h == null || a == null) return null;
-  const s = h + a;
-  if (s <= 0) return null;
-  return { home: (h / s) * 100, away: (a / s) * 100 };
+  const dv = shinDevig([h, a]);
+  if (!dv) return null;
+  return { home: dv[0] * 100, away: dv[1] * 100 };
+}
+
+// Consensus across every book ESPN lists: de-vig each independently with
+// Shin, average the results, and report how far the books spread (a proxy
+// for how settled the true price is). Returns probabilities as percentages.
+function consensusDevig(oddsArray, homeAbbr, awayAbbr) {
+  const books = [];
+  (oddsArray || []).forEach((o) => {
+    if (!o || !o.homeTeamOdds || !o.awayTeamOdds) return;
+    const rh = mlImplied(o.homeTeamOdds.moneyLine), ra = mlImplied(o.awayTeamOdds.moneyLine);
+    if (rh == null || ra == null) return;
+    const dv = shinDevig([rh, ra]);
+    if (dv) books.push({ home: dv[0] * 100, away: dv[1] * 100 });
+  });
+  if (!books.length) return null;
+  const mean = (k) => books.reduce((s, b) => s + b[k], 0) / books.length;
+  const home = mean("home"), away = mean("away");
+  const disp = books.length > 1
+    ? Math.sqrt(books.reduce((s, b) => s + Math.pow(b.home - home, 2), 0) / books.length) : 0;
+  const probByAbbr = {};
+  if (homeAbbr) probByAbbr[homeAbbr] = home;
+  if (awayAbbr) probByAbbr[awayAbbr] = away;
+  return { probByAbbr, home, away, books: books.length, disp };
 }
 
 // Empirical calibration from settled calls: if the desk's fair values have
@@ -1803,14 +1856,17 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
         signals.push({ label: "Live win prob", prob: lNow.impliedCents });
       }
       let bookProb = null;
-      if (lNow && lNow.odds && lNow.mySide && lNow.odds.homeML != null && lNow.odds.awayML != null) {
+      if (lNow && lNow.bookProb && lNow.mySide) {
+        bookProb = lNow.mySide.home ? lNow.bookProb.home : lNow.bookProb.away;
+      } else if (lNow && lNow.odds && lNow.mySide && lNow.odds.homeML != null && lNow.odds.awayML != null) {
         const nv = noVigMoneyline(lNow.odds.homeML, lNow.odds.awayML);
         if (nv) bookProb = lNow.mySide.home ? nv.home : nv.away;
       }
       if (bookProb != null) {
         anchorInputs[98] = { n: 98, strength: 3, implied: clamp(bookProb, 1, 99) };
         anchorByN[98] = { n: 98, enabled: true, weight: 1.5 };
-        signals.push({ label: "No-vig book line", prob: bookProb });
+        const nbooks = lNow.bookProb && lNow.bookProb.books ? lNow.bookProb.books : 1;
+        signals.push({ label: "Book line" + (nbooks > 1 ? " (" + nbooks + " books)" : ""), prob: bookProb });
       }
       const anchor = anchorFair(m.price, anchorInputs, anchorByN, relMult);
 
@@ -2775,20 +2831,27 @@ async function espnGamesForLeague(lg) {
   });
 }
 
-// De-vigged moneyline for one game, from the summary endpoint's pickcenter.
+// Best available probability for one game. In progress: the live win-
+// probability model (more current than any pregame line). Otherwise: the
+// Shin-de-vigged consensus across every book ESPN lists.
 async function espnDevig(game) {
   try {
     const sm = await getJson("https://site.api.espn.com/apis/site/v2/sports/" + game.path + "/summary?event=" + game.eventId);
-    const pc = sm.pickcenter || sm.odds || [];
-    const od = pc.find((o) => o && o.homeTeamOdds && o.awayTeamOdds &&
-      o.homeTeamOdds.moneyLine != null && o.awayTeamOdds.moneyLine != null);
-    if (!od) return null;
-    const nv = noVigMoneyline(od.homeTeamOdds.moneyLine, od.awayTeamOdds.moneyLine);
-    if (!nv) return null;
-    const probByAbbr = {};
-    if (game.homeAbbr) probByAbbr[game.homeAbbr] = nv.home;
-    if (game.awayAbbr) probByAbbr[game.awayAbbr] = nv.away;
-    return probByAbbr;
+
+    if (game.state === "in") {
+      const wp = sm.winprobability;
+      if (Array.isArray(wp) && wp.length && wp[wp.length - 1].homeWinPercentage != null) {
+        const home = Number(wp[wp.length - 1].homeWinPercentage) * 100;
+        const probByAbbr = {};
+        if (game.homeAbbr) probByAbbr[game.homeAbbr] = home;
+        if (game.awayAbbr) probByAbbr[game.awayAbbr] = 100 - home;
+        return { probByAbbr, books: 1, disp: 0, src: "live" };
+      }
+    }
+
+    const cons = consensusDevig(sm.pickcenter || sm.odds || [], game.homeAbbr, game.awayAbbr);
+    if (!cons) return null;
+    return { ...cons, src: "book" };
   } catch { return null; }
 }
 
@@ -2840,11 +2903,11 @@ async function scanEdges() {
     distinct.forEach((g, i) => { gmap[g.eventId] = devigs[i]; });
 
     for (const { m, g, codes } of matched) {
-      const probByAbbr = gmap[g.eventId];
-      if (!probByAbbr) continue;
+      const dv = gmap[g.eventId];
+      if (!dv || !dv.probByAbbr) continue;
       const myCode = codes[0];
       let modelProb = null;
-      for (const [ab, p] of Object.entries(probByAbbr)) {
+      for (const [ab, p] of Object.entries(dv.probByAbbr)) {
         if (ab === myCode || ab.startsWith(myCode) || myCode.startsWith(ab)) { modelProb = p; break; }
       }
       if (modelProb == null) continue;
@@ -2852,6 +2915,7 @@ async function scanEdges() {
       picks.push({
         id: m.id, market: m, modelProb, entry, edge: modelProb - entry,
         league: lg.label, state: g.state, game: g.name, codes,
+        src: dv.src, books: dv.books || 1, disp: dv.disp || 0,
       });
     }
   }
@@ -2871,7 +2935,11 @@ function parlayMath(slip) {
     model *= clamp(l.modelProb, 1, 99) / 100;
     mult *= 100 / e;
   });
-  return { legs: slip.length, mktProb: mkt * 100, modelProb: model * 100, mult, ev: model * mult - 1 };
+  const p = model, b = mult - 1; // decimal profit multiple
+  // Kelly fraction on the parlay; halved for safety, floored at 0.
+  const kelly = b > 0 ? Math.max(0, (p * b - (1 - p)) / b) : 0;
+  return { legs: slip.length, mktProb: mkt * 100, modelProb: model * 100, mult,
+    ev: model * mult - 1, stake: clamp((kelly / 2) * 100, 0, 25) };
 }
 
 // Two legs are correlated if they belong to the same game (shared team code).
@@ -2985,9 +3053,9 @@ function Parlay({ onPick }) {
               <span className="sub">Per $1 staked, on these probabilities</span>
             </div>
             <div className="fig">
-              <span className="big">{pm.mktProb.toFixed(pm.mktProb < 10 ? 1 : 0)}%</span>
-              <span className="cap">Priced-in chance</span>
-              <span className="sub">What the combined ticket costs implies</span>
+              <span className="big">{pm.ev > 0 ? pm.stake.toFixed(1) + "%" : "—"}</span>
+              <span className="cap">Suggested stake</span>
+              <span className="sub">Half-Kelly of your bankroll; only when EV is positive</span>
             </div>
           </div>
           <p className="help" style={{ marginTop: 12, color: pm.ev > 0 ? "var(--moss)" : "var(--dim)" }}>
@@ -3015,7 +3083,8 @@ function Parlay({ onPick }) {
               {p.market.name === p.market.question ? p.market.question : p.market.name}
               <span className="sub">
                 {p.league} · {p.state === "in" ? "live" : p.state === "post" ? "final" : "upcoming"} ·
-                book {p.modelProb.toFixed(0)}% vs price {p.entry.toFixed(0)}c
+                {p.src === "live" ? " live win prob" : " " + (p.books > 1 ? p.books + " books" : "1 book")} {p.modelProb.toFixed(0)}% vs price {p.entry.toFixed(0)}c
+                {p.disp > 6 ? " · books split" : ""}
               </span>
             </span>
             <span style={{ display: "flex", gap: 10, alignItems: "center", flex: "0 0 auto" }}>
