@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-08.game-links";
+const BUILD = "2026-08-09.accuracy-audit";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -414,7 +414,12 @@ function buildFrameworks() {
 
 /* ================= helpers ================= */
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-const today = () => new Date().toISOString().slice(0, 10);
+// US sports schedules (and Kalshi game tickers) run on Eastern time. The UTC
+// date rolls over at 5pm Phoenix time, which made every night game query
+// tomorrow's slate — use the ET calendar date instead.
+const etDate = (ms) => new Date(ms != null ? ms : Date.now())
+  .toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+const today = () => etDate();
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 const STOP = new Set("will the a an of in on at to be by for and or is are it its this that with from as no yes than more less".split(" "));
 const toks = (s) => new Set(String(s).toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w)));
@@ -711,8 +716,11 @@ async function fetchHistory(m) {
         .filter((x) => Number.isFinite(x.p));
     }
     if (points.length < 2) return null;
-    // Some payloads quote dollars, others cents — normalise to cents.
-    if (Math.max.apply(null, points.map((pt) => pt.p)) <= 1.001) points = points.map((pt) => ({ t: pt.t, p: pt.p * 100 }));
+    // Some payloads quote dollars, others cents — normalise to cents. A
+    // dollar feed has fractional values (0.45); a cents feed pinned at 1
+    // is a real 1c longshot, not $1, so require a fraction before scaling.
+    if (Math.max.apply(null, points.map((pt) => pt.p)) <= 1.001 &&
+        points.some((pt) => pt.p % 1 !== 0)) points = points.map((pt) => ({ t: pt.t, p: pt.p * 100 }));
     points.sort((a, b) => a.t - b.t);
     const at = (secsAgo) => {
       const target = now - secsAgo;
@@ -737,20 +745,29 @@ const isThin = (m) => {
 };
 
 /* ---- open positions: quotes and stay/sell advice ---- */
+// Full quote — mid/last for display, bid/ask for what a sale would really
+// collect right now.
 async function fetchCurrentPrice(e) {
   try {
     if (e.venue === "Kalshi") {
       const r = await fetch(px("https://api.elections.kalshi.com/trade-api/v2/markets/" + e.marketId));
       if (!r.ok) return null;
       const d = await r.json();
-      if (d.market) return kaPrice(d.market).price;
+      if (d.market) {
+        const k = kaPrice(d.market);
+        return k.price != null ? { price: k.price, bid: k.bid, ask: k.ask } : null;
+      }
     } else if (e.slug) {
       const r = await fetch(px("https://gamma-api.polymarket.com/events?slug=" + encodeURIComponent(e.slug)));
       if (!r.ok) return null;
       const d = await r.json();
       const ev = Array.isArray(d) ? d[0] : d;
       const m = ev && (ev.markets || []).find((x) => (x.conditionId || String(x.id)) === e.marketId);
-      if (m) return pmMarket(m, ev).price;
+      if (m) {
+        const p = pmMarket(m, ev).price;
+        const n = (x) => { const v = Number(x); return Number.isFinite(v) ? v * 100 : null; };
+        return p != null ? { price: p, bid: n(m.bestBid), ask: n(m.bestAsk) } : null;
+      }
     }
   } catch { /* quote later */ }
   return null;
@@ -759,10 +776,16 @@ async function fetchCurrentPrice(e) {
 // Deterministic stay/sell guidance — free to compute, honest about its
 // source. During a live game the win-probability model outranks the desk's
 // own (possibly hours-old) fair value.
-function positionAdvice(e, cur, live) {
+function positionAdvice(e, cur, live, quote) {
   const side = e.taken.side;
   const curSide = side === "YES" ? cur : 100 - cur;
   const pnl = curSide - e.taken.entryPrice;
+  // What selling actually collects: YES exits at the bid, NO at (100 - ask).
+  // Without a visible book, assume half a cent inside the last price.
+  const bid = quote && quote.bid != null ? quote.bid : null;
+  const ask = quote && quote.ask != null ? quote.ask : null;
+  const sellAt = side === "YES" ? (bid != null ? bid : curSide - 0.5)
+    : (ask != null ? 100 - ask : curSide - 0.5);
 
   if (live && live.sides && live.state === "post") {
     return { act: "SETTLING", why: "The game is final. This resolves shortly — nothing left to decide." };
@@ -787,29 +810,30 @@ function positionAdvice(e, cur, live) {
   else { eff = curSide; src = "the market price"; independent = false; }
 
   // Entry price is sunk — decisions are forward-looking only. Selling pays
-  // fees and crosses the spread; holding to resolution is free. So exiting
-  // is only right when an INDEPENDENT read says the market overpays.
-  const exitCost = takerFee(e.venue, curSide) + 0.5;
-  const rem = eff - curSide;
+  // the taker fee and collects the bid, not the last print; holding to
+  // resolution is free. So exiting is only right when an INDEPENDENT read
+  // says the sale nets more than the position is worth.
+  const exitFee = takerFee(e.venue, clamp(sellAt, 0.5, 99.5));
+  const proceeds = sellAt - exitFee; // per contract, if sold right now
 
-  if (independent && rem <= -(2 + exitCost)) {
+  if (independent && proceeds - eff >= 2) {
     return { act: pnl >= 0 ? "TAKE PROFIT" : "SELL NOW",
-      why: "By " + src + " your side is worth about " + eff.toFixed(0) + "c but the market pays " + curSide.toFixed(0) +
-        "c — selling collects more than the position is worth, even after ~" + exitCost.toFixed(1) + "c in exit costs." };
+      why: "By " + src + " your side is worth about " + eff.toFixed(0) + "c, but selling nets ~" + proceeds.toFixed(0) +
+        "c after the " + exitFee.toFixed(1) + "c fee — the market is paying more than the position is worth." };
   }
-  if (independent && rem >= 2) return { act: "HOLD",
-    why: "About " + rem.toFixed(0) + "c of edge left by " + src + ". " +
+  if (independent && eff - proceeds >= 2) return { act: "HOLD",
+    why: "About " + (eff - proceeds).toFixed(0) + "c of edge left by " + src + " over what a sale nets today. " +
       (pnl >= 0 ? "Up " : "Down ") + Math.abs(pnl).toFixed(0) + "c a contract so far." };
 
   if (!independent) return { act: "HOLD",
     why: "No fresh independent read right now, so the market price is the best estimate — it already reflects a " +
-      curSide.toFixed(0) + "% chance, which is what your side is worth. Selling pays ~" + exitCost.toFixed(1) +
-      "c in fees and spread; holding to resolution is free and wins that " + curSide.toFixed(0) +
+      curSide.toFixed(0) + "% chance, which is what your side is worth. Selling only nets ~" + proceeds.toFixed(0) +
+      "c after fees and the spread; holding to resolution is free and wins that " + curSide.toFixed(0) +
       "% of the time. What you paid (" + Number(e.taken.entryPrice).toFixed(0) + "c) is already spent and shouldn't drive this." };
 
   return { act: "HOLD",
-    why: "Priced about right by " + src + ": worth ~" + eff.toFixed(0) + "c, sells for " + curSide.toFixed(0) +
-      "c. Selling costs ~" + exitCost.toFixed(1) + "c in fees and spread; holding to resolution costs nothing and wins " +
+    why: "Priced about right by " + src + ": worth ~" + eff.toFixed(0) + "c, and a sale nets ~" + proceeds.toFixed(0) +
+      "c after fees. Holding to resolution costs nothing and wins " +
       eff.toFixed(0) + "% of the time. What you paid (" + Number(e.taken.entryPrice).toFixed(0) +
       "c) is already spent — it shouldn't drive this decision." };
 }
@@ -917,9 +941,19 @@ const LEAGUES = [
 ];
 
 function detectLeague(m) {
-  const hay = (m.id || "") + " " + (m.question || "") + " " + (m.name || "");
-  for (const [re, path, label] of LEAGUES) if (re.test(hay)) return { path, label };
-  return null;
+  const id = String(m.id || "");
+  // A multivariate combo (native parlay) spans several games — no single
+  // live game can represent it, and pairing it with one shows the wrong
+  // team's feed entirely.
+  if (/^KXMVE|MULTIGAME|PARLAY/i.test(id)) return null;
+  const hay = id + " " + (m.question || "") + " " + (m.name || "");
+  const hits = [];
+  for (const [re, path, label] of LEAGUES) {
+    if (re.test(hay) && !hits.some((h) => h.path === path)) hits.push({ path, label });
+  }
+  // Text that matches two different sports is a parlay or cross-sport prop —
+  // guessing one league would attach somebody else's game.
+  return hits.length === 1 ? hits[0] : null;
 }
 
 // Trailing capitals in Kalshi ticker segments are competitor codes. A game
@@ -943,8 +977,22 @@ function teamCodes(ticker) {
   return out;
 }
 
-const codeHit = (codes, abbrs) =>
-  codes.filter((c) => abbrs.some((a) => a && (a === c || a.startsWith(c) || c.startsWith(a)))).length;
+// Exact abbreviation matches score full weight; prefix overlaps (different
+// feeds abbreviate differently) score partial, and only when one side is at
+// least 3 characters — two-letter prefixes pair up the wrong teams.
+const codeHit = (codes, abbrs) => {
+  let s = 0;
+  for (const c of codes) {
+    let best = 0;
+    for (const a of abbrs) {
+      if (!a) continue;
+      if (a === c) { best = 1; break; }
+      if ((a.length >= 3 && c.length >= 3) && (a.startsWith(c) || c.startsWith(a))) best = Math.max(best, 0.6);
+    }
+    s += best;
+  }
+  return s;
+};
 
 // Sports feeds load straight from the browser first: ESPN 403s datacenter
 // IPs (which is where the proxy lives) but sends open CORS headers, so the
@@ -1014,7 +1062,10 @@ async function espnGame(lg, m, codes) {
       const last = wp[wp.length - 1];
       if (last && last.homeWinPercentage != null) base.homeWinPct = Number(last.homeWinPercentage) * 100;
     }
-    if (base.homeWinPct == null && sm.predictor && sm.predictor.homeTeam) {
+    // ESPN's matchup predictor is a PREGAME projection — once the game is
+    // underway it's stale, and passing it off as a live read poisons both
+    // the anchor and the stay/sell advice. Only use it before tip-off.
+    if (base.homeWinPct == null && base.state === "pre" && sm.predictor && sm.predictor.homeTeam) {
       const v = Number(sm.predictor.homeTeam.gameProjection);
       if (Number.isFinite(v)) base.homeWinPct = v;
     }
@@ -1357,17 +1408,22 @@ function consensusDevig(oddsArray, homeAbbr, awayAbbr) {
     // "team to win" probability isn't inflated by ignoring the draw.
     const rd = o.drawOdds ? mlImplied(o.drawOdds.moneyLine) : null;
     const dv = shinDevig(rd != null ? [rh, rd, ra] : [rh, ra]);
-    if (dv) books.push({ home: dv[0] * 100, away: dv[dv.length - 1] * 100 });
+    if (dv) books.push({ home: dv[0] * 100, away: dv[dv.length - 1] * 100,
+      draw: dv.length === 3 ? dv[1] * 100 : null });
   });
   if (!books.length) return null;
   const mean = (k) => books.reduce((s, b) => s + b[k], 0) / books.length;
   const home = mean("home"), away = mean("away");
+  const withDraw = books.filter((b) => b.draw != null);
+  const draw = withDraw.length ? withDraw.reduce((s, b) => s + b.draw, 0) / withDraw.length : null;
   const disp = books.length > 1
     ? Math.sqrt(books.reduce((s, b) => s + Math.pow(b.home - home, 2), 0) / books.length) : 0;
   const probByAbbr = {};
   if (homeAbbr) probByAbbr[homeAbbr] = home;
   if (awayAbbr) probByAbbr[awayAbbr] = away;
-  return { probByAbbr, home, away, books: books.length, disp };
+  // Soccer's third outcome — Kalshi tie contracts end in TIE or DRAW.
+  if (draw != null) { probByAbbr.TIE = draw; probByAbbr.DRAW = draw; }
+  return { probByAbbr, home, away, draw, books: books.length, disp };
 }
 
 // Empirical calibration from settled calls: if the desk's fair values have
@@ -1376,8 +1432,10 @@ function consensusDevig(oddsArray, homeAbbr, awayAbbr) {
 // pulls more than 70% of the way in — it corrects over-confidence, it
 // doesn't surrender to the market.
 function calibrationFactor(ledger) {
+  // Synced positions carry fair === price by construction — including them
+  // shrinks the model-vs-market gap and masks real overconfidence.
   const done = (ledger || []).filter((e) => e.status === "resolved" && e.outcome !== null &&
-    typeof e.fair === "number" && typeof e.price === "number");
+    e.call !== "SYNCED" && typeof e.fair === "number" && typeof e.price === "number");
   if (done.length < 20) return { k: 1, n: done.length, active: false };
   const brier = (p, o) => Math.pow(p / 100 - o, 2);
   const model = done.reduce((s, e) => s + brier(e.fair, e.outcome), 0) / done.length;
@@ -2654,11 +2712,11 @@ function Positions({ ledger, save, reopen, reload }) {
     setRefreshing(true);
     const out = {};
     await Promise.all(open.map(async (e) => {
-      const [price, live] = await Promise.all([
+      const [quote, live] = await Promise.all([
         fetchCurrentPrice(e),
         fetchLive({ id: e.marketId, question: e.question, name: e.name }).catch(() => null),
       ]);
-      out[e.id] = { price, live, at: Date.now() };
+      out[e.id] = { quote, price: quote ? quote.price : null, live, at: Date.now() };
     }));
     setQ(out);
     anyLiveRef.current = Object.values(out).some((x) => x.live && x.live.state === "in");
@@ -2666,11 +2724,16 @@ function Positions({ ledger, save, reopen, reload }) {
   }
 
   // Refresh on open, then every 15 seconds while any game is live and
-  // every 30 otherwise. Returning to the tab refreshes immediately.
+  // every 30 otherwise. Returning to the tab refreshes immediately. The loop
+  // calls through a ref so each cycle sees the CURRENT open-position list —
+  // the effect only re-runs when the ledger length changes, and a sync can
+  // swap positions without changing the count.
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
   useEffect(() => {
     let alive = true, timer = null;
     const loop = async () => {
-      await refresh();
+      await refreshRef.current();
       if (!alive) return;
       timer = setTimeout(loop, anyLiveRef.current ? 15000 : 30000);
     };
@@ -2722,7 +2785,7 @@ function Positions({ ledger, save, reopen, reload }) {
           const qq = q[e.id] || {};
           const cur = qq.price != null ? qq.price : null;
           const live = qq.live && !qq.live.none && qq.live.sides ? qq.live : null;
-          const adv = cur != null ? positionAdvice(e, cur, live) : null;
+          const adv = cur != null ? positionAdvice(e, cur, live, qq.quote) : null;
           const curSide = cur != null ? (e.taken.side === "YES" ? cur : 100 - cur) : null;
           const pnlC = curSide != null ? curSide - e.taken.entryPrice : null;
           const pnlD = pnlC != null ? (pnlC * e.taken.contracts) / 100 : null;
@@ -3034,6 +3097,7 @@ async function scanEdges() {
       const entry = m.ask != null ? m.ask : m.price;
       picks.push({
         id: m.id, market: m, modelProb, entry, edge: modelProb - entry,
+        fee: takerFee(m.venue, entry),
         league: label, state: g.state, game: g.name, codes,
         src: dv.src, books: dv.books || 1, disp: dv.disp || 0,
       });
@@ -3051,9 +3115,12 @@ function parlayMath(slip) {
   let mkt = 1, model = 1, mult = 1;
   slip.forEach((l) => {
     const e = clamp(l.entry, 1, 99);
+    // Each leg's real cost includes the venue's taker fee — the payout
+    // multiplier has to clear it, or the "EV" flatters the parlay.
+    const cost = clamp(e + takerFee(l.market && l.market.venue, e), 1, 99.9);
     mkt *= e / 100;
     model *= clamp(l.modelProb, 1, 99) / 100;
-    mult *= 100 / e;
+    mult *= 100 / cost;
   });
   const p = model, b = mult - 1; // decimal profit multiple
   // Kelly fraction on the parlay; halved for safety, floored at 0.
@@ -3078,11 +3145,18 @@ function parlayConflicts(slip) {
 // real edge confirmed by multiple books (or a live model); LEAN is a smaller
 // edge; otherwise the game is fairly priced and there's no bet.
 function pickDecision(p) {
-  // A firmly-sourced read is a live model or two-plus books; a stale
-  // pregame line on a live game (or ESPN's model-only projection) is softer.
-  const firm = p.src === "live" || p.books >= 2;
-  if (p.edge >= 5 && firm) return { tag: "STRONG BET", color: "var(--moss)", bet: true };
-  if (p.edge >= 2.5) return { tag: "LEAN", color: "var(--amber)", bet: true };
+  // A pregame line on a game already in progress prices a state of the world
+  // that no longer exists — the "edge" against the moved market is fiction.
+  if (p.src === "pregame-line") {
+    return { tag: "stale line — no live read, skip", color: "var(--dim)", bet: false };
+  }
+  // A firmly-sourced read is a live model or a two-plus-book pregame
+  // consensus; ESPN's model-only projection is softer.
+  const firm = p.src === "live" || (p.src === "book" && p.books >= 2);
+  // Judge the edge net of the taker fee actually paid on entry.
+  const net = p.edge - (p.fee || 0);
+  if (net >= 5 && firm) return { tag: "STRONG BET", color: "var(--moss)", bet: true };
+  if (net >= 2.5) return { tag: "LEAN", color: "var(--amber)", bet: true };
   return { tag: "no edge — skip", color: "var(--dim)", bet: false };
 }
 
@@ -3092,6 +3166,9 @@ function pickDecision(p) {
 function suggestParlay(picks, maxLegs, mode) {
   const byGame = {};
   picks.forEach((p) => {
+    // A frozen pregame line on an in-progress game has no real edge — never
+    // auto-build a parlay leg from one.
+    if (p.src === "pregame-line") return;
     if (mode === "safe" ? p.modelProb < 55 : p.edge < 2) return;
     const key = p.game || p.id;
     const cur = byGame[key];
@@ -3107,8 +3184,8 @@ function suggestParlay(picks, maxLegs, mode) {
 // Friendly label for a YYYYMMDD slate date.
 function dateLabel(d) {
   const iso = d.slice(0, 4) + "-" + d.slice(4, 6) + "-" + d.slice(6, 8);
-  const today = new Date().toISOString().slice(0, 10);
-  const tmrw = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const today = etDate();
+  const tmrw = etDate(Date.now() + 86400000);
   if (iso === today) return "Today";
   if (iso === tmrw) return "Tomorrow";
   try { return new Date(iso + "T12:00:00Z").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }); }
@@ -3402,10 +3479,15 @@ function Parlay({ onPick }) {
                     <div><span className="k">Kalshi parlay price</span><span className="v" style={{ color: "var(--cyan)" }}>{kp.ask != null ? kp.ask.toFixed(0) + "c" : "—"}</span></div>
                     <div><span className="k">Model win chance</span><span className="v">{pm.modelProb.toFixed(pm.modelProb < 10 ? 1 : 0)}%</span></div>
                     <div>
-                      <span className="k">Edge vs Kalshi</span>
-                      <span className="v" style={{ color: kp.ask != null && pm.modelProb - kp.ask > 2 ? "var(--moss)" : "var(--dim)" }}>
-                        {kp.ask != null ? (pm.modelProb - kp.ask > 0 ? "+" : "") + (pm.modelProb - kp.ask).toFixed(0) + "c" : "—"}
-                      </span>
+                      <span className="k">Edge vs Kalshi (after fee)</span>
+                      {(() => {
+                        const net = kp.ask != null ? pm.modelProb - kp.ask - takerFee("Kalshi", kp.ask) : null;
+                        return (
+                          <span className="v" style={{ color: net != null && net > 2 ? "var(--moss)" : "var(--dim)" }}>
+                            {net != null ? (net > 0 ? "+" : "") + net.toFixed(0) + "c" : "—"}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 10, marginTop: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -3481,9 +3563,10 @@ function Parlay({ onPick }) {
               </span>
             </span>
             <span style={{ display: "flex", gap: 10, alignItems: "center", flex: "0 0 auto" }}>
-              {(() => { const dec = pickDecision(p); return (
-                <span className="sig" style={{ color: dec.color, borderColor: dec.color }} title={"Edge " + p.edge.toFixed(1) + "c"}>
-                  {dec.tag}{dec.bet ? " · " + (p.edge > 0 ? "+" : "") + p.edge.toFixed(0) + "c" : ""}
+              {(() => { const dec = pickDecision(p); const net = p.edge - (p.fee || 0); return (
+                <span className="sig" style={{ color: dec.color, borderColor: dec.color }}
+                  title={"Edge " + p.edge.toFixed(1) + "c gross, " + net.toFixed(1) + "c after the " + (p.fee || 0).toFixed(1) + "c taker fee"}>
+                  {dec.tag}{dec.bet ? " · " + (net > 0 ? "+" : "") + net.toFixed(0) + "c net" : ""}
                 </span>
               ); })()}
               <button className={"chip" + (inSlip(p.id) ? " on" : "")} onClick={() => toggle(p)}>
@@ -3799,10 +3882,18 @@ function Ledger({ ledger, setLedger, fw }) {
   const stats = useMemo(() => {
     if (!done.length) return null;
     const brier = (p, o) => Math.pow(p / 100 - o, 2);
-    const model = done.reduce((s, e) => s + brier(e.fair, e.outcome), 0) / done.length;
-    const mkt = done.reduce((s, e) => s + brier(e.price, e.outcome), 0) / done.length;
-    const acted = done.filter((e) => e.call !== "PASS");
-    const wins = acted.filter((e) => (e.call === "BUY YES" ? 1 : 0) === e.outcome).length;
+    // Brier comparison only over genuine analyses — synced positions have
+    // fair === price by construction and would flatten the gap.
+    const scored = done.filter((e) => e.call !== "SYNCED");
+    const model = scored.length ? scored.reduce((s, e) => s + brier(e.fair, e.outcome), 0) / scored.length : null;
+    const mkt = scored.length ? scored.reduce((s, e) => s + brier(e.price, e.outcome), 0) / scored.length : null;
+    // A "call" bets the side it named: BUY YES/NO from analyses, the actual
+    // held side for positions synced from Kalshi.
+    const acted = done.filter((e) => e.call === "BUY YES" || e.call === "BUY NO" ||
+      (e.call === "SYNCED" && e.taken && e.taken.side));
+    const calledSide = (e) => e.call === "BUY YES" ? 1 : e.call === "BUY NO" ? 0
+      : e.taken && e.taken.side === "YES" ? 1 : 0;
+    const wins = acted.filter((e) => calledSide(e) === e.outcome).length;
     return { n: done.length, model, mkt, acted: acted.length, wins,
       hit: acted.length ? wins / acted.length : null };
   }, [done]);
@@ -3834,11 +3925,13 @@ function Ledger({ ledger, setLedger, fw }) {
             </div>
             <div>
               <span className="k eyebrow">My score</span>
-              <div className="n" style={{ color: stats.model < stats.mkt ? "var(--moss)" : "var(--rose)" }}>{stats.model.toFixed(3)}</div>
+              <div className="n" style={{ color: stats.model != null && stats.model < stats.mkt ? "var(--moss)" : "var(--rose)" }}>
+                {stats.model == null ? "—" : stats.model.toFixed(3)}
+              </div>
             </div>
             <div>
               <span className="k eyebrow">Market score</span>
-              <div className="n" style={{ color: "var(--dim)" }}>{stats.mkt.toFixed(3)}</div>
+              <div className="n" style={{ color: "var(--dim)" }}>{stats.mkt == null ? "—" : stats.mkt.toFixed(3)}</div>
             </div>
             <div>
               <span className="k eyebrow">Calls I got right</span>
@@ -3850,7 +3943,9 @@ function Ledger({ ledger, setLedger, fw }) {
         {stats && (
           <p className="thesis" style={{ marginTop: 16, color: "var(--dim)" }}>
             These scores measure how close a probability landed to what actually happened — lower is better, and the
-            comparison is the whole point. {stats.model < stats.mkt
+            comparison is the whole point. {stats.model == null
+              ? "Only synced positions have settled so far — no desk analyses to score yet."
+              : stats.model < stats.mkt
               ? "Right now I score better than the market's own prices. Don't read much into it yet; a few dozen calls prove nothing."
               : "Right now the market's prices score better than mine. Until that flips, treat every gap I show you as noise."}
           </p>
