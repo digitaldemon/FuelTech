@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.portfolio-links";
+const BUILD = "2026-08-10.ui-polish";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -174,6 +174,41 @@ details.fold > summary:hover { color:var(--bone); }
 .pwait { font-size:12px; color:var(--dim); font-family:'JetBrains Mono',monospace; margin-top:6px; }
 .sig { font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:.1em; padding:4px 10px;
   border-radius:999px; white-space:nowrap; border:1px solid; }
+.sig.adv { font-size:11.5px; padding:7px 13px; background:rgba(255,255,255,.045);
+  box-shadow:0 2px 10px rgba(0,0,0,.22); font-weight:600; }
+
+/* pick cards — the landing board. Hierarchy: winner name and the tier
+   badge dominate; everything else is quiet metadata. */
+.pick { display:flex; gap:14px; align-items:center; justify-content:space-between;
+  border:1px solid var(--slate-600); border-left:3px solid var(--slate-600); border-radius:12px;
+  padding:13px 15px; margin-top:10px;
+  background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0) 60%), var(--slate-800);
+  transition:border-color .15s, box-shadow .15s; }
+.pick:hover { border-color:var(--dim); }
+.pick.t-strongest { border-left-color:var(--moss);
+  box-shadow:0 0 0 1px rgba(127,185,139,.16), 0 6px 20px rgba(0,0,0,.24); }
+.pick.t-strong { border-left-color:var(--moss); }
+.pick.t-lean { border-left-color:var(--amber); }
+.pick .who-big { font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:16.5px;
+  letter-spacing:-.012em; line-height:1.25; }
+.pick .meta-line { font-size:11.5px; color:var(--dim); margin-top:3px; line-height:1.55; }
+.tierbox { text-align:center; flex:0 0 auto; min-width:76px; padding:8px 10px; border-radius:11px;
+  border:1px solid; font-family:'JetBrains Mono',monospace; background:rgba(0,0,0,.18); }
+.tierbox .pct { font-size:20px; font-weight:700; display:block; line-height:1.02;
+  font-variant-numeric:tabular-nums; }
+.tierbox .lbl { font-size:8.5px; letter-spacing:.13em; display:block; margin-top:3px; opacity:.9; }
+.rank { font-family:'Bricolage Grotesque',sans-serif; font-weight:800; font-size:21px;
+  color:var(--dim); opacity:.65; width:24px; flex:0 0 auto; text-align:center; }
+.pick-actions { display:flex; gap:8px; align-items:center; flex:0 0 auto; }
+.livedot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--rose);
+  margin-right:6px; animation:pulse 1.6s ease-in-out infinite; vertical-align:1px; }
+@keyframes pulse { 0%,100%{opacity:1; box-shadow:0 0 0 0 rgba(228,112,126,.45)}
+  50%{opacity:.55; box-shadow:0 0 0 6px rgba(228,112,126,0)} }
+@media (max-width:560px) {
+  .pick { flex-wrap:wrap; }
+  .pick .who-big { font-size:15px; }
+  .pick-actions { width:100%; justify-content:flex-end; margin-top:2px; }
+}
 .dots::after { content:''; animation:dots 1.2s steps(4,end) infinite; }
 @keyframes dots { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'...'} }
 .contra { background:rgba(228,112,126,.05); margin:0 -20px; padding:15px 20px; border-radius:3px; }
@@ -3411,7 +3446,7 @@ function Positions({ ledger, save, reopen, reload }) {
                     my fair value {Number(e.fair).toFixed(0)}c
                   </div>
                 </div>
-                {adv && <span className="sig" style={{ color: col, borderColor: col }}>{adv.act}</span>}
+                {adv && <span className="sig adv" style={{ color: col, borderColor: col }}>{adv.act}</span>}
               </div>
               <div className="meta" style={{ marginTop: 10 }}>
                 <div><span className="k">Market now</span><span className="v">{cur != null ? cur.toFixed(1) + "c" : "…"}</span></div>
@@ -4049,10 +4084,10 @@ function Picks({ ledger, onPick }) {
   const analysisFor = (p) => (ledger || []).find((x) =>
     x.venue === "Kalshi" && x.marketId === p.id && x.call && x.call !== "SYNCED") || null;
 
-  const tier = (p) => p.modelProb >= 80 ? { t: "STRONGEST", c: "var(--moss)" }
-    : p.modelProb >= 68 ? { t: "STRONG", c: "var(--moss)" }
-    : p.modelProb >= 55 ? { t: "LEAN", c: "var(--amber)" }
-    : { t: "TOO CLOSE TO CALL", c: "var(--dim)" };
+  const tier = (p) => p.modelProb >= 80 ? { t: "STRONGEST", cls: "t-strongest", c: "var(--moss)" }
+    : p.modelProb >= 68 ? { t: "STRONG", cls: "t-strong", c: "var(--moss)" }
+    : p.modelProb >= 55 ? { t: "LEAN", cls: "t-lean", c: "var(--amber)" }
+    : { t: "TOSS-UP", cls: "", c: "var(--dim)" };
 
   const row = (p, rank) => {
     const tr = tier(p);
@@ -4060,42 +4095,40 @@ function Picks({ ledger, onPick }) {
     const dec = pickDecision(p);
     const n = p.edge - (p.fee || 0);
     return (
-      <div key={p.id} className="sel" style={{ cursor: "default", borderColor: p.modelProb >= 80 ? "rgba(127,185,139,.55)" : undefined }}>
-        <span style={{ minWidth: 0 }}>
-          <span style={{ fontWeight: 600 }}>
-            {rank != null && <span style={{ color: "var(--dim)" }}>{rank}. </span>}
-            <span style={{ color: tr.c }}>Winner: </span>
+      <div key={p.id} className={"pick " + tr.cls}>
+        {rank != null && <span className="rank">{rank}</span>}
+        <span style={{ minWidth: 0, flex: 1 }}>
+          <span className="who-big" style={{ display: "block" }}>
+            {p.state === "in" ? <span className="livedot" /> : null}
             {p.market.name === p.market.question ? p.market.question : p.market.name}
           </span>
-          <span className="sub">
-            {p.state === "in" ? <b style={{ color: "var(--rose)" }}>● LIVE </b> : null}
+          <span className="meta-line" style={{ display: "block" }}>
             {p.league} · {p.state === "in" && p.sides && p.sides.some((s) => s.score != null)
-              ? p.sides.map((s) => s.abbr + " " + (s.score != null ? s.score : "-")).join(" · ") + (p.detail ? " · " + p.detail : "")
+              ? <b style={{ color: "var(--bone)" }}>{p.sides.map((s) => s.abbr + " " + (s.score != null ? s.score : "-")).join(" · ") + (p.detail ? " · " + p.detail : "")}</b>
               : p.game}
             {" · "}{p.src === "live" ? "live model"
               : p.src === "live-books" ? "in-play books"
               : p.src === "model" ? "model projection"
               : p.books + " book" + (p.books === 1 ? "" : "s") + " consensus"}
             {" · costs " + p.entry.toFixed(0) + "c"}
-            {dec.bet ? <span style={{ color: "var(--moss)" }}>{" · also underpriced: +" + n.toFixed(0) + "c value"}</span>
-              : <span style={{ color: "var(--dim)" }}>{" · fairly priced"}</span>}
+            {dec.bet ? <span style={{ color: "var(--moss)" }}>{" · +"+ n.toFixed(0) + "c value"}</span>
+              : <span>{" · fairly priced"}</span>}
             {an && <span style={{ color: an.call.indexOf("BUY") === 0 ? "var(--amber)" : "var(--dim)" }}>
-              {" · full analysis: " + an.call + (an.confidence ? " (" + an.confidence.toLowerCase() + ")" : "")}</span>}
+              {" · analysis: " + an.call + (an.confidence ? " (" + an.confidence.toLowerCase() + ")" : "")}</span>}
           </span>
           {(p.ou || p.spr) && (
-            <span className="sub" style={{ display: "block", marginTop: 2 }}>
+            <span className="meta-line" style={{ display: "block" }}>
               {p.ou && <>
-                <span style={{ color: "var(--dim)" }}>O/U {p.ou.point}: </span>
+                O/U {p.ou.point}:{" "}
                 <b style={{ color: p.ou.a >= 55 || p.ou.b >= 55 ? "var(--amber)" : "var(--dim)" }}>
                   {p.ou.a >= 55 ? "OVER (" + p.ou.a.toFixed(0) + "%)"
                     : p.ou.b >= 55 ? "UNDER (" + p.ou.b.toFixed(0) + "%)"
                     : "coin flip"}
                 </b>
-                <span style={{ color: "var(--dim)" }}> · {p.ou.books} books</span>
+                {" · " + p.ou.books + " books"}
               </>}
               {p.spr && <>
-                {p.ou ? <span style={{ color: "var(--dim)" }}> · </span> : null}
-                <span style={{ color: "var(--dim)" }}>spread {(p.homeAbbr || "home")} {p.spr.point > 0 ? "+" : ""}{p.spr.point}: </span>
+                {p.ou ? " · " : ""}spread {(p.homeAbbr || "home")} {p.spr.point > 0 ? "+" : ""}{p.spr.point}:{" "}
                 <b style={{ color: p.spr.a >= 55 || p.spr.b >= 55 ? "var(--amber)" : "var(--dim)" }}>
                   {p.spr.a >= 55 ? (p.homeAbbr || "home") + " covers (" + p.spr.a.toFixed(0) + "%)"
                     : p.spr.b >= 55 ? (p.awayAbbr || "away") + " covers (" + p.spr.b.toFixed(0) + "%)"
@@ -4105,10 +4138,11 @@ function Picks({ ledger, onPick }) {
             </span>
           )}
         </span>
-        <span style={{ display: "flex", gap: 10, alignItems: "center", flex: "0 0 auto" }}>
-          <span className="sig" style={{ color: tr.c, borderColor: tr.c }}>
-            {tr.t} · {p.modelProb.toFixed(0)}%
-          </span>
+        <span className="tierbox" style={{ color: tr.c, borderColor: tr.c }}>
+          <span className="pct">{p.modelProb.toFixed(0)}%</span>
+          <span className="lbl">{tr.t}</span>
+        </span>
+        <span className="pick-actions">
           <button className="chip" onClick={() => onPick(p.market)} title="Run every check on this pick">deep dive</button>
           <a className="chip" href={p.market.link} target="_blank" rel="noreferrer">open ↗</a>
         </span>
