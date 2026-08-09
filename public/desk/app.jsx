@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-09.accuracy-audit";
+const BUILD = "2026-08-09.clear-compare";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -132,24 +132,23 @@ details.fold > summary:hover { color:var(--bone); }
   letter-spacing:.16em; text-transform:uppercase; display:block; margin-bottom:3px; }
 .meta .v { font-family:'JetBrains Mono',monospace; font-size:13px; }
 
-/* signature: probability rail */
-.rail-box { margin:26px 0 6px; }
-.rail { position:relative; height:52px; background:rgba(0,0,0,.22);
-  border:1px solid var(--slate-600); border-radius:9px; overflow:visible;
-  box-shadow:0 2px 8px rgba(0,0,0,.25) inset; }
-.rail-tick { position:absolute; top:0; bottom:0; width:1px; background:var(--line); }
-.rail-band { position:absolute; top:1px; bottom:1px;
-  background-image:repeating-linear-gradient(45deg, rgba(242,179,61,.30) 0 5px, rgba(242,179,61,.07) 5px 10px);
-  transition:left .7s cubic-bezier(.22,1,.36,1), width .7s cubic-bezier(.22,1,.36,1); }
-.rail-band.neg { background-image:repeating-linear-gradient(45deg, rgba(228,112,126,.30) 0 5px, rgba(228,112,126,.07) 5px 10px); }
-.rail-mark { position:absolute; top:-7px; bottom:-7px; width:2px; transition:left .7s cubic-bezier(.22,1,.36,1); }
-.rail-mark .lbl { position:absolute; left:50%; transform:translateX(-50%); white-space:nowrap;
-  font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:.08em; padding:3px 8px; border-radius:6px;
-  box-shadow:0 2px 8px rgba(0,0,0,.3); }
-.rail-mark .lbl.top { bottom:calc(100% + 5px); }
-.rail-mark .lbl.bot { top:calc(100% + 5px); }
-.rail-scale { display:flex; justify-content:space-between; margin-top:26px; }
-.rail-scale span { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim); }
+/* signature: price comparison — one aligned bar per estimate, all on the
+   same 0-100% scale so longer bar = likelier, and gaps jump out */
+.cmp-box { margin:22px 0 6px; }
+.cmp-row { display:grid; grid-template-columns:112px 1fr 118px; gap:12px; align-items:center; margin-top:9px; }
+.cmp-row .cl { font-size:10px; color:var(--dim); font-family:'JetBrains Mono',monospace;
+  letter-spacing:.08em; text-transform:uppercase; text-align:right; line-height:1.3; }
+.cmp-row.strong .cl { color:var(--bone); }
+.cmp-track { position:relative; height:22px; background:rgba(0,0,0,.24);
+  border:1px solid var(--slate-600); border-radius:6px; overflow:hidden; }
+.cmp-fill { position:absolute; top:0; bottom:0; left:0;
+  transition:width .7s cubic-bezier(.22,1,.36,1); }
+.cmp-tick { position:absolute; top:0; bottom:0; width:1px; background:rgba(255,255,255,.09); }
+.cmp-row .cv { font-family:'JetBrains Mono',monospace; font-size:12.5px; white-space:nowrap; }
+.cmp-row .cv .sub2 { display:block; font-size:9.5px; color:var(--dim); letter-spacing:.05em; }
+.cmp-scan { position:relative; height:22px; border:1px solid var(--slate-600); border-radius:6px;
+  overflow:hidden; background:rgba(0,0,0,.24); margin-top:9px; }
+.cmp-verdict { margin:16px 0 0; font-size:14.5px; line-height:1.55; }
 .sweep { position:absolute; top:0; bottom:0; width:26%;
   background:linear-gradient(90deg, transparent, rgba(111,179,210,.20), transparent);
   animation:sweep 1.5s linear infinite; }
@@ -821,6 +820,17 @@ function positionAdvice(e, cur, live, quote) {
       why: "By " + src + " your side is worth about " + eff.toFixed(0) + "c, but selling nets ~" + proceeds.toFixed(0) +
         "c after the " + exitFee.toFixed(1) + "c fee — the market is paying more than the position is worth." };
   }
+  // Adding pays the ask plus the taker fee — a higher bar than holding
+  // (which is free). Only an independent read clearing that all-in cost by
+  // a real margin justifies putting more money in.
+  const buyAt = side === "YES" ? (ask != null ? ask : curSide + 0.5) : (bid != null ? 100 - bid : curSide + 0.5);
+  const addCost = buyAt + takerFee(e.venue, clamp(buyAt, 0.5, 99.5));
+  if (independent && eff - addCost >= 3) {
+    return { act: "BUY MORE",
+      why: "By " + src + " your side is worth about " + eff.toFixed(0) + "c and adding costs ~" + addCost.toFixed(1) +
+        "c all-in (ask + fee) — roughly " + (eff - addCost).toFixed(0) + "c of edge on every contract you add. " +
+        "Keep additions small; the read can move fast" + (liveProb != null ? " mid-game" : "") + "." };
+  }
   if (independent && eff - proceeds >= 2) return { act: "HOLD",
     why: "About " + (eff - proceeds).toFixed(0) + "c of edge left by " + src + " over what a sale nets today. " +
       (pnl >= 0 ? "Up " : "Down ") + Math.abs(pnl).toFixed(0) + "c a contract so far." };
@@ -838,7 +848,7 @@ function positionAdvice(e, cur, live, quote) {
       "c) is already spent — it shouldn't drive this decision." };
 }
 
-const ADVICE_COLORS = { HOLD: "var(--moss)", "TAKE PROFIT": "var(--amber)", "SELL NOW": "var(--rose)", "RE-CHECK": "var(--cyan)", SETTLING: "var(--dim)" };
+const ADVICE_COLORS = { HOLD: "var(--moss)", "BUY MORE": "var(--cyan)", "TAKE PROFIT": "var(--amber)", "SELL NOW": "var(--rose)", "RE-CHECK": "var(--cyan)", SETTLING: "var(--dim)" };
 
 // Translate a BUY YES/NO verdict into the plain side to wager on, naming the
 // actual outcome (and the opponent for a game, when we can find it).
@@ -2338,41 +2348,59 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
             </div>
           )}
 
-          <div className="rail-box">
-            <div className="rail">
-              {[25, 50, 75].map((t) => <div key={t} className="rail-tick" style={{ left: t + "%" }} />)}
-              {busy && <div className="sweep" />}
-              {result && (
-                <div className={"rail-band" + (result.edge < 0 ? " neg" : "")}
-                  style={{ left: pos(Math.min(market.price, result.fair)) + "%", width: Math.abs(result.fair - market.price) + "%" }} />
-              )}
-              <div className="rail-mark" style={{ left: pos(market.price) + "%", background: "var(--cyan)" }}>
-                <span className="lbl top" style={{ background: "var(--cyan)", color: "#1B202B" }}>MARKET {market.price.toFixed(1)}c</span>
-              </div>
-              {xp && xp.status === "found" && (
-                <div className="rail-mark" style={{ left: pos(xp.match.price) + "%", background: "var(--moss)", width: 1 }}>
-                  <span className="lbl top" style={{ background: "var(--moss)", color: "#1B202B", opacity: .9 }}>{xp.match.venue.slice(0, 4).toUpperCase()} {xp.match.price.toFixed(0)}c</span>
-                </div>
-              )}
-              {live && live.impliedCents != null && (
-                <div className="rail-mark" style={{ left: pos(live.impliedCents) + "%", background: "var(--violet)", width: 1 }}>
-                  <span className="lbl top" style={{ background: "var(--violet)", color: "#1B202B", opacity: .92 }}>
-                    WIN PROB {live.impliedCents.toFixed(0)}c
+          <div className="cmp-box">
+            {(() => {
+              const rows = [{ label: "Market price", v: market.price, color: "var(--cyan)", note: "what it costs now" }];
+              if (live && live.impliedCents != null) {
+                rows.push({ label: "Live win prob", v: live.impliedCents, color: "var(--violet)", note: "in-game model, right now" });
+              } else if (live && live.bookProb && live.mySide) {
+                const bp = live.mySide.home ? live.bookProb.home : live.bookProb.away;
+                const nb = live.bookProb.books || 1;
+                rows.push({ label: "Sportsbooks", v: bp, color: "var(--violet)", note: nb + " book" + (nb === 1 ? "" : "s") + ", vig removed" });
+              }
+              if (xp && xp.status === "found") {
+                rows.push({ label: xp.match.venue, v: xp.match.price, color: "var(--moss)", note: "same bet, other exchange" });
+              }
+              if (result) {
+                rows.push({ label: "My fair value", v: result.fair, color: railColor, strong: true,
+                  note: (result.edge > 0 ? "+" : "") + result.edge.toFixed(1) + "c vs market" });
+              }
+              return rows.map((r) => (
+                <div key={r.label} className={"cmp-row" + (r.strong ? " strong" : "")}>
+                  <span className="cl">{r.label}</span>
+                  <div className="cmp-track">
+                    {[25, 50, 75].map((t) => <div key={t} className="cmp-tick" style={{ left: t + "%" }} />)}
+                    <div className="cmp-fill" style={{ width: pos(r.v) + "%", background: r.color, opacity: r.strong ? 0.95 : 0.55 }} />
+                  </div>
+                  <span className="cv" style={{ color: r.color }}>
+                    {r.v.toFixed(0)}% chance
+                    <span className="sub2">{r.note}</span>
                   </span>
                 </div>
-              )}
-              {result && (
-                <div className="rail-mark" style={{ left: pos(result.fair) + "%", background: railColor }}>
-                  <span className="lbl bot" style={{ background: railColor, color: "#1B202B" }}>FAIR {result.fair.toFixed(1)}c</span>
-                </div>
-              )}
-            </div>
-            <div className="rail-scale"><span>0c</span><span>25c</span><span>50c</span><span>75c</span><span>100c</span></div>
-            <p className="help">
-              A contract pays 100c if it happens, nothing if it doesn't — so the price is roughly the market's
-              odds. {market.price.toFixed(0)}c means about a {market.price.toFixed(0)}% chance.
-              {result ? " The shaded band is the gap between that price and what I think it's worth." : ""}
-            </p>
+              ));
+            })()}
+            {busy && !result && <div className="cmp-scan"><div className="sweep" /></div>}
+            {result ? (
+              <p className="cmp-verdict">
+                {Math.abs(result.edge) < 2 ? (
+                  <>The market and my estimate <b>agree within {Math.abs(result.edge).toFixed(1)}c</b> — this looks fairly priced.</>
+                ) : result.edge > 0 ? (
+                  <>All the checks together say <b style={{ color: "var(--amber)" }}>{market.name}</b> is more likely than the
+                  market thinks — <b style={{ color: "var(--amber)" }}>underpriced by about {result.edge.toFixed(0)}c</b>.
+                  {result.call === "PASS" ? " But after the real fill price and fees the gap is too small to bet — see the verdict below." : " My call is below."}</>
+                ) : (
+                  <>All the checks together say <b style={{ color: "var(--rose)" }}>{market.name}</b> is <b style={{ color: "var(--rose)" }}>less
+                  likely</b> than the market thinks — overpriced by about {Math.abs(result.edge).toFixed(0)}c, which favors the other side.
+                  {result.call === "PASS" ? " But after costs the gap is too small to bet — see the verdict below." : " My call is below."}</>
+                )}
+              </p>
+            ) : (
+              <p className="help">
+                Every bar is a chance out of 100 — longer bar, more likely. A contract pays 100c if it happens, so
+                a {market.price.toFixed(0)}c price means the market sees about a {market.price.toFixed(0)}% chance.
+                When my gold bar ends past the blue one, the bet is underpriced; short of it, overpriced.
+              </p>
+            )}
           </div>
 
           {(phase === "ready" || phase === "done") && (
@@ -2547,7 +2575,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
               {result.call !== "PASS" && lastSaved && (
                 lastSaved.taken ? (
                   <p className="help" style={{ marginTop: 16, color: "var(--moss)" }}>
-                    Tracking this position — open <b>My trades</b> for live stay-or-sell feedback.
+                    Tracking this position — open <b>My trades</b> for live hold / buy-more / sell calls.
                   </p>
                 ) : (
                   <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
@@ -2570,7 +2598,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                       setLastSaved(upd);
                     }}>I took this trade</button>
                     <span className="help" style={{ flexBasis: "100%", marginTop: 2 }}>
-                      Mark it, and <b>My trades</b> will watch the price and the game and tell you when to stay or get out.
+                      Mark it, and <b>My trades</b> will watch the price and the game and tell you when to hold, buy more, or get out.
                     </span>
                   </div>
                 )

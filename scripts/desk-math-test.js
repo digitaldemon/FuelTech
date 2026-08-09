@@ -17,6 +17,7 @@ function slice(startMarker, endMarker) {
 const code = [
   "const clamp = (n,a,b) => Math.max(a, Math.min(b, n));",
   slice("const takerFee =", ": 0;"),
+  slice("function positionAdvice(", "\n}"),
   slice("function mlImplied(", "\n}"),
   slice("function shinDevig(", "\n}"),
   slice("function consensusDevig(", "\n}"),
@@ -30,8 +31,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -82,6 +83,23 @@ ok(Math.abs(takerFee("Kalshi", 50) - 1.75) < 1e-9 && takerFee("Polymarket", 50) 
 
 // Ticker date
 ok(tickerDate("KXNFLGAME-26SEP07DALPHI-DAL") === "20260907", "tickerDate parses game date");
+
+// Position advice: hold / buy more / sell off a live independent read
+const pos = (over) => Object.assign({
+  venue: "Kalshi", fair: 55, ts: Date.now(), call: "BUY YES", pillars: [{}],
+  taken: { side: "YES", entryPrice: 50, contracts: 100 },
+}, over);
+const liveIn = (implied) => ({ sides: [{}, {}], state: "in", impliedCents: implied, disagree: false });
+ok(positionAdvice(pos(), 80, liveIn(60), { price: 80, bid: 80, ask: 81 }).act === "TAKE PROFIT",
+  "worth 60c by live model, bid 80c -> TAKE PROFIT");
+ok(positionAdvice(pos(), 60, liveIn(70), { price: 60, bid: 59, ask: 60 }).act === "BUY MORE",
+  "worth 70c by live model, all-in add ~61.7c -> BUY MORE");
+ok(positionAdvice(pos(), 60, liveIn(61), { price: 60, bid: 59, ask: 60 }).act === "HOLD",
+  "worth ~ price -> HOLD");
+ok(positionAdvice(pos({ ts: Date.now() - 5 * 3600 * 1000 }), 60, null, { price: 60, bid: 59, ask: 60 }).act === "HOLD",
+  "stale analysis, no live read -> HOLD (market is the estimate)");
+ok(positionAdvice(pos(), 60, { sides: [{}, {}], state: "post" }, { price: 60, bid: 59, ask: 60 }).act === "SETTLING",
+  "game final -> SETTLING");
 
 console.log(fail ? fail + " FAILURES" : "ALL TESTS PASSED");
 process.exit(fail ? 1 : 0);
