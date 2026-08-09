@@ -20,6 +20,8 @@ const code = [
   slice("const STOP = new Set(", "\n}"), // STOP + toks + overlap
   slice("const takerFee =", ": 0;"),
   slice("function oddsSideMarket(", "\n}"),
+  slice("const BOOK_WEIGHT = {", "};"),
+  slice("function oddsEventConsensus(", "\n}"),
   slice("function matchOddsEvent(", "\n}"),
   slice("function likelyWinner(", "\n}"),
   slice("function legsCombined(", "\n}"),
@@ -41,8 +43,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, gameWinnerAbbr, pickWon } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, gameWinnerAbbr, pickWon })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -107,6 +109,22 @@ ok(matchOddsEvent(oddsEvents, 'Las Vegas Aces at New York Liberty') === oddsEven
 ok(matchOddsEvent(oddsEvents, 'New York Liberty at Indiana Fever') === null,
   'game missing from the odds list does NOT borrow a sibling event sharing one team');
 ok(matchOddsEvent(oddsEvents, 'Phoenix Mercury at Los Angeles Sparks', '20260811') === oddsEvents[1], 'date bonus still finds the right ET-dated event');
+
+// Sharp-book weighting: Pinnacle pulls the consensus toward its line
+const shEv = {
+  home_team: "H", away_team: "A",
+  bookmakers: [
+    { key: "pinnacle", markets: [{ key: "h2h", outcomes: [
+      { name: "H", price: -150 }, { name: "A", price: 130 }] }] },
+    { key: "softbook", markets: [{ key: "h2h", outcomes: [
+      { name: "H", price: -110 }, { name: "A", price: -110 }] }] },
+  ],
+};
+const shCons = oddsEventConsensus(shEv);
+const pinnHome = 100 * (150 / 250) / ((150 / 250) + (100 / 230)); // Shin≈proportional 2-way symmetric-ish check bound
+ok(shCons && shCons.sharp === true && shCons.home > 55,
+  "pinnacle (3x) pulls consensus home prob to " + (shCons ? shCons.home.toFixed(1) : "?") + "% (> plain mean of ~station 55)");
+ok(Math.abs(shCons.home + shCons.away - 100) < 0.01, "weighted consensus still sums to 100");
 
 // Totals/spreads consensus: median line, de-vigged, Over/home share as `a`
 const totEv = {

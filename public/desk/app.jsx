@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.boot-watchdog";
+const BUILD = "2026-08-10.sharper";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -1298,6 +1298,13 @@ function oddsSideMarket(ev, key) {
   return { point, a, b: 100 - a, books: dv.length };
 }
 
+// Not all books are equal: Pinnacle takes sharp action at high limits and
+// its line is the market's best single predictor; exchanges (Betfair et al)
+// are real order books. Weight them above recreational books when
+// averaging — this measurably tightens the consensus toward truth.
+const BOOK_WEIGHT = { pinnacle: 3, betfair_ex_eu: 2, betfair_ex_uk: 2, betfair_ex_au: 2,
+  smarkets: 1.5, matchbook: 1.5, betonlineag: 1.25, lowvig: 1.25 };
+
 function oddsEventConsensus(ev) {
   if (!ev || !Array.isArray(ev.bookmakers)) return null;
   const books = [];
@@ -1314,18 +1321,22 @@ function oddsEventConsensus(ev) {
     const dv = shinDevig(rd != null ? [rh, rd, ra] : [rh, ra]);
     if (!dv) return;
     books.push({ home: dv[0] * 100, away: dv[dv.length - 1] * 100,
-      draw: dv.length === 3 ? dv[1] * 100 : null });
+      draw: dv.length === 3 ? dv[1] * 100 : null,
+      w: BOOK_WEIGHT[bk.key] || 1 });
     const t = Date.parse(m.last_update || bk.last_update || "");
     if (Number.isFinite(t) && t > updated) updated = t;
   });
   if (!books.length) return null;
-  const mean = (k) => books.reduce((s, b) => s + (b[k] || 0), 0) / books.length;
+  const wsum = books.reduce((s, b) => s + b.w, 0);
+  const mean = (k) => books.reduce((s, b) => s + (b[k] || 0) * b.w, 0) / wsum;
   const home = mean("home"), away = mean("away");
   const withDraw = books.filter((b) => b.draw != null);
-  const draw = withDraw.length ? withDraw.reduce((s, b) => s + b.draw, 0) / withDraw.length : null;
+  const draw = withDraw.length
+    ? withDraw.reduce((s, b) => s + b.draw * b.w, 0) / withDraw.reduce((s, b) => s + b.w, 0) : null;
   const disp = books.length > 1
     ? Math.sqrt(books.reduce((s, b) => s + Math.pow(b.home - home, 2), 0) / books.length) : 0;
-  return { home, away, draw, books: books.length, disp, updated,
+  const sharp = books.some((b) => b.w >= 2);
+  return { home, away, draw, books: books.length, disp, updated, sharp,
     totals: oddsSideMarket(ev, "totals"), spreads: oddsSideMarket(ev, "spreads") };
 }
 
@@ -1447,6 +1458,20 @@ async function espnGame(lg, m, codes) {
       // Baseball: the count and outs.
       if (sit.balls != null) base.extra = sit.balls + "-" + sit.strikes + " count, " + (sit.outs != null ? sit.outs : "?") + " out";
     }
+    // Injury report — scratches and OUT designations move lines and are
+    // the single most common fact a pregame consensus hasn't absorbed yet.
+    if (Array.isArray(sm.injuries) && sm.injuries.length) {
+      const lines = [];
+      sm.injuries.forEach((t) => {
+        const teamName = (t.team && (t.team.abbreviation || t.team.displayName)) || "?";
+        (t.injuries || []).slice(0, 5).forEach((inj) => {
+          const who = inj.athlete && inj.athlete.displayName;
+          const st = inj.status || (inj.type && inj.type.description) || "";
+          if (who && st) lines.push(teamName + ": " + who + " (" + st + ")");
+        });
+      });
+      if (lines.length) base.injuries = lines.slice(0, 8).join("; ");
+    }
   } catch { /* scoreboard alone is still usable */ }
 
   return base;
@@ -1476,6 +1501,13 @@ async function officialGame(lg, codes) {
         { name: f.gameData.teams.home.name, abbr: String(f.gameData.teams.home.abbreviation || "").toUpperCase(), score: (ls.teams && ls.teams.home && ls.teams.home.runs) ?? null, home: true },
       ],
       extra: ls.balls != null ? ls.balls + "-" + ls.strikes + " count, " + (ls.outs ?? "?") + " out" : "",
+      // Starting pitchers decide baseball moneylines — name them.
+      probables: (() => {
+        const pp = f.gameData && f.gameData.probablePitchers;
+        if (!pp || (!pp.away && !pp.home)) return null;
+        return "Probable pitchers: " + (pp.away && pp.away.fullName || "TBD") + " (away) vs " +
+          (pp.home && pp.home.fullName || "TBD") + " (home)";
+      })(),
     };
   }
 
@@ -1588,6 +1620,8 @@ async function fetchLive(m) {
     odds: espn && espn.odds,
     bookProb: espn && espn.bookProb,
     oddsBook,
+    injuries: espn && espn.injuries,
+    probables: (off && off.probables) || null,
     homeWinPct: espn && espn.homeWinPct,
     mySide, impliedCents, disagree, sources, errs,
     fetched: Date.now(),
@@ -1620,6 +1654,8 @@ function liveSummary(l) {
       (l.odds.overUnder != null ? " O/U " + l.odds.overUnder : "") +
       (l.odds.homeML != null ? " (home ML " + l.odds.homeML + ")" : "");
   }
+  if (l.probables) out += ". " + l.probables;
+  if (l.injuries) out += ". INJURY REPORT: " + l.injuries;
   if (l.disagree) out += ". WARNING: the feeds disagree on the score — one is stale, so treat the score as uncertain.";
   out += ". This post-dates anything web search will return; weight it above every other input.";
   return out;
@@ -2403,8 +2439,11 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
         }
       }
       if (bookProb != null) {
+        // A consensus that includes a sharp book (Pinnacle/exchanges) has
+        // earned more say in the anchor than soft-book-only lines.
+        const sharpBoost = lNow && lNow.oddsBook && lNow.oddsBook.sharp ? 2 : 1.5;
         anchorInputs[98] = { n: 98, strength: 3, implied: clamp(bookProb, 1, 99) };
-        anchorByN[98] = { n: 98, enabled: true, weight: 1.5 };
+        anchorByN[98] = { n: 98, enabled: true, weight: sharpBoost };
         signals.push({ label: "Book line (" + bookN + (bookN === 1 ? " book" : " books") + (bookLive ? ", in-play)" : ")"), prob: bookProb });
       }
       // Parlay: the product of each leg's own best read (settled result,
@@ -3708,9 +3747,17 @@ async function espnDevig(game, odds) {
 
     if (game.state === "in") {
       const wp = sm.winprobability;
-      if (Array.isArray(wp) && wp.length && wp[wp.length - 1].homeWinPercentage != null) {
-        return homeProbObj(Number(wp[wp.length - 1].homeWinPercentage) * 100, game, { src: "live" });
+      const liveModel = Array.isArray(wp) && wp.length && wp[wp.length - 1].homeWinPercentage != null
+        ? Number(wp[wp.length - 1].homeWinPercentage) * 100 : null;
+      // Two independent live reads beat either alone: ESPN's play-by-play
+      // model and the in-play book consensus, combined in log-odds space
+      // (books slightly heavier — they take real money).
+      if (liveModel != null && odds && oddsFresh) {
+        const blended = unlogit(
+          (logit(clamp(liveModel, 1, 99)) + 1.5 * logit(clamp(odds.home, 1, 99))) / 2.5);
+        return homeProbObj(blended, game, { src: "live", books: odds.books, blended: true });
       }
+      if (liveModel != null) return homeProbObj(liveModel, game, { src: "live" });
       if (odds && oddsFresh) return oddsProbObj(odds, game, "live-books");
       const cons = consensusDevig(sm.pickcenter || sm.odds || [], game.homeAbbr, game.awayAbbr);
       if (cons) return { ...cons, src: "pregame-line", stale: true };
