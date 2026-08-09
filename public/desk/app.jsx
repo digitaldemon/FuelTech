@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.sharper";
+const BUILD = "2026-08-10.grade-fast";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -4008,7 +4008,9 @@ function Picks({ ledger, onPick }) {
     fetch("/api/desk/picks").then((r) => r.json())
       .then((d) => {
         recordRef.current = d.record || []; setRecord(recordRef.current);
-        if (picksRef.current.length) reconcileRecord(picksRef.current);
+        // Grade immediately on load — the scoreboard back-fill works even
+        // before (or without) a scan completing.
+        reconcileRecord(picksRef.current || []);
       })
       .catch(() => { recordRef.current = []; setRecord([]); });
   }, []);
@@ -4046,9 +4048,15 @@ function Picks({ ledger, onPick }) {
       r.final = p.sides.map((s) => s.abbr + " " + (s.score != null ? s.score : "-")).join(" ");
       changed.push(r);
     });
-    // Games from past days fall off the scan — grade them straight from
-    // the scoreboard, a few per cycle.
-    const stale = rec.filter((r) => r.result == null && r.date && r.date < todayEt).slice(0, 6);
+    // Settled games fall off the scan (their Kalshi markets close), and a
+    // game finishing TONIGHT still carries today's date — grade every
+    // pending entry that isn't currently visible as a pre/live game
+    // straight from the scoreboard, a batch per cycle.
+    const stale = rec.filter((r) => {
+      if (r.result != null || !r.date || r.date > todayEt) return false;
+      const inScan = byEvent[r.eventId];
+      return !inScan || inScan.state === "post"; // pre/in games aren't done — skip the fetch
+    }).slice(0, 10);
     for (const r of stale) {
       try {
         const gs = await espnGamesForLeague(r.path, r.date);
@@ -4230,16 +4238,22 @@ function Picks({ ledger, onPick }) {
         </p>
         {(() => {
           const scored = (record || []).filter((r) => r.result === "won" || r.result === "lost");
+          const pending = (record || []).filter((r) => r.result == null).length;
           const wins = scored.filter((r) => r.result === "won").length;
           const strong = scored.filter((r) => (r.prob || 0) >= 80);
           const strongWins = strong.filter((r) => r.result === "won").length;
-          return (scanInfo || scored.length > 0) && (
+          return (scanInfo || scored.length > 0 || pending > 0) && (
             <div className="chips" style={{ marginTop: 8 }}>
               {scored.length > 0 && (
                 <span className="chip static" style={{ color: wins * 2 >= scored.length ? "var(--moss)" : "var(--rose)",
                   borderColor: "rgba(127,185,139,.45)" }}
                   title="Every pregame winner call this board makes is logged and graded when the game ends">
                   Winner record: {wins}-{scored.length - wins} ({Math.round((wins / scored.length) * 100)}%)
+                </span>
+              )}
+              {pending > 0 && (
+                <span className="chip static" title="Logged pregame calls waiting for their games to finish — they grade automatically">
+                  {pending} pick{pending === 1 ? "" : "s"} awaiting results
                 </span>
               )}
               {strong.length > 0 && (
