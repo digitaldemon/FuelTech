@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-08.parlay-live";
+const BUILD = "2026-08-08.parlay-suggested";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -2991,13 +2991,45 @@ function parlayConflicts(slip) {
   return bad;
 }
 
+// Auto-build a suggested parlay from the day's priced games: the best
+// positive-edge side of each game, one leg per game, ranked and capped.
+// "safe" ranks by win probability instead of edge for a lower-variance card.
+function suggestParlay(picks, maxLegs, mode) {
+  const byGame = {};
+  picks.forEach((p) => {
+    if (mode === "safe" ? p.modelProb < 55 : p.edge < 2) return;
+    const key = p.game || p.id;
+    const cur = byGame[key];
+    const better = mode === "safe" ? (!cur || p.modelProb > cur.modelProb) : (!cur || p.edge > cur.edge);
+    if (better) byGame[key] = p;
+  });
+  const legs = Object.values(byGame)
+    .sort((a, b) => (mode === "safe" ? b.modelProb - a.modelProb : b.edge - a.edge))
+    .slice(0, maxLegs);
+  return legs.map((p) => ({ id: p.id, market: p.market, modelProb: p.modelProb, entry: p.entry, codes: p.codes, game: p.game }));
+}
+
+// Friendly label for the slate a set of legs belongs to.
+function slateLabel(legs) {
+  const dates = legs.map((l) => tickerDate(l.market.id)).filter(Boolean).sort();
+  if (!dates.length) return "";
+  const d = dates[Math.floor(dates.length / 2)];
+  const iso = d.slice(0, 4) + "-" + d.slice(4, 6) + "-" + d.slice(6, 8);
+  const today = new Date().toISOString().slice(0, 10);
+  if (iso === today) return "today";
+  try { return new Date(iso + "T12:00:00Z").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); }
+  catch { return iso; }
+}
+
 function Parlay({ onPick }) {
   const [picks, setPicks] = useState([]);
   const [state, setState] = useState("idle");
   const [err, setErr] = useState(null);
   const [slip, setSlip] = useState([]);
-  const [view, setView] = useState("value"); // value | locks
+  const [view, setView] = useState("value"); // value | locks | live
   const [minEdge, setMinEdge] = useState(3);
+  const [sugLegs, setSugLegs] = useState(3);
+  const [sugMode, setSugMode] = useState("value"); // value | safe
 
   const [scanInfo, setScanInfo] = useState(null);
   async function run() {
@@ -3043,6 +3075,9 @@ function Parlay({ onPick }) {
   const pm = parlayMath(slip);
   const conflicts = parlayConflicts(slip);
 
+  const suggested = useMemo(() => suggestParlay(picks, sugLegs, sugMode), [picks, sugLegs, sugMode]);
+  const sugMath = parlayMath(suggested);
+
   return (
     <>
       <div className="panel">
@@ -3078,6 +3113,64 @@ function Parlay({ onPick }) {
       </div>
 
       {err && <div className="panel err">{err}</div>}
+
+      {state === "done" && suggested.length >= 2 && sugMath && (
+        <div className="panel" style={{ borderColor: "rgba(127,185,139,.45)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
+            <p className="sect" style={{ margin: 0 }}>
+              {sugMode === "safe" ? "Safest" : "Best-value"} parlay{slateLabel(suggested) ? " · " + slateLabel(suggested) : ""}
+            </p>
+            <div className="chips" style={{ marginTop: 0 }}>
+              <button className={"chip" + (sugMode === "value" ? " on" : "")} onClick={() => setSugMode("value")}>value</button>
+              <button className={"chip" + (sugMode === "safe" ? " on" : "")} onClick={() => setSugMode("safe")}>safe</button>
+              {[2, 3, 4].map((n) => (
+                <button key={n} className={"chip" + (sugLegs === n ? " on" : "")} onClick={() => setSugLegs(n)}>{n} legs</button>
+              ))}
+            </div>
+          </div>
+          <p className="help" style={{ marginTop: 6 }}>
+            Auto-built from the day's priced games — the {sugMode === "safe" ? "highest-probability" : "biggest-edge"} side
+            of {suggested.length} different games. Tweak it after loading.
+          </p>
+          {suggested.map((l) => (
+            <div key={l.id} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
+              <span className="who" style={{ fontSize: 13.5 }}>
+                <a href={l.market.link} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>
+                  {l.market.name === l.market.question ? l.market.question : l.market.name} ↗
+                </a>
+              </span>
+              <span className="pts" style={{ fontSize: 14 }}>{l.modelProb.toFixed(0)}% @ {l.entry.toFixed(0)}c</span>
+            </div>
+          ))}
+          <div className="figures" style={{ marginTop: 14 }}>
+            <div className="fig">
+              <span className="big" style={{ color: "var(--amber)" }}>{sugMath.mult.toFixed(1)}×</span>
+              <span className="cap">Payout</span>
+              <span className="sub">$100 → ${(sugMath.mult * 100).toFixed(0)}</span>
+            </div>
+            <div className="fig">
+              <span className="big">{sugMath.modelProb.toFixed(sugMath.modelProb < 10 ? 1 : 0)}%</span>
+              <span className="cap">Win chance</span>
+              <span className="sub">All {sugMath.legs} legs hitting</span>
+            </div>
+            <div className="fig">
+              <span className="big" style={{ color: sugMath.ev > 0 ? "var(--moss)" : "var(--rose)" }}>
+                {sugMath.ev > 0 ? "+" : ""}{(sugMath.ev * 100).toFixed(0)}%
+              </span>
+              <span className="cap">Expected value</span>
+              <span className="sub">Per $1 staked</span>
+            </div>
+            <div className="fig">
+              <span className="big">{sugMath.ev > 0 ? sugMath.stake.toFixed(1) + "%" : "—"}</span>
+              <span className="cap">Suggested stake</span>
+              <span className="sub">Half-Kelly of bankroll</span>
+            </div>
+          </div>
+          <button className="btn btn-sm" style={{ marginTop: 12 }} onClick={() => setSlip(suggested)}>
+            Load into slip
+          </button>
+        </div>
+      )}
 
       {slip.length > 0 && pm && (
         <div className="panel" style={{ borderColor: "rgba(242,179,61,.4)" }}>
