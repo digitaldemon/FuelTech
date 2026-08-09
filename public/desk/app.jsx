@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.ui-polish";
+const BUILD = "2026-08-10.fast-boot";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -3934,10 +3934,15 @@ const pickWon = (pickCode, winner) => !!pickCode &&
    to refresh; deep dive hands the market to the Analyze pipeline. */
 function Picks({ ledger, onPick }) {
   // Warm start: the last scan renders instantly while a fresh one runs.
+  // Validate every cached entry — a stale cache written by an older build
+  // must never be able to crash the first render.
   const [picks, setPicks] = useState(() => {
     try {
       const c = JSON.parse(localStorage.getItem("cd:lastPicks") || "null");
-      if (c && Date.now() - c.at < 30 * 60 * 1000) return c.picks || [];
+      if (c && Date.now() - c.at < 30 * 60 * 1000 && Array.isArray(c.picks)) {
+        return c.picks.filter((p) => p && p.market && p.id &&
+          Number.isFinite(p.modelProb) && Number.isFinite(p.entry) && Number.isFinite(p.edge));
+      }
     } catch { /* cold start */ }
     return [];
   });

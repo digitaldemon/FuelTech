@@ -23,9 +23,19 @@
 <body>
   <div id="root"><div id="boot">Starting Contract Desk…</div></div>
 
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
-  <script type="text/babel" data-presets="react" src="/desk/app.jsx"></script>
+  <!-- If startup fails, say so instead of hanging on the boot line. -->
+  <script>
+    window.addEventListener("error", function (e) {
+      var b = document.getElementById("boot");
+      if (b) b.textContent = "Startup error: " + (e.message || (e.target && e.target.src) || "unknown") +
+        " — screenshot this.";
+    }, true);
+  </script>
+
+  <!-- Precompiled at deploy time (scripts/desk-build.js); no CDN, no
+       in-browser Babel — phones just run plain JavaScript. -->
+  <script src="/desk/vendor/react.production.min.js"></script>
+  <script src="/desk/vendor/react-dom.production.min.js"></script>
+  <script src="/desk/app.js"></script>
 </body>
 </html>
