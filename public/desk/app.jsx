@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.fast-boot";
+const BUILD = "2026-08-10.boot-watchdog";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5061,3 +5061,4 @@ function Ledger({ ledger, setLedger, fw }) {
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+window.__deskMounted = true; // boot watchdog in index.html stands down

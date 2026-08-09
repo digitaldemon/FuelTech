@@ -30,6 +30,29 @@
       if (b) b.textContent = "Startup error: " + (e.message || (e.target && e.target.src) || "unknown") +
         " — screenshot this.";
     }, true);
+    // Watchdog: if the app hasn't mounted in 8 seconds, self-heal once
+    // (clear the app's local cache and reload — a stale cache from an old
+    // build is the usual culprit), then say what to do instead of hanging.
+    (function () {
+      window.__deskMounted = false;
+      setTimeout(function () {
+        if (window.__deskMounted) return;
+        try {
+          if (!sessionStorage.getItem("cdheal")) {
+            sessionStorage.setItem("cdheal", "1");
+            var ks = [];
+            for (var i = 0; i < localStorage.length; i++) ks.push(localStorage.key(i));
+            ks.forEach(function (k) { if (k && k.indexOf("cd:") === 0) localStorage.removeItem(k); });
+            location.reload();
+            return;
+          }
+        } catch (err) { /* storage blocked — fall through to the message */ }
+        var b = document.getElementById("boot");
+        if (b) b.textContent = "Still stuck after two tries — your phone is holding an old cached copy. " +
+          "Fix: iPhone Settings > Apps > Safari > Advanced > Website Data > search 'fueltechaipro' > delete it, " +
+          "then remove and re-add the home-screen icon.";
+      }, 8000);
+    })();
   </script>
 
   <!-- Precompiled at deploy time (scripts/desk-build.js); no CDN, no
