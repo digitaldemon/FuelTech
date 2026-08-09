@@ -24,6 +24,8 @@ const code = [
   slice("function shinDevig(", "\n}"),
   slice("function consensusDevig(", "\n}"),
   slice("function teamCodes(", "\n}"),
+  slice("const CODE_ALIAS = {", "};"),
+  slice("const codeEq = (a, c)", ";"),
   slice("const codeHit = (codes, abbrs) => {", "\n};"),
   slice("function tickerDate(", "\n}"),
   slice("function pickDecision(", "\n}"),

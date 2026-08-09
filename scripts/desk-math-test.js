@@ -27,6 +27,8 @@ const code = [
   slice("function shinDevig(", "\n}"),
   slice("function consensusDevig(", "\n}"),
   slice("function teamCodes(", "\n}"),
+  slice("const CODE_ALIAS = {", "};"),
+  slice("const codeEq = (a, c)", ";"),
   slice("const codeHit = (codes, abbrs) => {", "\n};"),
   slice("function tickerDate(", "\n}"),
   slice("function parlayMath(", "\n}"),
@@ -63,6 +65,7 @@ ok(codeHit(["SEA", "TEX"], ["SEA", "TEX"]) === 2, "codeHit exact pair scores 2")
 ok(codeHit(["NY"], ["NYY", "NYM"]) === 0, "short code matching BOTH teams of a game scores nothing (NY vs NYY+NYM)");
 ok(codeHit(["LA"], ["LAS", "PHX"]) === 0.6, "short code matching exactly one team still pairs (LA vs LAS)");
 ok(codeHit(["KC"], ["KC"]) === 1, "2-char exact still pairs (KC)");
+ok(codeHit(["CWS"], ["CIN", "CHW"]) === 1, "cross-feed alias pairs White Sox (CWS vs CHW)");
 
 // De-vig math
 const dv = shinDevig([0.55, 0.55]);

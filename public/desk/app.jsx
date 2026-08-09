@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-09.daily-picks";
+const BUILD = "2026-08-09.winner-picks";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -1140,14 +1140,31 @@ function teamCodes(ticker) {
   return out;
 }
 
-// Exact abbreviation matches score full weight. Prefix overlaps (different
-// feeds abbreviate differently: LA vs LAS) score partial — but only when
-// exactly ONE of the game's abbreviations matches, so a short code like NY
-// can't pair with either New York team of a Yankees-Mets game.
+// Known cross-feed abbreviation differences (Kalshi vs ESPN vs league
+// APIs). Without these, the White Sox (CWS vs CHW) never exact-match and
+// a junk prefix can drag the market onto the wrong game entirely.
+const CODE_ALIAS = {
+  CWS: "CHW", CHW: "CWS",   // White Sox
+  AZ: "ARI", ARI: "AZ",     // Diamondbacks
+  WSN: "WSH",               // Nationals
+  JAX: "JAC", JAC: "JAX",   // Jaguars
+  WAS: "WSH", WSH: "WAS",   // Washington (NFL/NBA/NHL)
+  NO: "NOP", NOP: "NO",     // Pelicans
+  GS: "GSW", GSW: "GS",     // Warriors
+  NY: "NYK", SA: "SAS", SAS: "SA", PHO: "PHX",
+  UTAH: "UTA", UTA: "UTAH",
+  SJ: "SJS", SJS: "SJ", TBL: "TB", NJD: "NJ", LAK: "LA", MTL: "MON",
+};
+const codeEq = (a, c) => a === c || CODE_ALIAS[a] === c || CODE_ALIAS[c] === a;
+
+// Exact (or aliased) abbreviation matches score full weight. Prefix
+// overlaps (LA vs LAS) score partial — but only when exactly ONE of the
+// game's abbreviations matches, so a short code like NY can't pair with
+// either New York team of a Yankees-Mets game.
 const codeHit = (codes, abbrs) => {
   let s = 0;
   for (const c of codes) {
-    if (abbrs.some((a) => a === c)) { s += 1; continue; }
+    if (abbrs.some((a) => codeEq(a, c))) { s += 1; continue; }
     const pref = abbrs.filter((a) => a && (a.startsWith(c) || c.startsWith(a)));
     if (pref.length === 1) s += 0.6;
   }
@@ -3564,8 +3581,13 @@ async function espnGamesForLeague(path, date) {
     const comps = comp.competitors || [];
     const home = comps.find((c) => c.homeAway === "home");
     const away = comps.find((c) => c.homeAway === "away");
+    // Football scoreboards return the WHOLE WEEK for a single-date query —
+    // tag each game with its actual ET date, not the date we asked about,
+    // or the same-slate matching bonus lands on the wrong games.
+    const t = Date.parse(ev.date || "");
+    const evDate = Number.isFinite(t) ? etDate(t).replace(/-/g, "") : (date || null);
     return {
-      eventId: ev.id, path, date: date || null, abbrs: comps.map(competitorAbbr),
+      eventId: ev.id, path, date: evDate, abbrs: comps.map(competitorAbbr),
       homeAbbr: home ? competitorAbbr(home) : null, awayAbbr: away ? competitorAbbr(away) : null,
       state: (ev.status && ev.status.type && ev.status.type.state) || "pre",
       name: ev.name || ev.shortName || "",
@@ -3839,13 +3861,14 @@ function Picks({ ledger, onPick }) {
     return () => { alive = false; if (timer) clearTimeout(timer); };
   }, []);
 
-  const net = (x) => x.edge - (x.fee || 0);
+  // WINNER-centric: for each game keep the side the books/models say WINS
+  // (highest true probability) — price and value are secondary notes.
   const groups = useMemo(() => {
-    // One row per game: the single best side by net edge.
     const byGame = {};
     picks.forEach((p) => {
+      if (p.src === "pregame-line") return; // stale mid-game line — no honest winner read
       const k = p.game || p.id;
-      if (!byGame[k] || net(p) > net(byGame[k])) byGame[k] = p;
+      if (!byGame[k] || p.modelProb > byGame[k].modelProb) byGame[k] = p;
     });
     const rows = Object.values(byGame);
     const todayEt = etDate().replace(/-/g, "");
@@ -3856,41 +3879,52 @@ function Picks({ ledger, onPick }) {
       else if (d === todayEt) g.today.push(p);
       else g.soon.push(p);
     });
-    g.live.sort((a, b) => net(b) - net(a));
-    g.today.sort((a, b) => net(b) - net(a));
-    g.soon.sort((a, b) => ((tickerDate(a.market.id) || "").localeCompare(tickerDate(b.market.id) || "")) || net(b) - net(a));
+    g.live.sort((a, b) => b.modelProb - a.modelProb);
+    g.today.sort((a, b) => b.modelProb - a.modelProb);
+    g.soon.sort((a, b) => ((tickerDate(a.market.id) || "").localeCompare(tickerDate(b.market.id) || "")) || b.modelProb - a.modelProb);
+    // Top picks: the most certain winners on today's card (live included).
+    g.top = [...g.live, ...g.today].filter((p) => p.modelProb >= 65)
+      .sort((a, b) => b.modelProb - a.modelProb).slice(0, 6);
     return g;
   }, [picks]);
 
   const analysisFor = (p) => (ledger || []).find((x) =>
     x.venue === "Kalshi" && x.marketId === p.id && x.call && x.call !== "SYNCED") || null;
-  const bets = [...groups.live, ...groups.today].filter((p) => pickDecision(p).bet);
 
-  const row = (p) => {
-    const dec = pickDecision(p);
+  const tier = (p) => p.modelProb >= 80 ? { t: "STRONGEST", c: "var(--moss)" }
+    : p.modelProb >= 68 ? { t: "STRONG", c: "var(--moss)" }
+    : p.modelProb >= 55 ? { t: "LEAN", c: "var(--amber)" }
+    : { t: "TOO CLOSE TO CALL", c: "var(--dim)" };
+
+  const row = (p, rank) => {
+    const tr = tier(p);
     const an = analysisFor(p);
-    const n = net(p);
+    const dec = pickDecision(p);
+    const n = p.edge - (p.fee || 0);
     return (
-      <div key={p.id} className="sel" style={{ cursor: "default", borderColor: dec.tag === "STRONG BET" ? "rgba(127,185,139,.55)" : undefined }}>
+      <div key={p.id} className="sel" style={{ cursor: "default", borderColor: p.modelProb >= 80 ? "rgba(127,185,139,.55)" : undefined }}>
         <span style={{ minWidth: 0 }}>
           <span style={{ fontWeight: 600 }}>
-            {dec.bet ? <span style={{ color: dec.color }}>Pick: </span> : <span style={{ color: "var(--dim)" }}>Skip: </span>}
+            {rank != null && <span style={{ color: "var(--dim)" }}>{rank}. </span>}
+            <span style={{ color: tr.c }}>Winner: </span>
             {p.market.name === p.market.question ? p.market.question : p.market.name}
           </span>
           <span className="sub">
             {p.state === "in" ? <b style={{ color: "var(--rose)" }}>● LIVE </b> : null}
-            {p.league} · {p.game} · true odds {p.modelProb.toFixed(0)}% ({p.src === "live" ? "live model"
+            {p.league} · {p.game} · {p.src === "live" ? "live model"
               : p.src === "live-books" ? "in-play books"
-              : p.src === "pregame-line" ? "stale pregame line"
               : p.src === "model" ? "model projection"
-              : p.books + " book" + (p.books === 1 ? "" : "s")}) · costs {p.entry.toFixed(0)}c
+              : p.books + " book" + (p.books === 1 ? "" : "s") + " consensus"}
+            {" · costs " + p.entry.toFixed(0) + "c"}
+            {dec.bet ? <span style={{ color: "var(--moss)" }}>{" · also underpriced: +" + n.toFixed(0) + "c value"}</span>
+              : <span style={{ color: "var(--dim)" }}>{" · fairly priced"}</span>}
             {an && <span style={{ color: an.call.indexOf("BUY") === 0 ? "var(--amber)" : "var(--dim)" }}>
               {" · full analysis: " + an.call + (an.confidence ? " (" + an.confidence.toLowerCase() + ")" : "")}</span>}
           </span>
         </span>
         <span style={{ display: "flex", gap: 10, alignItems: "center", flex: "0 0 auto" }}>
-          <span className="sig" style={{ color: dec.color, borderColor: dec.color }}>
-            {dec.tag}{dec.bet ? " · " + (n > 0 ? "+" : "") + n.toFixed(0) + "c net" : ""}
+          <span className="sig" style={{ color: tr.c, borderColor: tr.c }}>
+            {tr.t} · {p.modelProb.toFixed(0)}%
           </span>
           <button className="chip" onClick={() => onPick(p.market)} title="Run every check on this pick">deep dive</button>
           <a className="chip" href={p.market.link} target="_blank" rel="noreferrer">open ↗</a>
@@ -3899,26 +3933,31 @@ function Picks({ ledger, onPick }) {
     );
   };
 
-  const section = (title, arr, color) => arr.length > 0 && (
+  const section = (title, arr, color, ranked) => arr.length > 0 && (
     <div className="panel">
       <p className="sect" style={{ margin: 0, color }}>{title} ({arr.length})</p>
-      <div style={{ marginTop: 6 }}>{arr.map(row)}</div>
+      <div style={{ marginTop: 6 }}>{arr.map((p, i) => row(p, ranked ? i + 1 : null))}</div>
     </div>
   );
+
+  const strongest = groups.top.filter((p) => p.modelProb >= 80).length;
 
   return (
     <>
       <div className="panel">
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
-          <p className="sect" style={{ margin: 0 }}>Today's picks</p>
+          <p className="sect" style={{ margin: 0 }}>Today's picks — who wins</p>
           <button className="btn btn-ghost btn-sm" onClick={run} disabled={state === "loading"}>
             {state === "loading" ? "Scanning" : "Rescan"}
           </button>
         </div>
         <p className="help" style={{ marginTop: 6 }}>
-          Every game on the board, one line each: the side worth picking by the de-vigged book consensus and live
-          models, net of fees. <b>{bets.length ? bets.length + " pick" + (bets.length === 1 ? "" : "s") + " clear the bar today." : "No picks clear the bar right now — most games are priced fairly."}</b>{" "}
-          Deep dive runs all nine checks on any of them.
+          The projected winner of every event on the board — by the de-vigged consensus of every sportsbook, the
+          live win-probability models, and your full analyses where you've run them.{" "}
+          <b>{groups.top.length
+            ? groups.top.length + " top pick" + (groups.top.length === 1 ? "" : "s") + " today" + (strongest ? ", " + strongest + " at 80%+ certainty." : ".")
+            : "No high-certainty winners on today's card yet."}</b>{" "}
+          Deep dive runs all nine checks on any pick.
         </p>
         {scanInfo && (
           <div className="chips" style={{ marginTop: 8 }}>
@@ -3926,11 +3965,12 @@ function Picks({ ledger, onPick }) {
             {oddsQuota && <span className="chip static">odds feed · {oddsQuota.remaining} credits</span>}
           </div>
         )}
-        {state === "loading" && picks.length === 0 && <p className="pwait" style={{ marginTop: 10 }}><span className="dots">pricing every game on the board</span></p>}
+        {state === "loading" && picks.length === 0 && <p className="pwait" style={{ marginTop: 10 }}><span className="dots">reading the books on every game</span></p>}
         {err && <p className="help" style={{ marginTop: 10, color: "var(--rose)" }}>{err}</p>}
       </div>
+      {section("Top picks today", groups.top, "var(--amber)", true)}
       {section("● Live now", groups.live, "var(--rose)")}
-      {section("Today", groups.today, undefined)}
+      {section("Today — every game", groups.today, undefined)}
       {section("Coming up", groups.soon, "var(--dim)")}
     </>
   );
