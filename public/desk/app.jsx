@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-09.matching-verified";
+const BUILD = "2026-08-09.odds-visible";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -2444,6 +2444,13 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
               {live.lastPlay && <div className="sb-play">{live.lastPlay}</div>}
 
               <div className="sb-foot">
+                {live.oddsBook && live.mySide && (
+                  <span className="srcchip" style={{ color: "var(--moss)", borderColor: "rgba(127,185,139,.45)" }}>
+                    {live.oddsBook.books}-book consensus: {live.mySide.name}{" "}
+                    {(live.mySide.home ? live.oddsBook.home : live.oddsBook.away).toFixed(0)}%
+                    {live.oddsBook.disp > 6 ? " · books split" : ""}
+                  </span>
+                )}
                 {live.odds && (
                   <span className="srcchip" style={{ color: "var(--cyan)", borderColor: "rgba(111,179,210,.45)" }}>
                     {live.odds.provider}: {live.odds.details || "no line"}
@@ -2477,10 +2484,19 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
               const rows = [{ label: "Market price", v: market.price, color: "var(--cyan)", note: "what it costs now" }];
               if (live && live.impliedCents != null) {
                 rows.push({ label: "Live win prob", v: live.impliedCents, color: "var(--violet)", note: "in-game model, right now" });
-              } else if (live && live.bookProb && live.mySide) {
+              }
+              // The Odds API wide consensus gets its own row whenever we have
+              // it — it's the strongest external read and should be VISIBLE.
+              if (live && live.oddsBook && live.mySide) {
+                const ob = live.oddsBook;
+                const bp = live.mySide.home ? ob.home : ob.away;
+                const fresh = ob.updated && Date.now() - ob.updated < ODDS_FRESH_MS;
+                rows.push({ label: "Sportsbooks", v: bp, color: "var(--moss)",
+                  note: ob.books + " book" + (ob.books === 1 ? "" : "s") + ", vig removed" + (live.state === "in" ? (fresh ? ", in-play" : ", pregame") : "") });
+              } else if (live && live.impliedCents == null && live.bookProb && live.mySide) {
                 const bp = live.mySide.home ? live.bookProb.home : live.bookProb.away;
                 const nb = live.bookProb.books || 1;
-                rows.push({ label: "Sportsbooks", v: bp, color: "var(--violet)", note: nb + " book" + (nb === 1 ? "" : "s") + ", vig removed" });
+                rows.push({ label: "Sportsbooks", v: bp, color: "var(--moss)", note: nb + " book" + (nb === 1 ? "" : "s") + " via ESPN, vig removed" });
               }
               if (xp && xp.status === "found") {
                 rows.push({ label: xp.match.venue, v: xp.match.price, color: "var(--moss)", note: "same bet, other exchange" });
