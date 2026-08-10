@@ -128,6 +128,17 @@ export async function GET(req: Request) {
   const creds = await readStore<Creds | null>("kalshi_creds", null);
   if (!creds || !creds.keyId) return Response.json({ configured: false });
 
+  // Auth-gated debug: return one raw settlement so field names can be
+  // verified against reality instead of assumed.
+  if (new URL(req.url).searchParams.get("debug") === "settlements") {
+    try {
+      const sd = await kget(creds, "/trade-api/v2/portfolio/settlements?limit=3");
+      return Response.json({ sample: (sd.settlements || []).slice(0, 3) });
+    } catch (e) {
+      return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
+    }
+  }
+
   try {
     const pd = await kget(creds, "/trade-api/v2/portfolio/positions?limit=200&count_filter=position");
     const raw = (pd.market_positions || []) as Array<Record<string, unknown>>;
