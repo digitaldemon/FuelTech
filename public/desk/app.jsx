@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.f15-dialed";
+const BUILD = "2026-08-10.f15-only";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -2120,7 +2120,7 @@ function App() {
         </header>
 
         <nav className="tabs">
-          {[["picks", "Predictions"], ["analyze", "Ask an event"], ["parlay", "Combos"], ["commodities", "Commodities"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "Accuracy"]].map(([k, l]) => (
+          {[["picks", "Predictions"], ["analyze", "Ask an event"], ["parlay", "Combos"], ["commodities", "15-Minute"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "Accuracy"]].map(([k, l]) => (
             <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
           ))}
         </nav>
@@ -4863,11 +4863,10 @@ function Commodities({ onPick }) {
   async function run() {
     setState("loading");
     try {
-      const [r, f] = await Promise.all([scanCommodities(), scanFast15().catch(() => [])]);
-      setRows(r); rowsRef.current = r;
+      const f = await scanFast15();
+      setRows([]); rowsRef.current = [];
       setFast(f); fastRef.current = f;
       setAt(Date.now()); setState("done");
-      reconcileCom(r);
       reconcileF15(f);
     } catch { setState("done"); }
   }
@@ -4896,35 +4895,24 @@ function Commodities({ onPick }) {
     <>
       <div className="panel">
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
-          <p className="sect" style={{ margin: 0 }}>Commodities — where each price settles</p>
+          <p className="sect" style={{ margin: 0 }}>Commodities — 15-minute predictions</p>
           <button className="btn btn-ghost btn-sm" onClick={run} disabled={state === "loading"}>
             {state === "loading" ? "Scanning" : "Rescan"}
           </button>
         </div>
         <p className="help" style={{ marginTop: 6 }}>
-          Where will each price settle? Every open Kalshi ladder (oil, gold, silver, indexes, crypto) gets a
-          predicted settle bucket from the volatility model, chart strategies, trend, and the market consensus —
-          with the reasoning on the card and <b>deep dive</b> for the full nine-check research read.
+          Up or down, every live 15-minute window: crypto around the clock, gold, silver, oil and the stock indexes
+          during their market hours. Each call blends realtime spot, minute-level volatility, the chart strategies,
+          and the market's own quote — with every graded call building the record below.
         </p>
-        {(() => {
-          const scored = (record || []).filter((x) => x.type === "commodity" && (x.result === "won" || x.result === "lost"));
-          const w = scored.filter((x) => x.result === "won").length;
-          return (at || scored.length > 0) && (
-            <div className="chips" style={{ marginTop: 8 }}>
-              {scored.length > 0 && (
-                <span className="chip static" style={{ color: w * 2 >= scored.length ? "var(--moss)" : "var(--rose)" }}
-                  title="Every ladder call is logged and graded against the actual settle">
-                  Ladder record: {w}-{scored.length - w}
-                </span>
-              )}
-              {at && <span className="chip static">updated {new Date(at).toLocaleTimeString()}</span>}
-            </div>
-          );
-        })()}
+        {at && <div className="chips" style={{ marginTop: 8 }}>
+          <span className="chip static">updated {new Date(at).toLocaleTimeString()}</span>
+          <span className="chip static">refreshes every 15s · 8s in a window's final minutes</span>
+        </div>}
         {state === "loading" && rows.length === 0 && <p className="pwait" style={{ marginTop: 10 }}><span className="dots">pricing every ladder</span></p>}
         {state === "done" && rows.length === 0 && fast.length === 0 && (
           <p className="thesis" style={{ color: "var(--dim)", marginTop: 10 }}>
-            No commodity ladders are open right now — metals and oil list on weekdays; crypto dailies roll over each morning.
+            No 15-minute windows are live right now — crypto windows run around the clock, so this usually means a data hiccup; it will retry on its own.
           </p>
         )}
       </div>
@@ -4999,127 +4987,7 @@ function Commodities({ onPick }) {
         </div>
       )}
 
-      {rows.map((r, ri) => {
-        const tr = tierFor(r.winProb);
-        const hrs = r.days * 24;
-        return (
-          <div key={ri} className="panel">
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "baseline" }}>
-              <p className="sect" style={{ margin: 0 }}>{r.asset.label}</p>
-              <span className="eyebrow">
-                spot {r.asset.unit}{r.spot.toFixed(2)}
-                <span style={{ color: r.chg1d >= 0 ? "var(--moss)" : "var(--rose)" }}>
-                  {" "}{r.chg1d >= 0 ? "+" : ""}{r.chg1d.toFixed(1)}% today
-                </span>
-                {r.chg5d != null && <span style={{ color: "var(--dim)" }}> · {r.chg5d >= 0 ? "+" : ""}{r.chg5d.toFixed(1)}% 5d</span>}
-                {" · settles in " + (hrs < 48 ? hrs.toFixed(0) + "h" : r.days.toFixed(1) + "d")}
-              </span>
-            </div>
 
-            <div className={"pick " + (r.winProb >= 60 ? "t-strong" : r.winProb >= 40 ? "t-lean" : "")} style={{ marginTop: 12 }}>
-              <span style={{ minWidth: 0, flex: 1 }}>
-                <span className="who-big" style={{ display: "block" }}>
-                  <span style={{ color: tr.c }}>Winner: </span>{r.bucketName(r.win)}
-                </span>
-                <span className="meta-line" style={{ display: "block" }}>
-                  ensemble of the vol model and the market's ladder ·{" "}
-                  {r.agree ? "model and market agree"
-                    : "model favors " + r.bucketName(r.modelWin) + ", market favors " + r.bucketName(r.mktWin)}
-                  {r.sigImp ? " · implied vol " + (r.sigImp * 100).toFixed(2) + "% vs realized " + (r.sigmaD * 100).toFixed(2) + "%" : ""}
-                  {Math.abs(r.chg1d) > 1.5 ? " · big move today — fresh spot in use" : ""}
-                </span>
-              </span>
-              <span className="tierbox" style={{ color: tr.c, borderColor: tr.c }}>
-                <span className="pct">{r.winProb.toFixed(0)}%</span>
-                <span className="lbl">{tr.t}</span>
-              </span>
-              <span className="pick-actions">
-                <a className="chip" href={kalshiEventLink(r.ladder[0].m.id)} target="_blank" rel="noreferrer">trade ↗</a>
-              </span>
-            </div>
-
-            {r.trend && (
-              <div className="chips" style={{ marginTop: 10 }}>
-                <span className="chip static" style={{
-                  color: r.trend.score >= 2 ? "var(--moss)" : r.trend.score <= -2 ? "var(--rose)" : "var(--dim)",
-                  borderColor: r.trend.score >= 2 ? "rgba(127,185,139,.5)" : r.trend.score <= -2 ? "rgba(228,112,126,.5)" : undefined }}>
-                  {r.trend.label}
-                </span>
-                <span className="chip static">5d {r.trend.mom5 >= 0 ? "+" : ""}{r.trend.mom5.toFixed(1)}%</span>
-                <span className="chip static">20d {r.trend.mom20 >= 0 ? "+" : ""}{r.trend.mom20.toFixed(1)}%</span>
-                <span className="chip static">{r.trend.vsSma >= 0 ? "above" : "below"} 20-day avg ({r.trend.vsSma >= 0 ? "+" : ""}{r.trend.vsSma.toFixed(1)}%)</span>
-                <span className="chip static" style={{ color: r.trend.rsi >= 70 ? "var(--rose)" : r.trend.rsi <= 30 ? "var(--moss)" : undefined }}>
-                  RSI {r.trend.rsi.toFixed(0)}{r.trend.rsi >= 70 ? " overbought" : r.trend.rsi <= 30 ? " oversold" : ""}
-                </span>
-                <span className="chip static">vol {r.trend.volRatio >= 1.3 ? "heating up" : r.trend.volRatio <= 0.7 ? "calming" : "normal"}</span>
-                {r.drift !== 0 && !r.tech && <span className="chip static" title="The 20-day trend, heavily shrunk, tilts the model this direction">
-                  trend tilts model {r.drift > 0 ? "up" : "down"}</span>}
-              </div>
-            )}
-            {r.tech && r.tech.votes.length > 0 && (
-              <div className="chips" style={{ marginTop: 6 }}>
-                <span className="chip static" style={{
-                  color: r.tech.lean === "UP" ? "var(--moss)" : r.tech.lean === "DOWN" ? "var(--rose)" : "var(--dim)",
-                  borderColor: r.tech.lean === "UP" ? "rgba(127,185,139,.5)" : r.tech.lean === "DOWN" ? "rgba(228,112,126,.5)" : undefined }}>
-                  charts {r.tech.lean === "NEUTRAL" ? "neutral" : "lean " + r.tech.lean}
-                </span>
-                {r.tech.votes.map((v, i) => (
-                  <span key={i} className="chip static" style={{ color: v.dir > 0 ? "var(--moss)" : "var(--rose)" }}>
-                    {v.k}: {v.note}
-                  </span>
-                ))}
-              </div>
-            )}
-            {(() => {
-              // A second prediction from the same event: any single strike
-              // where the analysis and the market's consensus split hard is
-              // worth naming — as a disagreement, not a trade ticket.
-              let big = null;
-              r.ladder.forEach((x, i) => {
-                const gap = r.pModel[i] - r.pMarket[i];
-                if (!big || Math.abs(gap) > Math.abs(big.gap)) big = { K: x.K, gap, p: r.pModel[i], mkt: r.pMarket[i], m: x.m };
-              });
-              if (!big || Math.abs(big.gap) < 8) return null;
-              return (
-                <p className="help" style={{ marginTop: 8 }}>
-                  Sharpest disagreement: <b>Above {r.asset.unit}{big.K}</b> — my analysis says{" "}
-                  <b style={{ color: big.gap > 0 ? "var(--moss)" : "var(--rose)" }}>{big.p.toFixed(0)}%</b>, the market
-                  consensus says {big.mkt.toFixed(0)}%. One of us is wrong; the settle will say who.
-                </p>
-              );
-            })()}
-            <ResearchBrief asset={r.asset} spot={r.spot} trend={r.trend} />
-            <details className="fold">
-              <summary>Every strike — model vs market</summary>
-              {r.ladder.map((x, i) => {
-                const pm = r.pModel[i], pk = r.pMarket[i];
-                const gap = pm - pk;
-                return (
-                  <div key={x.m.id} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
-                    <span className="who" style={{ fontSize: 13 }}>
-                      Above {r.asset.unit}{x.K}
-                      <span className="sub" style={{ display: "block" }}>
-                        model {pm.toFixed(0)}% · market {pk.toFixed(0)}c
-                        {Math.abs(gap) >= 8 ? <b style={{ color: gap > 0 ? "var(--moss)" : "var(--rose)" }}>
-                          {" · model says " + (gap > 0 ? "likelier" : "less likely") + " than priced"}</b> : ""}
-                      </span>
-                    </span>
-                    <span className="pick-actions">
-                      <button className="chip" onClick={() => onPick(x.m)}>deep dive</button>
-                      <a className="chip" href={x.m.link} target="_blank" rel="noreferrer">open ↗</a>
-                    </span>
-                  </div>
-                );
-              })}
-              <p className="help" style={{ marginTop: 8 }}>
-                Model = chance the settle finishes above that strike, from {(r.sigmaD * 100).toFixed(1)}% daily
-                volatility over the remaining time. Deep dive adds the research checks — supply news, macro,
-                positioning — on top of the math.
-              </p>
-            </details>
-          </div>
-        );
-      })}
     </>
   );
 }
