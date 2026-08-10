@@ -4179,7 +4179,12 @@ function pAbove(spot, strike, sigmaD, tradingDays, muPerBar) {
   if (!(spot > 0) || !(strike > 0) || !(sigmaD > 0)) return null;
   const t = Math.max(0.02, tradingDays);
   const mu = Number.isFinite(muPerBar) ? muPerBar : 0;
-  return clamp(normCdf((Math.log(spot / strike) + mu * t) / (sigmaD * Math.sqrt(t))) * 100, 0.5, 99.5);
+  // Total trend effect capped at a quarter of one standard move for the
+  // horizon — drift compounds with time and would otherwise dominate
+  // weekly ladders.
+  const lim = 0.25 * sigmaD * Math.sqrt(t);
+  const eff = clamp(mu * t, -lim, lim);
+  return clamp(normCdf((Math.log(spot / strike) + eff) / (sigmaD * Math.sqrt(t))) * 100, 0.5, 99.5);
 }
 
 // Multi-horizon trend read from daily closes: momentum at 5 and 20 days,
@@ -4218,7 +4223,7 @@ function trendStats(closes) {
 function trendDrift(trend, sigmaD) {
   if (!trend || !(sigmaD > 0)) return 0;
   const daily = Math.log(1 + trend.mom20 / 100) / 20;
-  return clamp(0.25 * daily, -0.3 * sigmaD, 0.3 * sigmaD);
+  return clamp(0.15 * daily, -0.3 * sigmaD, 0.3 * sigmaD);
 }
 
 // Ladder of ascending "above K" strikes -> probability the settle lands in
