@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.fast15-all";
+const BUILD = "2026-08-10.trends";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -4172,12 +4172,53 @@ function normCdf(x) {
   return x > 0 ? 1 - (1 - p) : p;
 }
 
-// P(price at expiry > strike) under a driftless lognormal walk calibrated
-// to realized daily volatility. tradingDays already time-adjusted.
-function pAbove(spot, strike, sigmaD, tradingDays) {
+// P(price at expiry > strike) under a lognormal walk calibrated to
+// realized volatility, with an optional (heavily shrunk) trend drift per
+// bar. Drift defaults to zero — the honest prior for short horizons.
+function pAbove(spot, strike, sigmaD, tradingDays, muPerBar) {
   if (!(spot > 0) || !(strike > 0) || !(sigmaD > 0)) return null;
   const t = Math.max(0.02, tradingDays);
-  return clamp(normCdf(Math.log(spot / strike) / (sigmaD * Math.sqrt(t))) * 100, 0.5, 99.5);
+  const mu = Number.isFinite(muPerBar) ? muPerBar : 0;
+  return clamp(normCdf((Math.log(spot / strike) + mu * t) / (sigmaD * Math.sqrt(t))) * 100, 0.5, 99.5);
+}
+
+// Multi-horizon trend read from daily closes: momentum at 5 and 20 days,
+// position vs the 20-day average, RSI(14), and the volatility regime.
+// score sums the directional votes (-3..+3); it contextualizes and gently
+// nudges the model, it never overrides it.
+function trendStats(closes) {
+  if (!closes || closes.length < 21) return null;
+  const last = closes[closes.length - 1];
+  const mom5 = (last / closes[closes.length - 6] - 1) * 100;
+  const mom20 = (last / closes[closes.length - 21] - 1) * 100;
+  const sma20 = closes.slice(-20).reduce((s, x) => s + x, 0) / 20;
+  const vsSma = (last / sma20 - 1) * 100;
+  let g = 0, l = 0;
+  for (let i = closes.length - 14; i < closes.length; i++) {
+    const ch = closes[i] - closes[i - 1];
+    if (ch >= 0) g += ch; else l -= ch;
+  }
+  const rsi = l === 0 ? 100 : 100 - 100 / (1 + g / l);
+  const recent = closes.slice(-10), older = closes.slice(-60, -10);
+  const sd = (a) => {
+    const rs = []; for (let i = 1; i < a.length; i++) rs.push(Math.log(a[i] / a[i - 1]));
+    const m = rs.reduce((s, x) => s + x, 0) / rs.length;
+    return Math.sqrt(rs.reduce((s, x) => s + (x - m) * (x - m), 0) / Math.max(1, rs.length - 1));
+  };
+  const volRatio = older.length > 10 ? sd(recent) / Math.max(1e-9, sd(older)) : 1;
+  const score = (mom5 > 0 ? 1 : mom5 < 0 ? -1 : 0) + (mom20 > 0 ? 1 : mom20 < 0 ? -1 : 0) +
+    (vsSma > 0.2 ? 1 : vsSma < -0.2 ? -1 : 0);
+  return { mom5, mom20, vsSma, rsi, volRatio, score,
+    label: score >= 2 ? "UPTREND" : score <= -2 ? "DOWNTREND" : "MIXED" };
+}
+
+// Trend drift per day for the model: a quarter of the 20-day daily pace,
+// capped at ±30% of one daily sigma. Trend-following predicts weakly —
+// the shrink keeps the model calibrated instead of chasing.
+function trendDrift(trend, sigmaD) {
+  if (!trend || !(sigmaD > 0)) return 0;
+  const daily = Math.log(1 + trend.mom20 / 100) / 20;
+  return clamp(0.25 * daily, -0.3 * sigmaD, 0.3 * sigmaD);
 }
 
 // Ladder of ascending "above K" strikes -> probability the settle lands in
@@ -4217,6 +4258,7 @@ async function yahooHist(sym) {
       spot, sigmaD,
       chg1d: (spot / closes[closes.length - 2] - 1) * 100,
       chg5d: closes.length > 6 ? (spot / closes[closes.length - 6] - 1) * 100 : null,
+      trend: trendStats(closes),
     };
     yahooCache.set(sym, { at: Date.now(), v });
     return v;
@@ -4253,13 +4295,16 @@ async function scanCommodities() {
         .sort((a, b) => a.K - b.K);
       if (ladder.length < 2) continue;
       // Short horizons live on the intraday clock: minute-level EWMA vol
-      // and the freshest spot beat a 3-month daily average.
-      let spotUse = q.spot, sigUse = q.sigmaD, tUse = td;
+      // and the freshest spot beat a 3-month daily average. Trend drift
+      // only applies at daily+ horizons — intraday it's noise.
+      let spotUse = q.spot, sigUse = q.sigmaD, tUse = td, muUse = 0;
       if (days * 24 <= 48) {
         const qi = await yahooIntraday(asset.sym);
         if (qi) { spotUse = qi.spot; sigUse = qi.sigmaM; tUse = Math.max(0.5, days * 24 * 60); }
+      } else {
+        muUse = trendDrift(q.trend, q.sigmaD);
       }
-      const pModel = ladder.map((x) => pAbove(spotUse, x.K, sigUse, tUse));
+      const pModel = ladder.map((x) => pAbove(spotUse, x.K, sigUse, tUse, muUse));
       if (pModel.some((p) => p == null)) continue;
       const pMarket = ladder.map((x) => clamp(x.m.price, 0.5, 99.5));
       const bModel = bucketProbs(ladder.map((x) => x.K), pModel);
@@ -4271,7 +4316,7 @@ async function scanCommodities() {
       let mktWin = 0; bMarket.forEach((p, i) => { if (p > bMarket[mktWin]) mktWin = i; });
       out.push({
         asset, spot: spotUse, sigmaD: sigUse, intraday: tUse !== td,
-        chg1d: q.chg1d, chg5d: q.chg5d,
+        chg1d: q.chg1d, chg5d: q.chg5d, trend: q.trend, drift: muUse,
         title: ms[0].title || asset.label, close: ms[0].close_time, days,
         ladder, pModel, pMarket, bModel, bucketName,
         win, winProb: bModel[win], mktWin, agree: win === mktWin,
@@ -4402,6 +4447,54 @@ const pickWon = (pickCode, winner) => !!pickCode &&
   (winner === "TIE" ? /TIE|DRAW/i.test(pickCode) : codeHit([pickCode], [winner]) >= 0.6);
 
 /* ---------------- Commodities ---------------- */
+// One-tap research brief per asset: a single search-enabled Claude call
+// (macro drivers, supply/demand, positioning, catalysts) cached for six
+// hours locally so repeat opens cost nothing.
+function ResearchBrief({ asset, spot, trend }) {
+  const key = "cd:combrief:" + asset.sym;
+  const [brief, setBrief] = useState(() => {
+    try {
+      const c = JSON.parse(localStorage.getItem(key) || "null");
+      if (c && Date.now() - c.at < 6 * 3600 * 1000) return c;
+    } catch { /* fresh */ }
+    return null;
+  });
+  const [busy, setBusy] = useState(false);
+
+  async function run() {
+    setBusy(true);
+    try {
+      const name = asset.label.replace(/\s*\(.*\)/, "");
+      const r = await callClaude(
+        "Today is " + today() + ". You are a commodities analyst. In under 130 words, brief a trader on " + name +
+        " right now: spot is ~" + spot.toFixed(2) + (trend ? ", 20-day move " + trend.mom20.toFixed(1) + "%, RSI " + trend.rsi.toFixed(0) : "") +
+        ". Search for the latest: (1) the one or two macro/supply drivers moving it this week, (2) any scheduled catalyst in the next few days (data releases, OPEC/Fed, expiries), (3) which direction the flows/positioning lean. End with one sentence: does the evidence lean bullish, bearish, or neutral into the next settlement, and why.",
+        { search: true, maxTokens: 500 });
+      const b = { at: Date.now(), text: r.text.trim() };
+      try { localStorage.setItem(key, JSON.stringify(b)); } catch { /* fine */ }
+      setBrief(b);
+    } catch { setBrief({ at: Date.now(), text: "Research call failed — try again in a minute." }); }
+    setBusy(false);
+  }
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      {!brief && (
+        <button className="btn btn-ghost btn-sm" onClick={run} disabled={busy}>
+          {busy ? "Researching…" : "Research brief (news, drivers, catalysts)"}
+        </button>
+      )}
+      {brief && (
+        <details className="fold" open>
+          <summary>Research brief · {new Date(brief.at).toLocaleTimeString()} <button className="chip" style={{ marginLeft: 8 }}
+            onClick={(e) => { e.preventDefault(); run(); }} disabled={busy}>{busy ? "…" : "refresh"}</button></summary>
+          <p className="thesis" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{brief.text}</p>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function Commodities({ onPick }) {
   const [rows, setRows] = useState([]);
   const [fast, setFast] = useState([]);
@@ -4552,6 +4645,25 @@ function Commodities({ onPick }) {
               </span>
             </div>
 
+            {r.trend && (
+              <div className="chips" style={{ marginTop: 10 }}>
+                <span className="chip static" style={{
+                  color: r.trend.score >= 2 ? "var(--moss)" : r.trend.score <= -2 ? "var(--rose)" : "var(--dim)",
+                  borderColor: r.trend.score >= 2 ? "rgba(127,185,139,.5)" : r.trend.score <= -2 ? "rgba(228,112,126,.5)" : undefined }}>
+                  {r.trend.label}
+                </span>
+                <span className="chip static">5d {r.trend.mom5 >= 0 ? "+" : ""}{r.trend.mom5.toFixed(1)}%</span>
+                <span className="chip static">20d {r.trend.mom20 >= 0 ? "+" : ""}{r.trend.mom20.toFixed(1)}%</span>
+                <span className="chip static">{r.trend.vsSma >= 0 ? "above" : "below"} 20-day avg ({r.trend.vsSma >= 0 ? "+" : ""}{r.trend.vsSma.toFixed(1)}%)</span>
+                <span className="chip static" style={{ color: r.trend.rsi >= 70 ? "var(--rose)" : r.trend.rsi <= 30 ? "var(--moss)" : undefined }}>
+                  RSI {r.trend.rsi.toFixed(0)}{r.trend.rsi >= 70 ? " overbought" : r.trend.rsi <= 30 ? " oversold" : ""}
+                </span>
+                <span className="chip static">vol {r.trend.volRatio >= 1.3 ? "heating up" : r.trend.volRatio <= 0.7 ? "calming" : "normal"}</span>
+                {r.drift !== 0 && <span className="chip static" title="The 20-day trend, heavily shrunk, tilts the model this direction">
+                  trend tilts model {r.drift > 0 ? "up" : "down"}</span>}
+              </div>
+            )}
+            <ResearchBrief asset={r.asset} spot={r.spot} trend={r.trend} />
             <details className="fold">
               <summary>Every strike — model vs market</summary>
               {r.ladder.map((x, i) => {

@@ -37,6 +37,8 @@ const code = [
   slice("function totalLine(", "\n}"),
   slice("function normCdf(", "\n}"),
   slice("function ewmaSigma(", "\n}"),
+  slice("function trendStats(", "\n}"),
+  slice("function trendDrift(", "\n}"),
   slice("function pAbove(", "\n}"),
   slice("function bucketProbs(", "\n}"),
   slice("function paceProjection(", "\n}"),
@@ -49,8 +51,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -173,6 +175,17 @@ ok(pa > 95 && pb < 5, 'pAbove: 10% OTM strikes at 2% daily vol over 5d -> extrem
 ok(pAbove(100, 100, 0.02, 5) > 49 && pAbove(100, 100, 0.02, 5) < 51, 'at-the-money -> ~50%');
 const bp = bucketProbs([90, 100, 110], [98, 50, 2]);
 ok(Math.abs(bp.reduce((s,x)=>s+x,0) - 100) < 1e-9 && bp[1] === 48 && bp[2] === 48, 'bucket probs sum to 100, middles correct');
+// Trend engine
+const up = []; for (let i = 0; i < 30; i++) up.push(100 * Math.pow(1.01, i));
+const dn = []; for (let i = 0; i < 30; i++) dn.push(100 * Math.pow(0.99, i));
+const tUp = trendStats(up), tDn = trendStats(dn);
+ok(tUp && tUp.label === "UPTREND" && tUp.rsi > 70, "steady climb -> UPTREND, high RSI (" + tUp.rsi.toFixed(0) + ")");
+ok(tDn && tDn.label === "DOWNTREND" && tDn.rsi < 30, "steady slide -> DOWNTREND, low RSI");
+const dUp = trendDrift(tUp, 0.02), dDn = trendDrift(tDn, 0.02);
+ok(dUp > 0 && dUp <= 0.006 + 1e-12 && dDn < 0, "drift follows trend, capped at 30% of daily sigma");
+const pNo = pAbove(100, 100, 0.02, 5), pYes = pAbove(100, 100, 0.02, 5, dUp);
+ok(pYes > pNo && pYes < 60, "uptrend drift nudges at-the-money up, but only nudges (" + pYes.toFixed(1) + "%)");
+
 const flat = ewmaSigma([100, 100, 100, 100, 100]);
 ok(flat === 0, 'ewma of a flat series is zero');
 const vol1 = ewmaSigma([100, 101, 100, 101, 100, 101]);
