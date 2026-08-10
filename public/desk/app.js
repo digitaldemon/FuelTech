@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.super-accurate";
+const BUILD = "2026-08-10.chart-strats";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5293,7 +5293,109 @@ function ewmaSigma(closes, lambda) {
   return v != null ? Math.sqrt(v) : null;
 }
 
-// 1-minute bars for the current day: live spot + per-minute EWMA sigma.
+// Exponential moving average of a series' last value.
+function emaLast(vals, n) {
+  if (!vals || vals.length < n) return null;
+  const k = 2 / (n + 1);
+  let e = vals[0];
+  for (let i = 1; i < vals.length; i++) e = vals[i] * k + e * (1 - k);
+  return e;
+}
+
+// Intraday chart read on 1-minute bars — the classic strategies, each
+// casting one vote: price vs VWAP, EMA 9/21 cross, MACD histogram, RSI
+// extremes (as mean-reversion fades), session high/low breakouts.
+// score in [-5, +5]; it tilts the live model, never overrides it.
+function intradayTech(closes, volumes) {
+  if (!closes || closes.length < 40) return null;
+  const last = closes[closes.length - 1];
+  const votes = [];
+  let vwap = null;
+  if (volumes && volumes.length === closes.length) {
+    let pv = 0,
+      vv = 0;
+    for (let i = 0; i < closes.length; i++) {
+      pv += closes[i] * (volumes[i] || 0);
+      vv += volumes[i] || 0;
+    }
+    if (vv > 0) vwap = pv / vv;
+  }
+  if (vwap != null) votes.push({
+    k: "VWAP",
+    dir: last > vwap ? 1 : -1,
+    note: last > vwap ? "above" : "below"
+  });
+  const win = closes.slice(-120);
+  const e9 = emaLast(win, 9),
+    e21 = emaLast(win, 21);
+  if (e9 != null && e21 != null) votes.push({
+    k: "EMA 9/21",
+    dir: e9 > e21 ? 1 : -1,
+    note: e9 > e21 ? "bull cross" : "bear cross"
+  });
+  const e12 = emaLast(win, 12),
+    e26 = emaLast(win, 26);
+  if (e12 != null && e26 != null) {
+    const macdSeries = [];
+    for (let i = 30; i <= win.length; i += 3) {
+      const w = win.slice(0, i);
+      macdSeries.push(emaLast(w, 12) - emaLast(w, 26));
+    }
+    const sig = emaLast(macdSeries, 9);
+    const hist = e12 - e26 - (sig == null ? 0 : sig);
+    votes.push({
+      k: "MACD",
+      dir: hist > 0 ? 1 : -1,
+      note: hist > 0 ? "momentum up" : "momentum down"
+    });
+  }
+  let g = 0,
+    l = 0;
+  for (let i = closes.length - 14; i < closes.length; i++) {
+    const ch = closes[i] - closes[i - 1];
+    if (ch >= 0) g += ch;else l -= ch;
+  }
+  const rsi = l === 0 ? 100 : 100 - 100 / (1 + g / l);
+  if (rsi >= 72) votes.push({
+    k: "RSI " + rsi.toFixed(0),
+    dir: -1,
+    note: "overbought — fade"
+  });else if (rsi <= 28) votes.push({
+    k: "RSI " + rsi.toFixed(0),
+    dir: 1,
+    note: "oversold — fade"
+  });
+  const body = closes.slice(0, -5);
+  const hi = Math.max.apply(null, body),
+    lo = Math.min.apply(null, body);
+  if (last >= hi) votes.push({
+    k: "Breakout",
+    dir: 1,
+    note: "new session high"
+  });else if (last <= lo) votes.push({
+    k: "Breakdown",
+    dir: -1,
+    note: "new session low"
+  });
+  const score = votes.reduce((s, v) => s + v.dir, 0);
+  return {
+    votes,
+    score,
+    rsi,
+    vwap,
+    lean: score >= 2 ? "UP" : score <= -2 ? "DOWN" : "NEUTRAL"
+  };
+}
+
+// Chart-score drift per minute: 3% of one minute-sigma per net vote,
+// capped at ±12% of sigma. pAbove's total-effect cap bounds it further.
+function techDrift(tech, sigmaM) {
+  if (!tech || !(sigmaM > 0)) return 0;
+  return clamp(tech.score * 0.03, -0.12, 0.12) * sigmaM;
+}
+
+// 1-minute bars for the current day: live spot, per-minute EWMA sigma,
+// and the chart-strategy read.
 const yahooIntraCache = new Map();
 async function yahooIntraday(sym) {
   const hit = yahooIntraCache.get(sym);
@@ -5304,7 +5406,17 @@ async function yahooIntraday(sym) {
     const d = await r.json();
     const res = d.chart && d.chart.result && d.chart.result[0];
     if (!res) return null;
-    const closes = (res.indicators && res.indicators.quote && res.indicators.quote[0] && res.indicators.quote[0].close || []).filter(x => Number.isFinite(x));
+    const q0 = res.indicators && res.indicators.quote && res.indicators.quote[0] || {};
+    const rawC = q0.close || [],
+      rawV = q0.volume || [];
+    const closes = [],
+      volumes = [];
+    for (let i = 0; i < rawC.length; i++) {
+      if (Number.isFinite(rawC[i])) {
+        closes.push(rawC[i]);
+        volumes.push(Number.isFinite(rawV[i]) ? rawV[i] : 0);
+      }
+    }
     if (closes.length < 30) return null;
     const spot = Number(res.meta && res.meta.regularMarketPrice) || closes[closes.length - 1];
     const sigmaM = ewmaSigma(closes.slice(-240));
@@ -5312,7 +5424,8 @@ async function yahooIntraday(sym) {
     const v = {
       spot,
       sigmaM,
-      chg15m: closes.length > 15 ? (spot / closes[closes.length - 16] - 1) * 100 : null
+      chg15m: closes.length > 15 ? (spot / closes[closes.length - 16] - 1) * 100 : null,
+      tech: intradayTech(closes, volumes)
     };
     yahooIntraCache.set(sym, {
       at: Date.now(),
@@ -5340,7 +5453,8 @@ async function scanFast15() {
       if (!q) return;
       const ref = Number(m.floor_strike);
       const minLeft = Math.max(0.2, (new Date(m.close_time) - Date.now()) / 60000);
-      const pUp = pAbove(q.spot, ref, q.sigmaM, minLeft);
+      // Chart strategies tilt the window call (VWAP/EMA/MACD/RSI/breakout)
+      const pUp = pAbove(q.spot, ref, q.sigmaM, minLeft, techDrift(q.tech, q.sigmaM));
       if (pUp == null) return;
       out.push({
         a,
@@ -5350,7 +5464,8 @@ async function scanFast15() {
         chg15m: q.chg15m,
         minLeft,
         pUp,
-        close: m.close_time
+        close: m.close_time,
+        tech: q.tech
       });
     } catch {/* next asset */}
   });
@@ -5542,18 +5657,21 @@ async function scanCommodities() {
       })).filter(x => Number.isFinite(x.K) && x.m.price != null).sort((a, b) => a.K - b.K);
       if (ladder.length < 2) continue;
       // Short horizons live on the intraday clock: minute-level EWMA vol
-      // and the freshest spot beat a 3-month daily average. Trend drift
-      // only applies at daily+ horizons — intraday it's noise.
+      // and the freshest spot beat a 3-month daily average. Daily trend
+      // drift applies at daily+ horizons; chart strategies tilt intraday.
       let spotUse = q.spot,
         sigUse = q.sigmaD,
         tUse = td,
-        muUse = 0;
+        muUse = 0,
+        tech = null;
       if (days * 24 <= 48) {
         const qi = await yahooIntraday(asset.sym);
         if (qi) {
           spotUse = qi.spot;
           sigUse = qi.sigmaM;
           tUse = Math.max(0.5, days * 24 * 60);
+          tech = qi.tech;
+          muUse = techDrift(tech, qi.sigmaM);
         }
       } else {
         muUse = trendDrift(q.trend, q.sigmaD);
@@ -5589,6 +5707,7 @@ async function scanCommodities() {
         sigImp,
         sigBlend,
         intraday: tUse !== td,
+        tech,
         chg1d: q.chg1d,
         chg5d: q.chg5d,
         trend: q.trend,
@@ -6083,7 +6202,16 @@ function Commodities({
       style: {
         color: diff >= 0 ? "var(--moss)" : "var(--rose)"
       }
-    }, diff >= 0 ? "+" : "", diffPct.toFixed(3), "%"), ")", " · Kalshi YES costs " + (f.m.ask != null ? f.m.ask.toFixed(0) : f.m.price.toFixed(0)) + "c", f.chg15m != null ? " · prior 15m " + (f.chg15m >= 0 ? "+" : "") + f.chg15m.toFixed(2) + "%" : "")), /*#__PURE__*/React.createElement("span", {
+    }, diff >= 0 ? "+" : "", diffPct.toFixed(3), "%"), ")", " · Kalshi YES costs " + (f.m.ask != null ? f.m.ask.toFixed(0) : f.m.price.toFixed(0)) + "c", f.chg15m != null ? " · prior 15m " + (f.chg15m >= 0 ? "+" : "") + f.chg15m.toFixed(2) + "%" : ""), f.tech && f.tech.votes.length > 0 && /*#__PURE__*/React.createElement("span", {
+      className: "meta-line",
+      style: {
+        display: "block"
+      }
+    }, "charts", " ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: f.tech.lean === "UP" ? "var(--moss)" : f.tech.lean === "DOWN" ? "var(--rose)" : "var(--dim)"
+      }
+    }, f.tech.lean === "NEUTRAL" ? "neutral" : "lean " + f.tech.lean), ": ", f.tech.votes.map(v => v.k + " " + v.note).join(" · "))), /*#__PURE__*/React.createElement("span", {
       className: "tierbox",
       style: {
         color: col,
@@ -6200,10 +6328,27 @@ function Commodities({
       }
     }, "RSI ", r.trend.rsi.toFixed(0), r.trend.rsi >= 70 ? " overbought" : r.trend.rsi <= 30 ? " oversold" : ""), /*#__PURE__*/React.createElement("span", {
       className: "chip static"
-    }, "vol ", r.trend.volRatio >= 1.3 ? "heating up" : r.trend.volRatio <= 0.7 ? "calming" : "normal"), r.drift !== 0 && /*#__PURE__*/React.createElement("span", {
+    }, "vol ", r.trend.volRatio >= 1.3 ? "heating up" : r.trend.volRatio <= 0.7 ? "calming" : "normal"), r.drift !== 0 && !r.tech && /*#__PURE__*/React.createElement("span", {
       className: "chip static",
       title: "The 20-day trend, heavily shrunk, tilts the model this direction"
-    }, "trend tilts model ", r.drift > 0 ? "up" : "down")), /*#__PURE__*/React.createElement(ResearchBrief, {
+    }, "trend tilts model ", r.drift > 0 ? "up" : "down")), r.tech && r.tech.votes.length > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "chips",
+      style: {
+        marginTop: 6
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "chip static",
+      style: {
+        color: r.tech.lean === "UP" ? "var(--moss)" : r.tech.lean === "DOWN" ? "var(--rose)" : "var(--dim)",
+        borderColor: r.tech.lean === "UP" ? "rgba(127,185,139,.5)" : r.tech.lean === "DOWN" ? "rgba(228,112,126,.5)" : undefined
+      }
+    }, "charts ", r.tech.lean === "NEUTRAL" ? "neutral" : "lean " + r.tech.lean), r.tech.votes.map((v, i) => /*#__PURE__*/React.createElement("span", {
+      key: i,
+      className: "chip static",
+      style: {
+        color: v.dir > 0 ? "var(--moss)" : "var(--rose)"
+      }
+    }, v.k, ": ", v.note))), /*#__PURE__*/React.createElement(ResearchBrief, {
       asset: r.asset,
       spot: r.spot,
       trend: r.trend

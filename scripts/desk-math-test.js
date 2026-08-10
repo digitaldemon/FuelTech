@@ -42,6 +42,9 @@ const code = [
   slice("function trendStats(", "\n}"),
   slice("function trendDrift(", "\n}"),
   slice("function pAbove(", "\n}"),
+  slice("function emaLast(", "\n}"),
+  slice("function intradayTech(", "\n}"),
+  slice("function techDrift(", "\n}"),
   slice("function impliedSigma(", "\n}"),
   slice("function blendProb(", "\n}"),
   slice("function bucketProbs(", "\n}"),
@@ -55,8 +58,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -189,6 +192,19 @@ const dUp = trendDrift(tUp, 0.02), dDn = trendDrift(tDn, 0.02);
 ok(dUp > 0 && dUp <= 0.006 + 1e-12 && dDn < 0, "drift follows trend, capped at 30% of daily sigma");
 const pNo = pAbove(100, 100, 0.02, 5), pYes = pAbove(100, 100, 0.02, 5, dUp);
 ok(pYes > pNo && pYes < 60, "uptrend drift nudges at-the-money up, but only nudges (" + pYes.toFixed(1) + "%)");
+
+// Chart strategies (intraday tech)
+const rise = [], riseVol = [];
+for (let i = 0; i < 120; i++) { rise.push(100 + i * 0.05 + (i % 3 === 0 ? -0.02 : 0.02)); riseVol.push(1000); }
+const techUp = intradayTech(rise, riseVol);
+ok(techUp && techUp.score >= 2 && techUp.lean === "UP", "steady intraday climb -> charts lean UP (score " + techUp.score + ")");
+const fall = rise.slice().reverse();
+const techDn = intradayTech(fall, riseVol);
+ok(techDn && techDn.score <= -2 && techDn.lean === "DOWN", "steady slide -> charts lean DOWN");
+ok(techDrift(techUp, 0.001) > 0 && techDrift(techDn, 0.001) < 0, "chart drift follows the lean");
+ok(Math.abs(techDrift({ score: 99 }, 0.001)) <= 0.001 * 0.12 + 1e-12, "chart drift capped at 12% of sigma");
+const pTech = pAbove(100, 100, 0.001, 10, techDrift(techUp, 0.001));
+ok(pTech > 50 && pTech < 62, "charts nudge an at-the-money window, never decide it (" + pTech.toFixed(1) + "%)");
 
 // Implied vol + ensemble
 const trueSig = 0.015, S0 = 100, T = 4;
