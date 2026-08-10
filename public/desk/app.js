@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.all-sports";
+const BUILD = "2026-08-10.prediction-first";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -3590,23 +3590,23 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
     className: "sweep"
   })), result ? /*#__PURE__*/React.createElement("p", {
     className: "cmp-verdict"
-  }, Math.abs(result.edge) < 2 ? /*#__PURE__*/React.createElement(React.Fragment, null, "The market and my estimate ", /*#__PURE__*/React.createElement("b", null, "agree within ", Math.abs(result.edge).toFixed(1), "c"), " \u2014 this looks fairly priced.") : result.edge > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, "All the checks together say ", /*#__PURE__*/React.createElement("b", {
+  }, Math.abs(result.edge) < 2 ? /*#__PURE__*/React.createElement(React.Fragment, null, "The market and my estimate ", /*#__PURE__*/React.createElement("b", null, "agree within ", Math.abs(result.edge).toFixed(1), "c"), " \u2014 this looks fairly priced.") : result.edge > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, "All the checks together make ", /*#__PURE__*/React.createElement("b", {
     style: {
       color: "var(--amber)"
     }
-  }, market.name), " is more likely than the market thinks \u2014 ", /*#__PURE__*/React.createElement("b", {
+  }, market.name), " a ", /*#__PURE__*/React.createElement("b", {
     style: {
       color: "var(--amber)"
     }
-  }, "underpriced by about ", result.edge.toFixed(0), "c"), ".", result.call === "PASS" ? " But after the real fill price and fees the gap is too small to bet — see the verdict below." : " My call is below.") : /*#__PURE__*/React.createElement(React.Fragment, null, "All the checks together say ", /*#__PURE__*/React.createElement("b", {
+  }, result.fair.toFixed(0), "% shot"), " \u2014 the market only sees ", market.price.toFixed(0), "%.", result.call === "PASS" ? " But after the real fill price and fees the gap is too small to bet — see the verdict below." : " My call is below.") : /*#__PURE__*/React.createElement(React.Fragment, null, "All the checks together give ", /*#__PURE__*/React.createElement("b", {
     style: {
       color: "var(--rose)"
     }
-  }, market.name), " is ", /*#__PURE__*/React.createElement("b", {
+  }, market.name), " only a ", /*#__PURE__*/React.createElement("b", {
     style: {
       color: "var(--rose)"
     }
-  }, "less likely"), " than the market thinks \u2014 overpriced by about ", Math.abs(result.edge).toFixed(0), "c, which favors the other side.", result.call === "PASS" ? " But after costs the gap is too small to bet — see the verdict below." : " My call is below.")) : /*#__PURE__*/React.createElement("p", {
+  }, result.fair.toFixed(0), "% chance"), " \u2014 the market sees ", market.price.toFixed(0), "%, so the OTHER side is the likelier outcome.", result.call === "PASS" ? " But after costs the gap is too small to bet — see the verdict below." : " My call is below.")) : /*#__PURE__*/React.createElement("p", {
     className: "help"
   }, "Every bar is a chance out of 100 \u2014 longer bar, more likely. A contract pays 100c if it happens, so a ", market.price.toFixed(0), "c price means the market sees about a ", market.price.toFixed(0), "% chance. When my gold bar ends past the blue one, the bet is underpriced; short of it, overpriced.")), (() => {
     if (legs) return null; // parlays get the legs panel instead
@@ -3780,27 +3780,68 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
   }, fill.short))), /*#__PURE__*/React.createElement("p", {
     className: "help"
   }, "The screen price is only for the first few contracts. Buy more and you pay worse prices as you eat through the order book \u2014 that difference is the slippage.")), result && /*#__PURE__*/React.createElement(React.Fragment, null, (() => {
-    const bs = betSide(result, market, live);
-    return /*#__PURE__*/React.createElement("div", {
+    // Prediction-first: name the outcome the desk expects, at
+    // what probability, at what certainty tier. The betting
+    // recommendation is a consequence, not the headline.
+    const predYes = result.fair >= 50;
+    const predProb = predYes ? result.fair : 100 - result.fair;
+    let predName = market.name;
+    if (!predYes) {
+      const bsNo = betSide({
+        call: "BUY NO",
+        side: "NO"
+      }, market, live);
+      predName = bsNo ? bsNo.who : "NOT " + market.name;
+    }
+    const tier = predProb >= 80 ? {
+      t: "STRONGEST CALL",
+      c: "var(--moss)"
+    } : predProb >= 68 ? {
+      t: "STRONG CALL",
+      c: "var(--moss)"
+    } : predProb >= 55 ? {
+      t: "LEAN",
+      c: "var(--amber)"
+    } : {
+      t: "TOO CLOSE TO CALL",
+      c: "var(--dim)"
+    };
+    const bs = result.call !== "PASS" ? betSide(result, market, live) : null;
+    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
       className: "verdict"
-    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
       className: "label",
       style: {
         marginBottom: 6
       }
-    }, result.call === "PASS" ? "My call" : "Wager on"), /*#__PURE__*/React.createElement("h2", {
+    }, "My prediction"), /*#__PURE__*/React.createElement("h2", {
       style: {
-        color: callColor
+        color: predProb >= 55 ? tier.c : "var(--bone)"
       }
-    }, result.call === "PASS" ? "Pass — no bet" : bs.who), result.call !== "PASS" && /*#__PURE__*/React.createElement("div", {
+    }, predProb >= 55 ? predName : "Too close to call"), /*#__PURE__*/React.createElement("div", {
       className: "eyebrow",
       style: {
         marginTop: 6
       }
-    }, "= ", result.call, " at ", result.entry.toFixed(0), "c \xB7 ", bs.plain)));
-  })(), /*#__PURE__*/React.createElement("p", {
-    className: "answer"
-  }, result.call === "PASS" ? /*#__PURE__*/React.createElement(React.Fragment, null, "I'd ", /*#__PURE__*/React.createElement("strong", null, "sit this one out"), ". It trades at ", market.price.toFixed(0), "c and I make it worth", " ", result.fair.toFixed(0), "c \u2014", " ", result.verify && result.verify.verdict === "REFUTE" ? "the final check killed the trade." : result.strong < 3 ? "but too few checks found solid evidence to lean on." : result.vetoed ? "and my own risk officer found solid evidence for the other side." : "after the real fill price and fees, that gap isn't worth paying for.") : /*#__PURE__*/React.createElement(React.Fragment, null, "I'd ", /*#__PURE__*/React.createElement("strong", null, "bet ", betSide(result, market, live).who), ". Filling actually costs about ", result.entry.toFixed(0), "c", result.fee > 0.05 ? " plus " + result.fee.toFixed(1) + "c in fees" : "", ", I make that side worth", " ", (result.side === "YES" ? result.fair : 100 - result.fair).toFixed(0), "c, and the trade survived a final attempt to knock it down \u2014 about ", /*#__PURE__*/React.createElement("strong", null, result.netEdge.toFixed(0), "c of value"), " per contract after costs, if I'm right.")), result.thesis && /*#__PURE__*/React.createElement("p", {
+    }, predProb >= 55 ? predProb.toFixed(0) + "% by all checks combined · " + tier.t + " · confidence " + result.confidence : "roughly " + result.fair.toFixed(0) + "/" + (100 - result.fair).toFixed(0) + " — no side earns a call")), /*#__PURE__*/React.createElement("span", {
+      className: "tierbox",
+      style: {
+        color: tier.c,
+        borderColor: tier.c,
+        alignSelf: "center"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "pct"
+    }, predProb.toFixed(0), "%"), /*#__PURE__*/React.createElement("span", {
+      className: "lbl"
+    }, predProb >= 55 ? tier.t.replace(" CALL", "") : "TOSS-UP"))), /*#__PURE__*/React.createElement("p", {
+      className: "answer"
+    }, predProb >= 55 ? /*#__PURE__*/React.createElement(React.Fragment, null, "Everything the checks found says ", /*#__PURE__*/React.createElement("strong", null, predName), " \u2014 a ", predProb.toFixed(0), "% shot once the market prior, the books, the live feeds and the research are weighed together.", " ", result.call !== "PASS" && bs ? /*#__PURE__*/React.createElement(React.Fragment, null, "The market hasn't fully caught up, so this one is ", /*#__PURE__*/React.createElement("strong", null, "also worth betting"), ":", " ", result.call, " at ", result.entry.toFixed(0), "c, and the call survived a final attempt to knock it down.") : /*#__PURE__*/React.createElement(React.Fragment, null, "The market prices it about the same, so there's no bet here \u2014 this is a prediction, not an edge.")) : /*#__PURE__*/React.createElement(React.Fragment, null, "The evidence splits almost evenly (", result.fair.toFixed(0), "% yes / ", (100 - result.fair).toFixed(0), "% no) \u2014 anyone claiming certainty on this one is guessing.", result.verify && result.verify.verdict === "REFUTE" ? " The final check also killed the trade case." : "")));
+  })(), result.thesis && /*#__PURE__*/React.createElement("p", {
     className: "thesis"
   }, result.thesis), result.verify && /*#__PURE__*/React.createElement("p", {
     className: "thesis",
@@ -3814,21 +3855,13 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
   }, /*#__PURE__*/React.createElement("span", {
     className: "big",
     style: {
-      color: callColor
+      color: "var(--amber)"
     }
-  }, result.netEdge > 0 ? "+" : "", result.netEdge.toFixed(1), "c"), /*#__PURE__*/React.createElement("span", {
+  }, (result.fair >= 50 ? result.fair : 100 - result.fair).toFixed(0), "%"), /*#__PURE__*/React.createElement("span", {
     className: "cap"
-  }, "Value after costs"), /*#__PURE__*/React.createElement("span", {
+  }, "Chance it happens"), /*#__PURE__*/React.createElement("span", {
     className: "sub"
-  }, "Fair value minus the real fill price and fees", result.call === "PASS" ? " — needed " + result.bar.toFixed(1) + "c to trade" : "", result.thin ? " · thin market raised the bar" : "")), /*#__PURE__*/React.createElement("div", {
-    className: "fig"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "big"
-  }, result.anchor.toFixed(0), "c"), /*#__PURE__*/React.createElement("span", {
-    className: "cap"
-  }, "Weighted anchor"), /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, "Market price + every check's read, weighted by evidence and track record")), /*#__PURE__*/React.createElement("div", {
+  }, "Every check weighed by evidence strength and track record")), /*#__PURE__*/React.createElement("div", {
     className: "fig"
   }, /*#__PURE__*/React.createElement("span", {
     className: "big"
@@ -3836,15 +3869,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
     className: "cap"
   }, "How sure I am"), /*#__PURE__*/React.createElement("span", {
     className: "sub"
-  }, "Based on how strong the evidence was")), /*#__PURE__*/React.createElement("div", {
-    className: "fig"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "big"
-  }, result.stake.toFixed(1), "%"), /*#__PURE__*/React.createElement("span", {
-    className: "cap"
-  }, "Suggested size"), /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, "Share of your betting money, half-Kelly on the net edge")), /*#__PURE__*/React.createElement("div", {
+  }, "Strength and agreement of the evidence")), /*#__PURE__*/React.createElement("div", {
     className: "fig"
   }, /*#__PURE__*/React.createElement("span", {
     className: "big"
@@ -3856,9 +3881,28 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
     className: "cap"
   }, "Checks with real data"), /*#__PURE__*/React.createElement("span", {
     className: "sub"
-  }, "The rest found nothing and were ignored"))), (result.signals && result.signals.length || result.sampleSpread > 0 || result.calib && result.calib.active) && /*#__PURE__*/React.createElement("details", {
+  }, "The rest found nothing and were ignored")), /*#__PURE__*/React.createElement("div", {
+    className: "fig"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "big",
+    style: {
+      color: result.call !== "PASS" ? "var(--moss)" : "var(--dim)"
+    }
+  }, result.call !== "PASS" ? "BET" : "NO BET"), /*#__PURE__*/React.createElement("span", {
+    className: "cap"
+  }, "Market check"), /*#__PURE__*/React.createElement("span", {
+    className: "sub"
+  }, result.call !== "PASS" ? "The market underrates this — " + (result.netEdge > 0 ? "+" : "") + result.netEdge.toFixed(0) + "c of value after costs" : "The market already prices it this way (sees " + market.price.toFixed(0) + "%)")), result.call !== "PASS" && /*#__PURE__*/React.createElement("div", {
+    className: "fig"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "big"
+  }, result.stake.toFixed(1), "%"), /*#__PURE__*/React.createElement("span", {
+    className: "cap"
+  }, "Suggested size"), /*#__PURE__*/React.createElement("span", {
+    className: "sub"
+  }, "Share of your betting money, half-Kelly \u2014 this is what keeps losses smaller than wins"))), (result.signals && result.signals.length || result.sampleSpread > 0 || result.calib && result.calib.active) && /*#__PURE__*/React.createElement("details", {
     className: "fold"
-  }, /*#__PURE__*/React.createElement("summary", null, "How the price was built"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("summary", null, "How the probability was built"), /*#__PURE__*/React.createElement("div", {
     className: "meta",
     style: {
       marginTop: 10

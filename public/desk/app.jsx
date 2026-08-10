@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.all-sports";
+const BUILD = "2026-08-10.prediction-first";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -2955,12 +2955,10 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                 {Math.abs(result.edge) < 2 ? (
                   <>The market and my estimate <b>agree within {Math.abs(result.edge).toFixed(1)}c</b> — this looks fairly priced.</>
                 ) : result.edge > 0 ? (
-                  <>All the checks together say <b style={{ color: "var(--amber)" }}>{market.name}</b> is more likely than the
-                  market thinks — <b style={{ color: "var(--amber)" }}>underpriced by about {result.edge.toFixed(0)}c</b>.
+                  <>All the checks together make <b style={{ color: "var(--amber)" }}>{market.name}</b> a <b style={{ color: "var(--amber)" }}>{result.fair.toFixed(0)}% shot</b> — the market only sees {market.price.toFixed(0)}%.
                   {result.call === "PASS" ? " But after the real fill price and fees the gap is too small to bet — see the verdict below." : " My call is below."}</>
                 ) : (
-                  <>All the checks together say <b style={{ color: "var(--rose)" }}>{market.name}</b> is <b style={{ color: "var(--rose)" }}>less
-                  likely</b> than the market thinks — overpriced by about {Math.abs(result.edge).toFixed(0)}c, which favors the other side.
+                  <>All the checks together give <b style={{ color: "var(--rose)" }}>{market.name}</b> only a <b style={{ color: "var(--rose)" }}>{result.fair.toFixed(0)}% chance</b> — the market sees {market.price.toFixed(0)}%, so the OTHER side is the likelier outcome.
                   {result.call === "PASS" ? " But after costs the gap is too small to bet — see the verdict below." : " My call is below."}</>
                 )}
               </p>
@@ -3082,40 +3080,65 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
 
           {result && (
             <>
-              {(() => { const bs = betSide(result, market, live); return (
-              <div className="verdict">
-                <div>
-                  <div className="label" style={{ marginBottom: 6 }}>{result.call === "PASS" ? "My call" : "Wager on"}</div>
-                  <h2 style={{ color: callColor }}>{result.call === "PASS" ? "Pass — no bet" : bs.who}</h2>
-                  {result.call !== "PASS" && (
+              {(() => {
+                // Prediction-first: name the outcome the desk expects, at
+                // what probability, at what certainty tier. The betting
+                // recommendation is a consequence, not the headline.
+                const predYes = result.fair >= 50;
+                const predProb = predYes ? result.fair : 100 - result.fair;
+                let predName = market.name;
+                if (!predYes) {
+                  const bsNo = betSide({ call: "BUY NO", side: "NO" }, market, live);
+                  predName = bsNo ? bsNo.who : "NOT " + market.name;
+                }
+                const tier = predProb >= 80 ? { t: "STRONGEST CALL", c: "var(--moss)" }
+                  : predProb >= 68 ? { t: "STRONG CALL", c: "var(--moss)" }
+                  : predProb >= 55 ? { t: "LEAN", c: "var(--amber)" }
+                  : { t: "TOO CLOSE TO CALL", c: "var(--dim)" };
+                const bs = result.call !== "PASS" ? betSide(result, market, live) : null;
+                return (
+                <>
+                <div className="verdict">
+                  <div style={{ minWidth: 0 }}>
+                    <div className="label" style={{ marginBottom: 6 }}>My prediction</div>
+                    <h2 style={{ color: predProb >= 55 ? tier.c : "var(--bone)" }}>
+                      {predProb >= 55 ? predName : "Too close to call"}
+                    </h2>
                     <div className="eyebrow" style={{ marginTop: 6 }}>
-                      = {result.call} at {result.entry.toFixed(0)}c · {bs.plain}
+                      {predProb >= 55
+                        ? predProb.toFixed(0) + "% by all checks combined · " + tier.t + " · confidence " + result.confidence
+                        : "roughly " + result.fair.toFixed(0) + "/" + (100 - result.fair).toFixed(0) + " — no side earns a call"}
                     </div>
-                  )}
+                  </div>
+                  <span className="tierbox" style={{ color: tier.c, borderColor: tier.c, alignSelf: "center" }}>
+                    <span className="pct">{predProb.toFixed(0)}%</span>
+                    <span className="lbl">{predProb >= 55 ? tier.t.replace(" CALL", "") : "TOSS-UP"}</span>
+                  </span>
                 </div>
-              </div>
-              ); })()}
 
-              <p className="answer">
-                {result.call === "PASS" ? (
-                  <>
-                    I'd <strong>sit this one out</strong>. It trades at {market.price.toFixed(0)}c and I make it worth{" "}
-                    {result.fair.toFixed(0)}c —{" "}
-                    {result.verify && result.verify.verdict === "REFUTE" ? "the final check killed the trade."
-                      : result.strong < 3 ? "but too few checks found solid evidence to lean on."
-                      : result.vetoed ? "and my own risk officer found solid evidence for the other side."
-                      : "after the real fill price and fees, that gap isn't worth paying for."}
-                  </>
-                ) : (
-                  <>
-                    I'd <strong>bet {betSide(result, market, live).who}</strong>. Filling actually costs about {result.entry.toFixed(0)}c
-                    {result.fee > 0.05 ? " plus " + result.fee.toFixed(1) + "c in fees" : ""}, I make that side worth{" "}
-                    {(result.side === "YES" ? result.fair : 100 - result.fair).toFixed(0)}c, and the trade survived a final
-                    attempt to knock it down — about <strong>{result.netEdge.toFixed(0)}c of value</strong> per contract
-                    after costs, if I'm right.
-                  </>
-                )}
-              </p>
+                <p className="answer">
+                  {predProb >= 55 ? (
+                    <>
+                      Everything the checks found says <strong>{predName}</strong> — a {predProb.toFixed(0)}% shot
+                      once the market prior, the books, the live feeds and the research are weighed together.{" "}
+                      {result.call !== "PASS" && bs ? (
+                        <>The market hasn't fully caught up, so this one is <strong>also worth betting</strong>:{" "}
+                        {result.call} at {result.entry.toFixed(0)}c, and the call survived a final attempt to knock it down.</>
+                      ) : (
+                        <>The market prices it about the same, so there's no bet here — this is a prediction, not an edge.</>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      The evidence splits almost evenly ({result.fair.toFixed(0)}% yes / {(100 - result.fair).toFixed(0)}% no)
+                      — anyone claiming certainty on this one is guessing.
+                      {result.verify && result.verify.verdict === "REFUTE" ? " The final check also killed the trade case." : ""}
+                    </>
+                  )}
+                </p>
+                </>
+                );
+              })()}
               {result.thesis && <p className="thesis">{result.thesis}</p>}
               {result.verify && (
                 <p className="thesis" style={{ color: result.verify.verdict === "CONFIRM" ? "var(--moss)" : "var(--rose)" }}>
@@ -3125,37 +3148,43 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
 
               <div className="figures">
                 <div className="fig">
-                  <span className="big" style={{ color: callColor }}>
-                    {result.netEdge > 0 ? "+" : ""}{result.netEdge.toFixed(1)}c
+                  <span className="big" style={{ color: "var(--amber)" }}>
+                    {(result.fair >= 50 ? result.fair : 100 - result.fair).toFixed(0)}%
                   </span>
-                  <span className="cap">Value after costs</span>
-                  <span className="sub">Fair value minus the real fill price and fees{result.call === "PASS" ? " — needed " + result.bar.toFixed(1) + "c to trade" : ""}{result.thin ? " · thin market raised the bar" : ""}</span>
-                </div>
-                <div className="fig">
-                  <span className="big">{result.anchor.toFixed(0)}c</span>
-                  <span className="cap">Weighted anchor</span>
-                  <span className="sub">Market price + every check's read, weighted by evidence and track record</span>
+                  <span className="cap">Chance it happens</span>
+                  <span className="sub">Every check weighed by evidence strength and track record</span>
                 </div>
                 <div className="fig">
                   <span className="big">{result.confidence}</span>
                   <span className="cap">How sure I am</span>
-                  <span className="sub">Based on how strong the evidence was</span>
-                </div>
-                <div className="fig">
-                  <span className="big">{result.stake.toFixed(1)}%</span>
-                  <span className="cap">Suggested size</span>
-                  <span className="sub">Share of your betting money, half-Kelly on the net edge</span>
+                  <span className="sub">Strength and agreement of the evidence</span>
                 </div>
                 <div className="fig">
                   <span className="big">{result.strong}<span style={{ color: "var(--dim)" }}>/9</span></span>
                   <span className="cap">Checks with real data</span>
                   <span className="sub">The rest found nothing and were ignored</span>
                 </div>
+                <div className="fig">
+                  <span className="big" style={{ color: result.call !== "PASS" ? "var(--moss)" : "var(--dim)" }}>
+                    {result.call !== "PASS" ? "BET" : "NO BET"}
+                  </span>
+                  <span className="cap">Market check</span>
+                  <span className="sub">{result.call !== "PASS"
+                    ? "The market underrates this — " + (result.netEdge > 0 ? "+" : "") + result.netEdge.toFixed(0) + "c of value after costs"
+                    : "The market already prices it this way (sees " + market.price.toFixed(0) + "%)"}</span>
+                </div>
+                {result.call !== "PASS" && (
+                  <div className="fig">
+                    <span className="big">{result.stake.toFixed(1)}%</span>
+                    <span className="cap">Suggested size</span>
+                    <span className="sub">Share of your betting money, half-Kelly — this is what keeps losses smaller than wins</span>
+                  </div>
+                )}
               </div>
 
               {((result.signals && result.signals.length) || result.sampleSpread > 0 || (result.calib && result.calib.active)) && (
                 <details className="fold">
-                  <summary>How the price was built</summary>
+                  <summary>How the probability was built</summary>
                   <div className="meta" style={{ marginTop: 10 }}>
                     <div><span className="k">Market</span><span className="v">{market.price.toFixed(0)}c</span></div>
                     {(result.signals || []).map((s, i) => (
