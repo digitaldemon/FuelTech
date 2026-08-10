@@ -47,6 +47,7 @@ const code = [
   slice("function techDrift(", "\n}"),
   slice("function impliedSigma(", "\n}"),
   slice("function blendProb(", "\n}"),
+  slice("function bestLadderWager(", "\n}"),
   slice("function bucketProbs(", "\n}"),
   slice("function paceProjection(", "\n}"),
   slice("function gameWinnerAbbr(", "\n}"),
@@ -58,8 +59,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -205,6 +206,20 @@ ok(techDrift(techUp, 0.001) > 0 && techDrift(techDn, 0.001) < 0, "chart drift fo
 ok(Math.abs(techDrift({ score: 99 }, 0.001)) <= 0.001 * 0.12 + 1e-12, "chart drift capped at 12% of sigma");
 const pTech = pAbove(100, 100, 0.001, 10, techDrift(techUp, 0.001));
 ok(pTech > 50 && pTech < 62, "charts nudge an at-the-money window, never decide it (" + pTech.toFixed(1) + "%)");
+
+// Wager instruction from the ladder
+const wl = [
+  { m: { id: "T1", ask: 40, bid: 38, price: 39 }, K: 100 },
+  { m: { id: "T2", ask: 20, bid: 18, price: 19 }, K: 105 },
+];
+const wagerYes = bestLadderWager(wl, [55, 18]); // strike 100 worth 55, costs 40
+ok(wagerYes && wagerYes.bet && wagerYes.side === "YES" && wagerYes.strike === 100 && wagerYes.edge > 10,
+  "underpriced strike -> BUY YES with edge (" + wagerYes.edge.toFixed(1) + "c)");
+const wagerNo = bestLadderWager(wl, [25, 18]); // strike 100 worth 25, bid 38
+ok(wagerNo && wagerNo.bet && wagerNo.side === "NO" && wagerNo.strike === 100,
+  "overpriced strike -> BUY NO");
+const wagerNone = bestLadderWager(wl, [39.5, 19.2]);
+ok(wagerNone && !wagerNone.bet, "fairly priced ladder -> no wager");
 
 // Implied vol + ensemble
 const trueSig = 0.015, S0 = 100, T = 4;

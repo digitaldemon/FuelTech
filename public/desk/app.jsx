@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.chart-strats";
+const BUILD = "2026-08-10.wager-calls";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -4334,6 +4334,27 @@ function blendProb(pModel, pMarket) {
   return unlogit((logit(clamp(pModel, 0.5, 99.5)) + 1.2 * logit(clamp(pMarket, 0.5, 99.5))) / 2.2);
 }
 
+// The tradeable instruction: scan every strike for the best fee-adjusted
+// edge between the ensemble probability and the real cost to enter. BUY
+// YES when a strike is likelier than its ask implies; BUY NO when it's
+// less likely than the bid implies. Below the bar -> no wager, say so.
+function bestLadderWager(ladder, pComb) {
+  let best = null;
+  for (let i = 0; i < ladder.length; i++) {
+    const m = ladder[i].m;
+    const yesCost = m.ask != null ? m.ask : m.price;
+    const noCost = m.bid != null ? 100 - m.bid : 100 - m.price;
+    const eYes = pComb[i] - yesCost - takerFee("Kalshi", yesCost);
+    const eNo = (100 - pComb[i]) - noCost - takerFee("Kalshi", noCost);
+    const cand = eYes >= eNo
+      ? { side: "YES", strike: ladder[i].K, cost: yesCost, edge: eYes, prob: pComb[i], m }
+      : { side: "NO", strike: ladder[i].K, cost: noCost, edge: eNo, prob: 100 - pComb[i], m };
+    if (!best || cand.edge > best.edge) best = cand;
+  }
+  if (best) best.bet = best.edge >= 3;
+  return best;
+}
+
 // Ladder of ascending "above K" strikes -> probability the settle lands in
 // each bucket (below first, between each pair, above last). Sums to 100.
 function bucketProbs(strikes, probsAbove) {
@@ -4792,6 +4813,26 @@ function Commodities({ onPick }) {
                       {": "}{f.tech.votes.map((v) => v.k + " " + v.note).join(" · ")}
                     </span>
                   )}
+                  {(() => {
+                    const yesCost = f.m.ask != null ? f.m.ask : f.m.price;
+                    const noCost = f.m.bid != null ? 100 - f.m.bid : 100 - f.m.price;
+                    const eYes = f.pUp - yesCost - takerFee("Kalshi", yesCost);
+                    const eNo = (100 - f.pUp) - noCost - takerFee("Kalshi", noCost);
+                    const w = eYes >= eNo
+                      ? { side: "YES (UP)", cost: yesCost, edge: eYes }
+                      : { side: "NO (DOWN)", cost: noCost, edge: eNo };
+                    return (
+                      <span className="meta-line" style={{ display: "block" }}>
+                        {w.edge >= 4 ? (
+                          <b style={{ color: w.side.startsWith("YES") ? "var(--moss)" : "var(--rose)" }}>
+                            WAGER: BUY {w.side} at {w.cost.toFixed(0)}c · +{w.edge.toFixed(1)}c edge after fees
+                          </b>
+                        ) : (
+                          <span style={{ color: "var(--dim)" }}>no wager — priced within {Math.max(0, w.edge).toFixed(1)}c of the model</span>
+                        )}
+                      </span>
+                    );
+                  })()}
                 </span>
                 <span className="tierbox" style={{ color: col, borderColor: col }}>
                   <span className="pct">{conf.toFixed(0)}%</span>
@@ -4882,6 +4923,33 @@ function Commodities({ onPick }) {
                 ))}
               </div>
             )}
+            {(() => {
+              const w = bestLadderWager(r.ladder, r.pComb);
+              if (!w) return null;
+              return w.bet ? (
+                <div className="pick t-strong" style={{ marginTop: 10, borderLeftColor: w.side === "YES" ? "var(--moss)" : "var(--rose)" }}>
+                  <span style={{ minWidth: 0, flex: 1 }}>
+                    <span className="who-big" style={{ display: "block" }}>
+                      <span style={{ color: w.side === "YES" ? "var(--moss)" : "var(--rose)" }}>WAGER: BUY {w.side}</span>
+                      {" on Above " + r.asset.unit + w.strike}
+                    </span>
+                    <span className="meta-line" style={{ display: "block" }}>
+                      costs {w.cost.toFixed(0)}c · worth {w.prob.toFixed(0)}% by the full analysis ·
+                      <b style={{ color: "var(--moss)" }}> +{w.edge.toFixed(1)}c edge after fees</b>
+                    </span>
+                  </span>
+                  <span className="pick-actions">
+                    <a className="chip" href={kalshiEventLink(w.m.id)} target="_blank" rel="noreferrer">place it ↗</a>
+                    <button className="chip" onClick={() => onPick(w.m)}>deep dive</button>
+                  </span>
+                </div>
+              ) : (
+                <p className="help" style={{ marginTop: 8 }}>
+                  <b>No wager here</b> — every strike is priced within {Math.max(0, w.edge).toFixed(1)}c of the analysis after fees.
+                  The prediction stands; the market just already agrees with it.
+                </p>
+              );
+            })()}
             <ResearchBrief asset={r.asset} spot={r.spot} trend={r.trend} />
             <details className="fold">
               <summary>Every strike — model vs market</summary>

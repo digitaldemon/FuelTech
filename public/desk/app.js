@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.chart-strats";
+const BUILD = "2026-08-10.wager-calls";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5577,6 +5577,39 @@ function blendProb(pModel, pMarket) {
   return unlogit((logit(clamp(pModel, 0.5, 99.5)) + 1.2 * logit(clamp(pMarket, 0.5, 99.5))) / 2.2);
 }
 
+// The tradeable instruction: scan every strike for the best fee-adjusted
+// edge between the ensemble probability and the real cost to enter. BUY
+// YES when a strike is likelier than its ask implies; BUY NO when it's
+// less likely than the bid implies. Below the bar -> no wager, say so.
+function bestLadderWager(ladder, pComb) {
+  let best = null;
+  for (let i = 0; i < ladder.length; i++) {
+    const m = ladder[i].m;
+    const yesCost = m.ask != null ? m.ask : m.price;
+    const noCost = m.bid != null ? 100 - m.bid : 100 - m.price;
+    const eYes = pComb[i] - yesCost - takerFee("Kalshi", yesCost);
+    const eNo = 100 - pComb[i] - noCost - takerFee("Kalshi", noCost);
+    const cand = eYes >= eNo ? {
+      side: "YES",
+      strike: ladder[i].K,
+      cost: yesCost,
+      edge: eYes,
+      prob: pComb[i],
+      m
+    } : {
+      side: "NO",
+      strike: ladder[i].K,
+      cost: noCost,
+      edge: eNo,
+      prob: 100 - pComb[i],
+      m
+    };
+    if (!best || cand.edge > best.edge) best = cand;
+  }
+  if (best) best.bet = best.edge >= 3;
+  return best;
+}
+
 // Ladder of ascending "above K" strikes -> probability the settle lands in
 // each bucket (below first, between each pair, above last). Sums to 100.
 function bucketProbs(strikes, probsAbove) {
@@ -6211,7 +6244,35 @@ function Commodities({
       style: {
         color: f.tech.lean === "UP" ? "var(--moss)" : f.tech.lean === "DOWN" ? "var(--rose)" : "var(--dim)"
       }
-    }, f.tech.lean === "NEUTRAL" ? "neutral" : "lean " + f.tech.lean), ": ", f.tech.votes.map(v => v.k + " " + v.note).join(" · "))), /*#__PURE__*/React.createElement("span", {
+    }, f.tech.lean === "NEUTRAL" ? "neutral" : "lean " + f.tech.lean), ": ", f.tech.votes.map(v => v.k + " " + v.note).join(" · ")), (() => {
+      const yesCost = f.m.ask != null ? f.m.ask : f.m.price;
+      const noCost = f.m.bid != null ? 100 - f.m.bid : 100 - f.m.price;
+      const eYes = f.pUp - yesCost - takerFee("Kalshi", yesCost);
+      const eNo = 100 - f.pUp - noCost - takerFee("Kalshi", noCost);
+      const w = eYes >= eNo ? {
+        side: "YES (UP)",
+        cost: yesCost,
+        edge: eYes
+      } : {
+        side: "NO (DOWN)",
+        cost: noCost,
+        edge: eNo
+      };
+      return /*#__PURE__*/React.createElement("span", {
+        className: "meta-line",
+        style: {
+          display: "block"
+        }
+      }, w.edge >= 4 ? /*#__PURE__*/React.createElement("b", {
+        style: {
+          color: w.side.startsWith("YES") ? "var(--moss)" : "var(--rose)"
+        }
+      }, "WAGER: BUY ", w.side, " at ", w.cost.toFixed(0), "c \xB7 +", w.edge.toFixed(1), "c edge after fees") : /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: "var(--dim)"
+        }
+      }, "no wager \u2014 priced within ", Math.max(0, w.edge).toFixed(1), "c of the model"));
+    })()), /*#__PURE__*/React.createElement("span", {
       className: "tierbox",
       style: {
         color: col,
@@ -6348,7 +6409,55 @@ function Commodities({
       style: {
         color: v.dir > 0 ? "var(--moss)" : "var(--rose)"
       }
-    }, v.k, ": ", v.note))), /*#__PURE__*/React.createElement(ResearchBrief, {
+    }, v.k, ": ", v.note))), (() => {
+      const w = bestLadderWager(r.ladder, r.pComb);
+      if (!w) return null;
+      return w.bet ? /*#__PURE__*/React.createElement("div", {
+        className: "pick t-strong",
+        style: {
+          marginTop: 10,
+          borderLeftColor: w.side === "YES" ? "var(--moss)" : "var(--rose)"
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          minWidth: 0,
+          flex: 1
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "who-big",
+        style: {
+          display: "block"
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: w.side === "YES" ? "var(--moss)" : "var(--rose)"
+        }
+      }, "WAGER: BUY ", w.side), " on Above " + r.asset.unit + w.strike), /*#__PURE__*/React.createElement("span", {
+        className: "meta-line",
+        style: {
+          display: "block"
+        }
+      }, "costs ", w.cost.toFixed(0), "c \xB7 worth ", w.prob.toFixed(0), "% by the full analysis \xB7", /*#__PURE__*/React.createElement("b", {
+        style: {
+          color: "var(--moss)"
+        }
+      }, " +", w.edge.toFixed(1), "c edge after fees"))), /*#__PURE__*/React.createElement("span", {
+        className: "pick-actions"
+      }, /*#__PURE__*/React.createElement("a", {
+        className: "chip",
+        href: kalshiEventLink(w.m.id),
+        target: "_blank",
+        rel: "noreferrer"
+      }, "place it \u2197"), /*#__PURE__*/React.createElement("button", {
+        className: "chip",
+        onClick: () => onPick(w.m)
+      }, "deep dive"))) : /*#__PURE__*/React.createElement("p", {
+        className: "help",
+        style: {
+          marginTop: 8
+        }
+      }, /*#__PURE__*/React.createElement("b", null, "No wager here"), " \u2014 every strike is priced within ", Math.max(0, w.edge).toFixed(1), "c of the analysis after fees. The prediction stands; the market just already agrees with it.");
+    })(), /*#__PURE__*/React.createElement(ResearchBrief, {
       asset: r.asset,
       spot: r.spot,
       trend: r.trend
