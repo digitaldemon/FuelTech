@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.crypto-hub";
+const BUILD = "2026-08-10.fast15-all";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -536,7 +536,14 @@ const SERIES_SLUG = {
   KXBTCD: "bitcoin-price-above-below",
   KXETHD: "ethereum-price-above-below",
   KXBTC: "bitcoin-range",
-  KXETH: "ethereum-range"
+  KXETH: "ethereum-range",
+  KXGOLDH: "gold-hourly",
+  KXSILVERH: "silver-hourly",
+  KXGOLD15M: "gold-15-minute",
+  KXSILVER15M: "silver-15-minute",
+  KXWTI15M: "wti-15-minute",
+  KXINX15M: "s-p-500-15-minute",
+  KXNDQ15M: "nasdaq-100-15-minute"
 };
 function kalshiEventLink(ticker) {
   const parts = String(ticker || "").split("-");
@@ -5179,6 +5186,18 @@ const COMMODITIES = [{
   unit: "$",
   crypto: true
 }, {
+  series: "KXGOLDH",
+  sym: "GC=F",
+  label: "Gold (hourly)",
+  unit: "$",
+  crypto: false
+}, {
+  series: "KXSILVERH",
+  sym: "SI=F",
+  label: "Silver (hourly)",
+  unit: "$",
+  crypto: false
+}, {
   series: "KXBTC",
   sym: "BTC-USD",
   label: "Bitcoin (hourly)",
@@ -5197,23 +5216,63 @@ const COMMODITIES = [{
 const FAST15 = [{
   series: "KXBTC15M",
   sym: "BTC-USD",
-  label: "BTC"
+  label: "BTC",
+  hub: "https://kalshi.com/crypto"
 }, {
   series: "KXETH15M",
   sym: "ETH-USD",
-  label: "ETH"
+  label: "ETH",
+  hub: "https://kalshi.com/crypto"
 }, {
   series: "KXSOL15M",
   sym: "SOL-USD",
-  label: "SOL"
+  label: "SOL",
+  hub: "https://kalshi.com/crypto"
 }, {
   series: "KXXRP15M",
   sym: "XRP-USD",
-  label: "XRP"
+  label: "XRP",
+  hub: "https://kalshi.com/crypto"
 }, {
   series: "KXDOGE15M",
   sym: "DOGE-USD",
-  label: "DOGE"
+  label: "DOGE",
+  hub: "https://kalshi.com/crypto"
+}, {
+  series: "KXADA15M",
+  sym: "ADA-USD",
+  label: "ADA",
+  hub: "https://kalshi.com/crypto"
+}, {
+  series: "KXBNB15M",
+  sym: "BNB-USD",
+  label: "BNB",
+  hub: "https://kalshi.com/crypto"
+}, {
+  series: "KXGOLD15M",
+  sym: "GC=F",
+  label: "Gold",
+  hub: "https://kalshi.com/markets/kxgold15m/gold-15-minute"
+}, {
+  series: "KXSILVER15M",
+  sym: "SI=F",
+  label: "Silver",
+  hub: "https://kalshi.com/markets/kxsilver15m/silver-15-minute"
+}, {
+  series: "KXWTI15M",
+  sym: "CL=F",
+  label: "WTI Oil",
+  hub: "https://kalshi.com/markets/kxwti15m/wti-15-minute"
+}, {
+  series: "KXINX15M",
+  sym: "^GSPC",
+  label: "S&P 500",
+  hub: "https://kalshi.com/markets/kxinx15m/s-p-500-15-minute"
+}, {
+  series: "KXNDQ15M",
+  sym: "^NDX",
+  label: "Nasdaq 100",
+  hub: "https://kalshi.com/markets/kxndq15m/nasdaq-100-15-minute"
 }];
 
 // EWMA volatility (RiskMetrics lambda .94) — reacts to the last hour's
@@ -5705,7 +5764,7 @@ function Commodities({
       margin: 0,
       color: "var(--rose)"
     }
-  }, "\u26A1 15-minute markets \u2014 live windows"), /*#__PURE__*/React.createElement("p", {
+  }, "\u26A1 15-minute markets \u2014 crypto, metals, oil, indexes"), /*#__PURE__*/React.createElement("p", {
     className: "help",
     style: {
       marginTop: 6
@@ -5768,7 +5827,7 @@ function Commodities({
       className: "pick-actions"
     }, /*#__PURE__*/React.createElement("a", {
       className: "chip",
-      href: "https://kalshi.com/crypto",
+      href: f.a.hub,
       target: "_blank",
       rel: "noreferrer"
     }, "trade \u2197")));

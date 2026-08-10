@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.crypto-hub";
+const BUILD = "2026-08-10.fast15-all";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -522,6 +522,9 @@ const SERIES_SLUG = {
   KXSILVERD: "silver-daily", KXSILVERW: "silver-weekly-price",
   KXBTCD: "bitcoin-price-above-below", KXETHD: "ethereum-price-above-below",
   KXBTC: "bitcoin-range", KXETH: "ethereum-range",
+  KXGOLDH: "gold-hourly", KXSILVERH: "silver-hourly",
+  KXGOLD15M: "gold-15-minute", KXSILVER15M: "silver-15-minute", KXWTI15M: "wti-15-minute",
+  KXINX15M: "s-p-500-15-minute", KXNDQ15M: "nasdaq-100-15-minute",
 };
 function kalshiEventLink(ticker) {
   const parts = String(ticker || "").split("-");
@@ -4075,6 +4078,8 @@ const COMMODITIES = [
   { series: "KXSILVERW", sym: "SI=F", label: "Silver (weekly)", unit: "$", crypto: false },
   { series: "KXBTCD", sym: "BTC-USD", label: "Bitcoin (daily)", unit: "$", crypto: true },
   { series: "KXETHD", sym: "ETH-USD", label: "Ethereum (daily)", unit: "$", crypto: true },
+  { series: "KXGOLDH", sym: "GC=F", label: "Gold (hourly)", unit: "$", crypto: false },
+  { series: "KXSILVERH", sym: "SI=F", label: "Silver (hourly)", unit: "$", crypto: false },
   { series: "KXBTC", sym: "BTC-USD", label: "Bitcoin (hourly)", unit: "$", crypto: true },
   { series: "KXETH", sym: "ETH-USD", label: "Ethereum (hourly)", unit: "$", crypto: true },
 ];
@@ -4082,11 +4087,18 @@ const COMMODITIES = [
 // 15-minute up/down markets: YES = the 60s settlement average at window
 // close is at least the window-open reference (floor_strike).
 const FAST15 = [
-  { series: "KXBTC15M", sym: "BTC-USD", label: "BTC" },
-  { series: "KXETH15M", sym: "ETH-USD", label: "ETH" },
-  { series: "KXSOL15M", sym: "SOL-USD", label: "SOL" },
-  { series: "KXXRP15M", sym: "XRP-USD", label: "XRP" },
-  { series: "KXDOGE15M", sym: "DOGE-USD", label: "DOGE" },
+  { series: "KXBTC15M", sym: "BTC-USD", label: "BTC", hub: "https://kalshi.com/crypto" },
+  { series: "KXETH15M", sym: "ETH-USD", label: "ETH", hub: "https://kalshi.com/crypto" },
+  { series: "KXSOL15M", sym: "SOL-USD", label: "SOL", hub: "https://kalshi.com/crypto" },
+  { series: "KXXRP15M", sym: "XRP-USD", label: "XRP", hub: "https://kalshi.com/crypto" },
+  { series: "KXDOGE15M", sym: "DOGE-USD", label: "DOGE", hub: "https://kalshi.com/crypto" },
+  { series: "KXADA15M", sym: "ADA-USD", label: "ADA", hub: "https://kalshi.com/crypto" },
+  { series: "KXBNB15M", sym: "BNB-USD", label: "BNB", hub: "https://kalshi.com/crypto" },
+  { series: "KXGOLD15M", sym: "GC=F", label: "Gold", hub: "https://kalshi.com/markets/kxgold15m/gold-15-minute" },
+  { series: "KXSILVER15M", sym: "SI=F", label: "Silver", hub: "https://kalshi.com/markets/kxsilver15m/silver-15-minute" },
+  { series: "KXWTI15M", sym: "CL=F", label: "WTI Oil", hub: "https://kalshi.com/markets/kxwti15m/wti-15-minute" },
+  { series: "KXINX15M", sym: "^GSPC", label: "S&P 500", hub: "https://kalshi.com/markets/kxinx15m/s-p-500-15-minute" },
+  { series: "KXNDQ15M", sym: "^NDX", label: "Nasdaq 100", hub: "https://kalshi.com/markets/kxndq15m/nasdaq-100-15-minute" },
 ];
 
 // EWMA volatility (RiskMetrics lambda .94) — reacts to the last hour's
@@ -4455,7 +4467,7 @@ function Commodities({ onPick }) {
 
       {fast.length > 0 && (
         <div className="panel" style={{ borderColor: "rgba(228,112,126,.4)" }}>
-          <p className="sect" style={{ margin: 0, color: "var(--rose)" }}>⚡ 15-minute markets — live windows</p>
+          <p className="sect" style={{ margin: 0, color: "var(--rose)" }}>⚡ 15-minute markets — crypto, metals, oil, indexes</p>
           <p className="help" style={{ marginTop: 6 }}>
             Up or down over the current 15-minute window. The call comes from the live price vs the window's
             opening reference, scaled by this hour's minute-level volatility — refreshed every 15 seconds.
@@ -4489,7 +4501,7 @@ function Commodities({ onPick }) {
                   <span className="lbl">{conf >= 55 ? (up ? "UP" : "DOWN") : "TOSS-UP"}</span>
                 </span>
                 <span className="pick-actions">
-                  <a className="chip" href="https://kalshi.com/crypto" target="_blank" rel="noreferrer">trade ↗</a>
+                  <a className="chip" href={f.a.hub} target="_blank" rel="noreferrer">trade ↗</a>
                 </span>
               </div>
             );
