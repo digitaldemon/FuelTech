@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.prediction-app";
+const BUILD = "2026-08-10.true-record";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -4403,7 +4403,14 @@ function Positions({
       color: "var(--moss)",
       borderColor: "rgba(127,185,139,.5)"
     }
-  }, "Kalshi account connected \xB7 ", kal.synced, " position", kal.synced === 1 ? "" : "s", " synced"), wsOn && /*#__PURE__*/React.createElement("span", {
+  }, "Kalshi account connected \xB7 ", kal.synced, " position", kal.synced === 1 ? "" : "s", " synced"), kal && kal.history && /*#__PURE__*/React.createElement("span", {
+    className: "chip static",
+    style: {
+      color: kal.history.pnl >= 0 ? "var(--moss)" : "var(--rose)",
+      borderColor: kal.history.pnl >= 0 ? "rgba(127,185,139,.5)" : "rgba(228,112,126,.5)"
+    },
+    title: "Straight from your Kalshi portfolio settlement history \u2014 the authoritative record"
+  }, "Your wagers: ", kal.history.wins, "-", kal.history.losses, " \xB7 net ", kal.history.pnl >= 0 ? "+$" : "-$", Math.abs(kal.history.pnl).toFixed(2)), wsOn && /*#__PURE__*/React.createElement("span", {
     className: "chip static",
     style: {
       color: "var(--cyan)",
@@ -4644,7 +4651,42 @@ function Positions({
     className: "sub"
   }, e.venue, " \xB7 ", e.call, " \xB7 analyzed ", new Date(e.ts).toISOString().slice(0, 10))), /*#__PURE__*/React.createElement("span", {
     className: "px"
-  }, "track")))), settled.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "track")))), kal && kal.history && kal.history.recent.length > 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "panel"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "sect"
+  }, "Settled wagers \u2014 from your Kalshi history"), /*#__PURE__*/React.createElement("p", {
+    className: "help",
+    style: {
+      marginTop: 6
+    }
+  }, "Pulled directly from your Kalshi portfolio's settlement records \u2014 the same numbers the exchange paid out on. ", kal.history.wins, "-", kal.history.losses, " lifetime shown, net", " ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: kal.history.pnl >= 0 ? "var(--moss)" : "var(--rose)"
+    }
+  }, kal.history.pnl >= 0 ? "+$" : "-$", Math.abs(kal.history.pnl).toFixed(2)), "."), kal.history.recent.map(h => /*#__PURE__*/React.createElement("div", {
+    key: h.ticker + h.at,
+    className: "score-row",
+    style: {
+      borderBottom: "1px solid rgba(65,75,99,.35)"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "who",
+    style: {
+      fontSize: 13
+    }
+  }, h.title, /*#__PURE__*/React.createElement("span", {
+    className: "sub",
+    style: {
+      display: "block"
+    }
+  }, h.side, " \xB7 settled ", h.at ? new Date(h.at).toLocaleDateString() : "")), /*#__PURE__*/React.createElement("span", {
+    className: "pts",
+    style: {
+      fontSize: 13.5,
+      color: h.won ? "var(--moss)" : "var(--rose)"
+    }
+  }, h.won ? "WON " : "LOST ", h.pl >= 0 ? "+$" : "-$", Math.abs(h.pl).toFixed(2))))) : settled.length > 0 && /*#__PURE__*/React.createElement("div", {
     className: "panel"
   }, /*#__PURE__*/React.createElement("p", {
     className: "sect"
@@ -4658,7 +4700,7 @@ function Positions({
     style: {
       color: settledPnl >= 0 ? "var(--moss)" : "var(--rose)"
     }
-  }, settledPnl >= 0 ? "+$" : "-$", Math.abs(settledPnl).toFixed(2)), " ", "at the fills you recorded. The full call-by-call record lives in ", /*#__PURE__*/React.createElement("b", null, "How I'm doing"), ".")));
+  }, settledPnl >= 0 ? "+$" : "-$", Math.abs(settledPnl).toFixed(2)), " ", "at the fills you recorded.")));
 }
 
 /* ---------------- Parlay scanner ----------------

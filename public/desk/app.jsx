@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.prediction-app";
+const BUILD = "2026-08-10.true-record";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -3518,6 +3518,14 @@ function Positions({ ledger, save, reopen, reload }) {
                 Kalshi account connected · {kal.synced} position{kal.synced === 1 ? "" : "s"} synced
               </span>
             )}
+            {kal && kal.history && (
+              <span className="chip static" style={{
+                color: kal.history.pnl >= 0 ? "var(--moss)" : "var(--rose)",
+                borderColor: kal.history.pnl >= 0 ? "rgba(127,185,139,.5)" : "rgba(228,112,126,.5)" }}
+                title="Straight from your Kalshi portfolio settlement history — the authoritative record">
+                Your wagers: {kal.history.wins}-{kal.history.losses} · net {kal.history.pnl >= 0 ? "+$" : "-$"}{Math.abs(kal.history.pnl).toFixed(2)}
+              </span>
+            )}
             {wsOn && (
               <span className="chip static" style={{ color: "var(--cyan)", borderColor: "rgba(111,179,210,.5)" }}>
                 ● realtime prices
@@ -3700,7 +3708,31 @@ function Positions({ ledger, save, reopen, reload }) {
         </div>
       )}
 
-      {settled.length > 0 && (
+      {kal && kal.history && kal.history.recent.length > 0 ? (
+        <div className="panel">
+          <p className="sect">Settled wagers — from your Kalshi history</p>
+          <p className="help" style={{ marginTop: 6 }}>
+            Pulled directly from your Kalshi portfolio's settlement records — the same numbers the exchange paid
+            out on. {kal.history.wins}-{kal.history.losses} lifetime shown, net{" "}
+            <b style={{ color: kal.history.pnl >= 0 ? "var(--moss)" : "var(--rose)" }}>
+              {kal.history.pnl >= 0 ? "+$" : "-$"}{Math.abs(kal.history.pnl).toFixed(2)}
+            </b>.
+          </p>
+          {kal.history.recent.map((h) => (
+            <div key={h.ticker + h.at} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
+              <span className="who" style={{ fontSize: 13 }}>
+                {h.title}
+                <span className="sub" style={{ display: "block" }}>
+                  {h.side} · settled {h.at ? new Date(h.at).toLocaleDateString() : ""}
+                </span>
+              </span>
+              <span className="pts" style={{ fontSize: 13.5, color: h.won ? "var(--moss)" : "var(--rose)" }}>
+                {h.won ? "WON " : "LOST "}{h.pl >= 0 ? "+$" : "-$"}{Math.abs(h.pl).toFixed(2)}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : settled.length > 0 && (
         <div className="panel">
           <p className="sect">Settled positions</p>
           <p className="thesis" style={{ marginTop: 8 }}>
@@ -3708,7 +3740,7 @@ function Positions({ ledger, save, reopen, reload }) {
             <span className="mono" style={{ color: settledPnl >= 0 ? "var(--moss)" : "var(--rose)" }}>
               {settledPnl >= 0 ? "+$" : "-$"}{Math.abs(settledPnl).toFixed(2)}
             </span>{" "}
-            at the fills you recorded. The full call-by-call record lives in <b>How I'm doing</b>.
+            at the fills you recorded.
           </p>
         </div>
       )}

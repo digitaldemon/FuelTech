@@ -227,9 +227,40 @@ export async function GET(req: Request) {
     // Settlement history is the authoritative "you won/lost" feed — resolve
     // ledger entries from it immediately instead of waiting for the hourly
     // market-result check. Every sync cycle (15-30s in the app) sees this.
+    // The settlements feed is ALSO the authoritative wager record — wins,
+    // losses and P/L computed straight from what Kalshi actually settled,
+    // immune to any client-side store getting wiped or drifting.
     let settled = 0;
+    let history: { wins: number; losses: number; pnl: number;
+      recent: Array<{ ticker: string; title: string; side: string; won: boolean; pl: number; at: number }> } | null = null;
     try {
       const sd = await kget(creds, "/trade-api/v2/portfolio/settlements?limit=100");
+      const hRows: Array<{ ticker: string; side: string; won: boolean; pl: number; at: number }> = [];
+      for (const s of (sd.settlements || []) as Array<Record<string, unknown>>) {
+        const res = String(s.market_result || "");
+        if (res !== "yes" && res !== "no") continue;
+        const yc = num(s.yes_count_fp, s.yes_count) ?? 0;
+        const nc = num(s.no_count_fp, s.no_count) ?? 0;
+        if (yc <= 0 && nc <= 0) continue;
+        const side = yc >= nc ? "YES" : "NO";
+        const won = (res === "yes") === (side === "YES");
+        const costD = num(side === "YES" ? s.yes_total_cost_dollars : s.no_total_cost_dollars) ?? 0;
+        const revC = num(s.revenue_fp, s.revenue) ?? 0; // cents
+        hRows.push({ ticker: String(s.ticker || ""), side, won,
+          pl: Math.round((revC / 100 - costD) * 100) / 100,
+          at: num(Date.parse(String(s.settled_time || ""))) ?? 0 });
+      }
+      if (hRows.length) {
+        const recent = hRows.slice(0, 12);
+        const titles = await marketInfo(recent.map((h) => h.ticker));
+        history = {
+          wins: hRows.filter((h) => h.won).length,
+          losses: hRows.filter((h) => !h.won).length,
+          pnl: Math.round(hRows.reduce((sum, h) => sum + h.pl, 0) * 100) / 100,
+          recent: recent.map((h) => ({ ...h,
+            title: String((titles[h.ticker] && titles[h.ticker].title) || h.ticker) })),
+        };
+      }
       let backfills = 0;
       for (const s of (sd.settlements || []) as Array<Record<string, unknown>>) {
         const res = String(s.market_result || "");
@@ -279,7 +310,7 @@ export async function GET(req: Request) {
     } catch { /* settlements are additive; sync still succeeds without them */ }
 
     await writeStore("ledger", ledger.slice(0, 500));
-    return Response.json({ configured: true, synced: positions.length, created, updated, cleared, settled,
+    return Response.json({ configured: true, synced: positions.length, created, updated, cleared, settled, history,
       positions: positions.map((p) => ({ ticker: p.ticker, side: p.side, contracts: p.contracts, avg: p.avg })) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
