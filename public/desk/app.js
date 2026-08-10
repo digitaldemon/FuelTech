@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.over-unders";
+const BUILD = "2026-08-10.all-sports";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -502,7 +502,24 @@ const SERIES_SLUG = {
   KXUCLGAME: "uefa-champions-league-game",
   KXLALIGAGAME: "la-liga-game",
   KXSERIEAGAME: "serie-a-game",
-  KXBUNDESLIGAGAME: "bundesliga-game"
+  KXBUNDESLIGAGAME: "bundesliga-game",
+  KXLIGUE1GAME: "ligue-1-game",
+  KXLIGAMXGAME: "liga-mx-game",
+  KXUELGAME: "uefa-europa-league-game",
+  KXUECLGAME: "uefa-conference-league-game",
+  KXEREDIVISIEGAME: "eredivisie-game",
+  KXLIGAPORTUGALGAME: "liga-portugal-game",
+  KXBRASILEIROGAME: "brasileiro-serie-a-game",
+  KXEFLCHAMPIONSHIPGAME: "efl-championship-game",
+  KXSUPERLIGGAME: "turkish-super-lig-game",
+  KXBELGIANPLGAME: "belgian-pro-league-game",
+  KXNWSLGAME: "nwsl-game",
+  KXLEAGUESCUPGAME: "leagues-cup-game",
+  KXSAUDIPLGAME: "saudi-pro-league-game",
+  KXWCGAME: "world-cup-game",
+  KXCFLGAME: "cfl-game",
+  KXUFLGAME: "ufl-football-game",
+  KXNCAAWBGAME: "college-basketball-womens-game"
 };
 function kalshiEventLink(ticker) {
   const parts = String(ticker || "").split("-");
@@ -1259,7 +1276,7 @@ function walkBook(levels, size) {
    Several feeds, cross-checked. ESPN covers every league and carries win
    probability and sportsbook odds; the league's own API is the authority on
    score and clock. Disagreement between them is itself a signal. */
-const LEAGUES = [[/KXNBAGAME|\bnba\b/i, "basketball/nba", "NBA"], [/KXWNBAGAME|\bwnba\b/i, "basketball/wnba", "WNBA"], [/KXMLBGAME|\bmlb\b|world series/i, "baseball/mlb", "MLB"], [/KXNFLGAME|\bnfl\b|super bowl/i, "football/nfl", "NFL"], [/KXNHLGAME|\bnhl\b|stanley cup/i, "hockey/nhl", "NHL"], [/KXCFBGAME|KXNCAAFGAME|college football/i, "football/college-football", "NCAAF"], [/KXCBBGAME|KXNCAABGAME|march madness/i, "basketball/mens-college-basketball", "NCAAM"], [/KXATPMATCH|\batp\b/i, "tennis/atp", "ATP"], [/KXWTAMATCH|\bwta\b/i, "tennis/wta", "WTA"], [/KXUFCFIGHT|\bufc\b|\bmma\b/i, "mma/ufc", "UFC"], [/KXEPLGAME|premier league/i, "soccer/eng.1", "EPL"], [/KXMLSGAME|\bmls\b/i, "soccer/usa.1", "MLS"], [/champions league/i, "soccer/uefa.champions", "UCL"], [/la liga/i, "soccer/esp.1", "La Liga"]];
+const LEAGUES = [[/KXNBAGAME|\bnba\b/i, "basketball/nba", "NBA"], [/KXWNBAGAME|\bwnba\b/i, "basketball/wnba", "WNBA"], [/KXMLBGAME|\bmlb\b|world series/i, "baseball/mlb", "MLB"], [/KXNFLGAME|\bnfl\b|super bowl/i, "football/nfl", "NFL"], [/KXNHLGAME|\bnhl\b|stanley cup/i, "hockey/nhl", "NHL"], [/KXCFBGAME|KXNCAAFGAME|college football/i, "football/college-football", "NCAAF"], [/KXCBBGAME|KXNCAABGAME|march madness/i, "basketball/mens-college-basketball", "NCAAM"], [/KXATPMATCH|\batp\b/i, "tennis/atp", "ATP"], [/KXWTAMATCH|\bwta\b/i, "tennis/wta", "WTA"], [/KXUFCFIGHT|\bufc\b|\bmma\b/i, "mma/ufc", "UFC"], [/KXEPLGAME|premier league/i, "soccer/eng.1", "EPL"], [/KXMLSGAME|\bmls\b/i, "soccer/usa.1", "MLS"], [/champions league/i, "soccer/uefa.champions", "UCL"], [/la liga/i, "soccer/esp.1", "La Liga"], [/KXSERIEAGAME|serie a game/i, "soccer/ita.1", "Serie A"], [/KXBUNDESLIGAGAME|bundesliga game/i, "soccer/ger.1", "Bundesliga"], [/KXLIGUE1GAME|ligue 1/i, "soccer/fra.1", "Ligue 1"], [/KXLIGAMXGAME|liga mx/i, "soccer/mex.1", "Liga MX"], [/KXUELGAME|europa league/i, "soccer/uefa.europa", "Europa League"], [/KXUECLGAME|conference league/i, "soccer/uefa.europa.conf", "Conference League"], [/KXEREDIVISIEGAME|eredivisie/i, "soccer/ned.1", "Eredivisie"], [/KXLIGAPORTUGALGAME|primeira liga|liga portugal/i, "soccer/por.1", "Liga Portugal"], [/KXBRASILEIROGAME|brasileir/i, "soccer/bra.1", "Brasileirao"], [/KXEFLCHAMPIONSHIPGAME|efl championship/i, "soccer/eng.2", "EFL Championship"], [/KXSUPERLIGGAME|super lig\b/i, "soccer/tur.1", "Super Lig"], [/KXBELGIANPLGAME|belgian pro/i, "soccer/bel.1", "Belgian Pro League"], [/KXNWSLGAME|\bnwsl\b/i, "soccer/usa.nwsl", "NWSL"], [/KXLEAGUESCUPGAME|leagues cup/i, "soccer/concacaf.leagues.cup", "Leagues Cup"], [/KXSAUDIPLGAME|saudi pro league/i, "soccer/ksa.1", "Saudi Pro League"], [/KXWCGAME-|world cup game/i, "soccer/fifa.world", "World Cup"], [/KXCFLGAME|\bcfl\b/i, "football/cfl", "CFL"], [/KXUFLGAME|\bufl\b/i, "football/ufl", "UFL"], [/KXNCAAWBGAME|women's college basketball/i, "basketball/womens-college-basketball", "NCAAW"]];
 function detectLeague(m) {
   const id = String(m.id || "");
   // A multivariate combo (native parlay) spans several games — no single
@@ -1399,7 +1416,20 @@ const ODDS_SPORT = {
   "soccer/uefa.champions": "soccer_uefa_champs_league",
   "soccer/esp.1": "soccer_spain_la_liga",
   "soccer/ita.1": "soccer_italy_serie_a",
-  "soccer/ger.1": "soccer_germany_bundesliga"
+  "soccer/ger.1": "soccer_germany_bundesliga",
+  "soccer/fra.1": "soccer_france_ligue_one",
+  "soccer/mex.1": "soccer_mexico_ligamx",
+  "soccer/uefa.europa": "soccer_uefa_europa_league",
+  "soccer/ned.1": "soccer_netherlands_eredivisie",
+  "soccer/por.1": "soccer_portugal_primeira_liga",
+  "soccer/bra.1": "soccer_brazil_campeonato",
+  "soccer/eng.2": "soccer_efl_champ",
+  "soccer/tur.1": "soccer_turkey_super_league",
+  "soccer/bel.1": "soccer_belgium_first_div",
+  "soccer/fifa.world": "soccer_fifa_world_cup",
+  "football/cfl": "americanfootball_cfl",
+  "football/ufl": "americanfootball_ufl",
+  "basketball/womens-college-basketball": "basketball_wncaab"
 };
 const ODDS_FRESH_MS = 10 * 60 * 1000; // a quote older than this is not "live"
 let oddsQuota = null; // {remaining, at} for the UI chip
@@ -4585,7 +4615,7 @@ async function mapLimit(items, limit, fn) {
 }
 
 // The Kalshi game series we can price. Each maps to an ESPN sport path.
-const GAME_SERIES = [["KXNBAGAME", "basketball/nba", "NBA"], ["KXWNBAGAME", "basketball/wnba", "WNBA"], ["KXMLBGAME", "baseball/mlb", "MLB"], ["KXNFLGAME", "football/nfl", "NFL"], ["KXNHLGAME", "hockey/nhl", "NHL"], ["KXCFBGAME", "football/college-football", "NCAAF"], ["KXNCAAFGAME", "football/college-football", "NCAAF"], ["KXCBBGAME", "basketball/mens-college-basketball", "NCAAB"], ["KXNCAABGAME", "basketball/mens-college-basketball", "NCAAB"], ["KXATPMATCH", "tennis/atp", "ATP"], ["KXWTAMATCH", "tennis/wta", "WTA"], ["KXUFCFIGHT", "mma/ufc", "UFC"], ["KXEPLGAME", "soccer/eng.1", "EPL"], ["KXMLSGAME", "soccer/usa.1", "MLS"], ["KXUCLGAME", "soccer/uefa.champions", "UCL"], ["KXLALIGAGAME", "soccer/esp.1", "La Liga"], ["KXSERIEAGAME", "soccer/ita.1", "Serie A"], ["KXBUNDESLIGAGAME", "soccer/ger.1", "Bundesliga"]];
+const GAME_SERIES = [["KXNBAGAME", "basketball/nba", "NBA"], ["KXWNBAGAME", "basketball/wnba", "WNBA"], ["KXMLBGAME", "baseball/mlb", "MLB"], ["KXNFLGAME", "football/nfl", "NFL"], ["KXNHLGAME", "hockey/nhl", "NHL"], ["KXCFBGAME", "football/college-football", "NCAAF"], ["KXNCAAFGAME", "football/college-football", "NCAAF"], ["KXCBBGAME", "basketball/mens-college-basketball", "NCAAB"], ["KXNCAABGAME", "basketball/mens-college-basketball", "NCAAB"], ["KXATPMATCH", "tennis/atp", "ATP"], ["KXWTAMATCH", "tennis/wta", "WTA"], ["KXUFCFIGHT", "mma/ufc", "UFC"], ["KXEPLGAME", "soccer/eng.1", "EPL"], ["KXMLSGAME", "soccer/usa.1", "MLS"], ["KXUCLGAME", "soccer/uefa.champions", "UCL"], ["KXLALIGAGAME", "soccer/esp.1", "La Liga"], ["KXSERIEAGAME", "soccer/ita.1", "Serie A"], ["KXBUNDESLIGAGAME", "soccer/ger.1", "Bundesliga"], ["KXLIGUE1GAME", "soccer/fra.1", "Ligue 1"], ["KXLIGAMXGAME", "soccer/mex.1", "Liga MX"], ["KXUELGAME", "soccer/uefa.europa", "Europa League"], ["KXUECLGAME", "soccer/uefa.europa.conf", "Conference League"], ["KXEREDIVISIEGAME", "soccer/ned.1", "Eredivisie"], ["KXLIGAPORTUGALGAME", "soccer/por.1", "Liga Portugal"], ["KXBRASILEIROGAME", "soccer/bra.1", "Brasileirao"], ["KXEFLCHAMPIONSHIPGAME", "soccer/eng.2", "EFL Championship"], ["KXSUPERLIGGAME", "soccer/tur.1", "Super Lig"], ["KXBELGIANPLGAME", "soccer/bel.1", "Belgian Pro League"], ["KXNWSLGAME", "soccer/usa.nwsl", "NWSL"], ["KXLEAGUESCUPGAME", "soccer/concacaf.leagues.cup", "Leagues Cup"], ["KXSAUDIPLGAME", "soccer/ksa.1", "Saudi Pro League"], ["KXWCGAME", "soccer/fifa.world", "World Cup"], ["KXCFLGAME", "football/cfl", "CFL"], ["KXUFLGAME", "football/ufl", "UFL"], ["KXNCAAWBGAME", "basketball/womens-college-basketball", "NCAAW"]];
 
 // A Kalshi game ticker embeds the date: …-26AUG112210KCLAD-LAD -> 20260811
 // (some series carry a time after the day, some don't).
