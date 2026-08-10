@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.fast15";
+const BUILD = "2026-08-10.exact-links";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -519,7 +519,24 @@ const SERIES_SLUG = {
   KXWCGAME: "world-cup-game",
   KXCFLGAME: "cfl-game",
   KXUFLGAME: "ufl-football-game",
-  KXNCAAWBGAME: "college-basketball-womens-game"
+  KXNCAAWBGAME: "college-basketball-womens-game",
+  // Commodity + crypto series (slugified series titles from the API)
+  KXBTC15M: "bitcoin-price-up-down",
+  KXETH15M: "eth-15m-price-up-down",
+  KXSOL15M: "solana-15-minutes",
+  KXXRP15M: "xrp-15-minute",
+  KXDOGE15M: "dogecoin-15-minute",
+  KXWTI: "wti-oil-on-day",
+  KXWTIW: "wti-oil-weekly-range",
+  KXBRENTD: "brent-oil-daily",
+  KXGOLDD: "gold-daily",
+  KXGOLDW: "gold-weekly-price",
+  KXSILVERD: "silver-daily",
+  KXSILVERW: "silver-weekly-price",
+  KXBTCD: "bitcoin-price-above-below",
+  KXETHD: "ethereum-price-above-below",
+  KXBTC: "bitcoin-range",
+  KXETH: "ethereum-range"
 };
 function kalshiEventLink(ticker) {
   const parts = String(ticker || "").split("-");
@@ -5751,7 +5768,7 @@ function Commodities({
       className: "pick-actions"
     }, /*#__PURE__*/React.createElement("a", {
       className: "chip",
-      href: "https://kalshi.com/markets/" + f.a.series.toLowerCase(),
+      href: kalshiEventLink(f.m.id),
       target: "_blank",
       rel: "noreferrer"
     }, "trade \u2197")));
@@ -5827,7 +5844,7 @@ function Commodities({
       className: "pick-actions"
     }, /*#__PURE__*/React.createElement("a", {
       className: "chip",
-      href: "https://kalshi.com/markets/" + r.asset.series.toLowerCase(),
+      href: kalshiEventLink(r.ladder[0].m.id),
       target: "_blank",
       rel: "noreferrer"
     }, "trade \u2197"))), /*#__PURE__*/React.createElement("details", {

@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.fast15";
+const BUILD = "2026-08-10.exact-links";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -514,6 +514,14 @@ const SERIES_SLUG = {
   KXSAUDIPLGAME: "saudi-pro-league-game", KXWCGAME: "world-cup-game",
   KXCFLGAME: "cfl-game", KXUFLGAME: "ufl-football-game",
   KXNCAAWBGAME: "college-basketball-womens-game",
+  // Commodity + crypto series (slugified series titles from the API)
+  KXBTC15M: "bitcoin-price-up-down", KXETH15M: "eth-15m-price-up-down",
+  KXSOL15M: "solana-15-minutes", KXXRP15M: "xrp-15-minute", KXDOGE15M: "dogecoin-15-minute",
+  KXWTI: "wti-oil-on-day", KXWTIW: "wti-oil-weekly-range", KXBRENTD: "brent-oil-daily",
+  KXGOLDD: "gold-daily", KXGOLDW: "gold-weekly-price",
+  KXSILVERD: "silver-daily", KXSILVERW: "silver-weekly-price",
+  KXBTCD: "bitcoin-price-above-below", KXETHD: "ethereum-price-above-below",
+  KXBTC: "bitcoin-range", KXETH: "ethereum-range",
 };
 function kalshiEventLink(ticker) {
   const parts = String(ticker || "").split("-");
@@ -4481,7 +4489,7 @@ function Commodities({ onPick }) {
                   <span className="lbl">{conf >= 55 ? (up ? "UP" : "DOWN") : "TOSS-UP"}</span>
                 </span>
                 <span className="pick-actions">
-                  <a className="chip" href={"https://kalshi.com/markets/" + f.a.series.toLowerCase()} target="_blank" rel="noreferrer">trade ↗</a>
+                  <a className="chip" href={kalshiEventLink(f.m.id)} target="_blank" rel="noreferrer">trade ↗</a>
                 </span>
               </div>
             );
@@ -4528,7 +4536,7 @@ function Commodities({ onPick }) {
                 <span className="lbl">{tr.t}</span>
               </span>
               <span className="pick-actions">
-                <a className="chip" href={"https://kalshi.com/markets/" + r.asset.series.toLowerCase()} target="_blank" rel="noreferrer">trade ↗</a>
+                <a className="chip" href={kalshiEventLink(r.ladder[0].m.id)} target="_blank" rel="noreferrer">trade ↗</a>
               </span>
             </div>
 
