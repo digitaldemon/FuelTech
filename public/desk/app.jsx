@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.wager-calls";
+const BUILD = "2026-08-10.prediction-app";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -2106,14 +2106,14 @@ function App() {
             <div className="eyebrow">Kalshi · Polymarket</div>
             <h1 className="cd-title">Contract <span>Desk</span></h1>
             <p className="help" style={{ maxWidth: 460 }}>
-              Pick a market, and I'll research it nine ways and tell you whether the price looks wrong.
+              I predict the outcomes of Kalshi and Polymarket events — games, totals, commodities, anything listed — and grade every prediction against what actually happens.
             </p>
           </div>
           <div className="eyebrow">{today()}</div>
         </header>
 
         <nav className="tabs">
-          {[["picks", "Today's picks"], ["analyze", "Analyze a market"], ["parlay", "Parlays"], ["commodities", "Commodities"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "How I'm doing"]].map(([k, l]) => (
+          {[["picks", "Predictions"], ["analyze", "Ask an event"], ["parlay", "Combos"], ["commodities", "Commodities"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "Accuracy"]].map(([k, l]) => (
             <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
           ))}
         </nav>
@@ -2133,7 +2133,7 @@ function App() {
           priced about right, so a big gap usually means I'm missing a fact rather than that you've found free money.
           The decisions are yours.
         </p>
-        <p className="foot" style={{ opacity: .5, marginTop: 8 }}>Build {BUILD} · Today&apos;s picks first</p>
+        <p className="foot" style={{ opacity: .5, marginTop: 8 }}>Build {BUILD} · a prediction engine, graded daily</p>
       </div>
     </div>
   );
@@ -2985,7 +2985,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
               <p className="help">
                 Every bar is a chance out of 100 — longer bar, more likely. A contract pays 100c if it happens, so
                 a {market.price.toFixed(0)}c price means the market sees about a {market.price.toFixed(0)}% chance.
-                When my gold bar ends past the blue one, the bet is underpriced; short of it, overpriced.
+                Each bar is an independent read on the same outcome — when they agree, trust the number; when they split, dig in.
               </p>
             )}
           </div>
@@ -3011,23 +3011,21 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                     <div key={r.m.id} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
                       <span className="who" style={{ fontSize: 13.5 }}>
                         {r.m.name}
-                        {isBest && <span className="srcchip" style={{ marginLeft: 8, color: "var(--moss)", borderColor: "rgba(127,185,139,.5)" }}>BEST PICK</span>}
+                        {isBest && <span className="srcchip" style={{ marginLeft: 8, color: "var(--moss)", borderColor: "rgba(127,185,139,.5)" }}>MOST LIKELY</span>}
                         <span className="sub" style={{ display: "block" }}>
                           {r.prob != null ? "true odds ~" + r.prob.toFixed(0) + "% (" + r.src + ")" : "no model read"}
                           {r.entry != null ? " · costs " + r.entry.toFixed(0) + "c" : ""}
                         </span>
                       </span>
-                      <span className="pts" style={{ fontSize: 14, color: r.net == null ? "var(--dim)" : r.net > 0 ? "var(--moss)" : "var(--dim)" }}>
-                        {r.net == null ? "—" : (r.net > 0 ? "+" : "") + r.net.toFixed(1) + "c"}
-                        <span className="sub" style={{ display: "block" }}>edge after fees</span>
+                      <span className="pts" style={{ fontSize: 15, color: r.prob != null && r.prob >= 55 ? "var(--moss)" : "var(--dim)" }}>
+                        {r.prob != null ? r.prob.toFixed(0) + "%" : "—"}
+                        <span className="sub" style={{ display: "block" }}>chance it happens</span>
                       </span>
                     </div>
                   );
                 })}
                 <p className="help" style={{ marginTop: 10 }}>
-                  {eb.best && eb.best.net > 0
-                    ? "Positive edge after fees on " + eb.best.m.name + " — that's the wager this event offers. Run the full analysis to stress-test it."
-                    : "No side of this event is underpriced right now — the favorite is priced like the favorite. Betting the winner here pays fair odds at best."}
+                  {"Every outcome on this event with its predicted chance — the percentages come from the live models and the de-vigged book consensus. Run the full analysis on any of them to stress-test the read."}
                 </p>
               </div>
             );
@@ -3140,12 +3138,11 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                     <>
                       Everything the checks found says <strong>{predName}</strong> — a {predProb.toFixed(0)}% shot
                       once the market prior, the books, the live feeds and the research are weighed together.{" "}
-                      {result.call !== "PASS" && bs ? (
-                        <>The market hasn't fully caught up, so this one is <strong>also worth betting</strong>:{" "}
-                        {result.call} at {result.entry.toFixed(0)}c, and the call survived a final attempt to knock it down.</>
-                      ) : (
-                        <>The market prices it about the same, so there's no bet here — this is a prediction, not an edge.</>
-                      )}
+                      The market consensus sits at {market.price.toFixed(0)}% —{" "}
+                      {Math.abs(result.fair - market.price) < 4
+                        ? "aligned with this prediction."
+                        : "a real gap from this prediction; the verification pass " +
+                          (result.verify && result.verify.verdict === "CONFIRM" ? "backed my read." : "couldn't settle who's right.")}
                     </>
                   ) : (
                     <>
@@ -3184,21 +3181,12 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
                   <span className="sub">The rest found nothing and were ignored</span>
                 </div>
                 <div className="fig">
-                  <span className="big" style={{ color: result.call !== "PASS" ? "var(--moss)" : "var(--dim)" }}>
-                    {result.call !== "PASS" ? "BET" : "NO BET"}
-                  </span>
-                  <span className="cap">Market check</span>
-                  <span className="sub">{result.call !== "PASS"
-                    ? "The market underrates this — " + (result.netEdge > 0 ? "+" : "") + result.netEdge.toFixed(0) + "c of value after costs"
-                    : "The market already prices it this way (sees " + market.price.toFixed(0) + "%)"}</span>
+                  <span className="big">{market.price.toFixed(0)}%</span>
+                  <span className="cap">Market consensus</span>
+                  <span className="sub">{Math.abs(result.fair - market.price) < 4
+                    ? "The crowd reads it the same way"
+                    : "The crowd sees it differently — one of us is missing something"}</span>
                 </div>
-                {result.call !== "PASS" && (
-                  <div className="fig">
-                    <span className="big">{result.stake.toFixed(1)}%</span>
-                    <span className="cap">Suggested size</span>
-                    <span className="sub">Share of your betting money, half-Kelly — this is what keeps losses smaller than wins</span>
-                  </div>
-                )}
               </div>
 
               {((result.signals && result.signals.length) || result.sampleSpread > 0 || (result.calib && result.calib.active)) && (
@@ -4747,9 +4735,9 @@ function Commodities({ onPick }) {
           </button>
         </div>
         <p className="help" style={{ marginTop: 6 }}>
-          Every open Kalshi price ladder (oil, gold, silver, Bitcoin, Ethereum), each priced by a volatility model
-          on the live spot: the winner is the bucket where the settle most likely lands. The market's own favorite
-          is shown as a cross-check, and <b>deep dive</b> runs all nine finance checks on any strike.
+          Where will each price settle? Every open Kalshi ladder (oil, gold, silver, indexes, crypto) gets a
+          predicted settle bucket from the volatility model, chart strategies, trend, and the market consensus —
+          with the reasoning on the card and <b>deep dive</b> for the full nine-check research read.
         </p>
         {(() => {
           const scored = (record || []).filter((x) => x.type === "commodity" && (x.result === "won" || x.result === "lost"));
@@ -4778,9 +4766,9 @@ function Commodities({ onPick }) {
         <div className="panel" style={{ borderColor: "rgba(228,112,126,.4)" }}>
           <p className="sect" style={{ margin: 0, color: "var(--rose)" }}>⚡ 15-minute markets — crypto, metals, oil, indexes</p>
           <p className="help" style={{ marginTop: 6 }}>
-            Up or down over the current 15-minute window. The call comes from the live price vs the window's
-            opening reference, scaled by this hour's minute-level volatility — refreshed every 15 seconds.
-            These settle on a 60-second average, so late flips near the line can still reverse.
+            My prediction for each live 15-minute window — up or down — from the live price vs the window's opening
+            reference, this hour's minute-level volatility, and the chart strategies. Refreshed every 15 seconds.
+            Windows settle on a 60-second average, so late flips near the line can still reverse.
           </p>
           {fast.map((f) => {
             const up = f.pUp >= 50;
@@ -4801,7 +4789,7 @@ function Commodities({ onPick }) {
                   <span className="meta-line" style={{ display: "block" }}>
                     now {f.spot.toLocaleString(undefined, { maximumFractionDigits: 4 })} vs open {f.ref.toLocaleString(undefined, { maximumFractionDigits: 4 })}{" "}
                     (<b style={{ color: diff >= 0 ? "var(--moss)" : "var(--rose)" }}>{diff >= 0 ? "+" : ""}{diffPct.toFixed(3)}%</b>)
-                    {" · Kalshi YES costs " + (f.m.ask != null ? f.m.ask.toFixed(0) : f.m.price.toFixed(0)) + "c"}
+                    {" · market consensus " + (f.m.ask != null ? f.m.ask.toFixed(0) : f.m.price.toFixed(0)) + "% up"}
                     {f.chg15m != null ? " · prior 15m " + (f.chg15m >= 0 ? "+" : "") + f.chg15m.toFixed(2) + "%" : ""}
                   </span>
                   {f.tech && f.tech.votes.length > 0 && (
@@ -4813,26 +4801,7 @@ function Commodities({ onPick }) {
                       {": "}{f.tech.votes.map((v) => v.k + " " + v.note).join(" · ")}
                     </span>
                   )}
-                  {(() => {
-                    const yesCost = f.m.ask != null ? f.m.ask : f.m.price;
-                    const noCost = f.m.bid != null ? 100 - f.m.bid : 100 - f.m.price;
-                    const eYes = f.pUp - yesCost - takerFee("Kalshi", yesCost);
-                    const eNo = (100 - f.pUp) - noCost - takerFee("Kalshi", noCost);
-                    const w = eYes >= eNo
-                      ? { side: "YES (UP)", cost: yesCost, edge: eYes }
-                      : { side: "NO (DOWN)", cost: noCost, edge: eNo };
-                    return (
-                      <span className="meta-line" style={{ display: "block" }}>
-                        {w.edge >= 4 ? (
-                          <b style={{ color: w.side.startsWith("YES") ? "var(--moss)" : "var(--rose)" }}>
-                            WAGER: BUY {w.side} at {w.cost.toFixed(0)}c · +{w.edge.toFixed(1)}c edge after fees
-                          </b>
-                        ) : (
-                          <span style={{ color: "var(--dim)" }}>no wager — priced within {Math.max(0, w.edge).toFixed(1)}c of the model</span>
-                        )}
-                      </span>
-                    );
-                  })()}
+
                 </span>
                 <span className="tierbox" style={{ color: col, borderColor: col }}>
                   <span className="pct">{conf.toFixed(0)}%</span>
@@ -4845,9 +4814,8 @@ function Commodities({ onPick }) {
             );
           })}
           <p className="help" style={{ marginTop: 8 }}>
-            Honesty note: 15-minute moves are nearly random — even a strong read here is a small edge, and fees
-            eat thin ones. The model only claims UP or DOWN when the window's remaining time makes the current
-            lead hard to reverse.
+            Honesty note: 15-minute moves are nearly random — treat COIN FLIP as the true answer for most windows.
+            The model only claims UP or DOWN when the remaining time makes the current lead hard to reverse.
           </p>
         </div>
       )}
@@ -4924,29 +4892,20 @@ function Commodities({ onPick }) {
               </div>
             )}
             {(() => {
-              const w = bestLadderWager(r.ladder, r.pComb);
-              if (!w) return null;
-              return w.bet ? (
-                <div className="pick t-strong" style={{ marginTop: 10, borderLeftColor: w.side === "YES" ? "var(--moss)" : "var(--rose)" }}>
-                  <span style={{ minWidth: 0, flex: 1 }}>
-                    <span className="who-big" style={{ display: "block" }}>
-                      <span style={{ color: w.side === "YES" ? "var(--moss)" : "var(--rose)" }}>WAGER: BUY {w.side}</span>
-                      {" on Above " + r.asset.unit + w.strike}
-                    </span>
-                    <span className="meta-line" style={{ display: "block" }}>
-                      costs {w.cost.toFixed(0)}c · worth {w.prob.toFixed(0)}% by the full analysis ·
-                      <b style={{ color: "var(--moss)" }}> +{w.edge.toFixed(1)}c edge after fees</b>
-                    </span>
-                  </span>
-                  <span className="pick-actions">
-                    <a className="chip" href={kalshiEventLink(w.m.id)} target="_blank" rel="noreferrer">place it ↗</a>
-                    <button className="chip" onClick={() => onPick(w.m)}>deep dive</button>
-                  </span>
-                </div>
-              ) : (
+              // A second prediction from the same event: any single strike
+              // where the analysis and the market's consensus split hard is
+              // worth naming — as a disagreement, not a trade ticket.
+              let big = null;
+              r.ladder.forEach((x, i) => {
+                const gap = r.pModel[i] - r.pMarket[i];
+                if (!big || Math.abs(gap) > Math.abs(big.gap)) big = { K: x.K, gap, p: r.pModel[i], mkt: r.pMarket[i], m: x.m };
+              });
+              if (!big || Math.abs(big.gap) < 8) return null;
+              return (
                 <p className="help" style={{ marginTop: 8 }}>
-                  <b>No wager here</b> — every strike is priced within {Math.max(0, w.edge).toFixed(1)}c of the analysis after fees.
-                  The prediction stands; the market just already agrees with it.
+                  Sharpest disagreement: <b>Above {r.asset.unit}{big.K}</b> — my analysis says{" "}
+                  <b style={{ color: big.gap > 0 ? "var(--moss)" : "var(--rose)" }}>{big.p.toFixed(0)}%</b>, the market
+                  consensus says {big.mkt.toFixed(0)}%. One of us is wrong; the settle will say who.
                 </p>
               );
             })()}
@@ -5187,9 +5146,7 @@ function Picks({ ledger, onPick }) {
               : p.src === "live-books" ? "in-play books"
               : p.src === "model" ? "model projection"
               : p.books + " book" + (p.books === 1 ? "" : "s") + " consensus"}
-            {" · costs " + p.entry.toFixed(0) + "c"}
-            {dec.bet ? <span style={{ color: "var(--moss)" }}>{" · +"+ n.toFixed(0) + "c value"}</span>
-              : <span>{" · fairly priced"}</span>}
+            {" · market consensus " + p.entry.toFixed(0) + "%"}
             {an && <span style={{ color: an.call.indexOf("BUY") === 0 ? "var(--amber)" : "var(--dim)" }}>
               {" · analysis: " + an.call + (an.confidence ? " (" + an.confidence.toLowerCase() + ")" : "")}</span>}
           </span>
@@ -5240,7 +5197,7 @@ function Picks({ ledger, onPick }) {
     <>
       <div className="panel">
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
-          <p className="sect" style={{ margin: 0 }}>Today's picks — who wins</p>
+          <p className="sect" style={{ margin: 0 }}>Today's predictions — who wins</p>
           <button className="btn btn-ghost btn-sm" onClick={run} disabled={state === "loading"}>
             {state === "loading" ? "Scanning" : "Rescan"}
           </button>
@@ -5319,8 +5276,8 @@ function Picks({ ledger, onPick }) {
                         : t.game}
                       {" · " + t.books + " book" + (t.books === 1 ? "" : "s")}
                       {!t.exact ? " · books' line is " + t.bookLine + " (nearest Kalshi strike shown)" : ""}
-                      {" · over costs " + (overCost != null ? overCost.toFixed(0) + "c" : "—") +
-                        ", under " + (underCost != null ? underCost.toFixed(0) + "c" : "—")}
+                      {" · market: over " + (overCost != null ? overCost.toFixed(0) + "%" : "—") +
+                        ", under " + (underCost != null ? underCost.toFixed(0) + "%" : "—")}
                     </span>
                     {t.pace && (
                       <span className="meta-line" style={{ display: "block" }}>
@@ -5511,7 +5468,7 @@ function Parlay({ onPick }) {
             </button>
           )}
           <button className={"chip" + (view === "locks" ? " on" : "")} onClick={() => setView("locks")}>Most likely winners</button>
-          <button className={"chip" + (view === "value" ? " on" : "")} onClick={() => setView("value")}>Underpriced (for bettors)</button>
+          
           {view === "value" && (
             <span className="chip static">
               min edge{" "}
@@ -5576,18 +5533,7 @@ function Parlay({ onPick }) {
                 <span className="cap">Pays if it hits</span>
                 <span className="sub">$100 → ${(dm.mult * 100).toFixed(0)}</span>
               </div>
-              <div className="fig">
-                <span className="big" style={{ color: dm.ev > 0 ? "var(--moss)" : "var(--rose)" }}>
-                  {dm.ev > 0 ? "+" : ""}{(dm.ev * 100).toFixed(0)}%
-                </span>
-                <span className="cap">Expected value</span>
-                <span className="sub">Per $1 staked</span>
-              </div>
-              <div className="fig">
-                <span className="big">{dm.ev > 0 ? dm.stake.toFixed(1) + "%" : "—"}</span>
-                <span className="cap">Suggested stake</span>
-                <span className="sub">Half-Kelly of bankroll</span>
-              </div>
+
             </div>
             <button className="btn btn-sm" style={{ marginTop: 12 }} onClick={() => setSlip(legs)}>
               Load {dateLabel(date).toLowerCase()}'s parlay into slip
@@ -5625,18 +5571,7 @@ function Parlay({ onPick }) {
               <span className="cap">Pays if it hits</span>
               <span className="sub">$100 returns ${(pm.mult * 100).toFixed(0)} if every leg wins</span>
             </div>
-            <div className="fig">
-              <span className="big" style={{ color: pm.ev > 0 ? "var(--moss)" : "var(--rose)" }}>
-                {pm.ev > 0 ? "+" : ""}{(pm.ev * 100).toFixed(0)}%
-              </span>
-              <span className="cap">Expected value</span>
-              <span className="sub">Per $1 staked, on these probabilities</span>
-            </div>
-            <div className="fig">
-              <span className="big">{pm.ev > 0 ? pm.stake.toFixed(1) + "%" : "—"}</span>
-              <span className="cap">Suggested stake</span>
-              <span className="sub">Half-Kelly of your bankroll; only when EV is positive</span>
-            </div>
+
           </div>
           <p className="help" style={{ marginTop: 12, color: pm.ev > 0 ? "var(--moss)" : "var(--dim)" }}>
             {conflicts.size > 0
@@ -5752,7 +5687,7 @@ function Parlay({ onPick }) {
                   : p.src === "pregame-line" ? " pregame line (no live model)"
                   : p.src === "model" ? " model projection"
                   : " " + (p.books > 1 ? p.books + " books" : "1 book")} · costs {p.entry.toFixed(0)}c
-                {p.edge - (p.fee || 0) >= 2.5 ? <span style={{ color: "var(--moss)" }}> · also underpriced</span> : null}
+                
                 {p.disp > 6 ? " · books split" : ""}
               </span>
             </span>
@@ -5773,8 +5708,8 @@ function Parlay({ onPick }) {
         ))}
         {state === "done" && shown.length > 0 && (
           <p className="help" style={{ marginTop: 12 }}>
-            The percentage is each side's true chance of winning by the de-vigged book consensus and live models —
-            stack the ones you believe in. "Also underpriced" flags picks that are cheap relative to those odds.
+            The percentage is each side's chance of winning by the de-vigged book consensus and live models —
+            stack the outcomes you believe in and the slip shows the chance they all happen.
             Tap <b>deep dive</b> for the full nine-way read on any pick.
           </p>
         )}

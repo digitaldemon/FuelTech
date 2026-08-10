@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.wager-calls";
+const BUILD = "2026-08-10.prediction-app";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -2418,11 +2418,11 @@ function App() {
     style: {
       maxWidth: 460
     }
-  }, "Pick a market, and I'll research it nine ways and tell you whether the price looks wrong.")), /*#__PURE__*/React.createElement("div", {
+  }, "I predict the outcomes of Kalshi and Polymarket events \u2014 games, totals, commodities, anything listed \u2014 and grade every prediction against what actually happens.")), /*#__PURE__*/React.createElement("div", {
     className: "eyebrow"
   }, today())), /*#__PURE__*/React.createElement("nav", {
     className: "tabs"
-  }, [["picks", "Today's picks"], ["analyze", "Analyze a market"], ["parlay", "Parlays"], ["commodities", "Commodities"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "How I'm doing"]].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+  }, [["picks", "Predictions"], ["analyze", "Ask an event"], ["parlay", "Combos"], ["commodities", "Commodities"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "Accuracy"]].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
     key: k,
     className: tab === k ? "on" : "",
     onClick: () => setTab(k)
@@ -2475,7 +2475,7 @@ function App() {
       opacity: .5,
       marginTop: 8
     }
-  }, "Build ", BUILD, " \xB7 Today's picks first")));
+  }, "Build ", BUILD, " \xB7 a prediction engine, graded daily")));
 }
 
 /* ---------------- Analyze ---------------- */
@@ -3643,7 +3643,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
     }
   }, result.fair.toFixed(0), "% chance"), " \u2014 the market sees ", market.price.toFixed(0), "%, so the OTHER side is the likelier outcome.", result.call === "PASS" ? " But after costs the gap is too small to bet — see the verdict below." : " My call is below.")) : /*#__PURE__*/React.createElement("p", {
     className: "help"
-  }, "Every bar is a chance out of 100 \u2014 longer bar, more likely. A contract pays 100c if it happens, so a ", market.price.toFixed(0), "c price means the market sees about a ", market.price.toFixed(0), "% chance. When my gold bar ends past the blue one, the bet is underpriced; short of it, overpriced.")), (() => {
+  }, "Every bar is a chance out of 100 \u2014 longer bar, more likely. A contract pays 100c if it happens, so a ", market.price.toFixed(0), "c price means the market sees about a ", market.price.toFixed(0), "% chance. Each bar is an independent read on the same outcome \u2014 when they agree, trust the number; when they split, dig in.")), (() => {
     if (legs) return null; // parlays get the legs panel instead
     const eb = eventBoard(book, live);
     if (!eb || !eb.winner && !eb.rows.some(r => r.prob != null)) return null;
@@ -3687,7 +3687,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
           color: "var(--moss)",
           borderColor: "rgba(127,185,139,.5)"
         }
-      }, "BEST PICK"), /*#__PURE__*/React.createElement("span", {
+      }, "MOST LIKELY"), /*#__PURE__*/React.createElement("span", {
         className: "sub",
         style: {
           display: "block"
@@ -3695,21 +3695,21 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
       }, r.prob != null ? "true odds ~" + r.prob.toFixed(0) + "% (" + r.src + ")" : "no model read", r.entry != null ? " · costs " + r.entry.toFixed(0) + "c" : "")), /*#__PURE__*/React.createElement("span", {
         className: "pts",
         style: {
-          fontSize: 14,
-          color: r.net == null ? "var(--dim)" : r.net > 0 ? "var(--moss)" : "var(--dim)"
+          fontSize: 15,
+          color: r.prob != null && r.prob >= 55 ? "var(--moss)" : "var(--dim)"
         }
-      }, r.net == null ? "—" : (r.net > 0 ? "+" : "") + r.net.toFixed(1) + "c", /*#__PURE__*/React.createElement("span", {
+      }, r.prob != null ? r.prob.toFixed(0) + "%" : "—", /*#__PURE__*/React.createElement("span", {
         className: "sub",
         style: {
           display: "block"
         }
-      }, "edge after fees")));
+      }, "chance it happens")));
     }), /*#__PURE__*/React.createElement("p", {
       className: "help",
       style: {
         marginTop: 10
       }
-    }, eb.best && eb.best.net > 0 ? "Positive edge after fees on " + eb.best.m.name + " — that's the wager this event offers. Run the full analysis to stress-test it." : "No side of this event is underpriced right now — the favorite is priced like the favorite. Betting the winner here pays fair odds at best."));
+    }, "Every outcome on this event with its predicted chance — the percentages come from the live models and the de-vigged book consensus. Run the full analysis on any of them to stress-test the read."));
   })(), (phase === "ready" || phase === "done") && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "chips"
   }, /*#__PURE__*/React.createElement("span", {
@@ -3875,7 +3875,7 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
       className: "lbl"
     }, predProb >= 55 ? tier.t.replace(" CALL", "") : "TOSS-UP"))), /*#__PURE__*/React.createElement("p", {
       className: "answer"
-    }, predProb >= 55 ? /*#__PURE__*/React.createElement(React.Fragment, null, "Everything the checks found says ", /*#__PURE__*/React.createElement("strong", null, predName), " \u2014 a ", predProb.toFixed(0), "% shot once the market prior, the books, the live feeds and the research are weighed together.", " ", result.call !== "PASS" && bs ? /*#__PURE__*/React.createElement(React.Fragment, null, "The market hasn't fully caught up, so this one is ", /*#__PURE__*/React.createElement("strong", null, "also worth betting"), ":", " ", result.call, " at ", result.entry.toFixed(0), "c, and the call survived a final attempt to knock it down.") : /*#__PURE__*/React.createElement(React.Fragment, null, "The market prices it about the same, so there's no bet here \u2014 this is a prediction, not an edge.")) : /*#__PURE__*/React.createElement(React.Fragment, null, "The evidence splits almost evenly (", result.fair.toFixed(0), "% yes / ", (100 - result.fair).toFixed(0), "% no) \u2014 anyone claiming certainty on this one is guessing.", result.verify && result.verify.verdict === "REFUTE" ? " The final check also killed the trade case." : "")));
+    }, predProb >= 55 ? /*#__PURE__*/React.createElement(React.Fragment, null, "Everything the checks found says ", /*#__PURE__*/React.createElement("strong", null, predName), " \u2014 a ", predProb.toFixed(0), "% shot once the market prior, the books, the live feeds and the research are weighed together.", " ", "The market consensus sits at ", market.price.toFixed(0), "% \u2014", " ", Math.abs(result.fair - market.price) < 4 ? "aligned with this prediction." : "a real gap from this prediction; the verification pass " + (result.verify && result.verify.verdict === "CONFIRM" ? "backed my read." : "couldn't settle who's right.")) : /*#__PURE__*/React.createElement(React.Fragment, null, "The evidence splits almost evenly (", result.fair.toFixed(0), "% yes / ", (100 - result.fair).toFixed(0), "% no) \u2014 anyone claiming certainty on this one is guessing.", result.verify && result.verify.verdict === "REFUTE" ? " The final check also killed the trade case." : "")));
   })(), result.thesis && /*#__PURE__*/React.createElement("p", {
     className: "thesis"
   }, result.thesis), result.verify && /*#__PURE__*/React.createElement("p", {
@@ -3919,23 +3919,12 @@ Return ONLY: {"index":<number or null>,"caveat":"<max 25 words on any resolution
   }, "The rest found nothing and were ignored")), /*#__PURE__*/React.createElement("div", {
     className: "fig"
   }, /*#__PURE__*/React.createElement("span", {
-    className: "big",
-    style: {
-      color: result.call !== "PASS" ? "var(--moss)" : "var(--dim)"
-    }
-  }, result.call !== "PASS" ? "BET" : "NO BET"), /*#__PURE__*/React.createElement("span", {
-    className: "cap"
-  }, "Market check"), /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, result.call !== "PASS" ? "The market underrates this — " + (result.netEdge > 0 ? "+" : "") + result.netEdge.toFixed(0) + "c of value after costs" : "The market already prices it this way (sees " + market.price.toFixed(0) + "%)")), result.call !== "PASS" && /*#__PURE__*/React.createElement("div", {
-    className: "fig"
-  }, /*#__PURE__*/React.createElement("span", {
     className: "big"
-  }, result.stake.toFixed(1), "%"), /*#__PURE__*/React.createElement("span", {
+  }, market.price.toFixed(0), "%"), /*#__PURE__*/React.createElement("span", {
     className: "cap"
-  }, "Suggested size"), /*#__PURE__*/React.createElement("span", {
+  }, "Market consensus"), /*#__PURE__*/React.createElement("span", {
     className: "sub"
-  }, "Share of your betting money, half-Kelly \u2014 this is what keeps losses smaller than wins"))), (result.signals && result.signals.length || result.sampleSpread > 0 || result.calib && result.calib.active) && /*#__PURE__*/React.createElement("details", {
+  }, Math.abs(result.fair - market.price) < 4 ? "The crowd reads it the same way" : "The crowd sees it differently — one of us is missing something"))), (result.signals && result.signals.length || result.sampleSpread > 0 || result.calib && result.calib.active) && /*#__PURE__*/React.createElement("details", {
     className: "fold"
   }, /*#__PURE__*/React.createElement("summary", null, "How the probability was built"), /*#__PURE__*/React.createElement("div", {
     className: "meta",
@@ -6145,7 +6134,7 @@ function Commodities({
     style: {
       marginTop: 6
     }
-  }, "Every open Kalshi price ladder (oil, gold, silver, Bitcoin, Ethereum), each priced by a volatility model on the live spot: the winner is the bucket where the settle most likely lands. The market's own favorite is shown as a cross-check, and ", /*#__PURE__*/React.createElement("b", null, "deep dive"), " runs all nine finance checks on any strike."), (() => {
+  }, "Where will each price settle? Every open Kalshi ladder (oil, gold, silver, indexes, crypto) gets a predicted settle bucket from the volatility model, chart strategies, trend, and the market consensus \u2014 with the reasoning on the card and ", /*#__PURE__*/React.createElement("b", null, "deep dive"), " for the full nine-check research read."), (() => {
     const scored = (record || []).filter(x => x.type === "commodity" && (x.result === "won" || x.result === "lost"));
     const w = scored.filter(x => x.result === "won").length;
     return (at || scored.length > 0) && /*#__PURE__*/React.createElement("div", {
@@ -6191,7 +6180,7 @@ function Commodities({
     style: {
       marginTop: 6
     }
-  }, "Up or down over the current 15-minute window. The call comes from the live price vs the window's opening reference, scaled by this hour's minute-level volatility \u2014 refreshed every 15 seconds. These settle on a 60-second average, so late flips near the line can still reverse."), fast.map(f => {
+  }, "My prediction for each live 15-minute window \u2014 up or down \u2014 from the live price vs the window's opening reference, this hour's minute-level volatility, and the chart strategies. Refreshed every 15 seconds. Windows settle on a 60-second average, so late flips near the line can still reverse."), fast.map(f => {
     const up = f.pUp >= 50;
     const conf = up ? f.pUp : 100 - f.pUp;
     const col = conf >= 68 ? "var(--moss)" : conf >= 55 ? "var(--amber)" : "var(--dim)";
@@ -6235,7 +6224,7 @@ function Commodities({
       style: {
         color: diff >= 0 ? "var(--moss)" : "var(--rose)"
       }
-    }, diff >= 0 ? "+" : "", diffPct.toFixed(3), "%"), ")", " · Kalshi YES costs " + (f.m.ask != null ? f.m.ask.toFixed(0) : f.m.price.toFixed(0)) + "c", f.chg15m != null ? " · prior 15m " + (f.chg15m >= 0 ? "+" : "") + f.chg15m.toFixed(2) + "%" : ""), f.tech && f.tech.votes.length > 0 && /*#__PURE__*/React.createElement("span", {
+    }, diff >= 0 ? "+" : "", diffPct.toFixed(3), "%"), ")", " · market consensus " + (f.m.ask != null ? f.m.ask.toFixed(0) : f.m.price.toFixed(0)) + "% up", f.chg15m != null ? " · prior 15m " + (f.chg15m >= 0 ? "+" : "") + f.chg15m.toFixed(2) + "%" : ""), f.tech && f.tech.votes.length > 0 && /*#__PURE__*/React.createElement("span", {
       className: "meta-line",
       style: {
         display: "block"
@@ -6244,35 +6233,7 @@ function Commodities({
       style: {
         color: f.tech.lean === "UP" ? "var(--moss)" : f.tech.lean === "DOWN" ? "var(--rose)" : "var(--dim)"
       }
-    }, f.tech.lean === "NEUTRAL" ? "neutral" : "lean " + f.tech.lean), ": ", f.tech.votes.map(v => v.k + " " + v.note).join(" · ")), (() => {
-      const yesCost = f.m.ask != null ? f.m.ask : f.m.price;
-      const noCost = f.m.bid != null ? 100 - f.m.bid : 100 - f.m.price;
-      const eYes = f.pUp - yesCost - takerFee("Kalshi", yesCost);
-      const eNo = 100 - f.pUp - noCost - takerFee("Kalshi", noCost);
-      const w = eYes >= eNo ? {
-        side: "YES (UP)",
-        cost: yesCost,
-        edge: eYes
-      } : {
-        side: "NO (DOWN)",
-        cost: noCost,
-        edge: eNo
-      };
-      return /*#__PURE__*/React.createElement("span", {
-        className: "meta-line",
-        style: {
-          display: "block"
-        }
-      }, w.edge >= 4 ? /*#__PURE__*/React.createElement("b", {
-        style: {
-          color: w.side.startsWith("YES") ? "var(--moss)" : "var(--rose)"
-        }
-      }, "WAGER: BUY ", w.side, " at ", w.cost.toFixed(0), "c \xB7 +", w.edge.toFixed(1), "c edge after fees") : /*#__PURE__*/React.createElement("span", {
-        style: {
-          color: "var(--dim)"
-        }
-      }, "no wager \u2014 priced within ", Math.max(0, w.edge).toFixed(1), "c of the model"));
-    })()), /*#__PURE__*/React.createElement("span", {
+    }, f.tech.lean === "NEUTRAL" ? "neutral" : "lean " + f.tech.lean), ": ", f.tech.votes.map(v => v.k + " " + v.note).join(" · "))), /*#__PURE__*/React.createElement("span", {
       className: "tierbox",
       style: {
         color: col,
@@ -6295,7 +6256,7 @@ function Commodities({
     style: {
       marginTop: 8
     }
-  }, "Honesty note: 15-minute moves are nearly random \u2014 even a strong read here is a small edge, and fees eat thin ones. The model only claims UP or DOWN when the window's remaining time makes the current lead hard to reverse.")), rows.map((r, ri) => {
+  }, "Honesty note: 15-minute moves are nearly random \u2014 treat COIN FLIP as the true answer for most windows. The model only claims UP or DOWN when the remaining time makes the current lead hard to reverse.")), rows.map((r, ri) => {
     const tr = tierFor(r.winProb);
     const hrs = r.days * 24;
     return /*#__PURE__*/React.createElement("div", {
@@ -6410,53 +6371,31 @@ function Commodities({
         color: v.dir > 0 ? "var(--moss)" : "var(--rose)"
       }
     }, v.k, ": ", v.note))), (() => {
-      const w = bestLadderWager(r.ladder, r.pComb);
-      if (!w) return null;
-      return w.bet ? /*#__PURE__*/React.createElement("div", {
-        className: "pick t-strong",
-        style: {
-          marginTop: 10,
-          borderLeftColor: w.side === "YES" ? "var(--moss)" : "var(--rose)"
-        }
-      }, /*#__PURE__*/React.createElement("span", {
-        style: {
-          minWidth: 0,
-          flex: 1
-        }
-      }, /*#__PURE__*/React.createElement("span", {
-        className: "who-big",
-        style: {
-          display: "block"
-        }
-      }, /*#__PURE__*/React.createElement("span", {
-        style: {
-          color: w.side === "YES" ? "var(--moss)" : "var(--rose)"
-        }
-      }, "WAGER: BUY ", w.side), " on Above " + r.asset.unit + w.strike), /*#__PURE__*/React.createElement("span", {
-        className: "meta-line",
-        style: {
-          display: "block"
-        }
-      }, "costs ", w.cost.toFixed(0), "c \xB7 worth ", w.prob.toFixed(0), "% by the full analysis \xB7", /*#__PURE__*/React.createElement("b", {
-        style: {
-          color: "var(--moss)"
-        }
-      }, " +", w.edge.toFixed(1), "c edge after fees"))), /*#__PURE__*/React.createElement("span", {
-        className: "pick-actions"
-      }, /*#__PURE__*/React.createElement("a", {
-        className: "chip",
-        href: kalshiEventLink(w.m.id),
-        target: "_blank",
-        rel: "noreferrer"
-      }, "place it \u2197"), /*#__PURE__*/React.createElement("button", {
-        className: "chip",
-        onClick: () => onPick(w.m)
-      }, "deep dive"))) : /*#__PURE__*/React.createElement("p", {
+      // A second prediction from the same event: any single strike
+      // where the analysis and the market's consensus split hard is
+      // worth naming — as a disagreement, not a trade ticket.
+      let big = null;
+      r.ladder.forEach((x, i) => {
+        const gap = r.pModel[i] - r.pMarket[i];
+        if (!big || Math.abs(gap) > Math.abs(big.gap)) big = {
+          K: x.K,
+          gap,
+          p: r.pModel[i],
+          mkt: r.pMarket[i],
+          m: x.m
+        };
+      });
+      if (!big || Math.abs(big.gap) < 8) return null;
+      return /*#__PURE__*/React.createElement("p", {
         className: "help",
         style: {
           marginTop: 8
         }
-      }, /*#__PURE__*/React.createElement("b", null, "No wager here"), " \u2014 every strike is priced within ", Math.max(0, w.edge).toFixed(1), "c of the analysis after fees. The prediction stands; the market just already agrees with it.");
+      }, "Sharpest disagreement: ", /*#__PURE__*/React.createElement("b", null, "Above ", r.asset.unit, big.K), " \u2014 my analysis says", " ", /*#__PURE__*/React.createElement("b", {
+        style: {
+          color: big.gap > 0 ? "var(--moss)" : "var(--rose)"
+        }
+      }, big.p.toFixed(0), "%"), ", the market consensus says ", big.mkt.toFixed(0), "%. One of us is wrong; the settle will say who.");
     })(), /*#__PURE__*/React.createElement(ResearchBrief, {
       asset: r.asset,
       spot: r.spot,
@@ -6775,11 +6714,7 @@ function Picks({
       style: {
         color: "var(--bone)"
       }
-    }, p.sides.map(s => s.abbr + " " + (s.score != null ? s.score : "-")).join(" · ") + (p.detail ? " · " + p.detail : "")) : p.game, " · ", p.src === "live" ? "live model" : p.src === "live-books" ? "in-play books" : p.src === "model" ? "model projection" : p.books + " book" + (p.books === 1 ? "" : "s") + " consensus", " · costs " + p.entry.toFixed(0) + "c", dec.bet ? /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: "var(--moss)"
-      }
-    }, " · +" + n.toFixed(0) + "c value") : /*#__PURE__*/React.createElement("span", null, " · fairly priced"), an && /*#__PURE__*/React.createElement("span", {
+    }, p.sides.map(s => s.abbr + " " + (s.score != null ? s.score : "-")).join(" · ") + (p.detail ? " · " + p.detail : "")) : p.game, " · ", p.src === "live" ? "live model" : p.src === "live-books" ? "in-play books" : p.src === "model" ? "model projection" : p.books + " book" + (p.books === 1 ? "" : "s") + " consensus", " · market consensus " + p.entry.toFixed(0) + "%", an && /*#__PURE__*/React.createElement("span", {
       style: {
         color: an.call.indexOf("BUY") === 0 ? "var(--amber)" : "var(--dim)"
       }
@@ -6848,7 +6783,7 @@ function Picks({
     style: {
       margin: 0
     }
-  }, "Today's picks \u2014 who wins"), /*#__PURE__*/React.createElement("button", {
+  }, "Today's predictions \u2014 who wins"), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost btn-sm",
     onClick: run,
     disabled: state === "loading"
@@ -6958,7 +6893,7 @@ function Picks({
       style: {
         color: "var(--bone)"
       }
-    }, t.sides.map(s => s.abbr + " " + (s.score != null ? s.score : "-")).join(" · ") + (t.detail ? " · " + t.detail : "")) : t.game, " · " + t.books + " book" + (t.books === 1 ? "" : "s"), !t.exact ? " · books' line is " + t.bookLine + " (nearest Kalshi strike shown)" : "", " · over costs " + (overCost != null ? overCost.toFixed(0) + "c" : "—") + ", under " + (underCost != null ? underCost.toFixed(0) + "c" : "—")), t.pace && /*#__PURE__*/React.createElement("span", {
+    }, t.sides.map(s => s.abbr + " " + (s.score != null ? s.score : "-")).join(" · ") + (t.detail ? " · " + t.detail : "")) : t.game, " · " + t.books + " book" + (t.books === 1 ? "" : "s"), !t.exact ? " · books' line is " + t.bookLine + " (nearest Kalshi strike shown)" : "", " · market: over " + (overCost != null ? overCost.toFixed(0) + "%" : "—") + ", under " + (underCost != null ? underCost.toFixed(0) + "%" : "—")), t.pace && /*#__PURE__*/React.createElement("span", {
       className: "meta-line",
       style: {
         display: "block"
@@ -7224,10 +7159,7 @@ function Parlay({
   }, "\u25CF Live now (", liveCount, ")"), /*#__PURE__*/React.createElement("button", {
     className: "chip" + (view === "locks" ? " on" : ""),
     onClick: () => setView("locks")
-  }, "Most likely winners"), /*#__PURE__*/React.createElement("button", {
-    className: "chip" + (view === "value" ? " on" : ""),
-    onClick: () => setView("value")
-  }, "Underpriced (for bettors)"), view === "value" && /*#__PURE__*/React.createElement("span", {
+  }, "Most likely winners"), view === "value" && /*#__PURE__*/React.createElement("span", {
     className: "chip static"
   }, "min edge", " ", /*#__PURE__*/React.createElement("input", {
     type: "number",
@@ -7380,26 +7312,7 @@ function Parlay({
       className: "cap"
     }, "Pays if it hits"), /*#__PURE__*/React.createElement("span", {
       className: "sub"
-    }, "$100 \u2192 $", (dm.mult * 100).toFixed(0))), /*#__PURE__*/React.createElement("div", {
-      className: "fig"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "big",
-      style: {
-        color: dm.ev > 0 ? "var(--moss)" : "var(--rose)"
-      }
-    }, dm.ev > 0 ? "+" : "", (dm.ev * 100).toFixed(0), "%"), /*#__PURE__*/React.createElement("span", {
-      className: "cap"
-    }, "Expected value"), /*#__PURE__*/React.createElement("span", {
-      className: "sub"
-    }, "Per $1 staked")), /*#__PURE__*/React.createElement("div", {
-      className: "fig"
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "big"
-    }, dm.ev > 0 ? dm.stake.toFixed(1) + "%" : "—"), /*#__PURE__*/React.createElement("span", {
-      className: "cap"
-    }, "Suggested stake"), /*#__PURE__*/React.createElement("span", {
-      className: "sub"
-    }, "Half-Kelly of bankroll"))), /*#__PURE__*/React.createElement("button", {
+    }, "$100 \u2192 $", (dm.mult * 100).toFixed(0)))), /*#__PURE__*/React.createElement("button", {
       className: "btn btn-sm",
       style: {
         marginTop: 12
@@ -7485,26 +7398,7 @@ function Parlay({
     className: "cap"
   }, "Pays if it hits"), /*#__PURE__*/React.createElement("span", {
     className: "sub"
-  }, "$100 returns $", (pm.mult * 100).toFixed(0), " if every leg wins")), /*#__PURE__*/React.createElement("div", {
-    className: "fig"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "big",
-    style: {
-      color: pm.ev > 0 ? "var(--moss)" : "var(--rose)"
-    }
-  }, pm.ev > 0 ? "+" : "", (pm.ev * 100).toFixed(0), "%"), /*#__PURE__*/React.createElement("span", {
-    className: "cap"
-  }, "Expected value"), /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, "Per $1 staked, on these probabilities")), /*#__PURE__*/React.createElement("div", {
-    className: "fig"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "big"
-  }, pm.ev > 0 ? pm.stake.toFixed(1) + "%" : "—"), /*#__PURE__*/React.createElement("span", {
-    className: "cap"
-  }, "Suggested stake"), /*#__PURE__*/React.createElement("span", {
-    className: "sub"
-  }, "Half-Kelly of your bankroll; only when EV is positive"))), /*#__PURE__*/React.createElement("p", {
+  }, "$100 returns $", (pm.mult * 100).toFixed(0), " if every leg wins"))), /*#__PURE__*/React.createElement("p", {
     className: "help",
     style: {
       marginTop: 12,
@@ -7702,11 +7596,7 @@ function Parlay({
     style: {
       color: "var(--rose)"
     }
-  }, "\u25CF LIVE") : null, p.state === "in" ? " " : "", p.league, " \xB7 ", p.state === "in" ? "in progress" : p.state === "post" ? "final" : "upcoming", " \xB7", p.src === "live" ? " live win prob" : p.src === "live-books" ? " in-play books" : p.src === "pregame-line" ? " pregame line (no live model)" : p.src === "model" ? " model projection" : " " + (p.books > 1 ? p.books + " books" : "1 book"), " \xB7 costs ", p.entry.toFixed(0), "c", p.edge - (p.fee || 0) >= 2.5 ? /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--moss)"
-    }
-  }, " \xB7 also underpriced") : null, p.disp > 6 ? " · books split" : "")), /*#__PURE__*/React.createElement("span", {
+  }, "\u25CF LIVE") : null, p.state === "in" ? " " : "", p.league, " \xB7 ", p.state === "in" ? "in progress" : p.state === "post" ? "final" : "upcoming", " \xB7", p.src === "live" ? " live win prob" : p.src === "live-books" ? " in-play books" : p.src === "pregame-line" ? " pregame line (no live model)" : p.src === "model" ? " model projection" : " " + (p.books > 1 ? p.books + " books" : "1 book"), " \xB7 costs ", p.entry.toFixed(0), "c", p.disp > 6 ? " · books split" : "")), /*#__PURE__*/React.createElement("span", {
     style: {
       display: "flex",
       gap: 10,
@@ -7737,7 +7627,7 @@ function Parlay({
     style: {
       marginTop: 12
     }
-  }, "The percentage is each side's true chance of winning by the de-vigged book consensus and live models \u2014 stack the ones you believe in. \"Also underpriced\" flags picks that are cheap relative to those odds. Tap ", /*#__PURE__*/React.createElement("b", null, "deep dive"), " for the full nine-way read on any pick.")));
+  }, "The percentage is each side's chance of winning by the de-vigged book consensus and live models \u2014 stack the outcomes you believe in and the slip shows the chance they all happen. Tap ", /*#__PURE__*/React.createElement("b", null, "deep dive"), " for the full nine-way read on any pick.")));
 }
 
 /* ---------------- Browse ---------------- */
