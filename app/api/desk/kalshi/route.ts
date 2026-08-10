@@ -213,8 +213,30 @@ export async function GET(req: Request) {
       }
     }
 
+    // Settlement history is the authoritative "you won/lost" feed — resolve
+    // ledger entries from it immediately instead of waiting for the hourly
+    // market-result check. Every sync cycle (15-30s in the app) sees this.
+    let settled = 0;
+    try {
+      const sd = await kget(creds, "/trade-api/v2/portfolio/settlements?limit=100");
+      for (const s of (sd.settlements || []) as Array<Record<string, unknown>>) {
+        const res = String(s.market_result || "");
+        if (res !== "yes" && res !== "no") continue;
+        const t = String(s.ticker || "");
+        for (const e of ledger) {
+          if (e.venue !== "Kalshi" || e.marketId !== t || e.status === "resolved") continue;
+          e.status = "resolved";
+          e.outcome = res === "yes" ? 1 : 0;
+          e.resolvedAt = num(Date.parse(String(s.settled_time || ""))) ?? Date.now();
+          const rev = num(s.revenue_fp, s.revenue);
+          if (rev !== null) e.settleRevenue = rev;
+          settled++;
+        }
+      }
+    } catch { /* settlements are additive; sync still succeeds without them */ }
+
     await writeStore("ledger", ledger.slice(0, 500));
-    return Response.json({ configured: true, synced: positions.length, created, updated, cleared,
+    return Response.json({ configured: true, synced: positions.length, created, updated, cleared, settled,
       positions: positions.map((p) => ({ ticker: p.ticker, side: p.side, contracts: p.contracts, avg: p.avg })) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
