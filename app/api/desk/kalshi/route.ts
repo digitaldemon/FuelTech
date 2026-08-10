@@ -225,12 +225,15 @@ export async function GET(req: Request) {
         if (res !== "yes" && res !== "no") continue;
         const t = String(s.ticker || "");
         for (const e of ledger) {
-          if (e.venue !== "Kalshi" || e.marketId !== t || e.status === "resolved") continue;
-          e.status = "resolved";
-          e.outcome = res === "yes" ? 1 : 0;
-          e.resolvedAt = num(Date.parse(String(s.settled_time || ""))) ?? Date.now();
-          const rev = num(s.revenue_fp, s.revenue);
-          if (rev !== null) e.settleRevenue = rev;
+          if (e.venue !== "Kalshi" || e.marketId !== t) continue;
+          const fresh = e.status !== "resolved";
+          if (fresh) {
+            e.status = "resolved";
+            e.outcome = res === "yes" ? 1 : 0;
+            e.resolvedAt = num(Date.parse(String(s.settled_time || ""))) ?? Date.now();
+            const rev = num(s.revenue_fp, s.revenue);
+            if (rev !== null) e.settleRevenue = rev;
+          }
           // A settled trade whose position details were lost (stale client
           // overwrite) would show the result but no P/L — rebuild `taken`
           // from the settlement's own contract counts and the fill history.
@@ -257,7 +260,7 @@ export async function GET(req: Request) {
               entryPrice: avg !== null ? Math.round(avg * 100) / 100 : 50,
               at: e.resolvedAt, source: "kalshi-settlement" };
           }
-          settled++;
+          if (fresh) settled++;
         }
       }
     } catch { /* settlements are additive; sync still succeeds without them */ }
