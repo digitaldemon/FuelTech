@@ -235,23 +235,35 @@ export async function GET(req: Request) {
         const res = String(s.market_result || "");
         if (res !== "yes" && res !== "no") continue;
         const t = String(s.ticker || "");
-        for (const e of ledger) {
-          if (e.venue !== "Kalshi" || e.marketId !== t) continue;
-          const fresh = e.status !== "resolved";
-          if (fresh) {
+        const matches = ledger.filter((e) => e.venue === "Kalshi" && e.marketId === t);
+        if (!matches.length) continue;
+        const when = num(Date.parse(String(s.settled_time || ""))) ?? Date.now();
+        for (const e of matches) {
+          if (e.status !== "resolved") {
             e.status = "resolved";
             e.outcome = res === "yes" ? 1 : 0;
-            e.resolvedAt = num(Date.parse(String(s.settled_time || ""))) ?? Date.now();
+            e.resolvedAt = when;
             const rev = num(s.revenue_fp, s.revenue);
             if (rev !== null) e.settleRevenue = rev;
+            settled++;
           }
-          // A settled trade whose position details were lost (stale client
-          // overwrite) shows the result but no P/L. The settlement record
-          // itself carries the exact position: contract counts per side and
-          // the true total cost basis — rebuild `taken` straight from it.
-          const yc = num(s.yes_count_fp, s.yes_count) ?? 0;
-          const nc = num(s.no_count_fp, s.no_count) ?? 0;
-          if (!e.taken && (yc > 0 || nc > 0)) {
+        }
+        // Exactly ONE entry per market carries the position (re-analyses
+        // duplicate ledger entries; giving each the full position would
+        // multiply the P/L). Prefer an entry the user/sync marked, else the
+        // one with a real analysis, else the first. Strip settlement-sourced
+        // position data from the rest.
+        const yc = num(s.yes_count_fp, s.yes_count) ?? 0;
+        const nc = num(s.no_count_fp, s.no_count) ?? 0;
+        if (yc > 0 || nc > 0) {
+          const canonical =
+            matches.find((e) => e.taken && e.taken.source !== "kalshi-settlement") ||
+            matches.find((e) => Array.isArray(e.pillars) && e.pillars.length > 0) ||
+            matches[0];
+          matches.forEach((e) => {
+            if (e !== canonical && e.taken && e.taken.source === "kalshi-settlement") e.taken = null;
+          });
+          if (!canonical.taken) {
             backfills++;
             const side = yc >= nc ? "YES" : "NO";
             const contracts = Math.max(yc, nc);
@@ -259,10 +271,9 @@ export async function GET(req: Request) {
             const entryPrice = costD !== null && contracts > 0
               ? Math.round((costD / contracts) * 100 * 100) / 100  // $ total -> cents per contract
               : 50;
-            e.taken = { side, contracts: Math.round(contracts * 100) / 100,
-              entryPrice, at: e.resolvedAt, source: "kalshi-settlement" };
+            canonical.taken = { side, contracts: Math.round(contracts * 100) / 100,
+              entryPrice, at: when, source: "kalshi-settlement" };
           }
-          if (fresh) settled++;
         }
       }
     } catch { /* settlements are additive; sync still succeeds without them */ }
