@@ -219,6 +219,7 @@ export async function GET(req: Request) {
     let settled = 0;
     try {
       const sd = await kget(creds, "/trade-api/v2/portfolio/settlements?limit=100");
+      let backfills = 0;
       for (const s of (sd.settlements || []) as Array<Record<string, unknown>>) {
         const res = String(s.market_result || "");
         if (res !== "yes" && res !== "no") continue;
@@ -230,6 +231,32 @@ export async function GET(req: Request) {
           e.resolvedAt = num(Date.parse(String(s.settled_time || ""))) ?? Date.now();
           const rev = num(s.revenue_fp, s.revenue);
           if (rev !== null) e.settleRevenue = rev;
+          // A settled trade whose position details were lost (stale client
+          // overwrite) would show the result but no P/L — rebuild `taken`
+          // from the settlement's own contract counts and the fill history.
+          const yc = num(s.yes_count_fp, s.yes_count) ?? 0;
+          const nc = num(s.no_count_fp, s.no_count) ?? 0;
+          if (!e.taken && (yc > 0 || nc > 0) && backfills < 5) {
+            backfills++;
+            const side = yc >= nc ? "YES" : "NO";
+            const contracts = Math.max(yc, nc);
+            let avg: number | null = null;
+            try {
+              const fd = await kget(creds, "/trade-api/v2/portfolio/fills?ticker=" + encodeURIComponent(t) + "&limit=200");
+              let q = 0, cost = 0;
+              for (const f of (fd.fills || []) as Array<Record<string, unknown>>) {
+                if (f.action !== "buy") continue;
+                if ((side === "YES") !== (f.side === "yes")) continue;
+                const c = num(f.count_fp, f.count) ?? 0;
+                const price = f.side === "yes" ? cents(f.yes_price, f.yes_price_dollars) : cents(f.no_price, f.no_price_dollars);
+                if (c > 0 && price !== null) { q += c; cost += c * price; }
+              }
+              if (q > 0) avg = cost / q;
+            } catch { /* leave price unknown */ }
+            e.taken = { side, contracts: Math.round(contracts * 100) / 100,
+              entryPrice: avg !== null ? Math.round(avg * 100) / 100 : 50,
+              at: e.resolvedAt, source: "kalshi-settlement" };
+          }
           settled++;
         }
       }
