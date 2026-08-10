@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.all-wagers";
+const BUILD = "2026-08-10.f15-dialed";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5519,6 +5519,38 @@ async function yahooIntraday(sym) {
 
 // The 15-minute board: for each asset's live window, the model's UP/DOWN
 // call — live spot vs the window-open reference over the minutes left.
+// Realtime crypto spot straight from Coinbase — seconds-fresh and part of
+// the CF Benchmarks index family Kalshi settles on, unlike chart bars
+// that can lag a minute. 8-second cache.
+const cbSpotCache = new Map();
+async function coinbaseSpot(sym) {
+  const pair = String(sym).replace("-USD", "") + "-USD";
+  const hit = cbSpotCache.get(pair);
+  if (hit && Date.now() - hit.at < 8000) return hit.v;
+  try {
+    const r = await fetch(px("https://api.coinbase.com/v2/prices/" + pair + "/spot"));
+    if (!r.ok) return null;
+    const d = await r.json();
+    const v = Number(d.data && d.data.amount);
+    if (!Number.isFinite(v)) return null;
+    cbSpotCache.set(pair, {
+      at: Date.now(),
+      v
+    });
+    return v;
+  } catch {
+    return null;
+  }
+}
+
+// Settlement is the AVERAGE of the final 60 seconds, not the last print —
+// as the window closes, part of that average is already locked, so the
+// effective random horizon shrinks by roughly half the averaging minute.
+const settleHorizon = minLeft => Math.max(0.1, minLeft - 0.4);
+
+// Model and market combined in log-odds, equal weight — the 15-minute
+// books carry real bot money; ignoring them costs accuracy.
+const f15Blend = (pModel, pMkt) => unlogit((logit(clamp(pModel, 0.5, 99.5)) + logit(clamp(pMkt, 0.5, 99.5))) / 2);
 async function scanFast15() {
   const root = "https://api.elections.kalshi.com/trade-api/v2";
   const out = [];
@@ -5531,21 +5563,34 @@ async function scanFast15() {
       if (!m) return;
       const q = await yahooIntraday(a.sym);
       if (!q) return;
+      // Crypto gets the seconds-fresh Coinbase spot; bars still supply
+      // volatility and the chart read.
+      let spot = q.spot;
+      if (/-USD$/.test(a.sym)) {
+        const live = await coinbaseSpot(a.sym);
+        if (live != null) spot = live;
+      }
+      const km = kaMarket(m);
       const ref = Number(m.floor_strike);
       const minLeft = Math.max(0.2, (new Date(m.close_time) - Date.now()) / 60000);
-      // Chart strategies tilt the window call (VWAP/EMA/MACD/RSI/breakout)
-      const pUp = pAbove(q.spot, ref, q.sigmaM, minLeft, techDrift(q.tech, q.sigmaM));
-      if (pUp == null) return;
+      const pModel = pAbove(spot, ref, q.sigmaM, settleHorizon(minLeft), techDrift(q.tech, q.sigmaM));
+      if (pModel == null) return;
+      // Market read = the quote midpoint; the ensemble is the headline.
+      const pMkt = km.bid != null && km.ask != null ? (km.bid + km.ask) / 2 : km.price;
+      const pUp = pMkt != null ? f15Blend(pModel, pMkt) : pModel;
       out.push({
         a,
-        m: kaMarket(m),
+        m: km,
         ref,
-        spot: q.spot,
+        spot,
         chg15m: q.chg15m,
         minLeft,
         pUp,
+        pModel,
+        pMkt,
         close: m.close_time,
-        tech: q.tech
+        tech: q.tech,
+        disagree: pMkt != null && Math.abs(pModel - pMkt) >= 12
       });
     } catch {/* next asset */}
   });
@@ -6161,6 +6206,61 @@ function Commodities({
       } catch {/* resend next cycle */}
     }
   }
+
+  // Every confident 15-minute call gets logged once per window and graded
+  // from the market's settled result — the record for what gets bet most.
+  async function reconcileF15(fastRows) {
+    if (!recordRef.current) return;
+    const rec = recordRef.current;
+    const changed = [];
+    fastRows.forEach(f => {
+      const conf = Math.max(f.pUp, 100 - f.pUp);
+      if (conf < 55) return;
+      const id = "f15-" + f.m.id;
+      if (rec.some(x => x.id === id)) return;
+      const e = {
+        id,
+        type: "f15",
+        at: Date.now(),
+        league: f.a.label,
+        pick: f.a.label + " " + (f.pUp >= 50 ? "UP" : "DOWN"),
+        up: f.pUp >= 50,
+        prob: Math.round(conf * 10) / 10,
+        close: f.close,
+        result: null
+      };
+      rec.unshift(e);
+      changed.push(e);
+    });
+    const due = rec.filter(x => x.type === "f15" && x.result == null && x.close && Date.now() - new Date(x.close) > 2 * 60000).slice(0, 6);
+    for (const x of due) {
+      try {
+        const r2 = await fetch(px("https://api.elections.kalshi.com/trade-api/v2/markets/" + x.id.slice(4)));
+        if (!r2.ok) continue;
+        const d2 = await r2.json();
+        const res = d2.market && d2.market.result;
+        if (res === "yes" || res === "no") {
+          x.result = res === "yes" === x.up ? "won" : "lost";
+          changed.push(x);
+        } else if (Date.now() - (x.at || 0) > 86400000) {
+          x.result = "void";
+          changed.push(x);
+        }
+      } catch {/* next cycle */}
+    }
+    if (changed.length) {
+      setRecord(rec.slice());
+      try {
+        await fetch("/api/desk/picks", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(changed)
+        });
+      } catch {/* resend next cycle */}
+    }
+  }
   async function run() {
     setState("loading");
     try {
@@ -6172,6 +6272,7 @@ function Commodities({
       setAt(Date.now());
       setState("done");
       reconcileCom(r);
+      reconcileF15(f);
     } catch {
       setState("done");
     }
@@ -6184,7 +6285,8 @@ function Commodities({
     const loop = async () => {
       await run();
       if (!alive) return;
-      const wait = fastRef.current.length ? 15000 : rowsRef.current.some(r => r.days * 24 < 2) ? 45000 : 180000;
+      const anyClosing = fastRef.current.some(f => f.minLeft < 4);
+      const wait = anyClosing ? 8000 : fastRef.current.length ? 15000 : rowsRef.current.some(r => r.days * 24 < 2) ? 45000 : 180000;
       timer = setTimeout(loop, wait);
     };
     loop();
@@ -6276,7 +6378,22 @@ function Commodities({
       margin: 0,
       color: "var(--rose)"
     }
-  }, "\u26A1 15-minute markets \u2014 crypto, metals, oil, indexes"), /*#__PURE__*/React.createElement("p", {
+  }, "\u26A1 15-minute markets \u2014 crypto, metals, oil, indexes"), (() => {
+    const g = (record || []).filter(x => x.type === "f15" && (x.result === "won" || x.result === "lost"));
+    const w = g.filter(x => x.result === "won").length;
+    return g.length > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "chips",
+      style: {
+        marginTop: 6
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "chip static",
+      style: {
+        color: w * 2 >= g.length ? "var(--moss)" : "var(--rose)"
+      },
+      title: "Every confident 15-minute call, graded against the settled result"
+    }, "15-min calls: ", w, "-", g.length - w, " (", Math.round(w / g.length * 100), "%)"));
+  })(), /*#__PURE__*/React.createElement("p", {
     className: "help",
     style: {
       marginTop: 6
@@ -6306,7 +6423,13 @@ function Commodities({
       style: {
         color: col
       }
-    }, conf >= 55 ? up ? "UP" : "DOWN" : "COIN FLIP"), /*#__PURE__*/React.createElement("span", {
+    }, conf >= 55 ? up ? "UP" : "DOWN" : "COIN FLIP"), f.disagree && /*#__PURE__*/React.createElement("span", {
+      className: "srcchip bad",
+      style: {
+        marginLeft: 8,
+        fontSize: 9
+      }
+    }, "MODEL vs MARKET SPLIT"), /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 13,
         color: "var(--dim)",
@@ -6325,7 +6448,7 @@ function Commodities({
       style: {
         color: diff >= 0 ? "var(--moss)" : "var(--rose)"
       }
-    }, diff >= 0 ? "+" : "", diffPct.toFixed(3), "%"), ")", " · market consensus " + (f.m.ask != null ? f.m.ask.toFixed(0) : f.m.price.toFixed(0)) + "% up", f.chg15m != null ? " · prior 15m " + (f.chg15m >= 0 ? "+" : "") + f.chg15m.toFixed(2) + "%" : ""), f.tech && f.tech.votes.length > 0 && /*#__PURE__*/React.createElement("span", {
+    }, diff >= 0 ? "+" : "", diffPct.toFixed(3), "%"), ")", f.pMkt != null ? " · model " + f.pModel.toFixed(0) + "% · market " + f.pMkt.toFixed(0) + "% up" : " · model " + f.pModel.toFixed(0) + "% up", f.chg15m != null ? " · prior 15m " + (f.chg15m >= 0 ? "+" : "") + f.chg15m.toFixed(2) + "%" : ""), f.tech && f.tech.votes.length > 0 && /*#__PURE__*/React.createElement("span", {
       className: "meta-line",
       style: {
         display: "block"

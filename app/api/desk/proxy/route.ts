@@ -17,6 +17,9 @@ const ALLOWED = new Set([
   // Spot prices + history for the commodities model
   "query1.finance.yahoo.com",
   "query2.finance.yahoo.com",
+  // Realtime crypto spot for the 15-minute windows (tracks the CF
+  // Benchmarks settlement index far closer than delayed chart bars)
+  "api.coinbase.com",
 ]);
 
 export async function GET(req: Request) {
