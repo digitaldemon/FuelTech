@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.commodities";
+const BUILD = "2026-08-10.fast15";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -4067,7 +4067,81 @@ const COMMODITIES = [
   { series: "KXSILVERW", sym: "SI=F", label: "Silver (weekly)", unit: "$", crypto: false },
   { series: "KXBTCD", sym: "BTC-USD", label: "Bitcoin (daily)", unit: "$", crypto: true },
   { series: "KXETHD", sym: "ETH-USD", label: "Ethereum (daily)", unit: "$", crypto: true },
+  { series: "KXBTC", sym: "BTC-USD", label: "Bitcoin (hourly)", unit: "$", crypto: true },
+  { series: "KXETH", sym: "ETH-USD", label: "Ethereum (hourly)", unit: "$", crypto: true },
 ];
+
+// 15-minute up/down markets: YES = the 60s settlement average at window
+// close is at least the window-open reference (floor_strike).
+const FAST15 = [
+  { series: "KXBTC15M", sym: "BTC-USD", label: "BTC" },
+  { series: "KXETH15M", sym: "ETH-USD", label: "ETH" },
+  { series: "KXSOL15M", sym: "SOL-USD", label: "SOL" },
+  { series: "KXXRP15M", sym: "XRP-USD", label: "XRP" },
+  { series: "KXDOGE15M", sym: "DOGE-USD", label: "DOGE" },
+];
+
+// EWMA volatility (RiskMetrics lambda .94) — reacts to the last hour's
+// regime instead of averaging a stale window. Returns sigma per bar.
+function ewmaSigma(closes, lambda) {
+  const L = lambda == null ? 0.94 : lambda;
+  let v = null;
+  for (let i = 1; i < closes.length; i++) {
+    const r = Math.log(closes[i] / closes[i - 1]);
+    v = v == null ? r * r : L * v + (1 - L) * r * r;
+  }
+  return v != null ? Math.sqrt(v) : null;
+}
+
+// 1-minute bars for the current day: live spot + per-minute EWMA sigma.
+const yahooIntraCache = new Map();
+async function yahooIntraday(sym) {
+  const hit = yahooIntraCache.get(sym);
+  if (hit && Date.now() - hit.at < 20000) return hit.v;
+  try {
+    const r = await fetch(px("https://query1.finance.yahoo.com/v8/finance/chart/" +
+      encodeURIComponent(sym) + "?range=1d&interval=1m"));
+    if (!r.ok) return null;
+    const d = await r.json();
+    const res = d.chart && d.chart.result && d.chart.result[0];
+    if (!res) return null;
+    const closes = ((res.indicators && res.indicators.quote && res.indicators.quote[0] &&
+      res.indicators.quote[0].close) || []).filter((x) => Number.isFinite(x));
+    if (closes.length < 30) return null;
+    const spot = Number(res.meta && res.meta.regularMarketPrice) || closes[closes.length - 1];
+    const sigmaM = ewmaSigma(closes.slice(-240));
+    if (!sigmaM) return null;
+    const v = { spot, sigmaM, chg15m: closes.length > 15 ? (spot / closes[closes.length - 16] - 1) * 100 : null };
+    yahooIntraCache.set(sym, { at: Date.now(), v });
+    return v;
+  } catch { return null; }
+}
+
+// The 15-minute board: for each asset's live window, the model's UP/DOWN
+// call — live spot vs the window-open reference over the minutes left.
+async function scanFast15() {
+  const root = "https://api.elections.kalshi.com/trade-api/v2";
+  const out = [];
+  await mapLimit(FAST15, 5, async (a) => {
+    try {
+      const r = await fetch(px(root + "/markets?series_ticker=" + a.series + "&status=open&limit=3"));
+      if (!r.ok) return;
+      const d = await r.json();
+      const m = (d.markets || []).filter((x) => x.floor_strike != null)
+        .sort((x, y) => new Date(x.close_time) - new Date(y.close_time))[0];
+      if (!m) return;
+      const q = await yahooIntraday(a.sym);
+      if (!q) return;
+      const ref = Number(m.floor_strike);
+      const minLeft = Math.max(0.2, (new Date(m.close_time) - Date.now()) / 60000);
+      const pUp = pAbove(q.spot, ref, q.sigmaM, minLeft);
+      if (pUp == null) return;
+      out.push({ a, m: kaMarket(m), ref, spot: q.spot, chg15m: q.chg15m,
+        minLeft, pUp, close: m.close_time });
+    } catch { /* next asset */ }
+  });
+  return out.sort((x, y) => Math.max(y.pUp, 100 - y.pUp) - Math.max(x.pUp, 100 - x.pUp));
+}
 
 // Standard normal CDF (Abramowitz-Stegun erf approximation, |err| < 7.5e-8).
 function normCdf(x) {
@@ -4152,13 +4226,20 @@ async function scanCommodities() {
       const closeT = new Date(ms[0].close_time);
       const days = Math.max(0.02, (closeT - Date.now()) / 86400000);
       const td = asset.crypto ? days : Math.max(0.02, days * 5 / 7);
-      // Ascending strike ladder (greater-type strikes only, the common shape)
-      const ladder = ms.filter((m) => m.strike_type === "greater" && m.floor_strike != null)
+      // Ascending strike ladder (greater-type strikes, the common shape)
+      const ladder = ms.filter((m) => /greater/.test(m.strike_type || "") && m.floor_strike != null)
         .map((m) => ({ m: kaMarket(m), K: Number(m.floor_strike) }))
         .filter((x) => Number.isFinite(x.K) && x.m.price != null)
         .sort((a, b) => a.K - b.K);
       if (ladder.length < 2) continue;
-      const pModel = ladder.map((x) => pAbove(q.spot, x.K, q.sigmaD, td));
+      // Short horizons live on the intraday clock: minute-level EWMA vol
+      // and the freshest spot beat a 3-month daily average.
+      let spotUse = q.spot, sigUse = q.sigmaD, tUse = td;
+      if (days * 24 <= 48) {
+        const qi = await yahooIntraday(asset.sym);
+        if (qi) { spotUse = qi.spot; sigUse = qi.sigmaM; tUse = Math.max(0.5, days * 24 * 60); }
+      }
+      const pModel = ladder.map((x) => pAbove(spotUse, x.K, sigUse, tUse));
       if (pModel.some((p) => p == null)) continue;
       const pMarket = ladder.map((x) => clamp(x.m.price, 0.5, 99.5));
       const bModel = bucketProbs(ladder.map((x) => x.K), pModel);
@@ -4169,7 +4250,8 @@ async function scanCommodities() {
       let win = 0; bModel.forEach((p, i) => { if (p > bModel[win]) win = i; });
       let mktWin = 0; bMarket.forEach((p, i) => { if (p > bMarket[mktWin]) mktWin = i; });
       out.push({
-        asset, spot: q.spot, sigmaD: q.sigmaD, chg1d: q.chg1d, chg5d: q.chg5d,
+        asset, spot: spotUse, sigmaD: sigUse, intraday: tUse !== td,
+        chg1d: q.chg1d, chg5d: q.chg5d,
         title: ms[0].title || asset.label, close: ms[0].close_time, days,
         ladder, pModel, pMarket, bModel, bucketName,
         win, winProb: bModel[win], mktWin, agree: win === mktWin,
@@ -4302,19 +4384,36 @@ const pickWon = (pickCode, winner) => !!pickCode &&
 /* ---------------- Commodities ---------------- */
 function Commodities({ onPick }) {
   const [rows, setRows] = useState([]);
+  const [fast, setFast] = useState([]);
   const [state, setState] = useState("idle");
   const [at, setAt] = useState(null);
+  const fastRef = useRef([]);
+  const rowsRef = useRef([]);
 
   async function run() {
     setState("loading");
-    try { const r = await scanCommodities(); setRows(r); setAt(Date.now()); setState("done"); }
-    catch { setState("done"); }
+    try {
+      const [r, f] = await Promise.all([scanCommodities(), scanFast15().catch(() => [])]);
+      setRows(r); rowsRef.current = r;
+      setFast(f); fastRef.current = f;
+      setAt(Date.now()); setState("done");
+    } catch { setState("done"); }
   }
+  // Live cadence: 15s while any 15-minute window is running, 45s when a
+  // ladder settles within 2 hours, 3 minutes otherwise.
   useEffect(() => {
     let alive = true, timer = null;
-    const loop = async () => { await run(); if (!alive) return; timer = setTimeout(loop, 180000); };
+    const loop = async () => {
+      await run();
+      if (!alive) return;
+      const wait = fastRef.current.length ? 15000
+        : rowsRef.current.some((r) => r.days * 24 < 2) ? 45000 : 180000;
+      timer = setTimeout(loop, wait);
+    };
     loop();
-    return () => { alive = false; if (timer) clearTimeout(timer); };
+    const onVis = () => { if (!document.hidden) { if (timer) clearTimeout(timer); loop(); } };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { alive = false; if (timer) clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); };
   }, []);
 
   const tierFor = (p) => p >= 60 ? { c: "var(--moss)", t: "STRONG" }
@@ -4339,12 +4438,61 @@ function Commodities({ onPick }) {
           <span className="chip static">refreshes every 3 min</span>
         </div>}
         {state === "loading" && rows.length === 0 && <p className="pwait" style={{ marginTop: 10 }}><span className="dots">pricing every ladder</span></p>}
-        {state === "done" && rows.length === 0 && (
+        {state === "done" && rows.length === 0 && fast.length === 0 && (
           <p className="thesis" style={{ color: "var(--dim)", marginTop: 10 }}>
             No commodity ladders are open right now — metals and oil list on weekdays; crypto dailies roll over each morning.
           </p>
         )}
       </div>
+
+      {fast.length > 0 && (
+        <div className="panel" style={{ borderColor: "rgba(228,112,126,.4)" }}>
+          <p className="sect" style={{ margin: 0, color: "var(--rose)" }}>⚡ 15-minute markets — live windows</p>
+          <p className="help" style={{ marginTop: 6 }}>
+            Up or down over the current 15-minute window. The call comes from the live price vs the window's
+            opening reference, scaled by this hour's minute-level volatility — refreshed every 15 seconds.
+            These settle on a 60-second average, so late flips near the line can still reverse.
+          </p>
+          {fast.map((f) => {
+            const up = f.pUp >= 50;
+            const conf = up ? f.pUp : 100 - f.pUp;
+            const col = conf >= 68 ? "var(--moss)" : conf >= 55 ? "var(--amber)" : "var(--dim)";
+            const diff = f.spot - f.ref;
+            const diffPct = (diff / f.ref) * 100;
+            return (
+              <div key={f.a.series} className={"pick " + (conf >= 68 ? "t-strong" : conf >= 55 ? "t-lean" : "")}>
+                <span style={{ minWidth: 0, flex: 1 }}>
+                  <span className="who-big" style={{ display: "block" }}>
+                    <span className="livedot" />
+                    {f.a.label}: <span style={{ color: col }}>{conf >= 55 ? (up ? "UP" : "DOWN") : "COIN FLIP"}</span>
+                    <span style={{ fontSize: 13, color: "var(--dim)", fontWeight: 400 }}>
+                      {" "}· {Math.max(0, f.minLeft).toFixed(0)} min left
+                    </span>
+                  </span>
+                  <span className="meta-line" style={{ display: "block" }}>
+                    now {f.spot.toLocaleString(undefined, { maximumFractionDigits: 4 })} vs open {f.ref.toLocaleString(undefined, { maximumFractionDigits: 4 })}{" "}
+                    (<b style={{ color: diff >= 0 ? "var(--moss)" : "var(--rose)" }}>{diff >= 0 ? "+" : ""}{diffPct.toFixed(3)}%</b>)
+                    {" · Kalshi YES costs " + (f.m.ask != null ? f.m.ask.toFixed(0) : f.m.price.toFixed(0)) + "c"}
+                    {f.chg15m != null ? " · prior 15m " + (f.chg15m >= 0 ? "+" : "") + f.chg15m.toFixed(2) + "%" : ""}
+                  </span>
+                </span>
+                <span className="tierbox" style={{ color: col, borderColor: col }}>
+                  <span className="pct">{conf.toFixed(0)}%</span>
+                  <span className="lbl">{conf >= 55 ? (up ? "UP" : "DOWN") : "TOSS-UP"}</span>
+                </span>
+                <span className="pick-actions">
+                  <a className="chip" href={"https://kalshi.com/markets/" + f.a.series.toLowerCase()} target="_blank" rel="noreferrer">trade ↗</a>
+                </span>
+              </div>
+            );
+          })}
+          <p className="help" style={{ marginTop: 8 }}>
+            Honesty note: 15-minute moves are nearly random — even a strong read here is a small edge, and fees
+            eat thin ones. The model only claims UP or DOWN when the window's remaining time makes the current
+            lead hard to reverse.
+          </p>
+        </div>
+      )}
 
       {rows.map((r, ri) => {
         const tr = tierFor(r.winProb);
@@ -4378,6 +4526,9 @@ function Commodities({ onPick }) {
               <span className="tierbox" style={{ color: tr.c, borderColor: tr.c }}>
                 <span className="pct">{r.winProb.toFixed(0)}%</span>
                 <span className="lbl">{tr.t}</span>
+              </span>
+              <span className="pick-actions">
+                <a className="chip" href={"https://kalshi.com/markets/" + r.asset.series.toLowerCase()} target="_blank" rel="noreferrer">trade ↗</a>
               </span>
             </div>
 

@@ -36,6 +36,7 @@ const code = [
   slice("function tickerDate(", "\n}"),
   slice("function totalLine(", "\n}"),
   slice("function normCdf(", "\n}"),
+  slice("function ewmaSigma(", "\n}"),
   slice("function pAbove(", "\n}"),
   slice("function bucketProbs(", "\n}"),
   slice("function paceProjection(", "\n}"),
@@ -48,8 +49,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -172,6 +173,11 @@ ok(pa > 95 && pb < 5, 'pAbove: 10% OTM strikes at 2% daily vol over 5d -> extrem
 ok(pAbove(100, 100, 0.02, 5) > 49 && pAbove(100, 100, 0.02, 5) < 51, 'at-the-money -> ~50%');
 const bp = bucketProbs([90, 100, 110], [98, 50, 2]);
 ok(Math.abs(bp.reduce((s,x)=>s+x,0) - 100) < 1e-9 && bp[1] === 48 && bp[2] === 48, 'bucket probs sum to 100, middles correct');
+const flat = ewmaSigma([100, 100, 100, 100, 100]);
+ok(flat === 0, 'ewma of a flat series is zero');
+const vol1 = ewmaSigma([100, 101, 100, 101, 100, 101]);
+const vol2 = ewmaSigma([100, 100.1, 100, 100.1, 100, 100.1]);
+ok(vol1 > vol2 && vol1 > 0, 'ewma ranks the choppier series higher (' + (vol1*100).toFixed(2) + '% > ' + (vol2*100).toFixed(3) + '%)');
 
 // Winner-pick grading from a final score
 ok(gameWinnerAbbr([{ abbr: "MIL", score: 5 }, { abbr: "MIN", score: 3 }]) === "MIL", "final score -> winner abbr");
