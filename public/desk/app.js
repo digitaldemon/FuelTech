@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.exact-links";
+const BUILD = "2026-08-10.crypto-hub";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5768,7 +5768,7 @@ function Commodities({
       className: "pick-actions"
     }, /*#__PURE__*/React.createElement("a", {
       className: "chip",
-      href: kalshiEventLink(f.m.id),
+      href: "https://kalshi.com/crypto",
       target: "_blank",
       rel: "noreferrer"
     }, "trade \u2197")));
