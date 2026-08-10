@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.kxm-links";
+const BUILD = "2026-08-10.super-accurate";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -4190,7 +4190,11 @@ function pAbove(spot, strike, sigmaD, tradingDays, muPerBar) {
   // weekly ladders.
   const lim = 0.25 * sigmaD * Math.sqrt(t);
   const eff = clamp(mu * t, -lim, lim);
-  return clamp(normCdf((Math.log(spot / strike) + eff) / (sigmaD * Math.sqrt(t))) * 100, 0.5, 99.5);
+  const z = (Math.log(spot / strike) + eff) / (sigmaD * Math.sqrt(t));
+  // Fat-tail mixture: real price moves have heavier tails than lognormal.
+  // 85% base regime + 15% double-vol regime keeps far strikes honest.
+  const p = 0.85 * normCdf(z) + 0.15 * normCdf(z / 2);
+  return clamp(p * 100, 0.5, 99.5);
 }
 
 // Multi-horizon trend read from daily closes: momentum at 5 and 20 days,
@@ -4230,6 +4234,34 @@ function trendDrift(trend, sigmaD) {
   if (!trend || !(sigmaD > 0)) return 0;
   const daily = Math.log(1 + trend.mom20 / 100) / 20;
   return clamp(0.15 * daily, -0.3 * sigmaD, 0.3 * sigmaD);
+}
+
+// The ladder's own prices imply a volatility — the market's forward-looking
+// estimate, which beats trailing realized vol when they differ. Fit sigma
+// by least squares against mid-ladder market probabilities (tails are too
+// noisy to fit). Returns null when the ladder gives nothing to fit.
+function impliedSigma(strikes, marketProbs, spot, t) {
+  if (!(spot > 0) || !(t > 0) || strikes.length < 2) return null;
+  const pts = [];
+  for (let i = 0; i < strikes.length; i++) {
+    if (marketProbs[i] >= 8 && marketProbs[i] <= 92) pts.push([strikes[i], marketProbs[i] / 100]);
+  }
+  if (pts.length < 2) return null;
+  const sse = (s) => pts.reduce((acc, kv) =>
+    acc + Math.pow(normCdf(Math.log(spot / kv[0]) / (s * Math.sqrt(t))) - kv[1], 2), 0);
+  let lo = Math.log(1e-6), hi = Math.log(1);
+  for (let i = 0; i < 60; i++) {
+    const a = lo + (hi - lo) * 0.382, b = lo + (hi - lo) * 0.618;
+    if (sse(Math.exp(a)) < sse(Math.exp(b))) hi = b; else lo = a;
+  }
+  const s = Math.exp((lo + hi) / 2);
+  return s > 1e-6 && s < 1 ? s : null;
+}
+
+// Model-and-market ensemble in log-odds: the market's ladder is real money
+// and earns slightly more weight than the model alone.
+function blendProb(pModel, pMarket) {
+  return unlogit((logit(clamp(pModel, 0.5, 99.5)) + 1.2 * logit(clamp(pMarket, 0.5, 99.5))) / 2.2);
 }
 
 // Ladder of ascending "above K" strikes -> probability the settle lands in
@@ -4315,22 +4347,32 @@ async function scanCommodities() {
       } else {
         muUse = trendDrift(q.trend, q.sigmaD);
       }
-      const pModel = ladder.map((x) => pAbove(spotUse, x.K, sigUse, tUse, muUse));
-      if (pModel.some((p) => p == null)) continue;
       const pMarket = ladder.map((x) => clamp(x.m.price, 0.5, 99.5));
+      // Volatility blend: geometric mean of trailing realized vol and the
+      // forward-looking vol implied by the ladder's own prices.
+      const sigImp = impliedSigma(ladder.map((x) => x.K), pMarket, spotUse, tUse);
+      const sigBlend = sigImp ? Math.sqrt(sigUse * sigImp) : sigUse;
+      const pModel = ladder.map((x) => pAbove(spotUse, x.K, sigBlend, tUse, muUse));
+      if (pModel.some((p) => p == null)) continue;
+      // Headline = ensemble of model and market per strike; both parents
+      // stay visible so disagreement is informative, not hidden.
+      const pComb = pModel.map((p, i) => blendProb(p, pMarket[i]));
       const bModel = bucketProbs(ladder.map((x) => x.K), pModel);
       const bMarket = bucketProbs(ladder.map((x) => x.K), pMarket);
+      const bComb = bucketProbs(ladder.map((x) => x.K), pComb);
       const bucketName = (i) => i === 0 ? "Below " + asset.unit + ladder[0].K
         : i === ladder.length ? "Above " + asset.unit + ladder[ladder.length - 1].K
         : asset.unit + ladder[i - 1].K + " – " + asset.unit + ladder[i].K;
-      let win = 0; bModel.forEach((p, i) => { if (p > bModel[win]) win = i; });
-      let mktWin = 0; bMarket.forEach((p, i) => { if (p > bMarket[mktWin]) mktWin = i; });
+      const argmax = (arr) => { let w = 0; arr.forEach((p, i) => { if (p > arr[w]) w = i; }); return w; };
+      const win = argmax(bComb), modelWin = argmax(bModel), mktWin = argmax(bMarket);
       out.push({
-        asset, spot: spotUse, sigmaD: sigUse, intraday: tUse !== td,
+        asset, spot: spotUse, sigmaD: sigUse, sigImp, sigBlend, intraday: tUse !== td,
         chg1d: q.chg1d, chg5d: q.chg5d, trend: q.trend, drift: muUse,
         title: ms[0].title || asset.label, close: ms[0].close_time, days,
-        ladder, pModel, pMarket, bModel, bucketName,
-        win, winProb: bModel[win], mktWin, agree: win === mktWin,
+        ladder, pModel, pMarket, pComb, bModel, bComb, bucketName,
+        win, winProb: bComb[win], modelWin, mktWin,
+        agree: modelWin === mktWin,
+        strikes: ladder.map((x) => x.K), eventTicker: ms[0].event_ticker,
       });
     }
   });
@@ -4511,8 +4553,64 @@ function Commodities({ onPick }) {
   const [fast, setFast] = useState([]);
   const [state, setState] = useState("idle");
   const [at, setAt] = useState(null);
+  const [record, setRecord] = useState(null);
   const fastRef = useRef([]);
   const rowsRef = useRef([]);
+  const recordRef = useRef(null);
+
+  useEffect(() => {
+    fetch("/api/desk/picks").then((r) => r.json())
+      .then((d) => { recordRef.current = d.record || []; setRecord(recordRef.current); })
+      .catch(() => { recordRef.current = []; });
+  }, []);
+
+  // Log every ladder call once per event; grade it from the settled
+  // markets' results after close. The winner-bucket record builds itself
+  // exactly like the sports board's.
+  async function reconcileCom(scanned) {
+    if (!recordRef.current) return;
+    const rec = recordRef.current.slice();
+    const changed = [];
+    scanned.forEach((r) => {
+      if (!r.eventTicker || new Date(r.close) < Date.now()) return;
+      const id = "cm-" + r.eventTicker;
+      if (rec.some((x) => x.id === id)) return;
+      const e = { id, type: "commodity", at: Date.now(), league: r.asset.label,
+        pick: r.bucketName(r.win), win: r.win, strikes: r.strikes,
+        prob: Math.round(r.winProb * 10) / 10, close: r.close, result: null };
+      rec.unshift(e); changed.push(e);
+    });
+    const due = rec.filter((x) => x.type === "commodity" && x.result == null &&
+      x.close && Date.now() - new Date(x.close) > 10 * 60000).slice(0, 5);
+    for (const x of due) {
+      try {
+        const r2 = await fetch(px("https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=" +
+          encodeURIComponent(x.id.slice(3)) + "&limit=100"));
+        if (!r2.ok) continue;
+        const d2 = await r2.json();
+        const ms = (d2.markets || []).filter((m) => /greater/.test(m.strike_type || "") &&
+          m.floor_strike != null && (m.result === "yes" || m.result === "no"));
+        if (!ms.length) {
+          if (Date.now() - (x.at || 0) > 3 * 86400000) { x.result = "void"; changed.push(x); }
+          continue;
+        }
+        // Settle landed above every strike that resolved YES — the actual
+        // bucket index is simply the count of YES strikes.
+        const actual = ms.filter((m) => m.result === "yes").length;
+        x.result = actual === x.win ? "won" : "lost";
+        x.actual = actual;
+        changed.push(x);
+      } catch { /* next cycle */ }
+    }
+    recordRef.current = rec;
+    if (changed.length) {
+      setRecord(rec.slice());
+      try {
+        await fetch("/api/desk/picks", { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify(changed) });
+      } catch { /* resend next cycle */ }
+    }
+  }
 
   async function run() {
     setState("loading");
@@ -4521,6 +4619,7 @@ function Commodities({ onPick }) {
       setRows(r); rowsRef.current = r;
       setFast(f); fastRef.current = f;
       setAt(Date.now()); setState("done");
+      reconcileCom(r);
     } catch { setState("done"); }
   }
   // Live cadence: 15s while any 15-minute window is running, 45s when a
@@ -4557,10 +4656,21 @@ function Commodities({ onPick }) {
           on the live spot: the winner is the bucket where the settle most likely lands. The market's own favorite
           is shown as a cross-check, and <b>deep dive</b> runs all nine finance checks on any strike.
         </p>
-        {at && <div className="chips" style={{ marginTop: 8 }}>
-          <span className="chip static">updated {new Date(at).toLocaleTimeString()}</span>
-          <span className="chip static">refreshes every 3 min</span>
-        </div>}
+        {(() => {
+          const scored = (record || []).filter((x) => x.type === "commodity" && (x.result === "won" || x.result === "lost"));
+          const w = scored.filter((x) => x.result === "won").length;
+          return (at || scored.length > 0) && (
+            <div className="chips" style={{ marginTop: 8 }}>
+              {scored.length > 0 && (
+                <span className="chip static" style={{ color: w * 2 >= scored.length ? "var(--moss)" : "var(--rose)" }}
+                  title="Every ladder call is logged and graded against the actual settle">
+                  Ladder record: {w}-{scored.length - w}
+                </span>
+              )}
+              {at && <span className="chip static">updated {new Date(at).toLocaleTimeString()}</span>}
+            </div>
+          );
+        })()}
         {state === "loading" && rows.length === 0 && <p className="pwait" style={{ marginTop: 10 }}><span className="dots">pricing every ladder</span></p>}
         {state === "done" && rows.length === 0 && fast.length === 0 && (
           <p className="thesis" style={{ color: "var(--dim)", marginTop: 10 }}>
@@ -4641,10 +4751,11 @@ function Commodities({ onPick }) {
                   <span style={{ color: tr.c }}>Winner: </span>{r.bucketName(r.win)}
                 </span>
                 <span className="meta-line" style={{ display: "block" }}>
-                  volatility model on live spot · {r.agree
-                    ? "the market's ladder agrees"
-                    : "market disagrees — its favorite is " + r.bucketName(r.mktWin)}
-                  {Math.abs(r.chg1d) > 1.5 ? " · big move today — model uses fresh spot" : ""}
+                  ensemble of the vol model and the market's ladder ·{" "}
+                  {r.agree ? "model and market agree"
+                    : "model favors " + r.bucketName(r.modelWin) + ", market favors " + r.bucketName(r.mktWin)}
+                  {r.sigImp ? " · implied vol " + (r.sigImp * 100).toFixed(2) + "% vs realized " + (r.sigmaD * 100).toFixed(2) + "%" : ""}
+                  {Math.abs(r.chg1d) > 1.5 ? " · big move today — fresh spot in use" : ""}
                 </span>
               </span>
               <span className="tierbox" style={{ color: tr.c, borderColor: tr.c }}>

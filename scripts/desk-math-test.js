@@ -16,6 +16,8 @@ function slice(startMarker, endMarker) {
 
 const code = [
   "const clamp = (n,a,b) => Math.max(a, Math.min(b, n));",
+  slice("const logit = (p)", ";"),
+  slice("const unlogit = (x)", ";"),
   slice("const etDate =", "});"),
   slice("const STOP = new Set(", "\n}"), // STOP + toks + overlap
   slice("const takerFee =", ": 0;"),
@@ -40,6 +42,8 @@ const code = [
   slice("function trendStats(", "\n}"),
   slice("function trendDrift(", "\n}"),
   slice("function pAbove(", "\n}"),
+  slice("function impliedSigma(", "\n}"),
+  slice("function blendProb(", "\n}"),
   slice("function bucketProbs(", "\n}"),
   slice("function paceProjection(", "\n}"),
   slice("function gameWinnerAbbr(", "\n}"),
@@ -51,8 +55,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -185,6 +189,15 @@ const dUp = trendDrift(tUp, 0.02), dDn = trendDrift(tDn, 0.02);
 ok(dUp > 0 && dUp <= 0.006 + 1e-12 && dDn < 0, "drift follows trend, capped at 30% of daily sigma");
 const pNo = pAbove(100, 100, 0.02, 5), pYes = pAbove(100, 100, 0.02, 5, dUp);
 ok(pYes > pNo && pYes < 60, "uptrend drift nudges at-the-money up, but only nudges (" + pYes.toFixed(1) + "%)");
+
+// Implied vol + ensemble
+const trueSig = 0.015, S0 = 100, T = 4;
+const Ks = [94, 97, 100, 103, 106];
+const synthetic = Ks.map((K) => normCdf(Math.log(S0 / K) / (trueSig * Math.sqrt(T))) * 100);
+const fit = impliedSigma(Ks, synthetic, S0, T);
+ok(fit && Math.abs(fit - trueSig) / trueSig < 0.02, "impliedSigma recovers the ladder's vol (" + (fit * 100).toFixed(2) + "% vs 1.50%)");
+const bl = blendProb(70, 50);
+ok(bl > 50 && bl < 70 && Math.abs(blendProb(50, 50) - 50) < 1e-9, "ensemble lands between model and market, market weighted (" + bl.toFixed(1) + "%)");
 
 const flat = ewmaSigma([100, 100, 100, 100, 100]);
 ok(flat === 0, 'ewma of a flat series is zero');
