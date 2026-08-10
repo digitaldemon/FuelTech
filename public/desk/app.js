@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.trends";
+const BUILD = "2026-08-10.kxm-links";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -548,6 +548,12 @@ const SERIES_SLUG = {
 function kalshiEventLink(ticker) {
   const parts = String(ticker || "").split("-");
   const series = parts[0];
+  // Commodity + crypto markets (incl. 15-minute windows) live under
+  // /markets/kx/m/{event-ticker} — a Google-indexed live page confirmed
+  // the shape; the sports-style slug path redirects to the portfolio.
+  if (/^(KXWTI|KXBRENTD|KXGOLD|KXSILVER|KXBTC|KXETH|KXSOL|KXXRP|KXDOGE|KXADA|KXBNB|KXINX15M|KXNDQ15M)/.test(series) && parts.length >= 2) {
+    return "https://kalshi.com/markets/kx/m/" + parts.slice(0, -1).join("-").toLowerCase();
+  }
   // Combos (KXMVE*) have no public market page — Kalshi only shows them in
   // the holder's portfolio (verified: event-page URLs redirect to the
   // homepage). Link where the combo actually lives.
@@ -5959,7 +5965,7 @@ function Commodities({
       className: "pick-actions"
     }, /*#__PURE__*/React.createElement("a", {
       className: "chip",
-      href: f.a.hub,
+      href: kalshiEventLink(f.m.id),
       target: "_blank",
       rel: "noreferrer"
     }, "trade \u2197")));
