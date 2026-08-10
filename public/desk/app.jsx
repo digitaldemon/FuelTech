@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.true-record";
+const BUILD = "2026-08-10.all-wagers";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -1181,6 +1181,13 @@ const LEAGUES = [
   [/KXCFLGAME|\bcfl\b/i, "football/cfl", "CFL"],
   [/KXUFLGAME|\bufl\b/i, "football/ufl", "UFL"],
   [/KXNCAAWBGAME|women's college basketball/i, "basketball/womens-college-basketball", "NCAAW"],
+  // Total-score (over/under) markets track the same games
+  [/KXMLBTOTAL/i, "baseball/mlb", "MLB"],
+  [/KXWNBATOTAL/i, "basketball/wnba", "WNBA"],
+  [/KXNBATOTAL/i, "basketball/nba", "NBA"],
+  [/KXNFLTOTAL/i, "football/nfl", "NFL"],
+  [/KXNHLTOTAL/i, "hockey/nhl", "NHL"],
+  [/KXCFBTOTAL/i, "football/college-football", "NCAAF"],
 ];
 
 function detectLeague(m) {
@@ -3566,7 +3573,11 @@ function Positions({ ledger, save, reopen, reload }) {
                       : e.name === e.question ? e.question : e.question + " — " + e.name}
                   </div>
                   <div className="pdesc">
-                    {e.venue} · {e.taken.contracts} × {e.taken.side} at {Number(e.taken.entryPrice).toFixed(1)}c ·
+                    <span className="srcchip" style={{ marginRight: 6, fontSize: 9 }}>{wagerType(e.marketId)}</span>
+                    {e.venue} · {e.taken.contracts} × {(() => {
+                      const tl0 = totalLine(e.marketId);
+                      return tl0 != null ? (e.taken.side === "YES" ? "OVER " + tl0 : "UNDER " + tl0) : e.taken.side;
+                    })()} at {Number(e.taken.entryPrice).toFixed(1)}c ·
                     my fair value {Number(e.fair).toFixed(0)}c
                   </div>
                 </div>
@@ -3599,6 +3610,35 @@ function Positions({ ledger, save, reopen, reload }) {
                   </div>
                 )}
               </div>
+              {(() => {
+                // Over/under position: live total vs your line, pace, and
+                // clinch detection (a total can only rise — once it crosses
+                // the line, OVER is locked in).
+                const tl = totalLine(e.marketId);
+                if (tl == null || !live || !live.sides) return null;
+                const totNow = live.sides.reduce((s, x) => s + (Number(x.score) || 0), 0);
+                const lg2 = detectLeague({ id: e.marketId, question: e.question, name: e.name });
+                const pace = live.state === "in" && lg2 ? paceProjection(lg2.path, live.detail, live.sides) : null;
+                const clinched = totNow > tl;
+                const overSide = e.taken.side === "YES";
+                return (
+                  <p className="help" style={{ marginTop: 8 }}>
+                    <b>Total now: {totNow}</b> vs your {overSide ? "OVER" : "UNDER"} {tl} line
+                    {clinched ? (
+                      <b style={{ color: overSide ? "var(--moss)" : "var(--rose)" }}>
+                        {" — the line is crossed; OVER is locked in" + (overSide ? " (your side wins)" : " (your side is dead)")}
+                      </b>
+                    ) : pace ? (
+                      <span> — on pace for ~{pace.projected.toFixed(0)}{" "}
+                        ({pace.projected > tl ? "over" : "under"} the line as it stands)</span>
+                    ) : live.state === "post" ? (
+                      <b style={{ color: overSide ? "var(--rose)" : "var(--moss)" }}>
+                        {" — final under the line" + (overSide ? " (your side lost)" : " (your side wins)")}
+                      </b>
+                    ) : null}
+                  </p>
+                );
+              })()}
               {qq.legs && (
                 <div style={{ marginTop: 10 }}>
                   {qq.legs.map((l, i) => {
@@ -3723,7 +3763,11 @@ function Positions({ ledger, save, reopen, reload }) {
               <span className="who" style={{ fontSize: 13 }}>
                 {h.title}
                 <span className="sub" style={{ display: "block" }}>
-                  {h.side} · settled {h.at ? new Date(h.at).toLocaleDateString() : ""}
+                  <span className="srcchip" style={{ marginRight: 6, fontSize: 9 }}>{wagerType(h.ticker)}</span>
+                  {(() => {
+                    const tl = totalLine(h.ticker);
+                    return tl != null ? (h.side === "YES" ? "OVER " + tl : "UNDER " + tl) : h.side;
+                  })()} · settled {h.at ? new Date(h.at).toLocaleDateString() : ""}
                 </span>
               </span>
               <span className="pts" style={{ fontSize: 13.5, color: h.won ? "var(--moss)" : "var(--rose)" }}>
@@ -4504,6 +4548,16 @@ const TOTAL_SERIES = [
   ["KXCFBTOTAL", "football/college-football", "NCAAF"],
   ["KXNBATOTAL", "basketball/nba", "NBA"],
 ];
+
+// What kind of wager a ticker is — labels the history and position cards.
+function wagerType(ticker) {
+  const t = String(ticker || "");
+  if (/^KXMVE/.test(t)) return "PARLAY";
+  if (/TOTAL/.test(t)) return "OVER/UNDER";
+  if (/15M-/.test(t)) return "15-MIN";
+  if (/^(KXWTI|KXBRENTD|KXGOLD|KXSILVER|KXBTC|KXETH|KXSOL|KXXRP|KXDOGE|KXADA|KXBNB|KXINX|KXNDQ)/.test(t)) return "PRICE";
+  return "WINNER";
+}
 
 // KXMLBTOTAL-26AUG102145HOUSF-9 -> threshold 9 -> the market is "9 or
 // more", i.e. OVER the books' 8.5 line.

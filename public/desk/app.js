@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.true-record";
+const BUILD = "2026-08-10.all-wagers";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -1306,7 +1306,9 @@ function walkBook(levels, size) {
    Several feeds, cross-checked. ESPN covers every league and carries win
    probability and sportsbook odds; the league's own API is the authority on
    score and clock. Disagreement between them is itself a signal. */
-const LEAGUES = [[/KXNBAGAME|\bnba\b/i, "basketball/nba", "NBA"], [/KXWNBAGAME|\bwnba\b/i, "basketball/wnba", "WNBA"], [/KXMLBGAME|\bmlb\b|world series/i, "baseball/mlb", "MLB"], [/KXNFLGAME|\bnfl\b|super bowl/i, "football/nfl", "NFL"], [/KXNHLGAME|\bnhl\b|stanley cup/i, "hockey/nhl", "NHL"], [/KXCFBGAME|KXNCAAFGAME|college football/i, "football/college-football", "NCAAF"], [/KXCBBGAME|KXNCAABGAME|march madness/i, "basketball/mens-college-basketball", "NCAAM"], [/KXATPMATCH|\batp\b/i, "tennis/atp", "ATP"], [/KXWTAMATCH|\bwta\b/i, "tennis/wta", "WTA"], [/KXUFCFIGHT|\bufc\b|\bmma\b/i, "mma/ufc", "UFC"], [/KXEPLGAME|premier league/i, "soccer/eng.1", "EPL"], [/KXMLSGAME|\bmls\b/i, "soccer/usa.1", "MLS"], [/champions league/i, "soccer/uefa.champions", "UCL"], [/la liga/i, "soccer/esp.1", "La Liga"], [/KXSERIEAGAME|serie a game/i, "soccer/ita.1", "Serie A"], [/KXBUNDESLIGAGAME|bundesliga game/i, "soccer/ger.1", "Bundesliga"], [/KXLIGUE1GAME|ligue 1/i, "soccer/fra.1", "Ligue 1"], [/KXLIGAMXGAME|liga mx/i, "soccer/mex.1", "Liga MX"], [/KXUELGAME|europa league/i, "soccer/uefa.europa", "Europa League"], [/KXUECLGAME|conference league/i, "soccer/uefa.europa.conf", "Conference League"], [/KXEREDIVISIEGAME|eredivisie/i, "soccer/ned.1", "Eredivisie"], [/KXLIGAPORTUGALGAME|primeira liga|liga portugal/i, "soccer/por.1", "Liga Portugal"], [/KXBRASILEIROGAME|brasileir/i, "soccer/bra.1", "Brasileirao"], [/KXEFLCHAMPIONSHIPGAME|efl championship/i, "soccer/eng.2", "EFL Championship"], [/KXSUPERLIGGAME|super lig\b/i, "soccer/tur.1", "Super Lig"], [/KXBELGIANPLGAME|belgian pro/i, "soccer/bel.1", "Belgian Pro League"], [/KXNWSLGAME|\bnwsl\b/i, "soccer/usa.nwsl", "NWSL"], [/KXLEAGUESCUPGAME|leagues cup/i, "soccer/concacaf.leagues.cup", "Leagues Cup"], [/KXSAUDIPLGAME|saudi pro league/i, "soccer/ksa.1", "Saudi Pro League"], [/KXWCGAME-|world cup game/i, "soccer/fifa.world", "World Cup"], [/KXCFLGAME|\bcfl\b/i, "football/cfl", "CFL"], [/KXUFLGAME|\bufl\b/i, "football/ufl", "UFL"], [/KXNCAAWBGAME|women's college basketball/i, "basketball/womens-college-basketball", "NCAAW"]];
+const LEAGUES = [[/KXNBAGAME|\bnba\b/i, "basketball/nba", "NBA"], [/KXWNBAGAME|\bwnba\b/i, "basketball/wnba", "WNBA"], [/KXMLBGAME|\bmlb\b|world series/i, "baseball/mlb", "MLB"], [/KXNFLGAME|\bnfl\b|super bowl/i, "football/nfl", "NFL"], [/KXNHLGAME|\bnhl\b|stanley cup/i, "hockey/nhl", "NHL"], [/KXCFBGAME|KXNCAAFGAME|college football/i, "football/college-football", "NCAAF"], [/KXCBBGAME|KXNCAABGAME|march madness/i, "basketball/mens-college-basketball", "NCAAM"], [/KXATPMATCH|\batp\b/i, "tennis/atp", "ATP"], [/KXWTAMATCH|\bwta\b/i, "tennis/wta", "WTA"], [/KXUFCFIGHT|\bufc\b|\bmma\b/i, "mma/ufc", "UFC"], [/KXEPLGAME|premier league/i, "soccer/eng.1", "EPL"], [/KXMLSGAME|\bmls\b/i, "soccer/usa.1", "MLS"], [/champions league/i, "soccer/uefa.champions", "UCL"], [/la liga/i, "soccer/esp.1", "La Liga"], [/KXSERIEAGAME|serie a game/i, "soccer/ita.1", "Serie A"], [/KXBUNDESLIGAGAME|bundesliga game/i, "soccer/ger.1", "Bundesliga"], [/KXLIGUE1GAME|ligue 1/i, "soccer/fra.1", "Ligue 1"], [/KXLIGAMXGAME|liga mx/i, "soccer/mex.1", "Liga MX"], [/KXUELGAME|europa league/i, "soccer/uefa.europa", "Europa League"], [/KXUECLGAME|conference league/i, "soccer/uefa.europa.conf", "Conference League"], [/KXEREDIVISIEGAME|eredivisie/i, "soccer/ned.1", "Eredivisie"], [/KXLIGAPORTUGALGAME|primeira liga|liga portugal/i, "soccer/por.1", "Liga Portugal"], [/KXBRASILEIROGAME|brasileir/i, "soccer/bra.1", "Brasileirao"], [/KXEFLCHAMPIONSHIPGAME|efl championship/i, "soccer/eng.2", "EFL Championship"], [/KXSUPERLIGGAME|super lig\b/i, "soccer/tur.1", "Super Lig"], [/KXBELGIANPLGAME|belgian pro/i, "soccer/bel.1", "Belgian Pro League"], [/KXNWSLGAME|\bnwsl\b/i, "soccer/usa.nwsl", "NWSL"], [/KXLEAGUESCUPGAME|leagues cup/i, "soccer/concacaf.leagues.cup", "Leagues Cup"], [/KXSAUDIPLGAME|saudi pro league/i, "soccer/ksa.1", "Saudi Pro League"], [/KXWCGAME-|world cup game/i, "soccer/fifa.world", "World Cup"], [/KXCFLGAME|\bcfl\b/i, "football/cfl", "CFL"], [/KXUFLGAME|\bufl\b/i, "football/ufl", "UFL"], [/KXNCAAWBGAME|women's college basketball/i, "basketball/womens-college-basketball", "NCAAW"],
+// Total-score (over/under) markets track the same games
+[/KXMLBTOTAL/i, "baseball/mlb", "MLB"], [/KXWNBATOTAL/i, "basketball/wnba", "WNBA"], [/KXNBATOTAL/i, "basketball/nba", "NBA"], [/KXNFLTOTAL/i, "football/nfl", "NFL"], [/KXNHLTOTAL/i, "hockey/nhl", "NHL"], [/KXCFBTOTAL/i, "football/college-football", "NCAAF"]];
 function detectLeague(m) {
   const id = String(m.id || "");
   // A multivariate combo (native parlay) spans several games — no single
@@ -4454,7 +4456,16 @@ function Positions({
       className: "pname"
     }, qq.legs ? "Parlay: " + qq.legs.map(l => l.name + (l.league ? " (" + l.league + ")" : "")).join(" + ") : e.name === e.question ? e.question : e.question + " — " + e.name), /*#__PURE__*/React.createElement("div", {
       className: "pdesc"
-    }, e.venue, " \xB7 ", e.taken.contracts, " \xD7 ", e.taken.side, " at ", Number(e.taken.entryPrice).toFixed(1), "c \xB7 my fair value ", Number(e.fair).toFixed(0), "c")), adv && /*#__PURE__*/React.createElement("span", {
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "srcchip",
+      style: {
+        marginRight: 6,
+        fontSize: 9
+      }
+    }, wagerType(e.marketId)), e.venue, " \xB7 ", e.taken.contracts, " \xD7 ", (() => {
+      const tl0 = totalLine(e.marketId);
+      return tl0 != null ? e.taken.side === "YES" ? "OVER " + tl0 : "UNDER " + tl0 : e.taken.side;
+    })(), " at ", Number(e.taken.entryPrice).toFixed(1), "c \xB7 my fair value ", Number(e.fair).toFixed(0), "c")), adv && /*#__PURE__*/React.createElement("span", {
       className: "sig adv",
       style: {
         color: col,
@@ -4491,7 +4502,36 @@ function Positions({
       style: {
         color: "var(--violet)"
       }
-    }, (e.taken.side === "YES" ? live.impliedCents : 100 - live.impliedCents).toFixed(0), "%"))), qq.legs && /*#__PURE__*/React.createElement("div", {
+    }, (e.taken.side === "YES" ? live.impliedCents : 100 - live.impliedCents).toFixed(0), "%"))), (() => {
+      // Over/under position: live total vs your line, pace, and
+      // clinch detection (a total can only rise — once it crosses
+      // the line, OVER is locked in).
+      const tl = totalLine(e.marketId);
+      if (tl == null || !live || !live.sides) return null;
+      const totNow = live.sides.reduce((s, x) => s + (Number(x.score) || 0), 0);
+      const lg2 = detectLeague({
+        id: e.marketId,
+        question: e.question,
+        name: e.name
+      });
+      const pace = live.state === "in" && lg2 ? paceProjection(lg2.path, live.detail, live.sides) : null;
+      const clinched = totNow > tl;
+      const overSide = e.taken.side === "YES";
+      return /*#__PURE__*/React.createElement("p", {
+        className: "help",
+        style: {
+          marginTop: 8
+        }
+      }, /*#__PURE__*/React.createElement("b", null, "Total now: ", totNow), " vs your ", overSide ? "OVER" : "UNDER", " ", tl, " line", clinched ? /*#__PURE__*/React.createElement("b", {
+        style: {
+          color: overSide ? "var(--moss)" : "var(--rose)"
+        }
+      }, " — the line is crossed; OVER is locked in" + (overSide ? " (your side wins)" : " (your side is dead)")) : pace ? /*#__PURE__*/React.createElement("span", null, " \u2014 on pace for ~", pace.projected.toFixed(0), " ", "(", pace.projected > tl ? "over" : "under", " the line as it stands)") : live.state === "post" ? /*#__PURE__*/React.createElement("b", {
+        style: {
+          color: overSide ? "var(--rose)" : "var(--moss)"
+        }
+      }, " — final under the line" + (overSide ? " (your side lost)" : " (your side wins)")) : null);
+    })(), qq.legs && /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 10
       }
@@ -4680,7 +4720,16 @@ function Positions({
     style: {
       display: "block"
     }
-  }, h.side, " \xB7 settled ", h.at ? new Date(h.at).toLocaleDateString() : "")), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "srcchip",
+    style: {
+      marginRight: 6,
+      fontSize: 9
+    }
+  }, wagerType(h.ticker)), (() => {
+    const tl = totalLine(h.ticker);
+    return tl != null ? h.side === "YES" ? "OVER " + tl : "UNDER " + tl : h.side;
+  })(), " \xB7 settled ", h.at ? new Date(h.at).toLocaleDateString() : "")), /*#__PURE__*/React.createElement("span", {
     className: "pts",
     style: {
       fontSize: 13.5,
@@ -5802,6 +5851,16 @@ async function scanCommodities() {
 /* ---- over/under pipeline ---- */
 // Kalshi totals series (YES = combined score reaches the ticker's number).
 const TOTAL_SERIES = [["KXMLBTOTAL", "baseball/mlb", "MLB"], ["KXWNBATOTAL", "basketball/wnba", "WNBA"], ["KXNFLTOTAL", "football/nfl", "NFL"], ["KXNHLTOTAL", "hockey/nhl", "NHL"], ["KXCFBTOTAL", "football/college-football", "NCAAF"], ["KXNBATOTAL", "basketball/nba", "NBA"]];
+
+// What kind of wager a ticker is — labels the history and position cards.
+function wagerType(ticker) {
+  const t = String(ticker || "");
+  if (/^KXMVE/.test(t)) return "PARLAY";
+  if (/TOTAL/.test(t)) return "OVER/UNDER";
+  if (/15M-/.test(t)) return "15-MIN";
+  if (/^(KXWTI|KXBRENTD|KXGOLD|KXSILVER|KXBTC|KXETH|KXSOL|KXXRP|KXDOGE|KXADA|KXBNB|KXINX|KXNDQ)/.test(t)) return "PRICE";
+  return "WINNER";
+}
 
 // KXMLBTOTAL-26AUG102145HOUSF-9 -> threshold 9 -> the market is "9 or
 // more", i.e. OVER the books' 8.5 line.

@@ -36,6 +36,7 @@ const code = [
   slice("const codeEq = (a, c)", ";"),
   slice("const codeHit = (codes, abbrs) => {", "\n};"),
   slice("function tickerDate(", "\n}"),
+  slice("function wagerType(", "\n}"),
   slice("function totalLine(", "\n}"),
   slice("function normCdf(", "\n}"),
   slice("function ewmaSigma(", "\n}"),
@@ -59,8 +60,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -206,6 +207,15 @@ ok(techDrift(techUp, 0.001) > 0 && techDrift(techDn, 0.001) < 0, "chart drift fo
 ok(Math.abs(techDrift({ score: 99 }, 0.001)) <= 0.001 * 0.12 + 1e-12, "chart drift capped at 12% of sigma");
 const pTech = pAbove(100, 100, 0.001, 10, techDrift(techUp, 0.001));
 ok(pTech > 50 && pTech < 62, "charts nudge an at-the-money window, never decide it (" + pTech.toFixed(1) + "%)");
+
+// Wager type labels + totals league mapping
+ok(wagerType("KXMVECROSSCATEGORY-S2026-ABC") === "PARLAY", "combo -> PARLAY label");
+ok(wagerType("KXMLBTOTAL-26AUG102020HOUSD-9") === "OVER/UNDER", "totals -> OVER/UNDER label");
+ok(wagerType("KXBTC15M-26AUG100145-45") === "15-MIN", "15-minute -> label");
+ok(wagerType("KXGOLDD-26AUG10-T4497") === "PRICE", "commodity ladder -> PRICE");
+ok(wagerType("KXMLBGAME-26AUG09SEATEX-SEA") === "WINNER", "game -> WINNER");
+const totLg = detectLeague({ id: "KXMLBTOTAL-26AUG102020HOUSD-9", question: "Houston vs San Diego Total Runs?", name: "9+ runs" });
+ok(totLg && totLg.path === "baseball/mlb", "MLB totals ticker maps to the MLB feed for live tracking");
 
 // Wager instruction from the ladder
 const wl = [
