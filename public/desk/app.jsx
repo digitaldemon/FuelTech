@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.prediction-first";
+const BUILD = "2026-08-10.commodities";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -2011,7 +2011,8 @@ function guessCategory(text) {
   if (hit(["temperature", "rainfall", "snow", "hurricane", "storm", "weather", "degrees", "precipitation", "tornado"])) return "weather";
   if (hit(["election", "president", "senate", "congress", "governor", "nominee", "primary", "parliament", "prime minister", "impeach", "cabinet", "supreme court", "shutdown", "speaker"])) return "politics";
   if (hit(["nfl", "nba", "mlb", "nhl", "premier league", "super bowl", "world cup", "ncaa", "ufc", " vs ", "playoff", "olympic", "grand slam"])) return "sports";
-  if (hit(["fed ", "cpi", "inflation", "gdp", "s&p", "nasdaq", "bitcoin", "ethereum", "earnings", "stock", "rate cut", "interest rate", "unemployment", "recession", "ipo"])) return "finance";
+  if (hit(["fed ", "cpi", "inflation", "gdp", "s&p", "nasdaq", "bitcoin", "ethereum", "earnings", "stock", "rate cut", "interest rate", "unemployment", "recession", "ipo",
+    "wti", "brent", "crude", "gold", "silver", "natural gas", "commodity", "settlement price"])) return "finance";
   return "general";
 }
 
@@ -2095,7 +2096,7 @@ function App() {
         </header>
 
         <nav className="tabs">
-          {[["picks", "Today's picks"], ["analyze", "Analyze a market"], ["parlay", "Parlays"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "How I'm doing"]].map(([k, l]) => (
+          {[["picks", "Today's picks"], ["analyze", "Analyze a market"], ["parlay", "Parlays"], ["commodities", "Commodities"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "How I'm doing"]].map(([k, l]) => (
             <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
           ))}
         </nav>
@@ -2103,6 +2104,7 @@ function App() {
         {tab === "picks" && <Picks ledger={ledger} onPick={(m) => { setPending(m); setTab("analyze"); }} />}
         {tab === "analyze" && <Analyze fw={fw} onSave={saveEntry} pending={pending} clearPending={() => setPending(null)} ledger={ledger} />}
         {tab === "parlay" && <Parlay onPick={(m) => { setPending(m); setTab("analyze"); }} />}
+        {tab === "commodities" && <Commodities onPick={(m) => { setPending(m); setTab("analyze"); }} />}
         {tab === "positions" && <Positions ledger={ledger} save={saveEntry} reopen={reopen} reload={reloadLedger} />}
         {tab === "browse" && <Browse onPick={(m) => { setPending(m); setTab("analyze"); }} />}
         {tab === "frameworks" && <Frameworks fw={fw} save={saveFw} ledger={ledger} reset={() => saveFw(buildFrameworks())} />}
@@ -4048,6 +4050,135 @@ function dateLabel(d) {
   catch { return iso; }
 }
 
+/* ---- commodities pipeline ----
+   Strictly analytical winner-picking for Kalshi's commodity/crypto strike
+   ladders. Checks used, all deterministic: (1) live spot + realized
+   volatility -> lognormal probability per strike; (2) the ladder's own
+   prices as the market's read, for agreement/disagreement; (3) recent
+   momentum as context. Deep dive hands the market to the nine-check
+   finance analysis for the full research treatment. */
+const COMMODITIES = [
+  { series: "KXWTI", sym: "CL=F", label: "WTI Crude (daily)", unit: "$", crypto: false },
+  { series: "KXWTIW", sym: "CL=F", label: "WTI Crude (weekly)", unit: "$", crypto: false },
+  { series: "KXBRENTD", sym: "BZ=F", label: "Brent Crude", unit: "$", crypto: false },
+  { series: "KXGOLDD", sym: "GC=F", label: "Gold (daily)", unit: "$", crypto: false },
+  { series: "KXGOLDW", sym: "GC=F", label: "Gold (weekly)", unit: "$", crypto: false },
+  { series: "KXSILVERD", sym: "SI=F", label: "Silver (daily)", unit: "$", crypto: false },
+  { series: "KXSILVERW", sym: "SI=F", label: "Silver (weekly)", unit: "$", crypto: false },
+  { series: "KXBTCD", sym: "BTC-USD", label: "Bitcoin (daily)", unit: "$", crypto: true },
+  { series: "KXETHD", sym: "ETH-USD", label: "Ethereum (daily)", unit: "$", crypto: true },
+];
+
+// Standard normal CDF (Abramowitz-Stegun erf approximation, |err| < 7.5e-8).
+function normCdf(x) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989422804014327 * Math.exp(-x * x / 2);
+  let p = d * t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  if (x > 0) p = 1 - p;
+  return x > 0 ? 1 - (1 - p) : p;
+}
+
+// P(price at expiry > strike) under a driftless lognormal walk calibrated
+// to realized daily volatility. tradingDays already time-adjusted.
+function pAbove(spot, strike, sigmaD, tradingDays) {
+  if (!(spot > 0) || !(strike > 0) || !(sigmaD > 0)) return null;
+  const t = Math.max(0.02, tradingDays);
+  return clamp(normCdf(Math.log(spot / strike) / (sigmaD * Math.sqrt(t))) * 100, 0.5, 99.5);
+}
+
+// Ladder of ascending "above K" strikes -> probability the settle lands in
+// each bucket (below first, between each pair, above last). Sums to 100.
+function bucketProbs(strikes, probsAbove) {
+  const out = [];
+  for (let i = 0; i <= strikes.length; i++) {
+    const hi = i === 0 ? 100 : probsAbove[i - 1];
+    const lo = i === strikes.length ? 0 : probsAbove[i];
+    out.push(Math.max(0, hi - lo));
+  }
+  return out;
+}
+
+// 3 months of daily closes from Yahoo (proxied): spot, realized daily
+// sigma of log returns, and the 1-day / 5-day moves for momentum context.
+const yahooCache = new Map();
+async function yahooHist(sym) {
+  const hit = yahooCache.get(sym);
+  if (hit && Date.now() - hit.at < 120000) return hit.v;
+  try {
+    const r = await fetch(px("https://query1.finance.yahoo.com/v8/finance/chart/" +
+      encodeURIComponent(sym) + "?range=3mo&interval=1d"));
+    if (!r.ok) return null;
+    const d = await r.json();
+    const res = d.chart && d.chart.result && d.chart.result[0];
+    if (!res) return null;
+    const closes = ((res.indicators && res.indicators.quote && res.indicators.quote[0] &&
+      res.indicators.quote[0].close) || []).filter((x) => Number.isFinite(x));
+    if (closes.length < 20) return null;
+    const spot = Number(res.meta && res.meta.regularMarketPrice) || closes[closes.length - 1];
+    const rets = [];
+    for (let i = 1; i < closes.length; i++) rets.push(Math.log(closes[i] / closes[i - 1]));
+    const mean = rets.reduce((s, x) => s + x, 0) / rets.length;
+    const sigmaD = Math.sqrt(rets.reduce((s, x) => s + (x - mean) * (x - mean), 0) / (rets.length - 1));
+    const v = {
+      spot, sigmaD,
+      chg1d: (spot / closes[closes.length - 2] - 1) * 100,
+      chg5d: closes.length > 6 ? (spot / closes[closes.length - 6] - 1) * 100 : null,
+    };
+    yahooCache.set(sym, { at: Date.now(), v });
+    return v;
+  } catch { return null; }
+}
+
+async function scanCommodities() {
+  const root = "https://api.elections.kalshi.com/trade-api/v2";
+  const out = [];
+  await mapLimit(COMMODITIES, 4, async (asset) => {
+    let d;
+    try {
+      const r = await fetch(px(root + "/markets?series_ticker=" + asset.series + "&status=open&limit=100"));
+      if (!r.ok) return;
+      d = await r.json();
+    } catch { return; }
+    const raw = (d.markets || []).filter((m) => m.floor_strike != null || m.cap_strike != null);
+    if (!raw.length) return;
+    const q = await yahooHist(asset.sym);
+    if (!q) return;
+    // Soonest event first; one card per event.
+    const byEvent = {};
+    raw.forEach((m) => { (byEvent[m.event_ticker] = byEvent[m.event_ticker] || []).push(m); });
+    const events = Object.values(byEvent)
+      .sort((a, b) => new Date(a[0].close_time) - new Date(b[0].close_time)).slice(0, 2);
+    for (const ms of events) {
+      const closeT = new Date(ms[0].close_time);
+      const days = Math.max(0.02, (closeT - Date.now()) / 86400000);
+      const td = asset.crypto ? days : Math.max(0.02, days * 5 / 7);
+      // Ascending strike ladder (greater-type strikes only, the common shape)
+      const ladder = ms.filter((m) => m.strike_type === "greater" && m.floor_strike != null)
+        .map((m) => ({ m: kaMarket(m), K: Number(m.floor_strike) }))
+        .filter((x) => Number.isFinite(x.K) && x.m.price != null)
+        .sort((a, b) => a.K - b.K);
+      if (ladder.length < 2) continue;
+      const pModel = ladder.map((x) => pAbove(q.spot, x.K, q.sigmaD, td));
+      if (pModel.some((p) => p == null)) continue;
+      const pMarket = ladder.map((x) => clamp(x.m.price, 0.5, 99.5));
+      const bModel = bucketProbs(ladder.map((x) => x.K), pModel);
+      const bMarket = bucketProbs(ladder.map((x) => x.K), pMarket);
+      const bucketName = (i) => i === 0 ? "Below " + asset.unit + ladder[0].K
+        : i === ladder.length ? "Above " + asset.unit + ladder[ladder.length - 1].K
+        : asset.unit + ladder[i - 1].K + " – " + asset.unit + ladder[i].K;
+      let win = 0; bModel.forEach((p, i) => { if (p > bModel[win]) win = i; });
+      let mktWin = 0; bMarket.forEach((p, i) => { if (p > bMarket[mktWin]) mktWin = i; });
+      out.push({
+        asset, spot: q.spot, sigmaD: q.sigmaD, chg1d: q.chg1d, chg5d: q.chg5d,
+        title: ms[0].title || asset.label, close: ms[0].close_time, days,
+        ladder, pModel, pMarket, bModel, bucketName,
+        win, winProb: bModel[win], mktWin, agree: win === mktWin,
+      });
+    }
+  });
+  return out.sort((a, b) => new Date(a.close) - new Date(b.close));
+}
+
 /* ---- over/under pipeline ---- */
 // Kalshi totals series (YES = combined score reaches the ticker's number).
 const TOTAL_SERIES = [
@@ -4167,6 +4298,123 @@ function gameWinnerAbbr(sides) {
 // Did a recorded pick win, given the final winner's abbreviation?
 const pickWon = (pickCode, winner) => !!pickCode &&
   (winner === "TIE" ? /TIE|DRAW/i.test(pickCode) : codeHit([pickCode], [winner]) >= 0.6);
+
+/* ---------------- Commodities ---------------- */
+function Commodities({ onPick }) {
+  const [rows, setRows] = useState([]);
+  const [state, setState] = useState("idle");
+  const [at, setAt] = useState(null);
+
+  async function run() {
+    setState("loading");
+    try { const r = await scanCommodities(); setRows(r); setAt(Date.now()); setState("done"); }
+    catch { setState("done"); }
+  }
+  useEffect(() => {
+    let alive = true, timer = null;
+    const loop = async () => { await run(); if (!alive) return; timer = setTimeout(loop, 180000); };
+    loop();
+    return () => { alive = false; if (timer) clearTimeout(timer); };
+  }, []);
+
+  const tierFor = (p) => p >= 60 ? { c: "var(--moss)", t: "STRONG" }
+    : p >= 40 ? { c: "var(--amber)", t: "LEAN" } : { c: "var(--dim)", t: "BEST GUESS" };
+
+  return (
+    <>
+      <div className="panel">
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
+          <p className="sect" style={{ margin: 0 }}>Commodities — where each price settles</p>
+          <button className="btn btn-ghost btn-sm" onClick={run} disabled={state === "loading"}>
+            {state === "loading" ? "Scanning" : "Rescan"}
+          </button>
+        </div>
+        <p className="help" style={{ marginTop: 6 }}>
+          Every open Kalshi price ladder (oil, gold, silver, Bitcoin, Ethereum), each priced by a volatility model
+          on the live spot: the winner is the bucket where the settle most likely lands. The market's own favorite
+          is shown as a cross-check, and <b>deep dive</b> runs all nine finance checks on any strike.
+        </p>
+        {at && <div className="chips" style={{ marginTop: 8 }}>
+          <span className="chip static">updated {new Date(at).toLocaleTimeString()}</span>
+          <span className="chip static">refreshes every 3 min</span>
+        </div>}
+        {state === "loading" && rows.length === 0 && <p className="pwait" style={{ marginTop: 10 }}><span className="dots">pricing every ladder</span></p>}
+        {state === "done" && rows.length === 0 && (
+          <p className="thesis" style={{ color: "var(--dim)", marginTop: 10 }}>
+            No commodity ladders are open right now — metals and oil list on weekdays; crypto dailies roll over each morning.
+          </p>
+        )}
+      </div>
+
+      {rows.map((r, ri) => {
+        const tr = tierFor(r.winProb);
+        const hrs = r.days * 24;
+        return (
+          <div key={ri} className="panel">
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "baseline" }}>
+              <p className="sect" style={{ margin: 0 }}>{r.asset.label}</p>
+              <span className="eyebrow">
+                spot {r.asset.unit}{r.spot.toFixed(2)}
+                <span style={{ color: r.chg1d >= 0 ? "var(--moss)" : "var(--rose)" }}>
+                  {" "}{r.chg1d >= 0 ? "+" : ""}{r.chg1d.toFixed(1)}% today
+                </span>
+                {r.chg5d != null && <span style={{ color: "var(--dim)" }}> · {r.chg5d >= 0 ? "+" : ""}{r.chg5d.toFixed(1)}% 5d</span>}
+                {" · settles in " + (hrs < 48 ? hrs.toFixed(0) + "h" : r.days.toFixed(1) + "d")}
+              </span>
+            </div>
+
+            <div className={"pick " + (r.winProb >= 60 ? "t-strong" : r.winProb >= 40 ? "t-lean" : "")} style={{ marginTop: 12 }}>
+              <span style={{ minWidth: 0, flex: 1 }}>
+                <span className="who-big" style={{ display: "block" }}>
+                  <span style={{ color: tr.c }}>Winner: </span>{r.bucketName(r.win)}
+                </span>
+                <span className="meta-line" style={{ display: "block" }}>
+                  volatility model on live spot · {r.agree
+                    ? "the market's ladder agrees"
+                    : "market disagrees — its favorite is " + r.bucketName(r.mktWin)}
+                  {Math.abs(r.chg1d) > 1.5 ? " · big move today — model uses fresh spot" : ""}
+                </span>
+              </span>
+              <span className="tierbox" style={{ color: tr.c, borderColor: tr.c }}>
+                <span className="pct">{r.winProb.toFixed(0)}%</span>
+                <span className="lbl">{tr.t}</span>
+              </span>
+            </div>
+
+            <details className="fold">
+              <summary>Every strike — model vs market</summary>
+              {r.ladder.map((x, i) => {
+                const pm = r.pModel[i], pk = r.pMarket[i];
+                const gap = pm - pk;
+                return (
+                  <div key={x.m.id} className="score-row" style={{ borderBottom: "1px solid rgba(65,75,99,.35)" }}>
+                    <span className="who" style={{ fontSize: 13 }}>
+                      Above {r.asset.unit}{x.K}
+                      <span className="sub" style={{ display: "block" }}>
+                        model {pm.toFixed(0)}% · market {pk.toFixed(0)}c
+                        {Math.abs(gap) >= 8 ? <b style={{ color: gap > 0 ? "var(--moss)" : "var(--rose)" }}>
+                          {" · model says " + (gap > 0 ? "likelier" : "less likely") + " than priced"}</b> : ""}
+                      </span>
+                    </span>
+                    <span className="pick-actions">
+                      <button className="chip" onClick={() => onPick(x.m)}>deep dive</button>
+                      <a className="chip" href={x.m.link} target="_blank" rel="noreferrer">open ↗</a>
+                    </span>
+                  </div>
+                );
+              })}
+              <p className="help" style={{ marginTop: 8 }}>
+                Model = chance the settle finishes above that strike, from {(r.sigmaD * 100).toFixed(1)}% daily
+                volatility over the remaining time. Deep dive adds the research checks — supply news, macro,
+                positioning — on top of the math.
+              </p>
+            </details>
+          </div>
+        );
+      })}
+    </>
+  );
+}
 
 /* ---------------- Today's picks ----------------
    The landing board: every live, today's, and upcoming game with the side

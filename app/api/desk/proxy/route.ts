@@ -14,6 +14,9 @@ const ALLOWED = new Set([
   "statsapi.mlb.com",
   "api-web.nhle.com",
   "cdn.nba.com",
+  // Spot prices + history for the commodities model
+  "query1.finance.yahoo.com",
+  "query2.finance.yahoo.com",
 ]);
 
 export async function GET(req: Request) {

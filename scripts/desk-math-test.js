@@ -35,6 +35,9 @@ const code = [
   slice("const codeHit = (codes, abbrs) => {", "\n};"),
   slice("function tickerDate(", "\n}"),
   slice("function totalLine(", "\n}"),
+  slice("function normCdf(", "\n}"),
+  slice("function pAbove(", "\n}"),
+  slice("function bucketProbs(", "\n}"),
   slice("function paceProjection(", "\n}"),
   slice("function gameWinnerAbbr(", "\n}"),
   slice("const pickWon = (pickCode, winner)", ";"),
@@ -45,8 +48,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -160,6 +163,15 @@ ok(mlbPace && Math.abs(mlbPace.projected - 8 / (5.5 / 9)) < 0.01, "MLB pace: 8 r
 const wPace = paceProjection("basketball/wnba", "2:12 - 4th", [{ score: 98 }, { score: 87 }]);
 ok(wPace && wPace.projected > 185 && wPace.projected < 200, "WNBA pace: 185 pts with 2:12 left -> ~" + (wPace ? wPace.projected.toFixed(0) : "?"));
 ok(paceProjection("baseball/mlb", "Top 1st", [{ score: 0 }, { score: 0 }]) === null, "too-early game -> no pace read");
+
+// Commodities model
+ok(Math.abs(normCdf(0) - 0.5) < 1e-6, 'normCdf(0) = 0.5');
+ok(Math.abs(normCdf(1.96) - 0.975) < 0.001, 'normCdf(1.96) ~ 0.975');
+const pa = pAbove(100, 90, 0.02, 5), pb = pAbove(100, 110, 0.02, 5);
+ok(pa > 95 && pb < 5, 'pAbove: 10% OTM strikes at 2% daily vol over 5d -> extremes (' + pa.toFixed(1) + '/' + pb.toFixed(1) + ')');
+ok(pAbove(100, 100, 0.02, 5) > 49 && pAbove(100, 100, 0.02, 5) < 51, 'at-the-money -> ~50%');
+const bp = bucketProbs([90, 100, 110], [98, 50, 2]);
+ok(Math.abs(bp.reduce((s,x)=>s+x,0) - 100) < 1e-9 && bp[1] === 48 && bp[2] === 48, 'bucket probs sum to 100, middles correct');
 
 // Winner-pick grading from a final score
 ok(gameWinnerAbbr([{ abbr: "MIL", score: 5 }, { abbr: "MIN", score: 3 }]) === "MIL", "final score -> winner abbr");
