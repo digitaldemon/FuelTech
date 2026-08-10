@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.f15-only";
+const BUILD = "2026-08-10.pyth-feeds";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -4164,9 +4164,9 @@ const FAST15 = [
   { series: "KXDOGE15M", sym: "DOGE-USD", label: "DOGE", hub: "https://kalshi.com/crypto" },
   { series: "KXADA15M", sym: "ADA-USD", label: "ADA", hub: "https://kalshi.com/crypto" },
   { series: "KXBNB15M", sym: "BNB-USD", label: "BNB", hub: "https://kalshi.com/crypto" },
-  { series: "KXGOLD15M", sym: "GC=F", label: "Gold", hub: "https://kalshi.com/markets/kxgold15m/gold-15-minute" },
-  { series: "KXSILVER15M", sym: "SI=F", label: "Silver", hub: "https://kalshi.com/markets/kxsilver15m/silver-15-minute" },
-  { series: "KXWTI15M", sym: "CL=F", label: "WTI Oil", hub: "https://kalshi.com/markets/kxwti15m/wti-15-minute" },
+  { series: "KXGOLD15M", sym: "GC=F", pyth: "XAUUSD", label: "Gold", hub: "https://kalshi.com/markets/kxgold15m/gold-15-minute" },
+  { series: "KXSILVER15M", sym: "SI=F", pyth: "XAGUSD", label: "Silver", hub: "https://kalshi.com/markets/kxsilver15m/silver-15-minute" },
+  { series: "KXWTI15M", sym: "CL=F", pyth: "USOILSPOT", label: "WTI Oil", hub: "https://kalshi.com/markets/kxwti15m/wti-15-minute" },
   { series: "KXINX15M", sym: "^GSPC", label: "S&P 500", hub: "https://kalshi.com/markets/kxinx15m/s-p-500-15-minute" },
   { series: "KXNDQ15M", sym: "^NDX", label: "Nasdaq 100", hub: "https://kalshi.com/markets/kxndq15m/nasdaq-100-15-minute" },
 ];
@@ -4281,6 +4281,32 @@ async function yahooIntraday(sym) {
 // Realtime crypto spot straight from Coinbase — seconds-fresh and part of
 // the CF Benchmarks index family Kalshi settles on, unlike chart bars
 // that can lag a minute. 8-second cache.
+// Pyth oracle 1-minute candles — the EXACT series these windows settle on
+// (rules cite "Pyth GOLD/SILVER/PYTHOIL candlesticks"). Using anything
+// else (futures!) reads a different price and wrecks the model.
+const pythCache = new Map();
+async function pythIntraday(sym) {
+  const hit = pythCache.get(sym);
+  if (hit && Date.now() - hit.at < 15000) return hit.v;
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const r = await fetch(px("https://benchmarks.pyth.network/v1/shims/tradingview/history?symbol=" +
+      encodeURIComponent(sym) + "&resolution=1&from=" + (now - 4 * 3600) + "&to=" + now));
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (d.s !== "ok" || !Array.isArray(d.c) || d.c.length < 30) return null;
+    const closes = d.c.filter((x) => Number.isFinite(x));
+    const spot = closes[closes.length - 1];
+    const sigmaM = ewmaSigma(closes.slice(-240));
+    if (!sigmaM) return null;
+    const v = { spot, sigmaM,
+      chg15m: closes.length > 15 ? (spot / closes[closes.length - 16] - 1) * 100 : null,
+      tech: intradayTech(closes, null) };
+    pythCache.set(sym, { at: Date.now(), v });
+    return v;
+  } catch { return null; }
+}
+
 const cbSpotCache = new Map();
 async function coinbaseSpot(sym) {
   const pair = String(sym).replace("-USD", "") + "-USD";
@@ -4318,10 +4344,10 @@ async function scanFast15() {
       const m = (d.markets || []).filter((x) => x.floor_strike != null)
         .sort((x, y) => new Date(x.close_time) - new Date(y.close_time))[0];
       if (!m) return;
-      const q = await yahooIntraday(a.sym);
+      // Settlement-feed first: Pyth candles for metals/oil, Yahoo for the
+      // rest; crypto adds the seconds-fresh Coinbase spot on top.
+      const q = a.pyth ? await pythIntraday(a.pyth) : await yahooIntraday(a.sym);
       if (!q) return;
-      // Crypto gets the seconds-fresh Coinbase spot; bars still supply
-      // volatility and the chart read.
       let spot = q.spot;
       if (/-USD$/.test(a.sym)) {
         const live = await coinbaseSpot(a.sym);

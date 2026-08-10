@@ -20,6 +20,8 @@ const ALLOWED = new Set([
   // Realtime crypto spot for the 15-minute windows (tracks the CF
   // Benchmarks settlement index far closer than delayed chart bars)
   "api.coinbase.com",
+  // Pyth oracle candles — the EXACT settlement feed for metal/oil windows
+  "benchmarks.pyth.network",
 ]);
 
 export async function GET(req: Request) {
