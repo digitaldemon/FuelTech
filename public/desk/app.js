@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.all-sports-real";
+const BUILD = "2026-08-10.integrity-checks";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -1654,6 +1654,28 @@ async function espnGame(lg, m, codes) {
   const d = await getJson("https://site.api.espn.com/apis/site/v2/sports/" + lg.path + "/scoreboard");
   const events = d.events || [];
   if (!events.length) return null;
+  // Tennis: matches nest inside tournament groupings — surface them as
+  // pseudo-events so the scorer below can pick the right MATCH, not the
+  // whole tournament.
+  if (lg.path.indexOf("tennis") === 0) {
+    const flat = [];
+    events.forEach(ev => {
+      const comps = [].concat(...(ev.groupings || []).map(g => g.competitions || []), ev.competitions || []);
+      comps.forEach(comp => {
+        const cs = comp.competitors || [];
+        if (cs.length < 2) return;
+        flat.push({
+          id: comp.id || ev.id,
+          date: comp.date || ev.date,
+          name: cs.map(c => c.athlete && c.athlete.displayName || "").join(" vs "),
+          shortName: "",
+          status: comp.status,
+          competitions: [comp]
+        });
+      });
+    });
+    if (flat.length) events.splice(0, events.length, ...flat);
+  }
   const target = (m.question || "") + " " + (m.name || "");
   const scored = events.map(ev => {
     const comp = ev.competitions && ev.competitions[0] || {};
@@ -5620,11 +5642,14 @@ async function yahooIntraday(sym) {
     }
     if (closes.length < 30) return null;
     const spot = Number(res.meta && res.meta.regularMarketPrice) || closes[closes.length - 1];
+    const mt = Number(res.meta && res.meta.regularMarketTime);
+    const staleSec = Number.isFinite(mt) ? Math.max(0, Math.floor(Date.now() / 1000) - mt) : null;
     const sigmaM = ewmaSigma(closes.slice(-240));
     if (!sigmaM) return null;
     const v = {
       spot,
       sigmaM,
+      staleSec,
       chg15m: closes.length > 15 ? (spot / closes[closes.length - 16] - 1) * 100 : null,
       tech: intradayTech(closes, volumes)
     };
@@ -5658,11 +5683,14 @@ async function pythIntraday(sym) {
     if (d.s !== "ok" || !Array.isArray(d.c) || d.c.length < 30) return null;
     const closes = d.c.filter(x => Number.isFinite(x));
     const spot = closes[closes.length - 1];
+    const lastBar = Array.isArray(d.t) && d.t.length ? d.t[d.t.length - 1] : null;
+    const staleSec = lastBar ? Math.max(0, Math.floor(Date.now() / 1000) - lastBar) : null;
     const sigmaM = ewmaSigma(closes.slice(-240));
     if (!sigmaM) return null;
     const v = {
       spot,
       sigmaM,
+      staleSec,
       chg15m: closes.length > 15 ? (spot / closes[closes.length - 16] - 1) * 100 : null,
       tech: intradayTech(closes, null)
     };
@@ -5718,11 +5746,21 @@ async function scanFast15() {
       // rest; crypto adds the seconds-fresh Coinbase spot on top.
       const q = a.pyth ? await pythIntraday(a.pyth) : await yahooIntraday(a.sym);
       if (!q) return;
-      let spot = q.spot;
+      let spot = q.spot,
+        staleSec = q.staleSec,
+        dataWarn = null;
       if (/-USD$/.test(a.sym)) {
         const live = await coinbaseSpot(a.sym);
-        if (live != null) spot = live;
+        if (live != null) {
+          // Cross-source sanity: two independent feeds disagreeing hard
+          // means one is broken — say so instead of predicting through it.
+          if (q.spot > 0 && Math.abs(live - q.spot) / q.spot > 0.005) dataWarn = "sources diverge";
+          spot = live;
+          staleSec = 0;
+        }
       }
+      // A confident call on a stale settlement feed is a lie — refuse it.
+      const stale = staleSec != null && staleSec > 180;
       const km = kaMarket(m);
       const ref = Number(m.floor_strike);
       const minLeft = Math.max(0.2, (new Date(m.close_time) - Date.now()) / 60000);
@@ -5730,7 +5768,7 @@ async function scanFast15() {
       if (pModel == null) return;
       // Market read = the quote midpoint; the ensemble is the headline.
       const pMkt = km.bid != null && km.ask != null ? (km.bid + km.ask) / 2 : km.price;
-      const pUp = pMkt != null ? f15Blend(pModel, pMkt) : pModel;
+      const pUp = stale ? 50 : pMkt != null ? f15Blend(pModel, pMkt) : pModel;
       out.push({
         a,
         m: km,
@@ -5743,7 +5781,10 @@ async function scanFast15() {
         pMkt,
         close: m.close_time,
         tech: q.tech,
-        disagree: pMkt != null && Math.abs(pModel - pMkt) >= 12
+        stale,
+        staleSec,
+        dataWarn,
+        disagree: !stale && pMkt != null && Math.abs(pModel - pMkt) >= 12
       });
     } catch {/* next asset */}
   });
@@ -6565,9 +6606,21 @@ function Commodities({
       className: "livedot"
     }), f.a.label, ": ", /*#__PURE__*/React.createElement("span", {
       style: {
-        color: col
+        color: f.stale ? "var(--dim)" : col
       }
-    }, conf >= 55 ? up ? "UP" : "DOWN" : "COIN FLIP"), f.disagree && /*#__PURE__*/React.createElement("span", {
+    }, f.stale ? "NO CALL" : conf >= 55 ? up ? "UP" : "DOWN" : "COIN FLIP"), f.stale && /*#__PURE__*/React.createElement("span", {
+      className: "srcchip bad",
+      style: {
+        marginLeft: 8,
+        fontSize: 9
+      }
+    }, "FEED STALE ", Math.round(f.staleSec / 60), "m"), f.dataWarn && /*#__PURE__*/React.createElement("span", {
+      className: "srcchip bad",
+      style: {
+        marginLeft: 8,
+        fontSize: 9
+      }
+    }, f.dataWarn.toUpperCase()), f.disagree && /*#__PURE__*/React.createElement("span", {
       className: "srcchip bad",
       style: {
         marginLeft: 8,
@@ -6847,22 +6900,32 @@ function Picks({
     return g;
   }, [picks]);
   const analysisFor = p => (ledger || []).find(x => x.venue === "Kalshi" && x.marketId === p.id && x.call && x.call !== "SYNCED") || null;
-  const tier = p => p.modelProb >= 80 ? {
-    t: "STRONGEST",
-    cls: "t-strongest",
-    c: "var(--moss)"
-  } : p.modelProb >= 68 ? {
-    t: "STRONG",
-    cls: "t-strong",
-    c: "var(--moss)"
-  } : p.modelProb >= 55 ? {
-    t: "LEAN",
-    cls: "t-lean",
-    c: "var(--amber)"
-  } : {
-    t: "TOSS-UP",
-    cls: "",
-    c: "var(--dim)"
+
+  // Books disagreeing with each other is real uncertainty — a split line
+  // caps the tier at LEAN no matter how high the average sits.
+  const tier = p => {
+    if (p.disp > 6 && p.modelProb >= 55) return {
+      t: "LEAN · BOOKS SPLIT",
+      cls: "t-lean",
+      c: "var(--amber)"
+    };
+    return p.modelProb >= 80 ? {
+      t: "STRONGEST",
+      cls: "t-strongest",
+      c: "var(--moss)"
+    } : p.modelProb >= 68 ? {
+      t: "STRONG",
+      cls: "t-strong",
+      c: "var(--moss)"
+    } : p.modelProb >= 55 ? {
+      t: "LEAN",
+      cls: "t-lean",
+      c: "var(--amber)"
+    } : {
+      t: "TOSS-UP",
+      cls: "",
+      c: "var(--dim)"
+    };
   };
   const row = (p, rank) => {
     const tr = tier(p);
