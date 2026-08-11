@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.fine-tuned";
+const BUILD = "2026-08-10.all-sports-real";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -3935,6 +3935,33 @@ async function espnGamesForLeague(path, date) {
       "/scoreboard" + (date ? "?dates=" + date : ""));
     events = d.events || [];
   } catch { return []; }
+  // Tennis: matches live inside tournament events' GROUPINGS (100+ per
+  // tournament) — flatten them and keep only the requested day's matches.
+  if (path.indexOf("tennis") === 0) {
+    const rows = [];
+    events.forEach((ev) => {
+      const comps = [].concat(...(ev.groupings || []).map((g) => g.competitions || []), ev.competitions || []);
+      comps.forEach((comp, ci) => {
+        const cs = comp.competitors || [];
+        if (cs.length < 2) return;
+        const t2 = Date.parse(comp.date || comp.startDate || ev.date || "");
+        const cDate = Number.isFinite(t2) ? etDate(t2).replace(/-/g, "") : null;
+        if (date && cDate && cDate !== String(date)) return;
+        rows.push({
+          eventId: String(comp.id || ev.id + "-" + ci), path,
+          date: cDate || (date || null),
+          abbrs: cs.map(competitorAbbr),
+          homeAbbr: null, awayAbbr: null,
+          state: (comp.status && comp.status.type && comp.status.type.state) || "pre",
+          name: cs.map((c) => (c.athlete && c.athlete.displayName) || "").join(" vs "),
+          sides: cs.map((c) => ({ abbr: competitorAbbr(c),
+            score: c.score != null && c.score !== "" ? Number(c.score) : null, home: false })),
+          detail: (comp.status && comp.status.type && comp.status.type.shortDetail) || "",
+        });
+      });
+    });
+    return rows;
+  }
   return events.map((ev) => {
     const comp = (ev.competitions && ev.competitions[0]) || {};
     const comps = comp.competitors || [];
@@ -5573,8 +5600,11 @@ function Parlay({ onPick }) {
       return dedupe(picks, (p, c) => p.edge > c.edge).filter((p) => p.edge >= minEdge)
         .sort((a, b) => b.edge - a.edge).slice(0, 25);
     }
-    return dedupe(picks, (p, c) => p.modelProb > c.modelProb).filter((p) => p.modelProb >= 70)
-      .sort((a, b) => b.modelProb - a.modelProb).slice(0, 25);
+    // Every game, every sport — the predicted winner of each, ranked by
+    // certainty. A 70% floor was silently hiding whole sports (soccer and
+    // tennis favorites rarely clear 70).
+    return dedupe(picks, (p, c) => p.modelProb > c.modelProb)
+      .sort((a, b) => b.modelProb - a.modelProb).slice(0, 60);
   }, [picks, view, minEdge]);
 
   const pm = parlayMath(slip);
