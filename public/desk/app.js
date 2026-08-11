@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.pyth-feeds";
+const BUILD = "2026-08-10.fine-tuned";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -2314,10 +2314,96 @@ function guessCategory(text) {
 }
 
 /* ================= app ================= */
+// Grade every pending prediction record from its authoritative source —
+// sports from final scores, commodity ladders from settled strikes,
+// 15-minute windows from market results. Runs from ANY tab so records
+// never depend on which screen happens to be open.
+async function gradeAllRecords() {
+  let rec;
+  try {
+    const r = await fetch("/api/desk/picks");
+    rec = (await r.json()).record || [];
+  } catch {
+    return;
+  }
+  const changed = [];
+  const todayEt = etDate().replace(/-/g, "");
+  const sports = rec.filter(x => (!x.type || x.type === "sports" || String(x.id).indexOf("pk-") === 0) && x.result == null && x.date && x.date <= todayEt && x.eventId && x.path).slice(0, 6);
+  for (const x of sports) {
+    try {
+      const gs = await espnGamesForLeague(x.path, x.date);
+      const g = gs.find(y => y.eventId === String(x.eventId));
+      if (g && g.state === "post" && g.sides) {
+        const w = gameWinnerAbbr(g.sides);
+        if (w) {
+          x.result = pickWon(x.pickCode, w) ? "won" : "lost";
+          x.final = g.sides.map(s => s.abbr + " " + (s.score != null ? s.score : "-")).join(" ");
+          changed.push(x);
+        }
+      } else if (Date.now() - (x.at || 0) > 5 * 86400000) {
+        x.result = "void";
+        changed.push(x);
+      }
+    } catch {/* next cycle */}
+  }
+  const f15 = rec.filter(x => x.type === "f15" && x.result == null && x.close && Date.now() - new Date(x.close) > 2 * 60000).slice(0, 6);
+  for (const x of f15) {
+    try {
+      const r2 = await fetch(px("https://api.elections.kalshi.com/trade-api/v2/markets/" + String(x.id).slice(4)));
+      if (!r2.ok) continue;
+      const d2 = await r2.json();
+      const res = d2.market && d2.market.result;
+      if (res === "yes" || res === "no") {
+        x.result = res === "yes" === x.up ? "won" : "lost";
+        changed.push(x);
+      } else if (Date.now() - (x.at || 0) > 86400000) {
+        x.result = "void";
+        changed.push(x);
+      }
+    } catch {/* next cycle */}
+  }
+  const com = rec.filter(x => x.type === "commodity" && x.result == null && x.close && Date.now() - new Date(x.close) > 10 * 60000).slice(0, 4);
+  for (const x of com) {
+    try {
+      const r2 = await fetch(px("https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=" + encodeURIComponent(String(x.id).slice(3)) + "&limit=100"));
+      if (!r2.ok) continue;
+      const d2 = await r2.json();
+      const ms = (d2.markets || []).filter(m => /greater/.test(m.strike_type || "") && m.floor_strike != null && (m.result === "yes" || m.result === "no"));
+      if (ms.length) {
+        const actual = ms.filter(m => m.result === "yes").length;
+        x.result = actual === x.win ? "won" : "lost";
+        x.actual = actual;
+        changed.push(x);
+      } else if (Date.now() - (x.at || 0) > 3 * 86400000) {
+        x.result = "void";
+        changed.push(x);
+      }
+    } catch {/* next cycle */}
+  }
+  if (changed.length) {
+    try {
+      await fetch("/api/desk/picks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(changed)
+      });
+    } catch {/* resend next cycle */}
+  }
+}
 function App() {
   const [tab, setTab] = useState("picks");
   const [fw, setFw] = useState(buildFrameworks);
   const [ledger, setLedger] = useState([]);
+
+  // Background grader: keep every prediction record current no matter
+  // which tab is open.
+  useEffect(() => {
+    gradeAllRecords();
+    const id = setInterval(gradeAllRecords, 120000);
+    return () => clearInterval(id);
+  }, []);
   useEffect(() => {
     (async () => {
       try {
