@@ -130,6 +130,23 @@ export async function GET(req: Request) {
 
   // Auth-gated debug: return one raw settlement so field names can be
   // verified against reality instead of assumed.
+  if (new URL(req.url).searchParams.get("debug") === "positions") {
+    try {
+      let all: unknown[] = [];
+      let cursor = "";
+      for (let i = 0; i < 5; i++) {
+        const pd = await kget(creds, "/trade-api/v2/portfolio/positions?limit=200" + (cursor ? "&cursor=" + cursor : ""));
+        all = all.concat(pd.market_positions || []);
+        cursor = pd.cursor || "";
+        if (!cursor) break;
+      }
+      const od = await kget(creds, "/trade-api/v2/portfolio/orders?status=resting&limit=200").catch(() => ({ orders: [] }));
+      return Response.json({ raw_positions: all, resting_orders: od.orders || [] });
+    } catch (e) {
+      return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
+    }
+  }
+
   if (new URL(req.url).searchParams.get("debug") === "settlements") {
     try {
       const sd = await kget(creds, "/trade-api/v2/portfolio/settlements?limit=3");
