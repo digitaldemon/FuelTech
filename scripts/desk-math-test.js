@@ -50,6 +50,7 @@ const code = [
   slice("function blendProb(", "\n}"),
   slice("function bestLadderWager(", "\n}"),
   slice("const settleHorizon = (minLeft)", ";"),
+  slice("function f15Call(", "\n}"),
   slice("const f15Blend = (pModel, pMkt)", ";"),
   slice("function bucketProbs(", "\n}"),
   slice("function paceProjection(", "\n}"),
@@ -62,8 +63,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -214,6 +215,16 @@ ok(pTech > 50 && pTech < 62, "charts nudge an at-the-money window, never decide 
 ok(settleHorizon(10) === 9.6 && settleHorizon(0.3) === 0.1, "settlement averaging trims the horizon, floored");
 const fb = f15Blend(80, 60);
 ok(fb > 60 && fb < 80 && Math.abs(f15Blend(50, 50) - 50) < 1e-9, "f15 ensemble sits between model and market (" + fb.toFixed(1) + ")");
+
+// Careful 15-minute decision rule
+ok(f15Call(80, 5, true).call === "NO CALL", "stale data -> NO CALL even at 80%");
+ok(f15Call(66, 13, false).call === "TOO EARLY", "fresh window at 66% -> TOO EARLY");
+ok(f15Call(74, 13, false).call === "UP" && f15Call(74, 13, false).firm, "decisive early move (70%+) may still call");
+ok(f15Call(72, 6, false).firm && f15Call(72, 6, false).call === "UP", "mid-window 72% -> firm UP");
+ok(f15Call(39, 6, false).call === "LEANING DOWN" && !f15Call(39, 6, false).firm, "61% down -> lean, not firm");
+ok(f15Call(30, 6, false).call === "DOWN" && f15Call(30, 6, false).firm, "mid-window 70% down -> firm DOWN");
+ok(f15Call(60, 6, false).call === "LEANING UP" && !f15Call(60, 6, false).firm, "58-65% -> lean only, never firm");
+ok(f15Call(52, 6, false).call === "COIN FLIP", "near-even -> coin flip");
 
 // Wager type labels + totals league mapping
 ok(wagerType("KXMVECROSSCATEGORY-S2026-ABC") === "PARLAY", "combo -> PARLAY label");

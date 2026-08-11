@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.integrity-checks";
+const BUILD = "2026-08-10.careful-15m";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5731,6 +5731,45 @@ const settleHorizon = minLeft => Math.max(0.1, minLeft - 0.4);
 
 // Model and market combined in log-odds, equal weight — the 15-minute
 // books carry real bot money; ignoring them costs accuracy.
+// The careful decision rule for a 15-minute window:
+// - stale data -> NO CALL, always
+// - first ~4 minutes -> TOO EARLY unless the move is already decisive
+//   (a fresh window's gap is noise; calling it is guessing)
+// - firm UP/DOWN needs 65%+; 58-65% is only a lean; below that, coin flip
+function f15Call(pUp, minLeft, stale) {
+  const up = pUp >= 50;
+  const conf = up ? pUp : 100 - pUp;
+  if (stale) return {
+    call: "NO CALL",
+    firm: false,
+    up,
+    conf
+  };
+  if (minLeft > 11 && conf < 70) return {
+    call: "TOO EARLY",
+    firm: false,
+    up,
+    conf
+  };
+  if (conf >= 65) return {
+    call: up ? "UP" : "DOWN",
+    firm: true,
+    up,
+    conf
+  };
+  if (conf >= 58) return {
+    call: up ? "LEANING UP" : "LEANING DOWN",
+    firm: false,
+    up,
+    conf
+  };
+  return {
+    call: "COIN FLIP",
+    firm: false,
+    up,
+    conf
+  };
+}
 const f15Blend = (pModel, pMkt) => unlogit((logit(clamp(pModel, 0.5, 99.5)) + logit(clamp(pMkt, 0.5, 99.5))) / 2);
 async function scanFast15() {
   const root = "https://api.elections.kalshi.com/trade-api/v2";
@@ -5740,8 +5779,9 @@ async function scanFast15() {
       const r = await fetch(px(root + "/markets?series_ticker=" + a.series + "&status=open&limit=3"));
       if (!r.ok) return;
       const d = await r.json();
-      const m = (d.markets || []).filter(x => x.floor_strike != null).sort((x, y) => new Date(x.close_time) - new Date(y.close_time))[0];
-      if (!m) return;
+      const nowT = Date.now();
+      const m = (d.markets || []).filter(x => x.floor_strike != null && new Date(x.open_time) <= nowT && new Date(x.close_time) > nowT).sort((x, y) => new Date(x.close_time) - new Date(y.close_time))[0];
+      if (!m) return; // between windows — never call a window that isn't running
       // Settlement-feed first: Pyth candles for metals/oil, Yahoo for the
       // rest; crypto adds the seconds-fresh Coinbase spot on top.
       const q = a.pyth ? await pythIntraday(a.pyth) : await yahooIntraday(a.sym);
@@ -6408,8 +6448,9 @@ function Commodities({
     const rec = recordRef.current;
     const changed = [];
     fastRows.forEach(f => {
-      const conf = Math.max(f.pUp, 100 - f.pUp);
-      if (conf < 55) return;
+      const dec = f15Call(f.pUp, f.minLeft, f.stale);
+      if (!dec.firm) return; // only firm, mid-window, fresh-data calls count
+      const conf = dec.conf;
       const id = "f15-" + f.m.id;
       if (rec.some(x => x.id === id)) return;
       const e = {
@@ -6604,23 +6645,26 @@ function Commodities({
       }
     }, /*#__PURE__*/React.createElement("span", {
       className: "livedot"
-    }), f.a.label, ": ", /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: f.stale ? "var(--dim)" : col
-      }
-    }, f.stale ? "NO CALL" : conf >= 55 ? up ? "UP" : "DOWN" : "COIN FLIP"), f.stale && /*#__PURE__*/React.createElement("span", {
-      className: "srcchip bad",
-      style: {
-        marginLeft: 8,
-        fontSize: 9
-      }
-    }, "FEED STALE ", Math.round(f.staleSec / 60), "m"), f.dataWarn && /*#__PURE__*/React.createElement("span", {
-      className: "srcchip bad",
-      style: {
-        marginLeft: 8,
-        fontSize: 9
-      }
-    }, f.dataWarn.toUpperCase()), f.disagree && /*#__PURE__*/React.createElement("span", {
+    }), (() => {
+      const dec = f15Call(f.pUp, f.minLeft, f.stale);
+      return /*#__PURE__*/React.createElement(React.Fragment, null, f.a.label, ": ", /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: dec.firm ? col : "var(--dim)"
+        }
+      }, dec.call), f.stale && /*#__PURE__*/React.createElement("span", {
+        className: "srcchip bad",
+        style: {
+          marginLeft: 8,
+          fontSize: 9
+        }
+      }, "FEED STALE ", Math.round(f.staleSec / 60), "m"), f.dataWarn && /*#__PURE__*/React.createElement("span", {
+        className: "srcchip bad",
+        style: {
+          marginLeft: 8,
+          fontSize: 9
+        }
+      }, f.dataWarn.toUpperCase()));
+    })(), f.disagree && /*#__PURE__*/React.createElement("span", {
       className: "srcchip bad",
       style: {
         marginLeft: 8,
@@ -6632,7 +6676,10 @@ function Commodities({
         color: "var(--dim)",
         fontWeight: 400
       }
-    }, " ", "\xB7 ", Math.max(0, f.minLeft).toFixed(0), " min left")), /*#__PURE__*/React.createElement("span", {
+    }, " ", "\xB7 closes ", new Date(f.close).toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit"
+    }), " \xB7 ", Math.max(0, f.minLeft).toFixed(1), " min left")), /*#__PURE__*/React.createElement("span", {
       className: "meta-line",
       style: {
         display: "block"
@@ -6654,17 +6701,20 @@ function Commodities({
       style: {
         color: f.tech.lean === "UP" ? "var(--moss)" : f.tech.lean === "DOWN" ? "var(--rose)" : "var(--dim)"
       }
-    }, f.tech.lean === "NEUTRAL" ? "neutral" : "lean " + f.tech.lean), ": ", f.tech.votes.map(v => v.k + " " + v.note).join(" · "))), /*#__PURE__*/React.createElement("span", {
-      className: "tierbox",
-      style: {
-        color: col,
-        borderColor: col
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "pct"
-    }, conf.toFixed(0), "%"), /*#__PURE__*/React.createElement("span", {
-      className: "lbl"
-    }, conf >= 55 ? up ? "UP" : "DOWN" : "TOSS-UP")), /*#__PURE__*/React.createElement("span", {
+    }, f.tech.lean === "NEUTRAL" ? "neutral" : "lean " + f.tech.lean), ": ", f.tech.votes.map(v => v.k + " " + v.note).join(" · "))), (() => {
+      const dec = f15Call(f.pUp, f.minLeft, f.stale);
+      return /*#__PURE__*/React.createElement("span", {
+        className: "tierbox",
+        style: {
+          color: dec.firm ? col : "var(--dim)",
+          borderColor: dec.firm ? col : "var(--dim)"
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "pct"
+      }, dec.conf.toFixed(0), "%"), /*#__PURE__*/React.createElement("span", {
+        className: "lbl"
+      }, dec.firm ? dec.call : dec.call === "TOO EARLY" ? "EARLY" : dec.call === "NO CALL" ? "STALE" : dec.call.indexOf("LEAN") === 0 ? "LEAN" : "TOSS-UP"));
+    })(), /*#__PURE__*/React.createElement("span", {
       className: "pick-actions"
     }, /*#__PURE__*/React.createElement("a", {
       className: "chip",
