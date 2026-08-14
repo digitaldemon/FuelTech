@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-13.nrfi-market-clv";
+const BUILD = "2026-08-13.nrfi-sim-calib";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5251,7 +5251,7 @@ async function pitcherMeta(pid, season) {
   if (pid == null) return { hand: null, form: null };
   const k = pid + ":" + season;
   if (_pitMeta.has(k)) return _pitMeta.get(k);
-  let hand = null, form = null, seasonEra = null, gs = null, g = null, ip = null;
+  let hand = null, form = null, seasonEra = null, gs = null, g = null, ip = null, allow = null;
   try {
     const [p, gl] = await Promise.all([
       getJson("https://statsapi.mlb.com/api/v1/people/" + pid + "?hydrate=stats(group=[pitching],type=[season],season=" + season + ")"),
@@ -5261,7 +5261,7 @@ async function pitcherMeta(pid, season) {
     hand = (pp && pp.pitchHand && pp.pitchHand.code) || null;
     const sst = pp && pp.stats && pp.stats[0] && pp.stats[0].splits && pp.stats[0].splits[0] && pp.stats[0].splits[0].stat;
     seasonEra = sst && sst.era != null ? Number(sst.era) : null;
-    if (sst) { gs = sst.gamesStarted != null ? Number(sst.gamesStarted) : null; g = sst.gamesPlayed != null ? Number(sst.gamesPlayed) : null; ip = sst.inningsPitched != null ? parseIp(sst.inningsPitched) : null; }
+    if (sst) { gs = sst.gamesStarted != null ? Number(sst.gamesStarted) : null; g = sst.gamesPlayed != null ? Number(sst.gamesPlayed) : null; ip = sst.inningsPitched != null ? parseIp(sst.inningsPitched) : null; allow = paRates(sst, sst.battersFaced); }
     const sp = (gl.stats && gl.stats[0] && gl.stats[0].splits) || [];
     const last = sp.slice(-3);
     if (last.length) {
@@ -5270,7 +5270,7 @@ async function pitcherMeta(pid, season) {
       if (lip > 0) form = (er * 9) / lip;
     }
   } catch { /* leave nulls */ }
-  const val = { hand, form, seasonEra, gs, g, ip };
+  const val = { hand, form, seasonEra, gs, g, ip, allow };
   _pitMeta.set(k, val);
   return val;
 }
@@ -5333,12 +5333,12 @@ function openerFactor(i01Era, seasonEra) {
 // Leadoff-weighted (0.5/0.3/0.2) top-of-order OBP vs the OPPOSING STARTER'S
 // HAND — the single sharpest offensive signal for a first-inning run.
 async function topOrderStrength(players, season, oppHand) {
-  const ordered = (players || []).slice(0, 3).map((p) => p && p.id).filter(Boolean);
-  if (ordered.length < 3) return { factor: 1, obp: null, note: "lineup not posted" };
+  const ordered = (players || []).slice(0, 5).map((p) => p && p.id).filter(Boolean);
+  if (ordered.length < 3) return { factor: 1, obp: null, note: "lineup not posted", batters: null };
   const sit = oppHand === "L" ? "vl" : oppHand === "R" ? "vr" : null;
-  const k = ordered.join(",") + ":" + (sit || "all") + ":" + season;
+  const k = ordered.join(",") + ":" + (sit || "all") + ":" + season + ":v2";
   if (_obpCache.has(k)) return _obpCache.get(k);
-  let val = { factor: 1, obp: null, note: "lineup not posted" };
+  let val = { factor: 1, obp: null, note: "lineup not posted", batters: null };
   try {
     const type = sit ? "type=[statSplits],sitCodes=[" + sit + "]" : "type=[season]";
     const d = await getJson("https://statsapi.mlb.com/api/v1/people?personIds=" + ordered.join(",") +
@@ -5346,15 +5346,19 @@ async function topOrderStrength(players, season, oppHand) {
     const byId = {};
     (d.people || []).forEach((p) => {
       const s = p.stats && p.stats[0] && p.stats[0].splits && p.stats[0].splits[0] && p.stats[0].splits[0].stat;
-      if (s && s.obp != null) byId[p.id] = Number(s.obp);
+      if (s) byId[p.id] = { obp: s.obp != null ? Number(s.obp) : null, rates: paRates(s, s.plateAppearances) };
     });
     const w = [0.5, 0.3, 0.2];
     let num = 0, den = 0;
-    ordered.forEach((id, i) => { if (byId[id] != null) { num += byId[id] * w[i]; den += w[i]; } });
+    ordered.slice(0, 3).forEach((id, i) => { const o = byId[id] && byId[id].obp; if (o != null) { num += o * w[i]; den += w[i]; } });
+    const batters = ordered.map((id) => (byId[id] && byId[id].rates) || null);
+    const hasB = batters.some(Boolean);
     if (den > 0) {
       const obp = num / den;
-      val = { factor: nClamp(obp / NRFI_LG_OBP, 0.82, 1.24), obp,
+      val = { factor: nClamp(obp / NRFI_LG_OBP, 0.82, 1.24), obp, batters: hasB ? batters : null,
         note: "1-3 OBP " + obp.toFixed(3) + (sit ? " vs " + (oppHand === "L" ? "LHP" : "RHP") : "") };
+    } else if (hasB) {
+      val = { factor: 1, obp: null, batters, note: "lineup posted" };
     }
   } catch { /* leave neutral */ }
   _obpCache.set(k, val);
@@ -5426,6 +5430,75 @@ function halfNoRun(offLambda, pitLambda, env) {
   return Math.pow(NRFI_LG_P0, lam / NRFI_LG_LAMBDA);
 }
 
+/* ---- Base-out simulation: model the actual batters through a base/out
+   Markov chain vs the starter's outcome profile -> true P(no run). ---- */
+// League-average per-PA outcome distribution (walk includes HBP).
+const NRFI_LG_PA = { out: 0.685, bb: 0.085, s1: 0.140, s2: 0.045, s3: 0.004, hr: 0.033 };
+// Per-PA/BF outcome rates from a raw stat line.
+function paRates(st, denom) {
+  const d = Number(denom || 0);
+  if (!st || d <= 0) return null;
+  const n = (x) => Number(x || 0);
+  const bb = (n(st.baseOnBalls) + n(st.hitByPitch)) / d;
+  const hr = n(st.homeRuns) / d;
+  const s3 = n(st.triples) / d;
+  const s2 = n(st.doubles) / d;
+  const s1 = Math.max(0, n(st.hits) - n(st.doubles) - n(st.triples) - n(st.homeRuns)) / d;
+  const out = Math.max(0, 1 - bb - hr - s3 - s2 - s1);
+  return { out, bb, s1, s2, s3, hr };
+}
+// Log5 matchup of a batter vs a pitcher's allowed rates, normalized to sum 1.
+function matchupPA(b, p, lg) {
+  const keys = ["out", "bb", "s1", "s2", "s3", "hr"];
+  const raw = {}; let sum = 0;
+  for (const k of keys) { const v = lg[k] > 0 ? (b[k] * p[k]) / lg[k] : 0; raw[k] = v; sum += v; }
+  if (sum <= 0) return Object.assign({}, lg);
+  const o = {}; for (const k of keys) o[k] = raw[k] / sum;
+  return o;
+}
+// Advance base/out state for one outcome. base = 3-bit (1=1B,2=2B,4=3B).
+function advanceBaseOut(base, outs, o) {
+  const r1 = base & 1, r2 = base & 2 ? 1 : 0, r3 = base & 4 ? 1 : 0, on1 = base & 1 ? 1 : 0;
+  if (o === "out") return [base, outs + 1, 0];
+  if (o === "bb") {
+    if (on1 && r2 && r3) return [7, outs, 1];              // loaded -> forced run in
+    if (on1 && r2) return [7, outs, 0];                    // 1st&2nd -> loaded
+    if (on1) return [1 | 2 | (r3 ? 4 : 0), outs, 0];       // 1st occupied -> 1st&2nd(+3rd)
+    return [1 | (r2 ? 2 : 0) | (r3 ? 4 : 0), outs, 0];     // batter to 1st
+  }
+  if (o === "s1") return [1 | (on1 ? 2 : 0), outs, r2 + r3];        // 2nd,3rd score; 1st->2nd
+  if (o === "s2") return [2 | (on1 ? 4 : 0), outs, r2 + r3];        // 2nd,3rd score; 1st->3rd
+  if (o === "s3") return [4, outs, on1 + r2 + r3];                  // all score; batter->3rd
+  if (o === "hr") return [0, outs, on1 + r2 + r3 + 1];             // everyone + batter
+  return [base, outs, 0];
+}
+// Probability the half-inning is scoreless, batting `batters` in order.
+function simHalfNoRun(batters, pAllow, lg, maxBatters) {
+  const N = maxBatters || 12;
+  const keys = ["out", "bb", "s1", "s2", "s3", "hr"];
+  let D = new Array(24).fill(0); D[0] = 1;   // bases empty, 0 outs
+  let noRun = 0;
+  for (let i = 0; i < N; i++) {
+    const b = batters[i] || lg;
+    const dist = matchupPA(b, pAllow, lg);
+    const nd = new Array(24).fill(0);
+    for (let s = 0; s < 24; s++) {
+      const m = D[s]; if (m <= 0) continue;
+      const base = Math.floor(s / 3), outs = s % 3;
+      for (const o of keys) {
+        const po = dist[o]; if (po <= 0) continue;
+        const adv = advanceBaseOut(base, outs, o);
+        if (adv[2] > 0) continue;                 // a run scored -> not scoreless
+        if (adv[1] >= 3) noRun += m * po;         // 3 outs, still 0 runs
+        else nd[adv[0] * 3 + adv[1]] += m * po;
+      }
+    }
+    D = nd;
+    if (D.reduce((a, x) => a + x, 0) < 1e-6) break;
+  }
+  return nClamp(noRun + D.reduce((a, x) => a + x, 0), 0.02, 0.98);
+}
+
 // Full research pass for one game -> probability + informative checks.
 function nrfiEvaluate(ctx) {
   const awayOffBase = nrfiRegress(ctx.awayOff && ctx.awayOff.rate, (ctx.awayOff && ctx.awayOff.sample) || 0, NRFI_OFF_REG);
@@ -5458,8 +5531,26 @@ function nrfiEvaluate(ctx) {
   const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG);
   const umpFactor = ctx.umpFactor || 1;
   const env = nClamp(1 + (ctx.wx.factor - 1) + (umpFactor - 1), 0.85, 1.20);
-  const p0top = halfNoRun(awayOff, homePit, env); // away bats vs home starter
-  const p0bot = halfNoRun(homeOff, awayPit, env); // home bats vs away starter
+  // λ-model (fallback when we don't have posted batters + pitcher allow-rates).
+  let p0top = halfNoRun(awayOff, homePit, env); // away bats vs home starter
+  let p0bot = halfNoRun(homeOff, awayPit, env); // home bats vs away starter
+  let method = "model";
+  const awayB = ctx.awayLineup && ctx.awayLineup.batters;
+  const homeB = ctx.homeLineup && ctx.homeLineup.batters;
+  const homeAllow = ctx.homeMeta && ctx.homeMeta.allow;
+  const awayAllow = ctx.awayMeta && ctx.awayMeta.allow;
+  if (awayB && homeAllow && homeB && awayAllow) {
+    // Base-out simulation captures matchup + lineup + platoon + pitcher skill
+    // from the raw rates. Apply only what the season rates DON'T contain:
+    // recent form, opener/bullpen, travel, and park/weather/umpire.
+    const homeCtx = nClamp(1 + (homeForm.f - 1) * 0.6 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0, 0.82, 1.2);
+    const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.6 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0, 0.82, 1.2);
+    const s0top = simHalfNoRun(awayB, homeAllow, NRFI_LG_PA);
+    const s0bot = simHalfNoRun(homeB, awayAllow, NRFI_LG_PA);
+    const pRunTop = nClamp((1 - s0top) * homeCtx * ctx.awayTravel.factor * env, 0.02, 0.97);
+    const pRunBot = nClamp((1 - s0bot) * awayCtx * ctx.homeTravel.factor * env, 0.02, 0.97);
+    p0top = 1 - pRunTop; p0bot = 1 - pRunBot; method = "sim";
+  }
   const pNRFI = p0top * p0bot;
 
   // Data-confidence: a decisive number on missing inputs isn't a real edge.
@@ -5514,7 +5605,7 @@ function nrfiEvaluate(ctx) {
   const call = pNRFI >= 0.5 ? "nrfi" : "yrfi";
   const nonNeutral = checks.filter((c) => c.lean !== "neutral");
   const agree = nonNeutral.filter((c) => c.lean === call).length;
-  return { pNRFI, checks, aligned: { agree, total: nonNeutral.length }, confidence: conf };
+  return { pNRFI, checks, aligned: { agree, total: nonNeutral.length }, confidence: conf, method };
 }
 const rate2 = (o) => (o && o.rate != null ? o.rate.toFixed(2) : "—");
 const awayPit0 = (o) => (o && o.rate != null ? o.rate.toFixed(2) + " R/1st" : "TBD");
@@ -5530,7 +5621,7 @@ function nrfiTier(pMax) {
 // 186 games): actual 51.1% vs model 50.7%, Brier 0.230 < 0.250 base, 66%
 // pick-side accuracy. The tiny shift confirms the model is already honest.
 // Used until enough LIVE picks are graded to calibrate on real results.
-const NRFI_CALIB_SEED = { c: 0.016, n: 186, active: true, source: "backtest" };
+const NRFI_CALIB_SEED = { c: -0.029, n: 188, active: true, source: "backtest-sim" };
 
 // Empirical calibration: once enough calls are graded, shift the model's
 // probabilities (in logit space) so its average prediction matches the actual
@@ -5693,7 +5784,7 @@ async function scanNrfi(onProgress) {
       away: ctx.awayName, home: ctx.homeName,
       awayAbbr: away && away.team && away.team.abbreviation, homeAbbr: home && home.team && home.team.abbreviation,
       awayPP: ctx.awayPP, homePP: ctx.homePP,
-      pNRFI: ev.pNRFI, pYRFI: 1 - ev.pNRFI, checks: ev.checks, aligned: ev.aligned, confidence: ev.confidence,
+      pNRFI: ev.pNRFI, pYRFI: 1 - ev.pNRFI, checks: ev.checks, aligned: ev.aligned, confidence: ev.confidence, method: ev.method,
       hasPitchers: !!(awayPP && awayPP.id && homePP && homePP.id),
       dataOk: !!(awayOff && homeOff && awayPit && homePit),
       lineupPosted: (ctx.awayLineup.obp != null && ctx.homeLineup.obp != null),
@@ -5854,7 +5945,7 @@ function FirstInning() {
               {r.v.label} <span style={{ color: "var(--dim)", fontWeight: 400, fontSize: 13 }}>· {r.away} @ {r.home}</span>
             </div>
             <div className="meta-line" style={{ color: r.v.color, marginTop: 2 }}>{r.v.blurb}</div>
-            <div className="meta-line">{r.awayPP} vs {r.homePP}{r.lineupPosted ? "" : " · lineups pending"}</div>
+            <div className="meta-line">{r.awayPP} vs {r.homePP}{r.lineupPosted ? "" : " · lineups pending"}{r.method === "sim" ? " · base-out sim" : ""}</div>
             {r.tails && r.tails.length > 0 && (
               <div style={{ marginTop: 4, fontSize: 12 }}>
                 {r.tails.map((t, i) => (
