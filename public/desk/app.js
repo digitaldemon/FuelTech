@@ -9934,7 +9934,7 @@ function FirstInning() {
         gap: 5
       }
     }, openPositions.positions.map((p, i) => {
-      const pnlColor = p.unrealizedPnl == null ? "var(--dim)" : p.unrealizedPnl >= 0 ? "var(--moss)" : "var(--rose)";
+      const rlPnlColor = p.realizedPnl == null ? "var(--dim)" : p.realizedPnl >= 0 ? "var(--moss)" : "var(--rose)";
       return /*#__PURE__*/React.createElement("div", {
         key: i,
         style: {
@@ -9965,7 +9965,7 @@ function FirstInning() {
           marginTop: 1
         }
       }, p.ticker)), /*#__PURE__*/React.createElement("span", {
-        title: "You hold NO contracts — wins if no run scores in the 1st inning (NRFI).",
+        title: p.call === "NRFI" ? "You hold NO contracts — wins $1 per contract if the 1st inning ends scoreless." : "You hold YES contracts — wins $1 per contract if a run scores in the 1st inning.",
         style: {
           cursor: "help",
           padding: "2px 9px",
@@ -9976,8 +9976,10 @@ function FirstInning() {
           color: p.call === "NRFI" ? "var(--moss)" : "var(--rose)",
           border: "1px solid " + (p.call === "NRFI" ? "rgba(80,160,80,0.4)" : "rgba(220,60,60,0.4)")
         }
-      }, p.call), /*#__PURE__*/React.createElement("div", {
+      }, p.call), p.contracts > 0 && /*#__PURE__*/React.createElement("div", {
+        title: "Number of contracts held. Each contract pays out $1 if your call is correct.",
         style: {
+          cursor: "help",
           textAlign: "center"
         }
       }, /*#__PURE__*/React.createElement("div", {
@@ -9991,23 +9993,10 @@ function FirstInning() {
           fontWeight: 700,
           fontSize: 14
         }
-      }, p.contracts)), p.entryPrice != null && /*#__PURE__*/React.createElement("div", {
+      }, p.contracts)), p.totalCost != null && /*#__PURE__*/React.createElement("div", {
+        title: "Total amount at risk on this position. If your call is wrong, you lose this amount.",
         style: {
-          textAlign: "center"
-        }
-      }, /*#__PURE__*/React.createElement("div", {
-        style: {
-          fontSize: 10,
-          color: "var(--dim)",
-          marginBottom: 1
-        }
-      }, "ENTRY"), /*#__PURE__*/React.createElement("div", {
-        style: {
-          fontWeight: 700,
-          fontSize: 14
-        }
-      }, p.entryPrice.toFixed(0), "\xA2")), p.totalCost != null && /*#__PURE__*/React.createElement("div", {
-        style: {
+          cursor: "help",
           textAlign: "center"
         }
       }, /*#__PURE__*/React.createElement("div", {
@@ -10021,8 +10010,8 @@ function FirstInning() {
           fontWeight: 700,
           fontSize: 14
         }
-      }, "$", p.totalCost.toFixed(2))), p.unrealizedPnl != null && /*#__PURE__*/React.createElement("div", {
-        title: "Unrealized P&L \u2014 estimated gain or loss on this position based on current market price.",
+      }, "$", p.totalCost.toFixed(2))), p.estimatedPayout != null && p.estimatedPayout > 0 && /*#__PURE__*/React.createElement("div", {
+        title: "Estimated profit if your call hits — what you'd collect above your stake.",
         style: {
           cursor: "help",
           textAlign: "center"
@@ -10033,15 +10022,17 @@ function FirstInning() {
           color: "var(--dim)",
           marginBottom: 1
         }
-      }, "UNREAL. P&L"), /*#__PURE__*/React.createElement("div", {
+      }, "WIN PROFIT"), /*#__PURE__*/React.createElement("div", {
         style: {
-          fontWeight: 800,
+          fontWeight: 700,
           fontSize: 14,
-          color: pnlColor
+          color: "var(--moss)"
         }
-      }, p.unrealizedPnl >= 0 ? "+" : "", "$", p.unrealizedPnl.toFixed(2))), /*#__PURE__*/React.createElement("div", {
+      }, "+$", p.estimatedPayout.toFixed(2))), p.realizedPnl != null && /*#__PURE__*/React.createElement("div", {
+        title: "Realized P&L from closed portions of this position.",
         style: {
-          marginLeft: "auto"
+          cursor: "help",
+          textAlign: "center"
         }
       }, /*#__PURE__*/React.createElement("div", {
         style: {
@@ -10049,13 +10040,13 @@ function FirstInning() {
           color: "var(--dim)",
           marginBottom: 1
         }
-      }, "WINS IF HIT"), /*#__PURE__*/React.createElement("div", {
+      }, "REALIZED P&L"), /*#__PURE__*/React.createElement("div", {
         style: {
-          fontWeight: 700,
+          fontWeight: 800,
           fontSize: 14,
-          color: "var(--moss)"
+          color: rlPnlColor
         }
-      }, "$", p.contracts.toFixed(0))));
+      }, p.realizedPnl >= 0 ? "+" : "", "$", p.realizedPnl.toFixed(2))));
     }))), profitGoal > 0 && /*#__PURE__*/React.createElement("div", {
       style: {
         padding: "10px 14px",

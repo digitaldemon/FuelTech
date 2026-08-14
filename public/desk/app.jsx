@@ -6868,42 +6868,43 @@ function FirstInning() {
               {openPositions && !openPositions.error && openPositions.positions.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                   {openPositions.positions.map((p, i) => {
-                    const pnlColor = p.unrealizedPnl == null ? "var(--dim)" : p.unrealizedPnl >= 0 ? "var(--moss)" : "var(--rose)";
+                    const rlPnlColor = p.realizedPnl == null ? "var(--dim)" : p.realizedPnl >= 0 ? "var(--moss)" : "var(--rose)";
                     return (
                       <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", background: "rgba(255,255,255,0.04)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.07)", flexWrap: "wrap" }}>
                         <div style={{ flex: 1, minWidth: 120 }}>
                           <div style={{ fontWeight: 700, fontSize: 13 }}>{p.game}</div>
                           <div style={{ fontSize: 10, color: "var(--dim)", fontFamily: "monospace", marginTop: 1 }}>{p.ticker}</div>
                         </div>
-                        <span title={"You hold NO contracts — wins if no run scores in the 1st inning (NRFI)."} style={{ cursor: "help", padding: "2px 9px", borderRadius: 20, fontSize: 11, fontWeight: 800, background: p.call === "NRFI" ? "rgba(80,160,80,0.15)" : "rgba(220,60,60,0.15)", color: p.call === "NRFI" ? "var(--moss)" : "var(--rose)", border: "1px solid " + (p.call === "NRFI" ? "rgba(80,160,80,0.4)" : "rgba(220,60,60,0.4)") }}>
+                        <span
+                          title={p.call === "NRFI" ? "You hold NO contracts — wins $1 per contract if the 1st inning ends scoreless." : "You hold YES contracts — wins $1 per contract if a run scores in the 1st inning."}
+                          style={{ cursor: "help", padding: "2px 9px", borderRadius: 20, fontSize: 11, fontWeight: 800, background: p.call === "NRFI" ? "rgba(80,160,80,0.15)" : "rgba(220,60,60,0.15)", color: p.call === "NRFI" ? "var(--moss)" : "var(--rose)", border: "1px solid " + (p.call === "NRFI" ? "rgba(80,160,80,0.4)" : "rgba(220,60,60,0.4)") }}
+                        >
                           {p.call}
                         </span>
-                        <div style={{ textAlign: "center" }}>
-                          <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>CONTRACTS</div>
-                          <div style={{ fontWeight: 700, fontSize: 14 }}>{p.contracts}</div>
-                        </div>
-                        {p.entryPrice != null && (
-                          <div style={{ textAlign: "center" }}>
-                            <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>ENTRY</div>
-                            <div style={{ fontWeight: 700, fontSize: 14 }}>{p.entryPrice.toFixed(0)}¢</div>
+                        {p.contracts > 0 && (
+                          <div title={"Number of contracts held. Each contract pays out $1 if your call is correct."} style={{ cursor: "help", textAlign: "center" }}>
+                            <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>CONTRACTS</div>
+                            <div style={{ fontWeight: 700, fontSize: 14 }}>{p.contracts}</div>
                           </div>
                         )}
                         {p.totalCost != null && (
-                          <div style={{ textAlign: "center" }}>
+                          <div title={"Total amount at risk on this position. If your call is wrong, you lose this amount."} style={{ cursor: "help", textAlign: "center" }}>
                             <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>AT RISK</div>
                             <div style={{ fontWeight: 700, fontSize: 14 }}>${p.totalCost.toFixed(2)}</div>
                           </div>
                         )}
-                        {p.unrealizedPnl != null && (
-                          <div title="Unrealized P&L — estimated gain or loss on this position based on current market price." style={{ cursor: "help", textAlign: "center" }}>
-                            <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>UNREAL. P&L</div>
-                            <div style={{ fontWeight: 800, fontSize: 14, color: pnlColor }}>{p.unrealizedPnl >= 0 ? "+" : ""}${p.unrealizedPnl.toFixed(2)}</div>
+                        {p.estimatedPayout != null && p.estimatedPayout > 0 && (
+                          <div title={"Estimated profit if your call hits — what you'd collect above your stake."} style={{ cursor: "help", textAlign: "center" }}>
+                            <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>WIN PROFIT</div>
+                            <div style={{ fontWeight: 700, fontSize: 14, color: "var(--moss)" }}>+${p.estimatedPayout.toFixed(2)}</div>
                           </div>
                         )}
-                        <div style={{ marginLeft: "auto" }}>
-                          <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>WINS IF HIT</div>
-                          <div style={{ fontWeight: 700, fontSize: 14, color: "var(--moss)" }}>${p.contracts.toFixed(0)}</div>
-                        </div>
+                        {p.realizedPnl != null && (
+                          <div title={"Realized P&L from closed portions of this position."} style={{ cursor: "help", textAlign: "center" }}>
+                            <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>REALIZED P&L</div>
+                            <div style={{ fontWeight: 800, fontSize: 14, color: rlPnlColor }}>{p.realizedPnl >= 0 ? "+" : ""}${p.realizedPnl.toFixed(2)}</div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

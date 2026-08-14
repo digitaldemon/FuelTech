@@ -34,9 +34,38 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-// Safely extract ticker from a position object — Kalshi uses different field names across API versions
-function getTicker(p: Record<string, unknown>): string {
-  return String(p.ticker || p.market_ticker || p.marketTicker || "");
+// Ordered longest-first so greedy left-to-right parse picks 3-letter codes before 2-letter
+const MLB_CODES = [
+  "ARI","ATL","BAL","BOS","CHC","CWS","CHW","CIN","CLE","COL","DET",
+  "HOU","KCR","KC","LAA","LAD","MIA","MIL","MIN","NYM","NYY","OAK",
+  "PHI","PIT","SEA","SF","SD","STL","TBR","TB","TEX","TOR","WSH","WSN",
+];
+
+function splitTeams(s: string): [string, string] | null {
+  for (const away of MLB_CODES) {
+    if (s.startsWith(away)) {
+      const rest = s.slice(away.length);
+      // rest should be a valid team code
+      if (MLB_CODES.includes(rest)) return [away, rest];
+    }
+  }
+  return null;
+}
+
+// Ticker: KXMLBRFI-26AUG141810MIACIN
+// After series prefix: 26AUG14 1810 MIACIN  (date=7, time=4, teams=rest)
+function parseGameLabel(ticker: string): string {
+  const body = ticker.replace(/^KXMLBRFI-/i, "");
+  // date part: digits+letters up to 4-digit time; date = first 7 chars (e.g. 26AUG14)
+  if (body.length < 12) return ticker;
+  const timePart = body.slice(7, 11); // e.g. "1810"
+  const teamsPart = body.slice(11);   // e.g. "MIACIN"
+  const parsed = splitTeams(teamsPart);
+  const teams = parsed ? parsed[0] + " @ " + parsed[1] : teamsPart;
+  // Format time as HH:MM ET
+  const hh = timePart.slice(0, 2);
+  const mm = timePart.slice(2, 4);
+  return teams + "  " + hh + ":" + mm + " ET";
 }
 
 export async function GET(req: Request) {
@@ -56,54 +85,52 @@ export async function GET(req: Request) {
       const path = "/trade-api/v2/portfolio/positions?count_filter=position&limit=100" +
         (cursor ? "&cursor=" + encodeURIComponent(cursor) : "");
       const d = await kget(creds, path);
-      // Kalshi v2 uses market_positions; older docs show positions
       const rows = (d.market_positions || d.positions || []) as Array<Record<string, unknown>>;
       allPositions = allPositions.concat(rows);
       cursor = d.cursor || "";
       if (!cursor || rows.length < 100) break;
     }
 
-    // Debug mode: return raw tickers so we can see the format
     if (debug) {
       return Response.json({
         total: allPositions.length,
         sample: allPositions.slice(0, 20).map((p) => ({
-          ticker: getTicker(p),
-          position: p.position,
+          ticker: p.ticker || p.market_ticker,
+          position_fp: p.position_fp,
+          market_exposure_dollars: p.market_exposure_dollars,
+          realized_pnl_dollars: p.realized_pnl_dollars,
+          total_traded_dollars: p.total_traded_dollars,
           keys: Object.keys(p),
         })),
       });
     }
 
-    // Filter: match KXMLBRFI series (handles KXMLBRFI-... and KXMLB-RFI-... formats)
+    // Filter to NRFI series
     const nrfi = allPositions.filter((p) => {
-      const t = getTicker(p).toUpperCase();
-      return t.includes("KXMLBRFI") || (t.includes("KXMLB") && t.includes("RFI"));
+      const t = String(p.ticker || p.market_ticker || "").toUpperCase();
+      return t.includes("KXMLBRFI");
     });
 
     const positions = nrfi.map((p) => {
-      const ticker = getTicker(p);
-      const position = num(p.position) ?? 0;
-      const side = position >= 0 ? "YES" : "NO";
-      const contracts = Math.abs(position);
+      const ticker = String(p.ticker || p.market_ticker || "");
+
+      // position_fp: positive = long YES (YRFI), negative = long NO (NRFI)
+      const rawFp = num(p.position_fp) ?? 0;
+      const side = rawFp >= 0 ? "YES" : "NO";
       const call = side === "NO" ? "NRFI" : "YRFI";
 
-      // prices in cents (0-100)
-      const lastYesPrice = num(p.last_fill_price_yes) ?? num(p.last_price) ?? null;
-      const entryPrice = side === "YES"
-        ? lastYesPrice
-        : (lastYesPrice != null ? 100 - lastYesPrice : null);
+      // Magnitude: position_fp might be scaled by 100 (fixed-point cents)
+      // Heuristic: if |fp| > 100 and exposure suggests smaller number, divide by 100
+      const exposureDollars = num(p.market_exposure_dollars) ?? 0;
+      const absFp = Math.abs(rawFp);
+      // If |fp| looks like it's in cents (e.g. 1000 for 10 contracts at 100¢) vs raw (e.g. 10)
+      // A contract costs at most $1, so if absFp >> exposureDollars, it's likely scaled
+      const contracts = absFp > 0 && exposureDollars > 0 && absFp > exposureDollars * 5
+        ? Math.round(absFp / 100)
+        : Math.round(absFp);
 
-      const unrealizedPnl = num(p.unrealized_pnl);
-      const realizedPnl = num(p.realized_pnl);
-      const totalCost = entryPrice != null ? contracts * (entryPrice / 100) : null;
-
-      // Parse game label from ticker: KXMLBRFI-26AUG14-NYY-BOS → "NYY @ BOS"
-      const parts = ticker.split("-");
-      const teamParts = parts.slice(2); // skip series + date
-      const game = teamParts.length >= 2
-        ? teamParts[0] + " @ " + teamParts[1]
-        : parts.slice(1).join(" ") || ticker;
+      const realizedPnl = num(p.realized_pnl_dollars);
+      const game = parseGameLabel(ticker);
 
       return {
         ticker,
@@ -111,10 +138,14 @@ export async function GET(req: Request) {
         side,
         call,
         contracts,
-        entryPrice,
-        totalCost,
-        unrealizedPnl: unrealizedPnl != null ? unrealizedPnl / 100 : null,
-        realizedPnl: realizedPnl != null ? realizedPnl / 100 : null,
+        totalCost: exposureDollars || null,
+        // Payout if win: exposure buys you NO contracts; each pays $1 minus cost
+        // Without knowing exact NO price we estimate from exposure/contracts
+        estimatedPayout: contracts > 0 && exposureDollars > 0
+          ? Math.round((contracts - exposureDollars) * 100) / 100
+          : null,
+        realizedPnl,
+        unrealizedPnl: null, // not available in this endpoint
       };
     }).filter((p) => p.contracts > 0);
 
