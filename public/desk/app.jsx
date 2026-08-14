@@ -6015,10 +6015,18 @@ async function fetchKalshiRFI() {
     const r = await fetch(px(root + "/markets?series_ticker=KXMLBRFI&status=open&limit=200"));
     if (!r.ok) return [];
     const d = await r.json();
-    return (d.markets || []).map(kaMarket)
-      .filter((m) => m.price != null && m.price > 0)
-      .map((m) => ({ ticker: m.id, link: m.link, date: tickerDate(m.id),
-        codes: teamCodes(m.id), yesPrice: m.price, marketNRFI: 100 - m.price }));
+    return (d.markets || [])
+      .map((raw) => {
+        const m = kaMarket(raw);
+        if (!m || m.price == null || m.price <= 0) return null;
+        // KXMLBRFI has no SERIES_SLUG entry, so kalshiEventLink returns the series
+        // homepage for every game. Instead build a direct per-game link from the
+        // event_ticker the API returns — Kalshi's /events/ URL always resolves correctly.
+        const eventTicker = raw.event_ticker || raw.ticker || m.id;
+        const link = "https://kalshi.com/events/" + eventTicker.toLowerCase();
+        return { ticker: m.id, link, date: tickerDate(m.id), codes: teamCodes(m.id), yesPrice: m.price, marketNRFI: 100 - m.price };
+      })
+      .filter(Boolean);
   } catch { return []; }
 }
 // Match a Kalshi RFI market to a scheduled game by ET date + both team codes.
@@ -6048,6 +6056,7 @@ function FirstInning() {
   const [profitGoal, setProfitGoal] = useState(null);
   const [growthSpeed, setGrowthSpeed] = useState("steady");
   const [amountOut, setAmountOut] = useState(null);
+  const saveBankrollTimer = useRef(null);
   const now = useNow(1000);
 
   async function loadRecord() {
@@ -6057,6 +6066,22 @@ function FirstInning() {
   async function loadTails() {
     try { const d = await fetch("/api/desk/nrfiking").then((r) => r.json()); setSellers((d && d.sellers) || []); }
     catch { setSellers([]); }
+  }
+  async function loadBankrollSettings() {
+    try {
+      const d = await fetch("/api/desk/nrfi/bankroll").then((r) => r.json());
+      if (d && d.settings) {
+        if (d.settings.startingBankroll != null) setBankroll(d.settings.startingBankroll);
+        if (d.settings.riskLevel) setRiskLevel(d.settings.riskLevel);
+        if (d.settings.growthSpeed) setGrowthSpeed(d.settings.growthSpeed);
+      }
+    } catch { /* ignore */ }
+  }
+  function saveBankrollSettings(patch) {
+    if (saveBankrollTimer.current) clearTimeout(saveBankrollTimer.current);
+    saveBankrollTimer.current = setTimeout(() => {
+      fetch("/api/desk/nrfi/bankroll", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }).catch(() => {});
+    }, 800);
   }
   async function reconcile(rs, rfiList) {
     if (!recRef.current) return;
@@ -6128,7 +6153,7 @@ function FirstInning() {
     finally { setImporting(false); }
   }
 
-  useEffect(() => { loadTails(); loadRecord().then(run); }, []);
+  useEffect(() => { loadTails(); loadBankrollSettings(); loadRecord().then(run); }, []);
 
   // T-45: auto-refresh once when any pregame game is within 45 minutes of first pitch.
   useEffect(() => {
@@ -6442,6 +6467,16 @@ function FirstInning() {
       {/* Bankroll builder */}
       {(() => {
         const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
+
+        // ── P&L from settled history (Kalshi imports have contracts + mktAtPick) ──
+        const gradedHistory = (rec || []).filter((r) => (r.result === "won" || r.result === "lost") && r.contracts && r.mktAtPick != null);
+        const historyPL = gradedHistory.reduce((s, r) => {
+          // mktAtPick = entry price cents for "our call side". Win pays $1/contract; loss forfeits cost.
+          const cost = r.contracts * r.mktAtPick / 100;
+          return s + (r.result === "won" ? r.contracts - cost : -cost);
+        }, 0);
+        const currentBankroll = bankroll != null ? bankroll + historyPL : null;
+
         // Sort by edge descending — best plays first
         const betRows = enriched
           .filter((r) => r.v && r.v.isBet && r.kelly != null && r.call === "NRFI")
@@ -6453,6 +6488,42 @@ function FirstInning() {
         const totalBetPct = rawTotalBetPct * allocationScale;
         const totalBetAmt = remaining ? remaining * totalBetPct : null;
         const avgEdgePct = betRows.length > 0 ? betRows.reduce((s, r) => s + (r.market ? r.market.edge : 0), 0) / betRows.length : 0;
+
+        // ── AI assistant insights ──
+        const nrfiGraded = (rec || []).filter((r) => r.result === "won" || r.result === "lost");
+        const last10 = nrfiGraded.slice(0, 10);
+        const wins10 = last10.filter((r) => r.result === "won").length;
+        const roi10 = last10.length > 0 ? last10.reduce((s, r) => {
+          if (r.mktAtPick == null) return s;
+          return s + (r.result === "won" ? (100 - r.mktAtPick) / 100 : -r.mktAtPick / 100);
+        }, 0) / last10.length * 100 : null;
+        let streak = 0;
+        const streakDir = nrfiGraded.length > 0 ? nrfiGraded[0].result : null;
+        for (const rg of nrfiGraded) { if (rg.result === streakDir) streak++; else break; }
+        const aiInsights = [];
+        if (last10.length >= 3) {
+          const wr = (wins10 / last10.length * 100).toFixed(0);
+          aiInsights.push({ type: wins10 / last10.length >= 0.55 ? "good" : wins10 / last10.length <= 0.4 ? "warn" : "neutral",
+            text: wr + "% win rate on last " + last10.length + " bets" + (roi10 != null ? " · avg " + (roi10 > 0 ? "+" : "") + roi10.toFixed(1) + "% ROI per bet" : "") + "." });
+        }
+        if (streak >= 3 && streakDir === "won") {
+          aiInsights.push({ type: "good", text: streak + "-bet win streak. Model is running hot — current risk level is appropriate." });
+        } else if (streak >= 3 && streakDir === "lost") {
+          aiInsights.push({ type: "warn", text: streak + " consecutive losses. Recommend dropping to conservative risk until the streak breaks." });
+        }
+        if (betRows.length > 0 && avgEdgePct >= 6) {
+          aiInsights.push({ type: "good", text: "Strong edge today (avg +" + avgEdgePct.toFixed(1) + "%). Good slate to press at current sizing." });
+        } else if (betRows.length > 0 && avgEdgePct < 2) {
+          aiInsights.push({ type: "warn", text: "Thin edge today (avg +" + avgEdgePct.toFixed(1) + "%). Consider sizing down or skipping marginal games." });
+        }
+        if (currentBankroll != null && bankroll != null && Math.abs(currentBankroll - bankroll) >= 5) {
+          const change = currentBankroll - bankroll;
+          aiInsights.push({ type: change >= 0 ? "good" : "warn",
+            text: "Bankroll " + (change >= 0 ? "up" : "down") + " $" + Math.abs(change).toFixed(0) + " from your starting $" + bankroll.toFixed(0) + " based on settled history." });
+        }
+        if (remaining != null && remaining <= 0 && bankroll) {
+          aiInsights.push({ type: "warn", text: "No remaining balance. Wait for open positions to settle before placing more bets." });
+        }
         // Goal planner logic
         // Estimate avg daily profit % = sum of edge-sized expected value across all bets
         const dailyEvPct = betRows.reduce((s, r) => {
@@ -6481,9 +6552,18 @@ function FirstInning() {
         const recBetCount = growthSpeed === "slow" ? "1-2" : growthSpeed === "fast" ? "all rated games" : "2-4";
         return (
           <div style={{ margin: "6px 0 2px", padding: "14px 16px", background: "rgba(80,160,80,0.05)", borderRadius: 10, border: "1px solid rgba(80,160,80,0.2)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: "var(--moss)" }}>Bankroll Builder</span>
               <span style={{ fontSize: 11, color: "var(--dim)" }}>— bet sizing, risk management, and growth planning</span>
+              {currentBankroll != null && (
+                <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>CURRENT BALANCE</span>
+                  <span title={"Starting $" + (bankroll || 0).toFixed(0) + " + $" + historyPL.toFixed(2) + " P&L from " + gradedHistory.length + " settled bet" + (gradedHistory.length === 1 ? "" : "s")} style={{ cursor: "help", fontSize: 18, fontWeight: 800, color: currentBankroll >= (bankroll || 0) ? "var(--moss)" : "var(--rose)" }}>
+                    ${currentBankroll.toFixed(0)}
+                    {historyPL !== 0 && <span style={{ fontSize: 12, fontWeight: 600, marginLeft: 4 }}>({historyPL >= 0 ? "+" : ""}{historyPL.toFixed(2)})</span>}
+                  </span>
+                </span>
+              )}
             </div>
             {/* Row 1: inputs */}
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 14 }}>
@@ -6491,13 +6571,13 @@ function FirstInning() {
                 <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>BANKROLL</span>
                 <div style={{ display: "flex", alignItems: "center", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 6, overflow: "hidden" }}>
                   <span style={{ padding: "0 8px", color: "var(--dim)", fontWeight: 700, borderRight: "1px solid rgba(120,130,150,.3)", lineHeight: "34px" }}>$</span>
-                  <input type="number" min="0" placeholder="500" value={bankroll || ""} onChange={(e) => setBankroll(Number(e.target.value) || null)}
+                  <input type="number" min="0" placeholder="500" value={bankroll || ""} onChange={(e) => { const v = Number(e.target.value) || null; setBankroll(v); saveBankrollSettings({ startingBankroll: v, riskLevel, growthSpeed }); }}
                     style={{ width: 80, fontSize: 14, padding: "6px 8px", background: "transparent", border: "none", color: "var(--fg)", fontWeight: 700, outline: "none" }} />
                 </div>
               </label>
               <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>RISK LEVEL</span>
-                <select value={riskLevel} onChange={(e) => setRiskLevel(e.target.value)}
+                <select value={riskLevel} onChange={(e) => { setRiskLevel(e.target.value); saveBankrollSettings({ startingBankroll: bankroll, riskLevel: e.target.value, growthSpeed }); }}
                   style={{ fontSize: 12, padding: "6px 10px", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 6, color: "var(--fg)", height: 34 }}>
                   <option value="conservative">Conservative — smaller bets</option>
                   <option value="moderate">Moderate — balanced (recommended)</option>
@@ -6514,7 +6594,7 @@ function FirstInning() {
               </label>
               <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>GROWTH SPEED</span>
-                <select value={growthSpeed} onChange={(e) => setGrowthSpeed(e.target.value)}
+                <select value={growthSpeed} onChange={(e) => { setGrowthSpeed(e.target.value); saveBankrollSettings({ startingBankroll: bankroll, riskLevel, growthSpeed: e.target.value }); }}
                   style={{ fontSize: 12, padding: "6px 10px", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 6, color: "var(--fg)", height: 34 }}>
                   <option value="slow">Slow &amp; safe — fewer bets, lower exposure</option>
                   <option value="steady">Steady — balanced approach</option>
@@ -6671,6 +6751,22 @@ function FirstInning() {
                     )}
                   </div>
                 ) : null}
+              </div>
+            )}
+            {/* AI assistant insights */}
+            {aiInsights.length > 0 && (
+              <div style={{ marginTop: 10, padding: "10px 14px", background: "rgba(120,130,150,0.06)", borderRadius: 8, border: "1px solid rgba(120,130,150,0.12)" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 8 }}>ASSISTANT RECOMMENDATIONS</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {aiInsights.map((ins, i) => (
+                    <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12 }}>
+                      <span style={{ color: ins.type === "good" ? "var(--moss)" : ins.type === "warn" ? "var(--amber)" : "var(--dim)", fontSize: 14, lineHeight: 1, flexShrink: 0 }}>
+                        {ins.type === "good" ? "✓" : ins.type === "warn" ? "⚠" : "·"}
+                      </span>
+                      <span style={{ color: ins.type === "warn" ? "var(--amber)" : "var(--fg)", lineHeight: 1.4 }}>{ins.text}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             {/* Row 4: advice */}

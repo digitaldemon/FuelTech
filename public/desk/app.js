@@ -7887,14 +7887,23 @@ async function fetchKalshiRFI() {
     const r = await fetch(px(root + "/markets?series_ticker=KXMLBRFI&status=open&limit=200"));
     if (!r.ok) return [];
     const d = await r.json();
-    return (d.markets || []).map(kaMarket).filter(m => m.price != null && m.price > 0).map(m => ({
-      ticker: m.id,
-      link: m.link,
-      date: tickerDate(m.id),
-      codes: teamCodes(m.id),
-      yesPrice: m.price,
-      marketNRFI: 100 - m.price
-    }));
+    return (d.markets || []).map(raw => {
+      const m = kaMarket(raw);
+      if (!m || m.price == null || m.price <= 0) return null;
+      // KXMLBRFI has no SERIES_SLUG entry, so kalshiEventLink returns the series
+      // homepage for every game. Instead build a direct per-game link from the
+      // event_ticker the API returns — Kalshi's /events/ URL always resolves correctly.
+      const eventTicker = raw.event_ticker || raw.ticker || m.id;
+      const link = "https://kalshi.com/events/" + eventTicker.toLowerCase();
+      return {
+        ticker: m.id,
+        link,
+        date: tickerDate(m.id),
+        codes: teamCodes(m.id),
+        yesPrice: m.price,
+        marketNRFI: 100 - m.price
+      };
+    }).filter(Boolean);
   } catch {
     return [];
   }
@@ -7925,6 +7934,7 @@ function FirstInning() {
   const [profitGoal, setProfitGoal] = useState(null);
   const [growthSpeed, setGrowthSpeed] = useState("steady");
   const [amountOut, setAmountOut] = useState(null);
+  const saveBankrollTimer = useRef(null);
   const now = useNow(1000);
   async function loadRecord() {
     try {
@@ -7943,6 +7953,28 @@ function FirstInning() {
     } catch {
       setSellers([]);
     }
+  }
+  async function loadBankrollSettings() {
+    try {
+      const d = await fetch("/api/desk/nrfi/bankroll").then(r => r.json());
+      if (d && d.settings) {
+        if (d.settings.startingBankroll != null) setBankroll(d.settings.startingBankroll);
+        if (d.settings.riskLevel) setRiskLevel(d.settings.riskLevel);
+        if (d.settings.growthSpeed) setGrowthSpeed(d.settings.growthSpeed);
+      }
+    } catch {/* ignore */}
+  }
+  function saveBankrollSettings(patch) {
+    if (saveBankrollTimer.current) clearTimeout(saveBankrollTimer.current);
+    saveBankrollTimer.current = setTimeout(() => {
+      fetch("/api/desk/nrfi/bankroll", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(patch)
+      }).catch(() => {});
+    }, 800);
   }
   async function reconcile(rs, rfiList) {
     if (!recRef.current) return;
@@ -8065,6 +8097,7 @@ function FirstInning() {
   }
   useEffect(() => {
     loadTails();
+    loadBankrollSettings();
     loadRecord().then(run);
   }, []);
 
@@ -8874,6 +8907,16 @@ function FirstInning() {
     }
   }, importMsg.text)), (() => {
     const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
+
+    // ── P&L from settled history (Kalshi imports have contracts + mktAtPick) ──
+    const gradedHistory = (rec || []).filter(r => (r.result === "won" || r.result === "lost") && r.contracts && r.mktAtPick != null);
+    const historyPL = gradedHistory.reduce((s, r) => {
+      // mktAtPick = entry price cents for "our call side". Win pays $1/contract; loss forfeits cost.
+      const cost = r.contracts * r.mktAtPick / 100;
+      return s + (r.result === "won" ? r.contracts - cost : -cost);
+    }, 0);
+    const currentBankroll = bankroll != null ? bankroll + historyPL : null;
+
     // Sort by edge descending — best plays first
     const betRows = enriched.filter(r => r.v && r.v.isBet && r.kelly != null && r.call === "NRFI").slice().sort((a, b) => (b.market ? b.market.edge : 0) - (a.market ? a.market.edge : 0));
     const remaining = bankroll && amountOut != null ? Math.max(0, bankroll - amountOut) : bankroll;
@@ -8883,6 +8926,63 @@ function FirstInning() {
     const totalBetPct = rawTotalBetPct * allocationScale;
     const totalBetAmt = remaining ? remaining * totalBetPct : null;
     const avgEdgePct = betRows.length > 0 ? betRows.reduce((s, r) => s + (r.market ? r.market.edge : 0), 0) / betRows.length : 0;
+
+    // ── AI assistant insights ──
+    const nrfiGraded = (rec || []).filter(r => r.result === "won" || r.result === "lost");
+    const last10 = nrfiGraded.slice(0, 10);
+    const wins10 = last10.filter(r => r.result === "won").length;
+    const roi10 = last10.length > 0 ? last10.reduce((s, r) => {
+      if (r.mktAtPick == null) return s;
+      return s + (r.result === "won" ? (100 - r.mktAtPick) / 100 : -r.mktAtPick / 100);
+    }, 0) / last10.length * 100 : null;
+    let streak = 0;
+    const streakDir = nrfiGraded.length > 0 ? nrfiGraded[0].result : null;
+    for (const rg of nrfiGraded) {
+      if (rg.result === streakDir) streak++;else break;
+    }
+    const aiInsights = [];
+    if (last10.length >= 3) {
+      const wr = (wins10 / last10.length * 100).toFixed(0);
+      aiInsights.push({
+        type: wins10 / last10.length >= 0.55 ? "good" : wins10 / last10.length <= 0.4 ? "warn" : "neutral",
+        text: wr + "% win rate on last " + last10.length + " bets" + (roi10 != null ? " · avg " + (roi10 > 0 ? "+" : "") + roi10.toFixed(1) + "% ROI per bet" : "") + "."
+      });
+    }
+    if (streak >= 3 && streakDir === "won") {
+      aiInsights.push({
+        type: "good",
+        text: streak + "-bet win streak. Model is running hot — current risk level is appropriate."
+      });
+    } else if (streak >= 3 && streakDir === "lost") {
+      aiInsights.push({
+        type: "warn",
+        text: streak + " consecutive losses. Recommend dropping to conservative risk until the streak breaks."
+      });
+    }
+    if (betRows.length > 0 && avgEdgePct >= 6) {
+      aiInsights.push({
+        type: "good",
+        text: "Strong edge today (avg +" + avgEdgePct.toFixed(1) + "%). Good slate to press at current sizing."
+      });
+    } else if (betRows.length > 0 && avgEdgePct < 2) {
+      aiInsights.push({
+        type: "warn",
+        text: "Thin edge today (avg +" + avgEdgePct.toFixed(1) + "%). Consider sizing down or skipping marginal games."
+      });
+    }
+    if (currentBankroll != null && bankroll != null && Math.abs(currentBankroll - bankroll) >= 5) {
+      const change = currentBankroll - bankroll;
+      aiInsights.push({
+        type: change >= 0 ? "good" : "warn",
+        text: "Bankroll " + (change >= 0 ? "up" : "down") + " $" + Math.abs(change).toFixed(0) + " from your starting $" + bankroll.toFixed(0) + " based on settled history."
+      });
+    }
+    if (remaining != null && remaining <= 0 && bankroll) {
+      aiInsights.push({
+        type: "warn",
+        text: "No remaining balance. Wait for open positions to settle before placing more bets."
+      });
+    }
     // Goal planner logic
     // Estimate avg daily profit % = sum of edge-sized expected value across all bets
     const dailyEvPct = betRows.reduce((s, r) => {
@@ -8921,8 +9021,9 @@ function FirstInning() {
       style: {
         display: "flex",
         alignItems: "center",
-        gap: 6,
-        marginBottom: 12
+        gap: 10,
+        marginBottom: 12,
+        flexWrap: "wrap"
       }
     }, /*#__PURE__*/React.createElement("span", {
       style: {
@@ -8935,7 +9036,35 @@ function FirstInning() {
         fontSize: 11,
         color: "var(--dim)"
       }
-    }, "\u2014 bet sizing, risk management, and growth planning")), /*#__PURE__*/React.createElement("div", {
+    }, "\u2014 bet sizing, risk management, and growth planning"), currentBankroll != null && /*#__PURE__*/React.createElement("span", {
+      style: {
+        marginLeft: "auto",
+        display: "flex",
+        alignItems: "center",
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.08em"
+      }
+    }, "CURRENT BALANCE"), /*#__PURE__*/React.createElement("span", {
+      title: "Starting $" + (bankroll || 0).toFixed(0) + " + $" + historyPL.toFixed(2) + " P&L from " + gradedHistory.length + " settled bet" + (gradedHistory.length === 1 ? "" : "s"),
+      style: {
+        cursor: "help",
+        fontSize: 18,
+        fontWeight: 800,
+        color: currentBankroll >= (bankroll || 0) ? "var(--moss)" : "var(--rose)"
+      }
+    }, "$", currentBankroll.toFixed(0), historyPL !== 0 && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12,
+        fontWeight: 600,
+        marginLeft: 4
+      }
+    }, "(", historyPL >= 0 ? "+" : "", historyPL.toFixed(2), ")")))), /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
         gap: 14,
@@ -8978,7 +9107,15 @@ function FirstInning() {
       min: "0",
       placeholder: "500",
       value: bankroll || "",
-      onChange: e => setBankroll(Number(e.target.value) || null),
+      onChange: e => {
+        const v = Number(e.target.value) || null;
+        setBankroll(v);
+        saveBankrollSettings({
+          startingBankroll: v,
+          riskLevel,
+          growthSpeed
+        });
+      },
       style: {
         width: 80,
         fontSize: 14,
@@ -9004,7 +9141,14 @@ function FirstInning() {
       }
     }, "RISK LEVEL"), /*#__PURE__*/React.createElement("select", {
       value: riskLevel,
-      onChange: e => setRiskLevel(e.target.value),
+      onChange: e => {
+        setRiskLevel(e.target.value);
+        saveBankrollSettings({
+          startingBankroll: bankroll,
+          riskLevel: e.target.value,
+          growthSpeed
+        });
+      },
       style: {
         fontSize: 12,
         padding: "6px 10px",
@@ -9081,7 +9225,14 @@ function FirstInning() {
       }
     }, "GROWTH SPEED"), /*#__PURE__*/React.createElement("select", {
       value: growthSpeed,
-      onChange: e => setGrowthSpeed(e.target.value),
+      onChange: e => {
+        setGrowthSpeed(e.target.value);
+        saveBankrollSettings({
+          startingBankroll: bankroll,
+          riskLevel,
+          growthSpeed: e.target.value
+        });
+      },
       style: {
         fontSize: 12,
         padding: "6px 10px",
@@ -9492,7 +9643,49 @@ function FirstInning() {
         color: "var(--amber)",
         fontSize: 11
       }
-    }, "\u26A0 Projecting under 2 weeks \u2014 this requires sustained high edge. Real results will vary. Never bet more than you can afford to lose.")) : null), /*#__PURE__*/React.createElement("div", {
+    }, "\u26A0 Projecting under 2 weeks \u2014 this requires sustained high edge. Real results will vary. Never bet more than you can afford to lose.")) : null), aiInsights.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 10,
+        padding: "10px 14px",
+        background: "rgba(120,130,150,0.06)",
+        borderRadius: 8,
+        border: "1px solid rgba(120,130,150,0.12)"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.08em",
+        marginBottom: 8
+      }
+    }, "ASSISTANT RECOMMENDATIONS"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 6
+      }
+    }, aiInsights.map((ins, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: {
+        display: "flex",
+        gap: 8,
+        alignItems: "flex-start",
+        fontSize: 12
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: ins.type === "good" ? "var(--moss)" : ins.type === "warn" ? "var(--amber)" : "var(--dim)",
+        fontSize: 14,
+        lineHeight: 1,
+        flexShrink: 0
+      }
+    }, ins.type === "good" ? "✓" : ins.type === "warn" ? "⚠" : "·"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: ins.type === "warn" ? "var(--amber)" : "var(--fg)",
+        lineHeight: 1.4
+      }
+    }, ins.text))))), /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 8,
         fontSize: 11,
