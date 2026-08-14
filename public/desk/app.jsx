@@ -1,8 +1,28 @@
 /* global React, ReactDOM */
-const { useState, useRef, useEffect, useMemo } = React;
+const { useState, useRef, useEffect, useMemo, useCallback } = React;
+
+// Ticking clock — re-renders every `ms` ms so countdowns stay live.
+function useNow(ms = 1000) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), ms); return () => clearInterval(id); }, [ms]);
+  return now;
+}
+
+function fmtCountdown(startUtc, now) {
+  const diff = new Date(startUtc).getTime() - now;
+  if (diff <= 0) return null;
+  const totalSec = Math.floor(diff / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h >= 24) return null; // too far out — don't show
+  if (h > 0) return h + "h " + m + "m";
+  if (m > 0) return m + "m " + String(s).padStart(2, "0") + "s";
+  return s + "s";
+}
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-13.nrfi-park-badge-v4";
+const BUILD = "2026-08-13.nrfi-countdown-v5";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5990,6 +6010,7 @@ function FirstInning() {
   const [open, setOpen] = useState({});
   const [rfi, setRfi] = useState([]);
   const recRef = useRef(null);
+  const now = useNow(1000);
 
   async function loadRecord() {
     try { const d = await fetch("/api/desk/nrfi").then((r) => r.json()); recRef.current = d.record || []; setRec(recRef.current); }
@@ -6097,12 +6118,24 @@ function FirstInning() {
     const tailTicker = (r.tails || []).map((t) => t.pick.kalshiTicker).find(Boolean);
     const tradeLink = (r.market && r.market.link) || (tailTicker ? kalshiEventLink(tailTicker) : null);
     const recE = (rec || []).find((x) => x.id === "nrfi-" + r.gamePk);
+    const gameTime = r.startUtc ? new Date(r.startUtc).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
+    const countdown = r.startUtc && !r.final && r.currentInning === 0 ? fmtCountdown(r.startUtc, now) : null;
     return (
       <div className={"pick " + r.tier.cls} key={r.gamePk}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
           <div style={{ flex: 1 }}>
             <div className="who-big" style={{ color: r.v.color }}>
               {r.v.label} <span style={{ color: "var(--dim)", fontWeight: 400, fontSize: 13 }}>· {r.away} @ {r.home}</span>
+              {gameTime && (
+                <span style={{ color: "var(--dim)", fontWeight: 400, fontSize: 12, marginLeft: 8 }}>
+                  {gameTime}
+                  {countdown && (
+                    <span style={{ color: countdown.includes("m") && !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)", fontWeight: countdown.includes("m") && !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400 }}>
+                      {" "}· starts in {countdown}
+                    </span>
+                  )}
+                </span>
+              )}
             </div>
             <div className="meta-line" style={{ color: r.v.color, marginTop: 2 }}>{r.v.blurb}</div>
             <div className="meta-line">
@@ -6110,19 +6143,19 @@ function FirstInning() {
                 <>
                   <span>{r.awayPP}</span>
                   {r.pitProfiles.away.grade !== "—" && (
-                    <span style={{ fontWeight: 700, fontSize: 11, color: r.pitProfiles.away.gradeColor, border: "1px solid", borderRadius: 3, padding: "0 3px", marginLeft: 4 }}>{r.pitProfiles.away.grade}</span>
+                    <span title={"1st-inning grade: " + (r.pitProfiles.away.summary || r.pitProfiles.away.grade) + " · " + (r.pitProfiles.away.vsNote || "")} style={{ cursor: "help", fontWeight: 700, fontSize: 11, color: r.pitProfiles.away.gradeColor, border: "1px solid", borderRadius: 3, padding: "0 3px", marginLeft: 4 }}>{r.pitProfiles.away.grade}</span>
                   )}
                   <span style={{ color: "var(--dim)" }}> vs </span>
                   <span>{r.homePP}</span>
                   {r.pitProfiles.home.grade !== "—" && (
-                    <span style={{ fontWeight: 700, fontSize: 11, color: r.pitProfiles.home.gradeColor, border: "1px solid", borderRadius: 3, padding: "0 3px", marginLeft: 4 }}>{r.pitProfiles.home.grade}</span>
+                    <span title={"1st-inning grade: " + (r.pitProfiles.home.summary || r.pitProfiles.home.grade) + " · " + (r.pitProfiles.home.vsNote || "")} style={{ cursor: "help", fontWeight: 700, fontSize: 11, color: r.pitProfiles.home.gradeColor, border: "1px solid", borderRadius: 3, padding: "0 3px", marginLeft: 4 }}>{r.pitProfiles.home.grade}</span>
                   )}
                 </>
               ) : (r.awayPP + " vs " + r.homePP)}
               {r.method === "sim" ? " · base-out sim" : ""}
             </div>
             {!r.lineupPosted && (
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4, padding: "2px 7px", background: "rgba(230,160,0,0.15)", border: "1px solid var(--amber)", borderRadius: 4, fontSize: 11, fontWeight: 700, color: "var(--amber)", letterSpacing: "0.04em" }}>
+              <div title="Starting lineups have not been posted yet — model uses projected lineup order" style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4, padding: "2px 7px", background: "rgba(230,160,0,0.15)", border: "1px solid var(--amber)", borderRadius: 4, fontSize: 11, fontWeight: 700, color: "var(--amber)", letterSpacing: "0.04em", cursor: "help" }}>
                 ⚠ LINEUPS PENDING
               </div>
             )}
@@ -6131,8 +6164,9 @@ function FirstInning() {
               const label = f >= 1.06 ? "HITTER FRIENDLY" : f >= 1.02 ? "SLIGHT HITTER LEAN" : f <= 0.95 ? "PITCHER FRIENDLY" : f <= 0.98 ? "SLIGHT PITCHER LEAN" : null;
               const color = label && (label.includes("HITTER") ? "var(--rose)" : "var(--moss)");
               if (!label) return null;
+              const tip = (f >= 1.06 ? "Park + weather strongly favor scoring (YRFI)" : f >= 1.02 ? "Park + weather lean slightly toward scoring" : f <= 0.95 ? "Park + weather strongly suppress scoring (NRFI)" : "Park + weather lean slightly toward suppressing runs") + (r.parkEnv.note ? " · " + r.parkEnv.note : "");
               return (
-                <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4, marginLeft: 6, padding: "2px 7px", background: color === "var(--rose)" ? "rgba(220,60,60,0.12)" : "rgba(80,160,80,0.12)", border: "1px solid " + color, borderRadius: 4, fontSize: 11, fontWeight: 700, color, letterSpacing: "0.04em" }}>
+                <div title={tip} style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4, marginLeft: 6, padding: "2px 7px", background: color === "var(--rose)" ? "rgba(220,60,60,0.12)" : "rgba(80,160,80,0.12)", border: "1px solid " + color, borderRadius: 4, fontSize: 11, fontWeight: 700, color, letterSpacing: "0.04em", cursor: "help" }}>
                   {label}
                   {r.parkEnv.note && <span style={{ fontWeight: 400, fontSize: 10, opacity: 0.85 }}> · {r.parkEnv.note}</span>}
                 </div>
@@ -6273,11 +6307,18 @@ function FirstInning() {
       {phase === "done" && sellers.length > 0 && sellers.every((s) => !s.active) && <p className="help" style={{ color: "var(--amber)" }}>No active seller subscriptions — showing the model board only.</p>}
       {phase === "done" && rows.length === 0 && <p className="help">No MLB games on today's slate.</p>}
       {rows.length > 0 && (
-        <p className="help" style={{ marginTop: 4 }}>
-          <b style={{ color: "var(--moss)" }}>★ BET</b> = strong (≥70%) · <b style={{ color: "var(--moss)" }}>BET</b> = solid (≥63%) ·{" "}
-          <b style={{ color: "var(--amber)" }}>Lean</b> = slight (≥57%) · <b style={{ color: "var(--dim)" }}>Pass</b> = coin flip.
-          NRFI = no run in the 1st, YRFI = a run scores.
-        </p>
+        <div style={{ marginTop: 6, marginBottom: 2, padding: "8px 12px", background: "rgba(255,255,255,0.04)", borderRadius: 6, fontSize: 12, color: "var(--dim)", lineHeight: 1.7 }}>
+          <div><b style={{ color: "var(--fg)" }}>Confidence:</b>{" "}
+            <b style={{ color: "var(--moss)" }}>★ BET</b> ≥70% · <b style={{ color: "var(--moss)" }}>BET</b> ≥63% · <b style={{ color: "var(--amber)" }}>LEAN</b> ≥57% · <b style={{ color: "var(--dim)" }}>PASS</b> = too close.
+            {" "}<b style={{ color: "var(--fg)" }}>NRFI</b> = no run in the 1st inning. <b style={{ color: "var(--fg)" }}>YRFI</b> = a run scores.
+          </div>
+          <div><b style={{ color: "var(--fg)" }}>Pitcher badge</b> (e.g. <span style={{ fontWeight: 700, fontSize: 11, color: "var(--moss)", border: "1px solid var(--moss)", borderRadius: 3, padding: "0 3px" }}>A+</span>): 1st-inning grade — A+/A = elite suppressor, B = solid, C = average, D/F = hitter-friendly. Hover for detail.</div>
+          <div><b style={{ color: "var(--fg)" }}>Park badge:</b>{" "}
+            <span style={{ color: "var(--moss)", fontWeight: 700 }}>PITCHER FRIENDLY</span> = park+weather suppress runs ·{" "}
+            <span style={{ color: "var(--rose)", fontWeight: 700 }}>HITTER FRIENDLY</span> = park+weather inflate runs. Hover for detail.
+          </div>
+          <div><span style={{ color: "var(--amber)", fontWeight: 700 }}>⚠ LINEUPS PENDING</span> = official lineup not yet posted; model uses projected order (less reliable).</div>
+        </div>
       )}
       {sect("Sharps tailing (your subs)", tailed, "var(--amber)")}
       {sect("✅ Bet NRFI — no run in the 1st", betNRFI, "var(--moss)")}
