@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-13.nrfi-parktip-v6";
+const BUILD = "2026-08-14.nrfi-card-rebuild-v7";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5776,7 +5776,8 @@ function pitcherI01Profile(pit, seasonEra, rolling) {
     pit.hr9    != null ? "HR/9 "  + pit.hr9.toFixed(2)    : null,
     "~" + cleanPct + "% clean",
   ].filter(Boolean);
-  return { grade, gradeColor, score, cleanPct, summary: parts.join("  ·  "), vsNote, rolling: rolling || null };
+  return { grade, gradeColor, score, cleanPct, summary: parts.join("  ·  "), vsNote, rolling: rolling || null,
+    k9: pit.k9 ?? null, bb9: pit.bb9 ?? null, whip: pit.whip ?? null, rate: pit.rate ?? null, sample: pit.sample };
 }
 
 function nrfiTier(pMax) {
@@ -6122,103 +6123,151 @@ function FirstInning() {
     const countdown = r.startUtc && !r.final && r.currentInning === 0 ? fmtCountdown(r.startUtc, now) : null;
     return (
       <div className={"pick " + r.tier.cls} key={r.gamePk}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-          <div style={{ flex: 1 }}>
-            <div className="who-big" style={{ color: r.v.color }}>
-              {r.v.label} <span style={{ color: "var(--dim)", fontWeight: 400, fontSize: 13 }}>· {r.away} @ {r.home}</span>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 2 }}>
+              <span style={{ fontWeight: 800, fontSize: 16, color: r.v.color }}>{r.v.label}</span>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>{r.away} @ {r.home}</span>
               {gameTime && (
-                <span style={{ color: "var(--dim)", fontWeight: 400, fontSize: 12, marginLeft: 8 }}>
-                  {gameTime}
+                <span style={{ color: "var(--dim)", fontSize: 12 }}>
+                  · {gameTime}
                   {countdown && (
-                    <span style={{ color: countdown.includes("m") && !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)", fontWeight: countdown.includes("m") && !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400 }}>
-                      {" "}· starts in {countdown}
+                    <span style={{ color: !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)", fontWeight: !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400 }}>
+                      {" · "}{countdown}
                     </span>
                   )}
                 </span>
               )}
             </div>
-            <div className="meta-line" style={{ color: r.v.color, marginTop: 2 }}>{r.v.blurb}</div>
-            <div className="meta-line">
-              {r.pitProfiles ? (
-                <>
-                  <span>{r.awayPP}</span>
-                  {r.pitProfiles.away.grade !== "—" && (
-                    <span title={"1st-inning grade: " + (r.pitProfiles.away.summary || r.pitProfiles.away.grade) + " · " + (r.pitProfiles.away.vsNote || "")} style={{ cursor: "help", fontWeight: 700, fontSize: 11, color: r.pitProfiles.away.gradeColor, border: "1px solid", borderRadius: 3, padding: "0 3px", marginLeft: 4 }}>{r.pitProfiles.away.grade}</span>
-                  )}
-                  <span style={{ color: "var(--dim)" }}> vs </span>
-                  <span>{r.homePP}</span>
-                  {r.pitProfiles.home.grade !== "—" && (
-                    <span title={"1st-inning grade: " + (r.pitProfiles.home.summary || r.pitProfiles.home.grade) + " · " + (r.pitProfiles.home.vsNote || "")} style={{ cursor: "help", fontWeight: 700, fontSize: 11, color: r.pitProfiles.home.gradeColor, border: "1px solid", borderRadius: 3, padding: "0 3px", marginLeft: 4 }}>{r.pitProfiles.home.grade}</span>
-                  )}
-                </>
-              ) : (r.awayPP + " vs " + r.homePP)}
-              {r.method === "sim" ? " · base-out sim" : ""}
-            </div>
-            {!r.lineupPosted && (
-              <div title="Starting lineups have not been posted yet — model uses projected lineup order" style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4, padding: "2px 7px", background: "rgba(230,160,0,0.15)", border: "1px solid var(--amber)", borderRadius: 4, fontSize: 11, fontWeight: 700, color: "var(--amber)", letterSpacing: "0.04em", cursor: "help" }}>
-                ⚠ LINEUPS PENDING
-              </div>
-            )}
-            {r.parkEnv && (() => {
-              const f = r.parkEnv.factor;
-              const label = f >= 1.06 ? "HITTER FRIENDLY" : f >= 1.02 ? "SLIGHT HITTER LEAN" : f <= 0.95 ? "PITCHER FRIENDLY" : f <= 0.98 ? "SLIGHT PITCHER LEAN" : null;
-              const color = label && (label.includes("HITTER") ? "var(--rose)" : "var(--moss)");
-              if (!label) return null;
-              const parkDir = r.parkEnv.park > 1.03 ? "hitter-friendly park" : r.parkEnv.park < 0.97 ? "pitcher-friendly park" : "neutral park";
-              const parkStr = "Park factor " + r.parkEnv.park.toFixed(2) + " (" + parkDir + ")";
-              const wxStr = r.parkEnv.note && r.parkEnv.note !== "neutral" ? r.parkEnv.note : "no significant weather";
-              const combinedStr = "Combined factor " + f.toFixed(2) + (f > 1 ? " — inflates run probability" : " — suppresses run probability");
-              const tip = parkStr + " · " + wxStr + " · " + combinedStr;
-              return (
-                <div title={tip} style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4, marginLeft: 6, padding: "2px 7px", background: color === "var(--rose)" ? "rgba(220,60,60,0.12)" : "rgba(80,160,80,0.12)", border: "1px solid " + color, borderRadius: 4, fontSize: 11, fontWeight: 700, color, letterSpacing: "0.04em", cursor: "help" }}>
-                  {label}
-                  {r.parkEnv.note && <span style={{ fontWeight: 400, fontSize: 10, opacity: 0.85 }}> · {r.parkEnv.note}</span>}
-                </div>
-              );
-            })()}
-            {r.tails && r.tails.length > 0 && (
-              <div style={{ marginTop: 4, fontSize: 12 }}>
-                {r.tails.map((t, i) => (
-                  <span key={i} style={{ marginRight: 12, color: t.pick.side === r.call ? "var(--moss)" : "var(--amber)", fontWeight: 600 }}>
-                    {t.name}: {t.pick.side}{t.pick.odds != null ? " (" + (t.pick.odds > 0 ? "+" : "") + t.pick.odds + ")" : ""}{t.pick.side === r.call ? " ✓" : " ⚠"}
-                  </span>
-                ))}
-              </div>
-            )}
-            {r.market && (
-              <div className="meta-line" style={{ marginTop: 3 }}>
-                <span style={{ color: "var(--dim)" }}>Market prior {r.market.marketNRFI.toFixed(0)}% · model {(r.pModel * 100).toFixed(0)}% · our # {r.pMax.toFixed(0)}% (YES {r.market.yesPrice.toFixed(0)}c)</span>
-                <span style={{ color: r.market.edge >= 3 ? "var(--moss)" : r.market.edge <= -3 ? "var(--rose)" : "var(--dim)", fontWeight: 600 }}>
-                  {" · "}{r.market.edge > 0 ? "+" : ""}{r.market.edge.toFixed(0)}% value
-                </span>
-              </div>
-            )}
-            {graded && (
-              <div className="meta-line" style={{ marginTop: 3 }}>
-                1st inning: {r.inning1runs} run{r.inning1runs === 1 ? "" : "s"} — {r.inning1runs === 0 ? "NRFI" : "YRFI"} hit
-                {recE && recE.mktAtPick != null && recE.mktAtClose != null && (
-                  <span style={{ color: (recE.mktAtClose - recE.mktAtPick) >= 0 ? "var(--moss)" : "var(--rose)" }}>
-                    {" · CLV "}{(recE.mktAtClose - recE.mktAtPick) > 0 ? "+" : ""}{(recE.mktAtClose - recE.mktAtPick).toFixed(1)}%
-                  </span>
-                )}
-              </div>
-            )}
+            <div style={{ color: "var(--dim)", fontSize: 12 }}>{r.v.blurb}</div>
           </div>
-          <span className="tierbox" style={{ color: r.tier.c, borderColor: r.tier.c }}>
+          <span className="tierbox" style={{ color: r.tier.c, borderColor: r.tier.c, flexShrink: 0 }}>
             <span className="pct">{r.pMax.toFixed(0)}%</span>
             <span className="lbl">{r.tier.t}</span>
           </span>
         </div>
-        <button className="btn btn-ghost btn-sm" style={{ marginTop: 8 }}
-          onClick={() => setOpen((o) => Object.assign({}, o, { [r.gamePk]: !o[r.gamePk] }))}>
-          {isOpen ? "Hide research" : "Show research"}
-        </button>
-        {tradeLink && (
-          <a className="btn btn-sm" href={tradeLink} target="_blank" rel="noreferrer"
-            style={{ marginTop: 8, marginLeft: 8, display: "inline-block", textDecoration: "none" }}>
-            Open on Kalshi ↗
-          </a>
+
+        {/* Pitcher columns */}
+        {r.pitProfiles && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+            {[
+              { side: "AWAY", name: r.awayPP, p: r.pitProfiles.away },
+              { side: "HOME", name: r.homePP, p: r.pitProfiles.home },
+            ].map(({ side, name, p }, i) => {
+              const rl = p.rolling;
+              const headline = rl && rl.l30 && rl.l30.pct != null ? rl.l30.pct : p.cleanPct;
+              const headlineN = rl && rl.l30 && rl.l30.n ? rl.l30.n : p.sample;
+              const headlineC = headline >= 65 ? "var(--moss)" : headline >= 50 ? "var(--amber)" : "var(--rose)";
+              const kbb = p.k9 != null && p.bb9 != null ? (p.k9 - p.bb9).toFixed(1) : null;
+              const pClr = (v) => v >= 65 ? "var(--moss)" : v >= 50 ? "var(--fg)" : v >= 38 ? "var(--amber)" : "var(--rose)";
+              const windows = rl ? [{ label: "SZN", ...rl.szn }, { label: "L50", ...rl.l50 }, { label: "L30", ...rl.l30 }, { label: "L10", ...rl.l10 }] : [];
+              return (
+                <div key={i} style={{ background: "rgba(120,130,150,0.08)", borderRadius: 7, padding: "9px 11px" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 3 }}>{side}</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={name}>{name}</div>
+                  {headline != null && (
+                    <>
+                      <div style={{ fontWeight: 800, fontSize: 30, color: headlineC, lineHeight: 1 }}>{headline}%</div>
+                      <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2, marginBottom: 7 }}>clean 1st inning · last 30 days · {headlineN}gs</div>
+                    </>
+                  )}
+                  {windows.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                      {windows.map((w) => (
+                        <div key={w.label} style={{ textAlign: "center", flex: 1 }}>
+                          <div style={{ fontSize: 9, color: "var(--dim)", letterSpacing: "0.06em", marginBottom: 1 }}>{w.label}</div>
+                          <div style={{ fontWeight: 700, fontSize: 12, color: w.pct != null ? pClr(w.pct) : "var(--dim)" }}>{w.pct != null ? w.pct + "%" : "—"}</div>
+                          <div style={{ fontSize: 9, color: "var(--dim)" }}>{w.n != null ? w.n + "g" : ""}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 5 }}>
+                    {p.grade !== "—" && (
+                      <span title={"1st-inning grade — " + (p.summary || "") + (p.vsNote || "")} style={{ cursor: "help", fontWeight: 800, fontSize: 12, color: p.gradeColor, border: "1.5px solid", borderRadius: 3, padding: "1px 5px" }}>{p.grade}</span>
+                    )}
+                    {kbb != null && (
+                      <span title={"K/9 minus BB/9: " + p.k9.toFixed(1) + " K/9, " + p.bb9.toFixed(1) + " BB/9 — higher means more dominant. League avg ~5.3"} style={{ cursor: "help", fontSize: 11, color: "var(--dim)" }}>K-BB {kbb}/9</span>
+                    )}
+                    {p.whip != null && (
+                      <span title="Walks + Hits per inning pitched in the 1st inning. Lower = harder to score against." style={{ cursor: "help", fontSize: 11, color: "var(--dim)" }}>WHIP {p.whip.toFixed(2)}</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
+
+        {/* Model / market */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", fontSize: 12, marginBottom: 8, padding: "6px 10px", background: "rgba(120,130,150,0.06)", borderRadius: 5 }}>
+          <span>Model <b style={{ color: r.v.color }}>{r.pMax.toFixed(0)}% {r.call}</b></span>
+          {r.market ? (
+            <>
+              <span style={{ color: "var(--dim)" }}>· Market {r.market.marketNRFI.toFixed(0)}% NRFI</span>
+              <span title="How much our probability exceeds the market on our call side" style={{ cursor: "help", color: r.market.edge >= 3 ? "var(--moss)" : r.market.edge <= -3 ? "var(--rose)" : "var(--dim)", fontWeight: 700 }}>· {r.market.edge > 0 ? "+" : ""}{r.market.edge.toFixed(0)}% edge</span>
+              <span style={{ color: "var(--dim)" }}>· YES {r.market.yesPrice.toFixed(0)}c (Kalshi)</span>
+            </>
+          ) : <span style={{ color: "var(--dim)" }}>· no market data</span>}
+          {r.method === "sim" && <span title="Probabilities via base-out Markov simulation of actual batters vs pitcher" style={{ cursor: "help", fontSize: 10, color: "var(--dim)", border: "1px solid rgba(120,130,150,.3)", borderRadius: 3, padding: "0 4px" }}>SIM</span>}
+        </div>
+
+        {/* Badges */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 8 }}>
+          {!r.lineupPosted && (
+            <div title="Official starting lineups not yet posted — model uses projected batting order, which is less reliable" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", background: "rgba(230,160,0,0.15)", border: "1px solid var(--amber)", borderRadius: 4, fontSize: 11, fontWeight: 700, color: "var(--amber)", cursor: "help" }}>
+              ⚠ LINEUPS PENDING
+            </div>
+          )}
+          {r.parkEnv && (() => {
+            const f = r.parkEnv.factor;
+            const label = f >= 1.06 ? "HITTER FRIENDLY" : f >= 1.02 ? "SLIGHT HITTER LEAN" : f <= 0.95 ? "PITCHER FRIENDLY" : f <= 0.98 ? "SLIGHT PITCHER LEAN" : null;
+            if (!label) return null;
+            const isHitter = label.includes("HITTER");
+            const color = isHitter ? "var(--rose)" : "var(--moss)";
+            const parkDir = r.parkEnv.park > 1.03 ? "hitter-friendly park" : r.parkEnv.park < 0.97 ? "pitcher-friendly park" : "neutral park";
+            const tip = "Park factor " + r.parkEnv.park.toFixed(2) + " (" + parkDir + ")" + (r.parkEnv.note && r.parkEnv.note !== "neutral" ? " · " + r.parkEnv.note : "") + " · Combined " + f.toFixed(2) + (f > 1 ? " — inflates run probability" : " — suppresses run probability");
+            return (
+              <div title={tip} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", background: isHitter ? "rgba(220,60,60,0.12)" : "rgba(80,160,80,0.12)", border: "1px solid " + color, borderRadius: 4, fontSize: 11, fontWeight: 700, color, cursor: "help" }}>
+                {label}{r.parkEnv.note && r.parkEnv.note !== "neutral" && <span style={{ fontWeight: 400, fontSize: 10, opacity: 0.85 }}> · {r.parkEnv.note}</span>}
+              </div>
+            );
+          })()}
+          {r.tails && r.tails.map((t, i) => (
+            <span key={i} style={{ padding: "2px 8px", border: "1px solid", borderColor: t.pick.side === r.call ? "var(--moss)" : "var(--amber)", borderRadius: 4, fontSize: 11, fontWeight: 600, color: t.pick.side === r.call ? "var(--moss)" : "var(--amber)" }}>
+              {t.name}: {t.pick.side}{t.pick.odds != null ? " (" + (t.pick.odds > 0 ? "+" : "") + t.pick.odds + ")" : ""} {t.pick.side === r.call ? "✓" : "⚠"}
+            </span>
+          ))}
+          {graded && (
+            <span style={{ fontWeight: 700, fontSize: 13, color: r.inning1runs === 0 ? "var(--moss)" : "var(--rose)" }}>
+              {r.inning1runs === 0 ? "✓ NRFI" : "✗ YRFI"} — {r.inning1runs} run{r.inning1runs === 1 ? "" : "s"} in the 1st
+              {recE && recE.mktAtPick != null && recE.mktAtClose != null && (
+                <span style={{ color: (recE.mktAtClose - recE.mktAtPick) >= 0 ? "var(--moss)" : "var(--rose)", fontSize: 11, marginLeft: 5 }}>
+                  CLV {(recE.mktAtClose - recE.mktAtPick) > 0 ? "+" : ""}{(recE.mktAtClose - recE.mktAtPick).toFixed(1)}%
+                </span>
+              )}
+            </span>
+          )}
+        </div>
+
+        {/* old layout placeholder */}
+        <div style={{ display: "none" }}>
+          <div className="meta-line">placeholder</div>
+        </div>
+
+        {/* Buttons */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn btn-ghost btn-sm"
+            onClick={() => setOpen((o) => Object.assign({}, o, { [r.gamePk]: !o[r.gamePk] }))}>
+            {isOpen ? "Hide research" : "Show research"}
+          </button>
+          {tradeLink && (
+            <a className="btn btn-sm" href={tradeLink} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+              Open on Kalshi ↗
+            </a>
+          )}
+        </div>
         {isOpen && (
           <div style={{ marginTop: 8 }}>
             {r.pitProfiles && (
