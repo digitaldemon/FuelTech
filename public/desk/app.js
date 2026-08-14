@@ -9220,8 +9220,11 @@ function FirstInning() {
       return s + (r.result === "won" ? r.contracts * (1 - pricePerContract) : -cost);
     }, 0);
 
-    // Sort by edge descending — best plays first
-    const betRows = enriched.filter(r => r.v && r.v.isBet && r.kelly != null && r.call === "NRFI").slice().sort((a, b) => (b.market ? b.market.edge : 0) - (a.market ? a.market.edge : 0));
+    // Sort by edge descending — best plays first; exclude games already held in Kalshi
+    const openTickerSet = new Set((openPositions && !openPositions.error ? openPositions.positions : []).map(p => p.ticker));
+    const allBetRows = enriched.filter(r => r.v && r.v.isBet && r.kelly != null && r.call === "NRFI").slice().sort((a, b) => (b.market ? b.market.edge : 0) - (a.market ? a.market.edge : 0));
+    const alreadyHeld = allBetRows.filter(r => r.market && openTickerSet.has(r.market.ticker));
+    const betRows = allBetRows.filter(r => !r.market || !openTickerSet.has(r.market.ticker));
     const remaining = bankroll && amountOut != null ? Math.max(0, bankroll - amountOut) : bankroll;
     const rawTotalBetPct = betRows.reduce((s, r) => s + r.kelly * riskMult, 0);
     // Cap total allocation at 100% of available balance
@@ -9730,7 +9733,18 @@ function FirstInning() {
         fontWeight: 800,
         color: "var(--moss)"
       }
-    }, "+$", (remaining * effectiveDailyEv).toFixed(0)))), betRows.length > 0 && /*#__PURE__*/React.createElement("div", {
+    }, "+$", (remaining * effectiveDailyEv).toFixed(0)))), betRows.length === 0 && alreadyHeld.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginBottom: 10,
+        padding: "10px 14px",
+        background: "rgba(80,160,80,0.06)",
+        borderRadius: 8,
+        border: "1px solid rgba(80,160,80,0.2)",
+        fontSize: 12,
+        color: "var(--moss)",
+        fontWeight: 600
+      }
+    }, "\u2713 All ", alreadyHeld.length, " model picks are already in your open positions \u2014 nothing left to place today."), betRows.length > 0 && /*#__PURE__*/React.createElement("div", {
       style: {
         marginBottom: 10
       }
@@ -9748,7 +9762,12 @@ function FirstInning() {
         color: "var(--dim)",
         letterSpacing: "0.08em"
       }
-    }, "TODAY'S NRFI BETS"), allocationScale < 1 && /*#__PURE__*/React.createElement("span", {
+    }, "TODAY'S NRFI BETS"), alreadyHeld.length > 0 && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        color: "var(--moss)"
+      }
+    }, "\u2713 ", alreadyHeld.length, " already placed \u2014 see open positions below"), allocationScale < 1 && /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 10,
         color: "var(--amber)"
