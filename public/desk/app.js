@@ -8308,6 +8308,7 @@ function FirstInning() {
         const diff = new Date(row.startUtc).getTime() - t;
         if (diff > 0 && diff <= thresh && !refreshedFor.current.has(row.gamePk)) {
           refreshedFor.current.add(row.gamePk);
+          loadTails();
           run();
           return;
         }
@@ -8325,6 +8326,7 @@ function FirstInning() {
     if (allFinal) return; // nothing to update once all games are over
     const id = setInterval(() => {
       if (phase === "scanning") return; // don't stack refreshes
+      loadTails();
       run();
     }, AUTO_REFRESH_MS);
     return () => clearInterval(id);
@@ -9463,7 +9465,10 @@ function FirstInning() {
     }
   }, "Avg CLV: ", avgCLV > 0 ? "+" : "", avgCLV.toFixed(1), "% (", clvSet.length, ")"), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-ghost btn-sm",
-    onClick: run,
+    onClick: () => {
+      loadTails();
+      run();
+    },
     disabled: phase === "scanning"
   }, phase === "scanning" ? "Researching…" : "↻ Refresh"), lastRefreshed && phase === "done" && (() => {
     const secsAgo = Math.floor((now - lastRefreshed.getTime()) / 1000);

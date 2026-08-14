@@ -6327,7 +6327,7 @@ function FirstInning() {
         const diff = new Date(row.startUtc).getTime() - t;
         if (diff > 0 && diff <= thresh && !refreshedFor.current.has(row.gamePk)) {
           refreshedFor.current.add(row.gamePk);
-          run();
+          loadTails(); run();
           return;
         }
       }
@@ -6344,7 +6344,7 @@ function FirstInning() {
     if (allFinal) return; // nothing to update once all games are over
     const id = setInterval(() => {
       if (phase === "scanning") return; // don't stack refreshes
-      run();
+      loadTails(); run();
     }, AUTO_REFRESH_MS);
     return () => clearInterval(id);
   }, [phase, rows]);
@@ -6773,7 +6773,7 @@ function FirstInning() {
         ))}
         <span style={{ fontSize: 13, color: "var(--dim)" }}>{liveCalib.active ? "Calibrated: " + liveCalib.n + " live graded games" : "Calibrated: backtest (" + NRFI_CALIB_SEED.n + " games) · +" + liveCalib.n + " live"}</span>
         {avgCLV != null && <span style={{ fontSize: 13, color: avgCLV >= 0 ? "var(--moss)" : "var(--rose)" }}>Avg CLV: {avgCLV > 0 ? "+" : ""}{avgCLV.toFixed(1)}% ({clvSet.length})</span>}
-        <button className="btn btn-ghost btn-sm" onClick={run} disabled={phase === "scanning"}>{phase === "scanning" ? "Researching…" : "↻ Refresh"}</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => { loadTails(); run(); }} disabled={phase === "scanning"}>{phase === "scanning" ? "Researching…" : "↻ Refresh"}</button>
         {lastRefreshed && phase === "done" && (() => {
           const secsAgo = Math.floor((now - lastRefreshed.getTime()) / 1000);
           const nextIn = Math.max(0, AUTO_REFRESH_MS / 1000 - secsAgo);
