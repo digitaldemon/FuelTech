@@ -5281,7 +5281,7 @@ async function pitcherMeta(pid, season) {
   if (pid == null) return { hand: null, form: null };
   const k = pid + ":" + season;
   if (_pitMeta.has(k)) return _pitMeta.get(k);
-  let hand = null, form = null, seasonEra = null, gs = null, g = null, ip = null, allow = null;
+  let hand = null, form = null, fipForm = null, lastStartDate = null, seasonEra = null, gs = null, g = null, ip = null, allow = null;
   try {
     const [p, gl] = await Promise.all([
       getJson("https://statsapi.mlb.com/api/v1/people/" + pid + "?hydrate=stats(group=[pitching],type=[season],season=" + season + ")"),
@@ -5293,14 +5293,28 @@ async function pitcherMeta(pid, season) {
     seasonEra = sst && sst.era != null ? Number(sst.era) : null;
     if (sst) { gs = sst.gamesStarted != null ? Number(sst.gamesStarted) : null; g = sst.gamesPlayed != null ? Number(sst.gamesPlayed) : null; ip = sst.inningsPitched != null ? parseIp(sst.inningsPitched) : null; allow = paRates(sst, sst.battersFaced); }
     const sp = (gl.stats && gl.stats[0] && gl.stats[0].splits) || [];
-    const last = sp.slice(-3);
-    if (last.length) {
-      let er = 0, lip = 0;
-      last.forEach((s) => { er += Number((s.stat && s.stat.earnedRuns) || 0); lip += parseIp(s.stat && s.stat.inningsPitched); });
-      if (lip > 0) form = (er * 9) / lip;
+    // Use starts only for form + rest day tracking (exclude relief appearances)
+    const starts = sp.filter((s) => Number(s.stat && s.stat.gamesStarted) === 1);
+    const lastSt = starts[starts.length - 1];
+    lastStartDate = (lastSt && (lastSt.date || (lastSt.game && lastSt.game.date))) || null;
+    const recentStarts = starts.slice(-3);
+    if (recentStarts.length) {
+      let er = 0, lip = 0, hr = 0, bb = 0, k = 0;
+      recentStarts.forEach((s) => {
+        er += Number((s.stat && s.stat.earnedRuns) || 0);
+        lip += parseIp(s.stat && s.stat.inningsPitched);
+        hr += Number((s.stat && s.stat.homeRuns) || 0);
+        bb += Number((s.stat && s.stat.baseOnBalls) || 0) + Number((s.stat && s.stat.hitByPitch) || 0);
+        k += Number((s.stat && s.stat.strikeOuts) || 0);
+      });
+      if (lip > 0) {
+        form = (er * 9) / lip;
+        // FIP (Fielding Independent Pitching) removes defense noise — better forward predictor than ERA
+        fipForm = Math.max(0.5, 3.13 + (13 * hr + 3 * bb - 2 * k) / lip);
+      }
     }
   } catch { /* leave nulls */ }
-  const val = { hand, form, seasonEra, gs, g, ip, allow, id: pid };
+  const val = { hand, form, fipForm, lastStartDate, seasonEra, gs, g, ip, allow, id: pid };
   _pitMeta.set(k, val);
   return val;
 }
@@ -5362,10 +5376,22 @@ function platoonFactor(off, oppHand) {
   if (!base) return { f: 1, note: "platoon data n/a" };
   return { f: nClamp(ops / base, 0.85, 1.18), note: "OPS " + ops.toFixed(3) + " vs " + (oppHand === "L" ? "LHP" : "RHP") };
 }
-// Recent form: hot starter (low ERA) suppresses the 1st, cold starter inflates it.
-function formFactor(era) {
-  if (era == null) return { f: 1, note: "recent form n/a" };
-  return { f: nClamp(1 + ((era - 4.15) / 4.15) * 0.25, 0.85, 1.2), note: "last 3 starts " + era.toFixed(2) + " ERA" };
+// Recent form: prefer FIP (fielding-independent, removes defense noise) over ERA.
+// FIP = 3.13 + (13*HR + 3*BB - 2*K) / IP — more predictive of next-start performance.
+function formFactor(era, fip) {
+  const metric = fip != null ? fip : era;
+  if (metric == null) return { f: 1, note: "recent form n/a" };
+  const label = fip != null ? "FIP" : "ERA";
+  return { f: nClamp(1 + ((metric - 4.15) / 4.15) * 0.25, 0.85, 1.2), note: "L3 " + metric.toFixed(2) + " " + label };
+}
+// Pitcher rest days: short rest (≤3d) slightly degrades 1st-inning quality;
+// extra rest (6-7d) gives a small edge; long layoff (8+d) → rust risk.
+function restFactor(days) {
+  if (days == null || days < 1 || days > 30) return { f: 1, note: "" };
+  if (days <= 3)              return { f: 1.05, note: days + "d rest (short)" };
+  if (days >= 6 && days <= 7) return { f: 0.97, note: days + "d extra rest" };
+  if (days >= 8)              return { f: 1.02, note: days + "d rest (long layoff)" };
+  return { f: 1, note: "" };
 }
 // Pitcher THESIS — stable season peripherals (the real predictors), not the
 // noisy first-inning run rate: strikeouts + whiff + first-pitch strikes suppress
@@ -5627,8 +5653,21 @@ function nrfiEvaluate(ctx) {
   // Platoon: each offense vs the opposing starter's hand. Recent form + skill peripherals per starter.
   const awayPlat = platoonFactor(ctx.awayOff, ctx.homeMeta && ctx.homeMeta.hand);
   const homePlat = platoonFactor(ctx.homeOff, ctx.awayMeta && ctx.awayMeta.hand);
-  const awayForm = formFactor(ctx.awayMeta && ctx.awayMeta.form);
-  const homeForm = formFactor(ctx.homeMeta && ctx.homeMeta.form);
+  // Form: prefer FIP (removes defense noise) over ERA for last-3-start form.
+  const awayForm = formFactor(ctx.awayMeta && ctx.awayMeta.form, ctx.awayMeta && ctx.awayMeta.fipForm);
+  const homeForm = formFactor(ctx.homeMeta && ctx.homeMeta.form, ctx.homeMeta && ctx.homeMeta.fipForm);
+  // Rest days: compute from game date vs pitcher's last start date.
+  const gameDate = ctx.startUtc ? ctx.startUtc.slice(0, 10) : null;
+  const awayRestDays = gameDate && ctx.awayMeta && ctx.awayMeta.lastStartDate
+    ? Math.round((new Date(gameDate) - new Date(ctx.awayMeta.lastStartDate)) / 86400000) : null;
+  const homeRestDays = gameDate && ctx.homeMeta && ctx.homeMeta.lastStartDate
+    ? Math.round((new Date(gameDate) - new Date(ctx.homeMeta.lastStartDate)) / 86400000) : null;
+  const awayRest = restFactor(awayRestDays);
+  const homeRest = restFactor(homeRestDays);
+  // Day game: games before ~4pm local (approximated as UTC < 20:00) run slightly higher scoring.
+  const utcHour = ctx.startUtc ? new Date(ctx.startUtc).getUTCHours() : null;
+  const isDayGame = utcHour != null && utcHour < 20;
+  const dayGameShift = isDayGame ? 0.025 : 0; // logit-space YRFI lean for day games
   const awaySkill = pitchSkillFactor(ctx.awayPeri, ctx.lg);
   const homeSkill = pitchSkillFactor(ctx.homePeri, ctx.lg);
   const awayOpen = openerFactor(ctx.awayPit && ctx.awayPit.era, ctx.awayMeta && ctx.awayMeta.seasonEra);
@@ -5643,12 +5682,12 @@ function nrfiEvaluate(ctx) {
   // is lower now that lineups are measured directly vs the starter's hand.
   const offMult = (lineup, plat, travel) =>
     nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.4 + (travel.factor - 1) * 0.6, 0.80, 1.30);
-  const pitMult = (skill, form, opener, openG, load) =>
-    nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.4 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7, 0.78, 1.25);
+  const pitMult = (skill, form, opener, openG, load, rest) =>
+    nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.4 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (rest.f - 1) * 0.8, 0.78, 1.25);
   const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel);
   const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel);
-  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad);
-  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad);
+  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest);
+  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeRest);
   const umpFactor = ctx.umpFactor || 1;
   const env = nClamp(1 + (ctx.wx.factor - 1) + (umpFactor - 1), 0.85, 1.20);
   // λ-model (fallback when we don't have posted batters + pitcher allow-rates).
@@ -5671,7 +5710,13 @@ function nrfiEvaluate(ctx) {
     const pRunBot = nClamp((1 - s0bot) * awayCtx * ctx.homeTravel.factor * env, 0.02, 0.97);
     p0top = 1 - pRunTop; p0bot = 1 - pRunBot; method = "sim";
   }
-  const pNRFI = p0top * p0bot;
+  // Apply day game logit shift (day games historically run ~2pp higher scoring).
+  const logit = (p) => Math.log(p / (1 - p));
+  const unlogit = (x) => 1 / (1 + Math.exp(-x));
+  const rawNRFI = p0top * p0bot;
+  const pNRFI = dayGameShift > 0
+    ? nClamp(unlogit(logit(nClamp(rawNRFI, 0.02, 0.98)) - dayGameShift), 0.02, 0.98)
+    : rawNRFI;
 
   // Data-confidence: a decisive number on missing inputs isn't a real edge.
   let conf = 1;
@@ -5720,6 +5765,10 @@ function nrfiEvaluate(ctx) {
     { label: "Pitcher season load",
       detail: ctx.homePP + ": " + (homeLoad.note || "normal") + " · " + ctx.awayPP + ": " + (awayLoad.note || "normal"),
       lean: (awayLoad.f >= 1.03 || homeLoad.f >= 1.03) ? "yrfi" : "neutral" },
+    (awayRest.note || homeRest.note) ? { label: "Pitcher rest days",
+      detail: [ctx.awayPP + ": " + (awayRest.note || "normal rest"), ctx.homePP + ": " + (homeRest.note || "normal rest")].join(" · "),
+      lean: (awayRest.f >= 1.04 || homeRest.f >= 1.04) ? "yrfi" : (awayRest.f <= 0.97 && homeRest.f <= 0.97) ? "nrfi" : "neutral" } : null,
+    isDayGame ? { label: "Day game", detail: "Daytime first pitch — historically ~2pp higher scoring vs night games", lean: "yrfi" } : null,
     { label: "Weather & park", detail: ctx.wx.note, lean: facLean(ctx.wx.factor) },
     { label: "Umpire",
       detail: ctx.umpName ? (ctx.umpName + (ctx.umpNote ? " — " + ctx.umpNote : (umpFactor === 1 ? " (tendency n/a)" : ""))) : "not posted",
@@ -6053,6 +6102,7 @@ async function scanNrfi(onProgress) {
       homePeri: homePP ? periById[homePP.id] : null,
       lg,
       umpName: umpName || null, umpFactor: umpEntry ? umpEntry.runFactor : 1, umpNote: umpEntry ? umpEntry.note : "",
+      startUtc: g.gameDate || null,
     };
     const ev = nrfiEvaluate(ctx);
     const ls = g.linescore || {};
@@ -6134,6 +6184,7 @@ function FirstInning() {
   const [syncMsg, setSyncMsg] = useState(null);
   const [openPositions, setOpenPositions] = useState(null);
   const [loadingPositions, setLoadingPositions] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState(null);
   const now = useNow(1000);
 
   async function loadRecord() {
@@ -6224,6 +6275,7 @@ function FirstInning() {
         priceSnap.current = snap;
       }
       setRows(r); setRfi(rfiList || []); setPhase("done");
+      setLastRefreshed(new Date());
       await reconcile(r, rfiList || []);
     } catch (e) { setErr(String((e && e.message) || e)); setPhase("error"); }
   }
@@ -6257,6 +6309,20 @@ function FirstInning() {
         }
       }
     }, 60000);
+    return () => clearInterval(id);
+  }, [phase, rows]);
+
+  // Auto-refresh all data every 10 minutes: keeps lineups, weather, market prices, and
+  // pitcher stats current throughout the day without any manual intervention.
+  const AUTO_REFRESH_MS = 10 * 60 * 1000;
+  useEffect(() => {
+    if (phase !== "done") return;
+    const allFinal = rows.length > 0 && rows.every((r) => r.final);
+    if (allFinal) return; // nothing to update once all games are over
+    const id = setInterval(() => {
+      if (phase === "scanning") return; // don't stack refreshes
+      run();
+    }, AUTO_REFRESH_MS);
     return () => clearInterval(id);
   }, [phase, rows]);
 
@@ -6686,7 +6752,17 @@ function FirstInning() {
         ))}
         <span style={{ fontSize: 13, color: "var(--dim)" }}>{liveCalib.active ? "Calibrated: " + liveCalib.n + " live graded games" : "Calibrated: backtest (" + NRFI_CALIB_SEED.n + " games) · +" + liveCalib.n + " live"}</span>
         {avgCLV != null && <span style={{ fontSize: 13, color: avgCLV >= 0 ? "var(--moss)" : "var(--rose)" }}>Avg CLV: {avgCLV > 0 ? "+" : ""}{avgCLV.toFixed(1)}% ({clvSet.length})</span>}
-        <button className="btn btn-ghost btn-sm" onClick={run} disabled={phase === "scanning"}>{phase === "scanning" ? "Researching…" : "Refresh"}</button>
+        <button className="btn btn-ghost btn-sm" onClick={run} disabled={phase === "scanning"}>{phase === "scanning" ? "Researching…" : "↻ Refresh"}</button>
+        {lastRefreshed && phase === "done" && (() => {
+          const secsAgo = Math.floor((now - lastRefreshed.getTime()) / 1000);
+          const nextIn = Math.max(0, AUTO_REFRESH_MS / 1000 - secsAgo);
+          const fmt = (s) => Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+          return (
+            <span style={{ fontSize: 11, color: "var(--dim)", fontVariantNumeric: "tabular-nums" }} title="Model auto-refreshes every 10 minutes — keeps lineups, weather, market prices, and pitcher stats current">
+              Updated {secsAgo < 60 ? secsAgo + "s ago" : Math.floor(secsAgo / 60) + "m ago"} · next in {fmt(nextIn)}
+            </span>
+          );
+        })()}
         <button className="btn btn-ghost btn-sm" onClick={importKalshiBets} disabled={importing} title="Pull your closed NRFI/YRFI bets from Kalshi and add them to the history">{importing ? "Importing…" : "Import Kalshi bets"}</button>
         {importMsg && <span style={{ fontSize: 12, color: importMsg.ok ? "var(--moss)" : "var(--rose)" }}>{importMsg.text}</span>}
       </div>

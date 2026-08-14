@@ -288,26 +288,128 @@ async function rollingNRFI(pid, season, beforeDate, fast) {
   return val;
 }
 
+// ── Statistics helpers ───────────────────────────────────────────────────────
+
+// Pearson correlation coefficient between arrays x and y.
+function pearsonR(x, y) {
+  const n = x.length;
+  if (n < 5) return null;
+  const mx = x.reduce((s, v) => s + v, 0) / n;
+  const my = y.reduce((s, v) => s + v, 0) / n;
+  let num = 0, dx2 = 0, dy2 = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = x[i] - mx, dy = y[i] - my;
+    num += dx * dy; dx2 += dx * dx; dy2 += dy * dy;
+  }
+  const denom = Math.sqrt(dx2 * dy2);
+  return denom < 1e-12 ? 0 : num / denom;
+}
+
+// Brier score: mean squared error between predicted probability and binary outcome.
+function brierScore(pairs) {
+  if (!pairs.length) return null;
+  return pairs.reduce((s, [p, y]) => s + (p - y) ** 2, 0) / pairs.length;
+}
+
+// AUC-ROC via Wilcoxon-Mann-Whitney.
+function auc(scores, labels) {
+  const pos = scores.filter((_, i) => labels[i] === 1);
+  const neg = scores.filter((_, i) => labels[i] === 0);
+  if (!pos.length || !neg.length) return null;
+  let wins = 0;
+  for (const p of pos) for (const n of neg) wins += p > n ? 1 : p === n ? 0.5 : 0;
+  return wins / (pos.length * neg.length);
+}
+
+// Logistic regression via gradient descent (returns {weights, bias}).
+// X: array of feature arrays. y: array of 0/1 labels.
+function logReg(X, y, { lr = 0.05, iters = 2000, lambda = 0.01 } = {}) {
+  const n = X.length, m = X[0].length;
+  let w = new Array(m).fill(0), b = 0;
+  for (let it = 0; it < iters; it++) {
+    const dw = new Array(m).fill(0);
+    let db = 0;
+    for (let i = 0; i < n; i++) {
+      const z = X[i].reduce((s, xi, j) => s + xi * w[j], b);
+      const p = 1 / (1 + Math.exp(-z));
+      const e = p - y[i];
+      for (let j = 0; j < m; j++) dw[j] += e * X[i][j];
+      db += e;
+    }
+    for (let j = 0; j < m; j++) w[j] -= lr * (dw[j] / n + lambda * w[j]);
+    b -= lr * db / n;
+  }
+  return { weights: w, bias: b };
+}
+
+// Z-score normalize feature columns. Returns {Xn, means, stds}.
+function normalize(X) {
+  const m = X[0].length;
+  const means = new Array(m).fill(0), stds = new Array(m).fill(1);
+  const n = X.length;
+  for (let j = 0; j < m; j++) {
+    means[j] = X.reduce((s, r) => s + r[j], 0) / n;
+    const v = X.reduce((s, r) => s + (r[j] - means[j]) ** 2, 0) / n;
+    stds[j] = Math.sqrt(v) || 1;
+  }
+  const Xn = X.map(r => r.map((v, j) => (v - means[j]) / stds[j]));
+  return { Xn, means, stds };
+}
+
 // ── Pitcher multiplier factors ───────────────────────────────────────────────
 
-// Recent form: compare last-3-start ERA to season ERA
-async function recentFormFactor(pid, season, beforeDate) {
+// Recent form: returns ERA AND FIP from last 3 starts before given date.
+async function recentFormFactors(pid, season, beforeDate) {
   const log = await getPitcherGameLog(pid, season);
   const recent = log
     .filter(s => num(s.stat?.gamesStarted) === 1)
     .filter(s => { const d = s.date || s.game?.date; return d && d < beforeDate; })
     .slice(-3);
-  if (!recent.length) return 1.0;
-  const er = recent.reduce((s, g) => s + (num(g.stat?.earnedRuns) || 0), 0);
-  const rawIp = recent.reduce((s, g) => {
+  if (!recent.length) return { formFactor: 1.0, era: null, fip: null };
+  let er = 0, rawIp = 0, hr = 0, bb = 0, k = 0;
+  recent.forEach(g => {
     const ip = parseFloat(g.stat?.inningsPitched || "0");
-    return s + Math.floor(ip) + (ip % 1) * 10 / 3;
-  }, 0);
-  if (rawIp < 3) return 1.0;
-  const recentEra = (er / rawIp) * 9;
+    rawIp += Math.floor(ip) + (ip % 1) * 10 / 3;
+    er += num(g.stat?.earnedRuns) || 0;
+    hr += num(g.stat?.homeRuns) || 0;
+    bb += (num(g.stat?.baseOnBalls) || 0) + (num(g.stat?.hitByPitch) || 0);
+    k  += num(g.stat?.strikeOuts) || 0;
+  });
+  if (rawIp < 3) return { formFactor: 1.0, era: null, fip: null };
+  const era = (er / rawIp) * 9;
+  const fip = Math.max(0.5, 3.13 + (13 * hr + 3 * bb - 2 * k) / rawIp);
   const szn = await getPitcherSeason(pid, season);
-  if (!szn?.era) return 1.0;
-  return clamp(1 + (recentEra - szn.era) * 0.06, 0.85, 1.20);
+  const baseline = szn?.era || 4.15;
+  // Use FIP (removes defense noise) for the actual multiplier — same formula as live model.
+  const formFactor = clamp(1 + ((fip - 4.15) / 4.15) * 0.25, 0.85, 1.20);
+  return { formFactor, era, fip };
+}
+
+// Days since pitcher's last start before the game date.
+async function pitcherRestDays(pid, season, gameDate) {
+  const log = await getPitcherGameLog(pid, season);
+  const starts = log
+    .filter(s => num(s.stat?.gamesStarted) === 1)
+    .filter(s => { const d = s.date || s.game?.date; return d && d < gameDate; });
+  if (!starts.length) return null;
+  const lastDate = starts[starts.length - 1].date || starts[starts.length - 1].game?.date;
+  if (!lastDate) return null;
+  return Math.round((new Date(gameDate) - new Date(lastDate)) / 86400000);
+}
+
+// Rest factor: mirrors live model restFactor().
+function restFactor(days) {
+  if (days == null || days < 1 || days > 30) return 1.0;
+  if (days <= 3) return 1.05;
+  if (days >= 6 && days <= 7) return 0.97;
+  if (days >= 8) return 1.02;
+  return 1.0;
+}
+
+// Recent form: legacy wrapper kept for backward compat
+async function recentFormFactor(pid, season, beforeDate) {
+  const r = await recentFormFactors(pid, season, beforeDate);
+  return r.formFactor;
 }
 
 // 1st-inning ERA vs season ERA: opener/slow-starter pattern
@@ -382,8 +484,9 @@ async function evaluateGame(game, date, season, fast) {
   const [
     awayPit, homePit, awayOff, homeOff,
     awayPitSzn, homePitSzn,
-    awayForm, homeForm,
+    awayFormData, homeFormData,
     awayRoll, homeRoll,
+    awayRestDays, homeRestDays,
   ] = await Promise.all([
     getPitcherSplits(awayPP.id, season),
     getPitcherSplits(homePP.id, season),
@@ -391,10 +494,12 @@ async function evaluateGame(game, date, season, fast) {
     getTeamSplits(homeTeam.team.id, season),
     getPitcherSeason(awayPP.id, season),
     getPitcherSeason(homePP.id, season),
-    recentFormFactor(awayPP.id, season, date),
-    recentFormFactor(homePP.id, season, date),
+    recentFormFactors(awayPP.id, season, date),
+    recentFormFactors(homePP.id, season, date),
     rollingNRFI(awayPP.id, season, date, fast),
     rollingNRFI(homePP.id, season, date, fast),
+    pitcherRestDays(awayPP.id, season, date),
+    pitcherRestDays(homePP.id, season, date),
   ]);
 
   if (!awayPit || !homePit || !awayOff || !homeOff) return null;
@@ -406,17 +511,24 @@ async function evaluateGame(game, date, season, fast) {
   const awayOffBase = nrfiRegress(awayOff.rate, awayOff.sample, OFF_REG);
   const homeOffBase = nrfiRegress(homeOff.rate, homeOff.sample, OFF_REG);
 
-  // Pitcher context multiplier (form + opener pattern + load)
+  // Pitcher context multiplier (form + opener pattern + load + rest)
   const awayOpenF = openerFactor(awayPit, awayPitSzn?.era);
   const homeOpenF = openerFactor(homePit, homePitSzn?.era);
   const awayLoadF = loadFactor(awayPitSzn);
   const homeLoadF = loadFactor(homePitSzn);
+  const awayRestF = restFactor(awayRestDays);
+  const homeRestF = restFactor(homeRestDays);
 
-  const awayPitMult = clamp(1 + (awayForm - 1) * 0.6 + (awayOpenF - 1) * 0.5 + (awayLoadF - 1) * 0.7, 0.78, 1.25);
-  const homePitMult = clamp(1 + (homeForm - 1) * 0.6 + (homeOpenF - 1) * 0.5 + (homeLoadF - 1) * 0.7, 0.78, 1.25);
+  const awayPitMult = clamp(1 + (awayFormData.formFactor - 1) * 0.4 + (awayOpenF - 1) * 0.5 + (awayLoadF - 1) * 0.7 + (awayRestF - 1) * 0.8, 0.78, 1.25);
+  const homePitMult = clamp(1 + (homeFormData.formFactor - 1) * 0.4 + (homeOpenF - 1) * 0.5 + (homeLoadF - 1) * 0.7 + (homeRestF - 1) * 0.8, 0.78, 1.25);
 
   const awayPitAdj = awayPitBase * awayPitMult;
   const homePitAdj = homePitBase * homePitMult;
+
+  // Day game flag (UTC hour < 20 ≈ before 4pm ET)
+  const gameTime = game.gameDate || "";
+  const dayGame = gameTime ? new Date(gameTime).getUTCHours() < 20 : false;
+  const month = parseInt(date.slice(5, 7));
 
   // Park factor (no weather for historical games)
   const parkF = PARK[homeAbbr] || 1.0;
@@ -440,7 +552,7 @@ async function evaluateGame(game, date, season, fast) {
   const avgL30   = awayL30 != null && homeL30 != null ? (awayL30 + homeL30) / 2 : null;
 
   return {
-    date, gamePk: game.gamePk,
+    date, gamePk: game.gamePk, season,
     away: awayTeam.team.name, home: homeTeam.team.name,
     awayAbbr, homeAbbr,
     awayPitcher: awayPP.fullName, homePitcher: homePP.fullName,
@@ -452,12 +564,27 @@ async function evaluateGame(game, date, season, fast) {
     awayPitBase: +awayPitBase.toFixed(3), homePitBase: +homePitBase.toFixed(3),
     awayOffBase: +awayOffBase.toFixed(3), homeOffBase: +homeOffBase.toFixed(3),
     awayPitAdj: +awayPitAdj.toFixed(3),  homePitAdj: +homePitAdj.toFixed(3),
-    awayForm: +awayForm.toFixed(3), homeForm: +homeForm.toFixed(3),
+    awayFormF: +awayFormData.formFactor.toFixed(3), homeFormF: +homeFormData.formFactor.toFixed(3),
+    awayERA: awayFormData.era != null ? +awayFormData.era.toFixed(2) : null,
+    homeERA: homeFormData.era != null ? +homeFormData.era.toFixed(2) : null,
+    awayFIP: awayFormData.fip != null ? +awayFormData.fip.toFixed(2) : null,
+    homeFIP: homeFormData.fip != null ? +homeFormData.fip.toFixed(2) : null,
+    awayRestDays, homeRestDays,
+    awayRestF: +awayRestF.toFixed(3), homeRestF: +homeRestF.toFixed(3),
     awayOpenF: +awayOpenF.toFixed(3), homeOpenF: +homeOpenF.toFixed(3),
     parkF: +parkF.toFixed(3),
+    dayGame, month,
     pNRFI: +pNRFI.toFixed(4), pCal: +pCal.toFixed(4), pMax: +pMax.toFixed(1),
     call, nrfiActual, totalRuns1, won,
     awayL10, homeL10, avgL10, awayL30, homeL30, avgL30,
+    // Individual feature values for regression
+    avgPitBase: +((awayPitBase + homePitBase) / 2).toFixed(4),
+    avgOffBase: +((awayOffBase + homeOffBase) / 2).toFixed(4),
+    avgPitAdj:  +((awayPitAdj  + homePitAdj)  / 2).toFixed(4),
+    avgFormF:   +((awayFormData.formFactor + homeFormData.formFactor) / 2).toFixed(4),
+    avgRestF:   +((awayRestF + homeRestF) / 2).toFixed(4),
+    avgKBB: awayPit.k9 != null && homePit.k9 != null
+      ? +(((awayPit.k9 - awayPit.bb9) + (homePit.k9 - homePit.bb9)) / 2).toFixed(2) : null,
   };
 }
 
@@ -732,6 +859,159 @@ async function main() {
     .slice(0, 10);
   for (const [name, e] of botPit) {
     err(`  ${name.padEnd(25)} ${e.clean}/${e.starts} = ${pct(e.clean, e.starts).padStart(6)} clean 1sts`);
+  }
+
+  // ── Advanced Analytics ──────────────────────────────────────────────────────
+
+  err(``);
+  err(`MODEL QUALITY — AUC & BRIER SCORE`);
+  err(`───────────────────────────────────────────────────`);
+  const scores = results.map(r => r.pCal);
+  const labels = results.map(r => r.nrfiActual ? 1 : 0);
+  const modelAUC = auc(scores, labels);
+  const modelBrier = brierScore(results.map(r => [r.pCal, r.nrfiActual ? 1 : 0]));
+  const naiveBrier = brierScore(results.map(r => [0.54, r.nrfiActual ? 1 : 0])); // naive 54% NRFI baseline
+  err(`  AUC-ROC:            ${modelAUC?.toFixed(4)} (0.5=chance, 1.0=perfect, >0.55=useful)`);
+  err(`  Brier score:        ${modelBrier?.toFixed(4)} (lower=better; naive baseline: ${naiveBrier?.toFixed(4)})`);
+  err(`  Brier skill score:  ${modelBrier != null && naiveBrier != null ? (1 - modelBrier / naiveBrier).toFixed(4) : "n/a"} (vs naive; >0=model adds value)`);
+
+  err(``);
+  err(`PEARSON CORRELATIONS — raw feature vs NRFI outcome`);
+  err(`───────────────────────────────────────────────────`);
+  const nrfiY = results.map(r => r.nrfiActual ? 1 : 0);
+  const featDefs = [
+    ["avgPitBase (lower → NRFI)",   r => r.avgPitBase != null ? -r.avgPitBase : null],
+    ["avgOffBase (lower → NRFI)",   r => r.avgOffBase != null ? -r.avgOffBase : null],
+    ["avgPitAdj  (lower → NRFI)",   r => r.avgPitAdj  != null ? -r.avgPitAdj  : null],
+    ["parkF      (lower → NRFI)",   r => r.parkF != null ? -r.parkF : null],
+    ["avgFormF   (lower → NRFI)",   r => r.avgFormF != null ? -r.avgFormF : null],
+    ["avgRestF   (lower → NRFI)",   r => r.avgRestF != null ? -r.avgRestF : null],
+    ["avgKBB     (higher → NRFI)",  r => r.avgKBB],
+    ["avgL10     (higher → NRFI)",  r => r.avgL10],
+    ["pCal       (model score)",    r => r.pCal],
+    ["dayGame    (day→more runs)",  r => r.dayGame ? -1 : 0],
+    ["month      (summer→more)",    r => r.month ? -(r.month >= 7 ? r.month : 0) : null],
+  ];
+  for (const [label, fn] of featDefs) {
+    const pairs = results.filter(r => fn(r) != null).map(r => ({ x: fn(r), y: r.nrfiActual ? 1 : 0 }));
+    if (pairs.length < 50) continue;
+    const r = pearsonR(pairs.map(p => p.x), pairs.map(p => p.y));
+    err(`  ${label.padEnd(32)} r=${r != null ? (r >= 0 ? "+" : "") + r.toFixed(4) : "n/a"}  n=${pairs.length}`);
+  }
+
+  err(``);
+  err(`LOGISTIC REGRESSION — optimal feature weights`);
+  err(`───────────────────────────────────────────────────`);
+  // Build feature matrix (only rows with all features present)
+  const featNames = ["pitBase(-)","offBase(-)","formF(-)","restF(-)","parkF(-)","dayGame(-)","pitSamp"];
+  const lrRows = results.filter(r =>
+    r.avgPitBase != null && r.avgOffBase != null && r.avgFormF != null && r.avgRestF != null && r.parkF != null
+  );
+  if (lrRows.length >= 200) {
+    const X = lrRows.map(r => [
+      -r.avgPitBase,  // negative: lower pit rate → more NRFI
+      -r.avgOffBase,  // negative: lower off rate → more NRFI
+      -r.avgFormF,    // negative: lower form factor → pitcher in better form → more NRFI
+      -r.avgRestF,    // negative: lower rest factor → more NRFI
+      -r.parkF,       // negative: pitcher-friendly park → more NRFI
+      r.dayGame ? -0.5 : 0, // day games trend YRFI
+      r.avgPitBase != null ? Math.min(r.awayPitSample, r.homePitSample) / 30 : 0, // data confidence
+    ]);
+    const y = lrRows.map(r => r.nrfiActual ? 1 : 0);
+    const { Xn } = normalize(X);
+    const model = logReg(Xn, y);
+    const lrPreds = lrRows.map((_, i) => 1 / (1 + Math.exp(-Xn[i].reduce((s, xi, j) => s + xi * model.weights[j], model.bias))));
+    const lrAUC = auc(lrPreds, y);
+    err(`  LR AUC-ROC: ${lrAUC?.toFixed(4)} vs model AUC: ${modelAUC?.toFixed(4)}`);
+    err(`  Feature coefficients (larger magnitude = stronger weight):`);
+    featNames.forEach((name, j) => {
+      err(`    ${name.padEnd(20)} coef=${model.weights[j] >= 0 ? "+" : ""}${model.weights[j].toFixed(4)}`);
+    });
+    err(`  NOTE: Coefficients are on normalized features (z-score), so they're comparable.`);
+    err(`  The live model's current weights (pitchSkill=1.0, form=0.4, opener=0.5, rest=0.8) should`);
+    err(`  roughly match the relative magnitudes above. Large discrepancies suggest weight tuning needed.`);
+  } else {
+    err(`  Too few complete records for LR (n=${lrRows.length})`);
+  }
+
+  err(``);
+  err(`DAY vs NIGHT GAME ANALYSIS`);
+  err(`───────────────────────────────────────────────────`);
+  const dayGames  = results.filter(r => r.dayGame);
+  const nightGames = results.filter(r => !r.dayGame);
+  if (dayGames.length >= 20) {
+    const dayNrfi  = dayGames.filter(r => r.nrfiActual).length;
+    const nightNrfi = nightGames.filter(r => r.nrfiActual).length;
+    err(`  Day games:   n=${String(dayGames.length).padStart(4)}  NRFI rate=${pct(dayNrfi, dayGames.length).padStart(6)}  model win=${pct(dayGames.filter(r => r.won).length, dayGames.length).padStart(6)}`);
+    err(`  Night games: n=${String(nightGames.length).padStart(4)}  NRFI rate=${pct(nightNrfi, nightGames.length).padStart(6)}  model win=${pct(nightGames.filter(r => r.won).length, nightGames.length).padStart(6)}`);
+    err(`  NRFI rate delta (day vs night): ${((dayNrfi / dayGames.length - nightNrfi / nightGames.length) * 100).toFixed(1)}pp`);
+  }
+
+  err(``);
+  err(`PITCHER REST DAYS ANALYSIS`);
+  err(`───────────────────────────────────────────────────`);
+  for (const [lo, hi, label] of [
+    [1, 3,  "Short (1-3 days)"],
+    [4, 5,  "Normal (4-5 days)"],
+    [6, 7,  "Extra (6-7 days)"],
+    [8, 99, "Long layoff (8+ days)"],
+  ]) {
+    const b = results.filter(r => {
+      const rd = r.awayRestDays != null && r.homeRestDays != null
+        ? Math.min(r.awayRestDays, r.homeRestDays) : null;
+      return rd != null && rd >= lo && rd <= hi;
+    });
+    if (b.length < 10) continue;
+    const nrfiHit = b.filter(r => r.nrfiActual).length;
+    err(`  ${label.padEnd(22)} n=${String(b.length).padStart(4)}  NRFI rate=${pct(nrfiHit, b.length).padStart(6)}  model win=${pct(b.filter(r => r.won).length, b.length).padStart(6)}`);
+  }
+
+  err(``);
+  err(`MONTH-BY-MONTH CALIBRATION`);
+  err(`───────────────────────────────────────────────────`);
+  for (const m of [3,4,5,6,7,8,9,10]) {
+    const b = results.filter(r => r.month === m);
+    if (b.length < 20) continue;
+    const nrfiHit = b.filter(r => r.nrfiActual).length;
+    const wins = b.filter(r => r.won).length;
+    const avgPred = avg(b.map(r => r.pMax));
+    const actualRate = nrfiHit / b.length * 100;
+    const bias = wins / b.length * 100 - (avgPred || 0);
+    const months = ["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct"];
+    err(`  ${months[m]} n=${String(b.length).padStart(4)}  NRFI-rate=${actualRate.toFixed(1).padStart(5)}%  model-win=${pct(wins, b.length).padStart(6)}  bias=${(bias >= 0 ? "+" : "") + bias.toFixed(1).padStart(5)}pp`);
+  }
+
+  err(``);
+  err(`ERA vs FIP FORM SIGNAL COMPARISON`);
+  err(`───────────────────────────────────────────────────`);
+  const withFIP = results.filter(r => r.awayFIP != null && r.homeFIP != null);
+  if (withFIP.length >= 50) {
+    const fipY = withFIP.map(r => r.nrfiActual ? 1 : 0);
+    const rFIP = pearsonR(withFIP.map(r => -(r.awayFIP + r.homeFIP) / 2), fipY);
+    const rERA = pearsonR(withFIP.map(r => -(r.awayERA + r.homeFIP) / 2), fipY);
+    err(`  FIP form correlation with NRFI:  r=${rFIP != null ? rFIP.toFixed(4) : "n/a"}`);
+    err(`  ERA form correlation with NRFI:  r=${rERA != null ? rERA.toFixed(4) : "n/a"}`);
+    err(`  FIP tercile analysis (lower FIP → better pitcher → more NRFI):`);
+    const sorted = [...withFIP].sort((a, b) => (a.awayFIP + a.homeFIP) - (b.awayFIP + b.homeFIP));
+    const t = Math.floor(sorted.length / 3);
+    const [bot, top] = [sorted.slice(0, t), sorted.slice(t * 2)];
+    err(`    Best FIP tercile:  n=${t}  NRFI rate=${pct(bot.filter(r => r.nrfiActual).length, bot.length).padStart(6)}`);
+    err(`    Worst FIP tercile: n=${t}  NRFI rate=${pct(top.filter(r => r.nrfiActual).length, top.length).padStart(6)}`);
+  } else {
+    err(`  Insufficient FIP data (n=${withFIP.length})`);
+  }
+
+  err(``);
+  err(`SEASON COMPARISON (2025 vs 2026)`);
+  err(`───────────────────────────────────────────────────`);
+  for (const yr of [2025, 2026]) {
+    const b = results.filter(r => r.season === yr);
+    if (b.length < 10) continue;
+    const nrfiHit = b.filter(r => r.nrfiActual).length;
+    const wins = b.filter(r => r.won).length;
+    const avgPred = avg(b.map(r => r.pMax));
+    const bias = wins / b.length * 100 - (avgPred || 0);
+    err(`  ${yr}  n=${String(b.length).padStart(4)}  NRFI rate=${pct(nrfiHit, b.length).padStart(6)}  win=${pct(wins, b.length).padStart(6)}  pred=${avgPred?.toFixed(1)}%  bias=${(bias >= 0 ? "+" : "") + bias.toFixed(1)}pp`);
   }
 
   err(`\n═══════════════════════════════════════════════════`);
