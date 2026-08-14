@@ -6442,9 +6442,15 @@ function FirstInning() {
       {/* Bankroll builder */}
       {(() => {
         const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
-        const betRows = enriched.filter((r) => r.v && r.v.isBet && r.kelly != null && r.call === "NRFI");
+        // Sort by edge descending — best plays first
+        const betRows = enriched
+          .filter((r) => r.v && r.v.isBet && r.kelly != null && r.call === "NRFI")
+          .slice().sort((a, b) => (b.market ? b.market.edge : 0) - (a.market ? a.market.edge : 0));
         const remaining = (bankroll && amountOut != null) ? Math.max(0, bankroll - amountOut) : bankroll;
-        const totalBetPct = betRows.reduce((s, r) => s + r.kelly * riskMult, 0);
+        const rawTotalBetPct = betRows.reduce((s, r) => s + r.kelly * riskMult, 0);
+        // Cap total allocation at 100% of available balance
+        const allocationScale = rawTotalBetPct > 1 ? 1 / rawTotalBetPct : 1;
+        const totalBetPct = rawTotalBetPct * allocationScale;
         const totalBetAmt = remaining ? remaining * totalBetPct : null;
         const avgEdgePct = betRows.length > 0 ? betRows.reduce((s, r) => s + (r.market ? r.market.edge : 0), 0) / betRows.length : 0;
         // Goal planner logic
@@ -6546,10 +6552,10 @@ function FirstInning() {
                     <div style={{ fontSize: 20, fontWeight: 800, color: stat.color }}>{stat.value}</div>
                   </div>
                 ))}
-                {bankroll && effectiveDailyEv > 0 && (
-                  <div title={"Estimated daily profit at " + riskLevel + " risk and " + growthSpeed + " speed, based on today's edge. Actual results will vary — this is a mathematical expectation, not a guarantee."} style={{ flex: "1 1 80px", padding: "10px 14px", cursor: "help" }}>
+                {remaining && effectiveDailyEv > 0 && (
+                  <div title={"Estimated daily profit based on your available $" + remaining.toFixed(0) + " at " + riskLevel + " risk. This is a mathematical expectation based on current edge — actual results will vary."} style={{ flex: "1 1 80px", padding: "10px 14px", cursor: "help" }}>
                     <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 3 }}>EST. DAILY PROFIT</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: "var(--moss)" }}>+${(bankroll * effectiveDailyEv).toFixed(0)}</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: "var(--moss)" }}>+${(remaining * effectiveDailyEv).toFixed(0)}</div>
                   </div>
                 )}
               </div>
@@ -6557,26 +6563,62 @@ function FirstInning() {
             {/* Row 2b: per-bet breakdown */}
             {betRows.length > 0 && (
               <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 6 }}>TODAY'S BETS</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>TODAY'S NRFI BETS</span>
+                  {allocationScale < 1 && <span style={{ fontSize: 10, color: "var(--amber)" }}>⚠ bets scaled to fit your available balance</span>}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {betRows.map((r, i) => {
-                    const betPct = (r.kelly * riskMult * 100).toFixed(1);
-                    const betAmt = remaining ? Math.round(remaining * r.kelly * riskMult * 100) / 100 : null;
-                    const winProb = r.pFinal;
+                    const scaledKelly = r.kelly * riskMult * allocationScale;
+                    const betAmt = remaining ? Math.floor(remaining * scaledKelly * 100) / 100 : null;
                     const edge = r.market ? r.market.edge : null;
                     const awayA = r.awayAbbr || r.away;
                     const homeA = r.homeAbbr || r.home;
+                    // Kalshi: NRFI = buy NO contracts. NO price = 100 - yesPrice cents.
+                    const noPrice = r.market ? (100 - r.market.yesPrice) : null;
+                    const contracts = (betAmt && noPrice && noPrice > 0) ? Math.floor(betAmt / (noPrice / 100)) : null;
+                    const actualCost = (contracts && noPrice) ? (contracts * noPrice / 100) : betAmt;
+                    const noPriceFmt = noPrice != null ? noPrice.toFixed(0) + "¢" : null;
                     return (
-                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "rgba(255,255,255,0.04)", borderRadius: 7, border: "1px solid rgba(255,255,255,0.06)", flexWrap: "wrap" }}>
-                        <span style={{ fontWeight: 700, fontSize: 13, minWidth: 110 }}>{awayA} @ {homeA}</span>
-                        <span style={{ padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 800, background: "rgba(80,160,80,0.15)", color: "var(--moss)", border: "1px solid rgba(80,160,80,0.4)" }}>NRFI</span>
-                        <span style={{ fontSize: 12, color: "var(--dim)" }} title="Model's probability that no run scores in the 1st inning">{(winProb * 100).toFixed(0)}% confidence</span>
-                        {edge != null && <span style={{ fontSize: 12, color: edge >= 3 ? "var(--moss)" : "var(--dim)" }} title="How much our model probability exceeds the market">+{edge.toFixed(1)}% edge</span>}
-                        <span style={{ marginLeft: "auto", fontWeight: 800, fontSize: 14, color: "var(--moss)" }} title={"Suggested bet from your available $" + (remaining || 0).toFixed(0) + " at " + riskLevel + " risk (" + betPct + "% of available)"}>
-                          {betAmt != null ? "$" + betAmt : betPct + "%"}
-                        </span>
+                      <div key={i} style={{ padding: "10px 14px", background: "rgba(255,255,255,0.04)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.07)" }}>
+                        {/* Top line: matchup + bet amount */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                          <span style={{ fontWeight: 800, fontSize: 14 }}>{awayA} @ {homeA}</span>
+                          <span style={{ padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 800, background: "rgba(80,160,80,0.15)", color: "var(--moss)", border: "1px solid rgba(80,160,80,0.4)" }}>NRFI</span>
+                          {edge != null && (
+                            <span title="Model edge over the market on this game" style={{ cursor: "help", fontSize: 11, color: edge >= 5 ? "var(--moss)" : edge >= 2 ? "var(--fg)" : "var(--dim)", fontWeight: 700 }}>
+                              +{edge.toFixed(1)}% edge
+                            </span>
+                          )}
+                          <span title={"Model probability of no run in the 1st: " + (r.pFinal * 100).toFixed(1) + "%"} style={{ cursor: "help", fontSize: 11, color: "var(--dim)" }}>
+                            {(r.pFinal * 100).toFixed(0)}% confidence
+                          </span>
+                          <span style={{ marginLeft: "auto", fontWeight: 900, fontSize: 18, color: "var(--moss)" }}>
+                            {betAmt != null ? "$" + actualCost.toFixed(2) : (scaledKelly * 100).toFixed(1) + "%"}
+                          </span>
+                        </div>
+                        {/* Bottom line: Kalshi order details */}
                         {r.market && (
-                          <span style={{ fontSize: 11, color: "var(--dim)" }}>@ {r.market.yesPrice.toFixed(0)}¢ YES</span>
+                          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 11 }}>
+                            <span style={{ color: "var(--dim)", fontFamily: "monospace", fontSize: 10 }}>{r.market.ticker}</span>
+                            <span title="Buy NO contracts on Kalshi — NO wins if no run scores in the 1st inning (NRFI)" style={{ cursor: "help", fontWeight: 700, color: "var(--fg)", background: "rgba(255,255,255,0.07)", padding: "2px 7px", borderRadius: 4 }}>
+                              Buy NO
+                            </span>
+                            {noPriceFmt && <span title={"Each NO contract costs " + noPriceFmt + ". Pays $1.00 if no run scores."} style={{ cursor: "help", color: "var(--dim)" }}>@ {noPriceFmt} each</span>}
+                            {contracts != null && contracts > 0 && (
+                              <span title={"Number of contracts to buy. " + contracts + " contracts × " + noPriceFmt + " = $" + actualCost.toFixed(2) + " total cost."} style={{ cursor: "help", fontWeight: 700, color: "var(--fg)" }}>
+                                {contracts} contracts
+                              </span>
+                            )}
+                            {contracts != null && contracts > 0 && (
+                              <span title={"If NRFI hits: " + contracts + " contracts pay out $" + contracts.toFixed(0) + ". Profit: $" + (contracts - actualCost).toFixed(2) + "."} style={{ cursor: "help", color: "var(--moss)" }}>
+                                → wins ${contracts.toFixed(0)} if NRFI
+                              </span>
+                            )}
+                            <a href={r.market.link} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", color: "var(--moss)", textDecoration: "none", fontWeight: 700 }}>
+                              Open on Kalshi ↗
+                            </a>
+                          </div>
                         )}
                       </div>
                     );
