@@ -6059,6 +6059,8 @@ function FirstInning() {
   const saveBankrollTimer = useRef(null);
   const [syncingBalance, setSyncingBalance] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
+  const [openPositions, setOpenPositions] = useState(null);
+  const [loadingPositions, setLoadingPositions] = useState(false);
   const now = useNow(1000);
 
   async function loadRecord() {
@@ -6078,6 +6080,15 @@ function FirstInning() {
         if (d.settings.growthSpeed) setGrowthSpeed(d.settings.growthSpeed);
       }
     } catch { /* ignore */ }
+  }
+  async function loadOpenPositions() {
+    setLoadingPositions(true);
+    try {
+      const d = await fetch("/api/desk/nrfi/kalshi-positions").then((r) => r.json());
+      if (d.positions) setOpenPositions(d);
+      else setOpenPositions({ error: d.error || "Failed to load", positions: [] });
+    } catch { setOpenPositions({ error: "Network error", positions: [] }); }
+    setLoadingPositions(false);
   }
   function saveBankrollSettings(patch) {
     if (saveBankrollTimer.current) clearTimeout(saveBankrollTimer.current);
@@ -6305,29 +6316,46 @@ function FirstInning() {
             <span style={{ fontSize: 11, fontWeight: 800, color: vg.c, letterSpacing: "0.04em", textTransform: "uppercase" }}>{vg.tag}</span>
           </div>
           {(avgPitHP != null || avgOffHP != null) && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {/* Pitcher bar */}
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.06em" }}>PITCHING</span>
-                  {avgPitHP != null && <span style={{ fontSize: 9, fontWeight: 700, color: avgPitHP >= 60 ? "var(--moss)" : avgPitHP >= 45 ? "var(--amber)" : "var(--rose)" }}>{avgPitHP}%</span>}
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {/* Pitcher bar */}
+                <div
+                  title={"PITCHING DOMINANCE — how likely both starters are to keep the 1st inning scoreless, based on their clean-inning rates. " + (avgPitHP != null ? avgPitHP + "% = " + (avgPitHP >= 65 ? "elite shutdown stuff" : avgPitHP >= 50 ? "solid control" : "vulnerable early") + ". Green = pitcher-friendly, amber = 50/50, red = starters are leaking." : "")}
+                  style={{ flex: 1, cursor: "help" }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.06em" }}>🛡️ PITCHING</span>
+                    {avgPitHP != null && <span style={{ fontSize: 10, fontWeight: 800, color: avgPitHP >= 60 ? "var(--moss)" : avgPitHP >= 45 ? "var(--amber)" : "var(--rose)" }}>{avgPitHP}%</span>}
+                  </div>
+                  <div style={{ height: 7, borderRadius: 4, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: (avgPitHP || 0) + "%", background: avgPitHP >= 60 ? "linear-gradient(90deg,#2d6a3f,var(--moss))" : avgPitHP >= 45 ? "linear-gradient(90deg,#8a6500,var(--amber))" : "linear-gradient(90deg,#7a1a1a,var(--rose))", borderRadius: 4, transition: "width 1s cubic-bezier(.2,1,.3,1)" }} />
+                  </div>
+                  <div style={{ fontSize: 8, color: "var(--dim)", marginTop: 2 }}>
+                    {avgPitHP >= 65 ? "elite — starters shutting it down" : avgPitHP >= 50 ? "solid — starters in control" : "shaky — vulnerable to early runs"}
+                  </div>
                 </div>
-                <div style={{ height: 7, borderRadius: 4, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: (avgPitHP || 0) + "%", background: avgPitHP >= 60 ? "linear-gradient(90deg,#2d6a3f,var(--moss))" : avgPitHP >= 45 ? "linear-gradient(90deg,#8a6500,var(--amber))" : "linear-gradient(90deg,#7a1a1a,var(--rose))", borderRadius: 4, transition: "width 1s cubic-bezier(.2,1,.3,1)" }} />
+                {/* Center icon with label */}
+                <div style={{ textAlign: "center", flexShrink: 0 }}>
+                  <div style={{ fontSize: 18, lineHeight: 1 }}>{pitWinning === true ? "⚔️" : pitWinning === false ? "💥" : "⚾"}</div>
+                  <div style={{ fontSize: 7, fontWeight: 800, color: pitWinning === true ? "var(--moss)" : pitWinning === false ? "var(--rose)" : "var(--dim)", letterSpacing: "0.04em", marginTop: 2, whiteSpace: "nowrap" }}>
+                    {pitWinning === true ? "ARM WINS" : pitWinning === false ? "BAT WINS" : "TOSS UP"}
+                  </div>
                 </div>
-              </div>
-              {/* Center icon */}
-              <span style={{ fontSize: 18, flexShrink: 0 }}>
-                {pitWinning === true ? "⚔️" : pitWinning === false ? "💥" : "⚾"}
-              </span>
-              {/* Offense bar (fills right-to-left to oppose) */}
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                  {avgOffHP != null && <span style={{ fontSize: 9, fontWeight: 700, color: avgOffHP >= 60 ? "var(--rose)" : avgOffHP >= 40 ? "var(--amber)" : "var(--moss)" }}>{avgOffHP}%</span>}
-                  <span style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.06em", marginLeft: "auto" }}>OFFENSE</span>
-                </div>
-                <div style={{ height: 7, borderRadius: 4, background: "rgba(255,255,255,0.08)", overflow: "hidden", transform: "scaleX(-1)" }}>
-                  <div style={{ height: "100%", width: (avgOffHP || 0) + "%", background: avgOffHP >= 60 ? "linear-gradient(90deg,#7a1a1a,var(--rose))" : avgOffHP >= 40 ? "linear-gradient(90deg,#8a6500,var(--amber))" : "linear-gradient(90deg,#2d6a3f,var(--moss))", borderRadius: 4, transition: "width 1s cubic-bezier(.2,1,.3,1)" }} />
+                {/* Offense bar (fills right-to-left to oppose) */}
+                <div
+                  title={"OFFENSIVE THREAT — how aggressive both lineups are in the 1st inning based on their season YRFI scoring rates. " + (avgOffHP != null ? avgOffHP + "% = " + (avgOffHP >= 60 ? "dangerous bats, run likely" : avgOffHP >= 40 ? "average scoring threat" : "cold bats, tough to score early") + ". Red = offense-friendly, amber = 50/50, green = offense is quiet." : "")}
+                  style={{ flex: 1, cursor: "help" }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
+                    {avgOffHP != null && <span style={{ fontSize: 10, fontWeight: 800, color: avgOffHP >= 60 ? "var(--rose)" : avgOffHP >= 40 ? "var(--amber)" : "var(--moss)" }}>{avgOffHP}%</span>}
+                    <span style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.06em", marginLeft: "auto" }}>OFFENSE ⚡</span>
+                  </div>
+                  <div style={{ height: 7, borderRadius: 4, background: "rgba(255,255,255,0.08)", overflow: "hidden", transform: "scaleX(-1)" }}>
+                    <div style={{ height: "100%", width: (avgOffHP || 0) + "%", background: avgOffHP >= 60 ? "linear-gradient(90deg,#7a1a1a,var(--rose))" : avgOffHP >= 40 ? "linear-gradient(90deg,#8a6500,var(--amber))" : "linear-gradient(90deg,#2d6a3f,var(--moss))", borderRadius: 4, transition: "width 1s cubic-bezier(.2,1,.3,1)" }} />
+                  </div>
+                  <div style={{ fontSize: 8, color: "var(--dim)", marginTop: 2, textAlign: "right" }}>
+                    {avgOffHP >= 60 ? "hot bats — scoring threat is real" : avgOffHP >= 40 ? "average — could go either way" : "cold lineup — quiet early innings"}
+                  </div>
                 </div>
               </div>
             </div>
@@ -6814,6 +6842,74 @@ function FirstInning() {
                 </div>
               </div>
             )}
+            {/* Row 2c: current open Kalshi positions */}
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>OPEN KALSHI POSITIONS</span>
+                <button
+                  onClick={loadOpenPositions}
+                  disabled={loadingPositions}
+                  style={{ fontSize: 10, padding: "2px 8px", background: "rgba(120,130,150,0.12)", border: "1px solid rgba(120,130,150,0.3)", borderRadius: 4, color: "var(--dim)", cursor: loadingPositions ? "not-allowed" : "pointer", opacity: loadingPositions ? 0.6 : 1 }}
+                >
+                  {loadingPositions ? "Loading…" : openPositions ? "↻ Refresh" : "Load from Kalshi"}
+                </button>
+                {openPositions && !openPositions.error && openPositions.positions.length > 0 && (
+                  <span style={{ fontSize: 11, color: "var(--dim)" }}>
+                    {openPositions.positions.length} open · ${openPositions.totalExposure.toFixed(2)} at risk
+                  </span>
+                )}
+              </div>
+              {openPositions && openPositions.error && (
+                <div style={{ fontSize: 11, color: "var(--rose)", padding: "6px 10px", background: "rgba(220,60,60,0.08)", borderRadius: 6 }}>{openPositions.error}</div>
+              )}
+              {openPositions && !openPositions.error && openPositions.positions.length === 0 && (
+                <div style={{ fontSize: 11, color: "var(--dim)", padding: "6px 10px" }}>No open NRFI positions found.</div>
+              )}
+              {openPositions && !openPositions.error && openPositions.positions.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  {openPositions.positions.map((p, i) => {
+                    const pnlColor = p.unrealizedPnl == null ? "var(--dim)" : p.unrealizedPnl >= 0 ? "var(--moss)" : "var(--rose)";
+                    return (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", background: "rgba(255,255,255,0.04)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.07)", flexWrap: "wrap" }}>
+                        <div style={{ flex: 1, minWidth: 120 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13 }}>{p.game}</div>
+                          <div style={{ fontSize: 10, color: "var(--dim)", fontFamily: "monospace", marginTop: 1 }}>{p.ticker}</div>
+                        </div>
+                        <span title={"You hold NO contracts — wins if no run scores in the 1st inning (NRFI)."} style={{ cursor: "help", padding: "2px 9px", borderRadius: 20, fontSize: 11, fontWeight: 800, background: p.call === "NRFI" ? "rgba(80,160,80,0.15)" : "rgba(220,60,60,0.15)", color: p.call === "NRFI" ? "var(--moss)" : "var(--rose)", border: "1px solid " + (p.call === "NRFI" ? "rgba(80,160,80,0.4)" : "rgba(220,60,60,0.4)") }}>
+                          {p.call}
+                        </span>
+                        <div style={{ textAlign: "center" }}>
+                          <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>CONTRACTS</div>
+                          <div style={{ fontWeight: 700, fontSize: 14 }}>{p.contracts}</div>
+                        </div>
+                        {p.entryPrice != null && (
+                          <div style={{ textAlign: "center" }}>
+                            <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>ENTRY</div>
+                            <div style={{ fontWeight: 700, fontSize: 14 }}>{p.entryPrice.toFixed(0)}¢</div>
+                          </div>
+                        )}
+                        {p.totalCost != null && (
+                          <div style={{ textAlign: "center" }}>
+                            <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>AT RISK</div>
+                            <div style={{ fontWeight: 700, fontSize: 14 }}>${p.totalCost.toFixed(2)}</div>
+                          </div>
+                        )}
+                        {p.unrealizedPnl != null && (
+                          <div title="Unrealized P&L — estimated gain or loss on this position based on current market price." style={{ cursor: "help", textAlign: "center" }}>
+                            <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>UNREAL. P&L</div>
+                            <div style={{ fontWeight: 800, fontSize: 14, color: pnlColor }}>{p.unrealizedPnl >= 0 ? "+" : ""}${p.unrealizedPnl.toFixed(2)}</div>
+                          </div>
+                        )}
+                        <div style={{ marginLeft: "auto" }}>
+                          <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>WINS IF HIT</div>
+                          <div style={{ fontWeight: 700, fontSize: 14, color: "var(--moss)" }}>${p.contracts.toFixed(0)}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             {/* Row 3: goal planner output */}
             {profitGoal > 0 && (
               <div style={{ padding: "10px 14px", background: "rgba(120,130,150,0.07)", borderRadius: 8, border: "1px solid rgba(120,130,150,0.15)", fontSize: 12 }}>
