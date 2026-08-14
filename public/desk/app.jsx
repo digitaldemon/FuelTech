@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-13.nrfi-backtest-v3";
+const BUILD = "2026-08-13.nrfi-park-badge-v4";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5944,7 +5944,7 @@ async function scanNrfi(onProgress) {
       away: ctx.awayName, home: ctx.homeName,
       awayAbbr: away && away.team && away.team.abbreviation, homeAbbr: home && home.team && home.team.abbreviation,
       awayPP: ctx.awayPP, homePP: ctx.homePP,
-      pNRFI: ev.pNRFI, pYRFI: 1 - ev.pNRFI, checks: ev.checks, aligned: ev.aligned, confidence: ev.confidence, method: ev.method, pitProfiles: ev.pitProfiles,
+      pNRFI: ev.pNRFI, pYRFI: 1 - ev.pNRFI, checks: ev.checks, aligned: ev.aligned, confidence: ev.confidence, method: ev.method, pitProfiles: ev.pitProfiles, parkEnv: ctx.wx,
       hasPitchers: !!(awayPP && awayPP.id && homePP && homePP.id),
       dataOk: !!(awayOff && homeOff && awayPit && homePit),
       lineupPosted: (ctx.awayLineup.obp != null && ctx.homeLineup.obp != null),
@@ -6119,8 +6119,25 @@ function FirstInning() {
                   )}
                 </>
               ) : (r.awayPP + " vs " + r.homePP)}
-              {r.lineupPosted ? "" : " · lineups pending"}{r.method === "sim" ? " · base-out sim" : ""}
+              {r.method === "sim" ? " · base-out sim" : ""}
             </div>
+            {!r.lineupPosted && (
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4, padding: "2px 7px", background: "rgba(230,160,0,0.15)", border: "1px solid var(--amber)", borderRadius: 4, fontSize: 11, fontWeight: 700, color: "var(--amber)", letterSpacing: "0.04em" }}>
+                ⚠ LINEUPS PENDING
+              </div>
+            )}
+            {r.parkEnv && (() => {
+              const f = r.parkEnv.factor;
+              const label = f >= 1.06 ? "HITTER FRIENDLY" : f >= 1.02 ? "SLIGHT HITTER LEAN" : f <= 0.95 ? "PITCHER FRIENDLY" : f <= 0.98 ? "SLIGHT PITCHER LEAN" : null;
+              const color = label && (label.includes("HITTER") ? "var(--rose)" : "var(--moss)");
+              if (!label) return null;
+              return (
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4, marginLeft: 6, padding: "2px 7px", background: color === "var(--rose)" ? "rgba(220,60,60,0.12)" : "rgba(80,160,80,0.12)", border: "1px solid " + color, borderRadius: 4, fontSize: 11, fontWeight: 700, color, letterSpacing: "0.04em" }}>
+                  {label}
+                  {r.parkEnv.note && <span style={{ fontWeight: 400, fontSize: 10, opacity: 0.85 }}> · {r.parkEnv.note}</span>}
+                </div>
+              );
+            })()}
             {r.tails && r.tails.length > 0 && (
               <div style={{ marginTop: 4, fontSize: 12 }}>
                 {r.tails.map((t, i) => (
