@@ -5742,8 +5742,8 @@ function nrfiEvaluate(ctx) {
   const nonNeutral = checks.filter((c) => c.lean !== "neutral");
   const agree = nonNeutral.filter((c) => c.lean === call).length;
   const pitProfiles = {
-    away: { name: ctx.awayPP, hand: ctx.awayMeta && ctx.awayMeta.hand, ...pitcherI01Profile(ctx.awayPit, ctx.awayMeta && ctx.awayMeta.seasonEra, ctx.awayRolling, ctx.awayPeri) },
-    home: { name: ctx.homePP, hand: ctx.homeMeta && ctx.homeMeta.hand, ...pitcherI01Profile(ctx.homePit, ctx.homeMeta && ctx.homeMeta.seasonEra, ctx.homeRolling, ctx.homePeri) },
+    away: { name: ctx.awayPP, pid: ctx.awayPPId, hand: ctx.awayMeta && ctx.awayMeta.hand, ...pitcherI01Profile(ctx.awayPit, ctx.awayMeta && ctx.awayMeta.seasonEra, ctx.awayRolling, ctx.awayPeri) },
+    home: { name: ctx.homePP, pid: ctx.homePPId, hand: ctx.homeMeta && ctx.homeMeta.hand, ...pitcherI01Profile(ctx.homePit, ctx.homeMeta && ctx.homeMeta.seasonEra, ctx.homeRolling, ctx.homePeri) },
   };
   return { pNRFI, checks, aligned: { agree, total: nonNeutral.length }, confidence: conf, method, pitProfiles };
 }
@@ -5820,6 +5820,75 @@ function nrfiTier(pMax) {
 // 63.6% (2025) and 71.8% (2026). pMax≥70: 71.8% and 81.8%.
 // Live calibration takes over after 25 graded picks.
 const NRFI_CALIB_SEED = { c: 0.050, n: 3753, active: true, source: "backtest-v4" };
+
+// Pitcher backtest rankings — 3,753 MLB games (2025 full + 2026 to-date).
+// clean = % of 1st innings kept scoreless. n = starts evaluated.
+// tier: "elite" ≥70%, "sharp" 65-69%, "leaky" 30-35%, "danger" <30%.
+const PITCHER_BT = (() => {
+  const t = {};
+  const add = (name, clean, n, tier) => { t[name.toLowerCase()] = { clean, n, tier }; };
+  // ── ELITE (≥70% clean 1st innings) ──
+  add("Keider Montero",      83, 12, "elite");
+  add("Logan Henderson",     82, 11, "elite");
+  add("Chris Sale",          76, 37, "elite"); // combined 2025+2026
+  add("Paul Skenes",         77, 30, "elite");
+  add("Gerrit Cole",         79, 14, "elite");
+  add("Casey Mize",          75, 16, "elite");
+  add("Shohei Ohtani",       75, 12, "elite");
+  add("Nathan Eovaldi",      75, 20, "elite");
+  add("Ranger Suárez",       75, 24, "elite");
+  add("Ranger Suarez",       75, 24, "elite");
+  add("Gavin Williams",      73, 22, "elite");
+  add("Kyle Leahy",          73, 22, "elite");
+  add("Trevor Rogers",       72, 18, "elite");
+  add("Tarik Skubal",        70, 30, "elite");
+  add("Noah Cameron",        71, 21, "elite");
+  add("Shane Drohan",        71, 14, "elite");
+  add("Logan Webb",          71, 17, "elite");
+  add("Griffin Jax",         71, 17, "elite");
+  add("Landen Roupp",        70, 20, "elite");
+  add("Hunter Brown",        70, 10, "elite");
+  add("Carmen Mlodzinski",   70, 10, "elite");
+  // ── SHARP (65-69%) ──
+  add("Bowden Francis",      69, 13, "sharp");
+  add("Edward Cabrera",      69, 13, "sharp");
+  add("Michael Wacha",       68, 28, "sharp");
+  add("Tyler Glasnow",       67, 15, "sharp");
+  add("Ryan Bergert",        67, 15, "sharp");
+  add("Janson Junk",         67, 15, "sharp");
+  add("Quinn Priester",      65, 23, "sharp");
+  add("Tanner Bibee",        65, 31, "sharp");
+  add("Tyler Mahle",         64, 14, "sharp");
+  add("Jesús Luzardo",       63, 19, "sharp");
+  add("Jesus Luzardo",       63, 19, "sharp");
+  // ── LEAKY (30-35%) ──
+  add("Zac Gallen",          31, 48, "leaky"); // worst in BOTH seasons
+  add("J.T. Ginn",           31, 16, "leaky");
+  add("Joey Cantillo",       31, 13, "leaky");
+  add("Mitchell Parker",     33, 27, "leaky");
+  add("Tyler Anderson",      32, 25, "leaky");
+  add("Clayton Kershaw",     30, 20, "leaky");
+  add("Justin Wrobleski",    26, 19, "leaky");
+  add("Adrian Houser",       27, 15, "leaky");
+  // ── DANGER (<30%) ──
+  add("Stephen Kolek",       10, 10, "danger");
+  add("Hunter Dobbins",      18, 11, "danger");
+  add("Bradley Blalock",     18, 11, "danger");
+  add("Reynaldo López",      20, 10, "danger");
+  add("Reynaldo Lopez",      20, 10, "danger");
+  add("Kumar Rocker",        20, 20, "danger");
+  add("Tomoyuki Sugano",     20, 20, "danger");
+  add("Cam Schlittler",      21, 14, "danger");
+  add("David Peterson",      21, 14, "danger");
+  add("Eric Lauer",          21, 14, "danger");
+  add("Zebby Matthews",      23, 13, "danger");
+  add("Jonathan Cannon",     27, 15, "danger");
+  return t;
+})();
+function pitcherBT(name) {
+  if (!name) return null;
+  return PITCHER_BT[name.toLowerCase()] || null;
+}
 
 // Empirical calibration: once enough calls are graded, shift the model's
 // probabilities (in logit space) so its average prediction matches the actual
@@ -5976,6 +6045,7 @@ async function scanNrfi(onProgress) {
     const ctx = {
       awayName: away && away.team && away.team.name, homeName: home && home.team && home.team.name,
       awayPP: (awayPP && awayPP.fullName) || "TBD", homePP: (homePP && homePP.fullName) || "TBD",
+      awayPPId: awayPP && awayPP.id, homePPId: homePP && homePP.id,
       awayOff, homeOff, awayPit, homePit, awayMeta, homeMeta,
       awayLineup, homeLineup, awayTravel, homeTravel, wx,
       awayRolling, homeRolling,
@@ -6379,16 +6449,42 @@ function FirstInning() {
               const kbb = p.k9 != null && p.bb9 != null ? (p.k9 - p.bb9).toFixed(1) : null;
               const pClr = (v) => v >= 65 ? "var(--moss)" : v >= 50 ? "var(--fg)" : v >= 38 ? "var(--amber)" : "var(--rose)";
               const windows = rl ? [{ label: "SZN", ...rl.szn }, { label: "L50", ...rl.l50 }, { label: "L30", ...rl.l30 }, { label: "L10", ...rl.l10 }] : [];
+              const bt = pitcherBT(name);
+              const btBadge = bt ? (
+                bt.tier === "elite"  ? { icon: "🔥", label: "ELITE 1ST INN", color: "var(--moss)",  bg: "rgba(80,200,120,0.1)",  border: "rgba(80,200,120,0.4)"  } :
+                bt.tier === "sharp"  ? { icon: "✅", label: "SHARP",         color: "#8ecf8e",       bg: "rgba(80,180,80,0.08)",  border: "rgba(80,180,80,0.3)"   } :
+                bt.tier === "leaky"  ? { icon: "⚠️", label: "LEAKY 1ST",     color: "var(--amber)",  bg: "rgba(230,160,0,0.1)",   border: "rgba(230,160,0,0.4)"   } :
+                bt.tier === "danger" ? { icon: "🩸", label: "BLEEDS EARLY",  color: "var(--rose)",   bg: "rgba(220,60,60,0.1)",   border: "rgba(220,60,60,0.4)"   } : null
+              ) : null;
+              const headshotUrl = p.pid
+                ? "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/" + p.pid + "/headshot/67/current"
+                : "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/generic/headshot/67/current";
               return (
                 <div key={i} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 10, padding: "12px 13px", border: "1px solid rgba(255,255,255,0.06)" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 3 }}>{side} STARTER</div>
-                      <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={name}>{name}</div>
+                  {/* Header: headshot + name/grade */}
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 8 }}>
+                    <img
+                      src={headshotUrl}
+                      alt={name}
+                      style={{ width: 60, height: 60, borderRadius: 8, objectFit: "cover", flexShrink: 0, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+                      onError={(e) => { e.target.src = "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/0/headshot/67/current"; }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 2 }}>{side} STARTER</div>
+                          <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={name}>{name}</div>
+                        </div>
+                        {p.grade !== "—" && (
+                          <span title={"1st-inning pitcher grade: " + p.grade + " — " + (p.summary || "") + (p.vsNote || "") + " · A+/A = elite, B = solid, C = average, D/F = struggles early."} style={{ cursor: "help", fontWeight: 800, fontSize: 12, color: p.gradeColor, background: p.gradeColor + "18", border: "1.5px solid " + p.gradeColor, borderRadius: 6, padding: "2px 7px", marginLeft: 8, flexShrink: 0 }}>{p.grade}</span>
+                        )}
+                      </div>
+                      {btBadge && (
+                        <div title={"Backtest result across 3,753 MLB games (2025 full season + 2026 to-date): " + name + " kept the 1st inning scoreless " + bt.clean + "% of the time in " + bt.n + " starts evaluated."} style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, marginTop: 5, padding: "2px 7px", background: btBadge.bg, border: "1px solid " + btBadge.border, borderRadius: 5, fontSize: 10, fontWeight: 700, color: btBadge.color }}>
+                          {btBadge.icon} {btBadge.label} · {bt.clean}%
+                        </div>
+                      )}
                     </div>
-                    {p.grade !== "—" && (
-                      <span title={"1st-inning pitcher grade: " + p.grade + " — " + (p.summary || "") + (p.vsNote || "") + " · A+/A = elite, B = solid, C = average, D/F = struggles early."} style={{ cursor: "help", fontWeight: 800, fontSize: 12, color: p.gradeColor, background: p.gradeColor + "18", border: "1.5px solid " + p.gradeColor, borderRadius: 6, padding: "2px 7px", marginLeft: 8, flexShrink: 0 }}>{p.grade}</span>
-                    )}
                   </div>
                   {headline != null && (
                     <div title={"Last 30 starts: kept the 1st inning scoreless " + headline + "% of the time (" + headlineN + " games). Green = elite, amber = average, red = struggles."} style={{ cursor: "help", marginBottom: 8 }}>
