@@ -5440,6 +5440,7 @@ function seasonLoadFactor(ip) {
   if (ip == null) return { f: 1, note: "" };
   if (ip >= 150) return { f: 1.04, note: Math.round(ip) + " IP (heavy load)" };
   if (ip >= 130) return { f: 1.02, note: Math.round(ip) + " IP (high load)" };
+  if (ip >= 120) return { f: 1.01, note: Math.round(ip) + " IP (building load)" };
   return { f: 1, note: "" };
 }
 
@@ -5742,6 +5743,8 @@ function nrfiEvaluate(ctx) {
   if (ctx.homeLineup.obp == null) conf -= 0.12;
   if (ctx.awayPeri == null) conf -= 0.05;
   if (ctx.homePeri == null) conf -= 0.05;
+  if (!ctx.awayRolling) conf -= 0.04;
+  if (!ctx.homeRolling) conf -= 0.04;
   conf = nClamp(conf, 0, 1);
 
   const lean = (v, hi, lo) => (v >= hi ? "yrfi" : v <= lo ? "nrfi" : "neutral");
@@ -5798,6 +5801,43 @@ function nrfiEvaluate(ctx) {
       const bothDirty = aLast === false && hLast === false;
       return { label: "Last start momentum", detail: notes.join(" · "),
         lean: bothClean ? "nrfi" : bothDirty ? "yrfi" : "neutral" };
+    })(),
+    (() => {
+      const aL10 = ctx.awayRolling && ctx.awayRolling.l10 && ctx.awayRolling.l10.n >= 5 ? ctx.awayRolling.l10.pct : null;
+      const hL10 = ctx.homeRolling && ctx.homeRolling.l10 && ctx.homeRolling.l10.n >= 5 ? ctx.homeRolling.l10.pct : null;
+      const aSzn = ctx.awayRolling && ctx.awayRolling.szn ? ctx.awayRolling.szn.pct : null;
+      const hSzn = ctx.homeRolling && ctx.homeRolling.szn ? ctx.homeRolling.szn.pct : null;
+      if (aL10 == null && hL10 == null) return null;
+      const notes = [];
+      const diffs = [];
+      if (aL10 != null) {
+        const diff = aSzn != null ? aL10 - aSzn : null;
+        const arrow = diff == null ? "" : diff >= 10 ? " ↑hot" : diff <= -10 ? " ↓cold" : "";
+        notes.push(ctx.awayPP + ": L10 " + aL10 + "%" + arrow + (aSzn != null ? " (SZN " + aSzn + "%)" : ""));
+        if (diff != null) diffs.push(diff);
+      }
+      if (hL10 != null) {
+        const diff = hSzn != null ? hL10 - hSzn : null;
+        const arrow = diff == null ? "" : diff >= 10 ? " ↑hot" : diff <= -10 ? " ↓cold" : "";
+        notes.push(ctx.homePP + ": L10 " + hL10 + "%" + arrow + (hSzn != null ? " (SZN " + hSzn + "%)" : ""));
+        if (diff != null) diffs.push(diff);
+      }
+      const anyDown = diffs.some(d => d <= -15);
+      const allUp = diffs.length > 0 && diffs.every(d => d >= 10);
+      return { label: "Pitcher L10 clean rate", detail: notes.join(" · "),
+        lean: anyDown ? "yrfi" : allUp ? "nrfi" : "neutral" };
+    })(),
+    (() => {
+      const aBT = pitcherBT(ctx.awayPP);
+      const hBT = pitcherBT(ctx.homePP);
+      if (!aBT && !hBT) return null;
+      const notes = [];
+      if (aBT) notes.push(ctx.awayPP + ": " + aBT.clean + "% clean (" + aBT.n + "gs, " + aBT.tier + ")");
+      if (hBT) notes.push(ctx.homePP + ": " + hBT.clean + "% clean (" + hBT.n + "gs, " + hBT.tier + ")");
+      const vals = [aBT, hBT].filter(Boolean);
+      const avgClean = vals.reduce((s, b) => s + b.clean, 0) / vals.length;
+      return { label: "Backtest profile", detail: notes.join(" · "),
+        lean: avgClean >= 68 ? "nrfi" : avgClean <= 33 ? "yrfi" : "neutral" };
     })(),
   ].filter(Boolean);
   const call = pNRFI >= 0.5 ? "nrfi" : "yrfi";
