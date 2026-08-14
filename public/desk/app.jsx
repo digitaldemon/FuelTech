@@ -6450,12 +6450,24 @@ function FirstInning() {
               const pClr = (v) => v >= 65 ? "var(--moss)" : v >= 50 ? "var(--fg)" : v >= 38 ? "var(--amber)" : "var(--rose)";
               const windows = rl ? [{ label: "SZN", ...rl.szn }, { label: "L50", ...rl.l50 }, { label: "L30", ...rl.l30 }, { label: "L10", ...rl.l10 }] : [];
               const bt = pitcherBT(name);
-              const btBadge = bt ? (
-                bt.tier === "elite"  ? { icon: "🔥", label: "ELITE 1ST INN", color: "var(--moss)",  bg: "rgba(80,200,120,0.1)",  border: "rgba(80,200,120,0.4)"  } :
-                bt.tier === "sharp"  ? { icon: "✅", label: "SHARP",         color: "#8ecf8e",       bg: "rgba(80,180,80,0.08)",  border: "rgba(80,180,80,0.3)"   } :
-                bt.tier === "leaky"  ? { icon: "⚠️", label: "LEAKY 1ST",     color: "var(--amber)",  bg: "rgba(230,160,0,0.1)",   border: "rgba(230,160,0,0.4)"   } :
-                bt.tier === "danger" ? { icon: "🩸", label: "BLEEDS EARLY",  color: "var(--rose)",   bg: "rgba(220,60,60,0.1)",   border: "rgba(220,60,60,0.4)"   } : null
-              ) : null;
+              // Derive tier: prefer backtest table; fall back to live model clean %
+              const btClean = bt ? bt.clean : headline;
+              const btN     = bt ? bt.n     : headlineN;
+              const btSrc   = bt ? "backtest" : "model";
+              const btTier  = bt ? bt.tier :
+                headline == null ? null :
+                headline >= 70 ? "elite" :
+                headline >= 65 ? "sharp" :
+                headline <= 30 ? "danger" :
+                headline <= 35 ? "leaky" : "avg";
+              const TIER_STYLES = {
+                elite:  { icon: "🔥", label: "ELITE 1ST INN", color: "var(--moss)",  bg: "rgba(80,200,120,0.1)",  border: "rgba(80,200,120,0.4)"  },
+                sharp:  { icon: "✅", label: "SHARP",          color: "#8ecf8e",      bg: "rgba(80,180,80,0.08)",  border: "rgba(80,180,80,0.3)"   },
+                leaky:  { icon: "⚠️", label: "LEAKY 1ST",      color: "var(--amber)", bg: "rgba(230,160,0,0.1)",   border: "rgba(230,160,0,0.4)"   },
+                danger: { icon: "🩸", label: "BLEEDS EARLY",   color: "var(--rose)",  bg: "rgba(220,60,60,0.1)",   border: "rgba(220,60,60,0.4)"   },
+                avg:    { icon: "📊", label: "AVERAGE",        color: "var(--dim)",   bg: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.12)" },
+              };
+              const btBadge = btTier ? TIER_STYLES[btTier] : null;
               const headshotUrl = p.pid
                 ? "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/" + p.pid + "/headshot/67/current"
                 : "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/generic/headshot/67/current";
@@ -6479,9 +6491,9 @@ function FirstInning() {
                           <span title={"1st-inning pitcher grade: " + p.grade + " — " + (p.summary || "") + (p.vsNote || "") + " · A+/A = elite, B = solid, C = average, D/F = struggles early."} style={{ cursor: "help", fontWeight: 800, fontSize: 12, color: p.gradeColor, background: p.gradeColor + "18", border: "1.5px solid " + p.gradeColor, borderRadius: 6, padding: "2px 7px", marginLeft: 8, flexShrink: 0 }}>{p.grade}</span>
                         )}
                       </div>
-                      {btBadge && (
-                        <div title={"Backtest result across 3,753 MLB games (2025 full season + 2026 to-date): " + name + " kept the 1st inning scoreless " + bt.clean + "% of the time in " + bt.n + " starts evaluated."} style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, marginTop: 5, padding: "2px 7px", background: btBadge.bg, border: "1px solid " + btBadge.border, borderRadius: 5, fontSize: 10, fontWeight: 700, color: btBadge.color }}>
-                          {btBadge.icon} {btBadge.label} · {bt.clean}%
+                      {btBadge && btClean != null && (
+                        <div title={(btSrc === "backtest" ? "Backtest result — 3,753 MLB games (2025 full + 2026 to-date): " : "Live model estimate: ") + name + " kept the 1st inning scoreless " + btClean + "% of the time across " + btN + " starts."} style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, marginTop: 5, padding: "2px 7px", background: btBadge.bg, border: "1px solid " + btBadge.border, borderRadius: 5, fontSize: 10, fontWeight: 700, color: btBadge.color }}>
+                          {btBadge.icon} {btBadge.label} · {btClean}%
                         </div>
                       )}
                     </div>
