@@ -6057,6 +6057,8 @@ function FirstInning() {
   const [growthSpeed, setGrowthSpeed] = useState("steady");
   const [amountOut, setAmountOut] = useState(null);
   const saveBankrollTimer = useRef(null);
+  const [syncingBalance, setSyncingBalance] = useState(false);
+  const [syncMsg, setSyncMsg] = useState(null);
   const now = useNow(1000);
 
   async function loadRecord() {
@@ -6553,14 +6555,15 @@ function FirstInning() {
       {(() => {
         const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
 
-        // ── P&L from settled history (Kalshi imports have contracts + mktAtPick) ──
-        const gradedHistory = (rec || []).filter((r) => (r.result === "won" || r.result === "lost") && r.contracts && r.mktAtPick != null);
+        // ── P&L from settled Kalshi imports — shown as context only, not added to bankroll ──
+        // The bankroll the user enters IS their current balance. P&L is informational.
+        const gradedHistory = (rec || []).filter((r) => (r.result === "won" || r.result === "lost") && r.contracts > 0 && r.mktAtPick != null && r.mktAtPick > 0);
         const historyPL = gradedHistory.reduce((s, r) => {
-          // mktAtPick = entry price cents for "our call side". Win pays $1/contract; loss forfeits cost.
-          const cost = r.contracts * r.mktAtPick / 100;
-          return s + (r.result === "won" ? r.contracts - cost : -cost);
+          // mktAtPick = price paid per contract in cents (0-100). Each contract pays $1 on win.
+          const pricePerContract = Math.min(99, Math.max(1, r.mktAtPick)) / 100;
+          const cost = r.contracts * pricePerContract;
+          return s + (r.result === "won" ? r.contracts * (1 - pricePerContract) : -cost);
         }, 0);
-        const currentBankroll = bankroll != null ? bankroll + historyPL : null;
 
         // Sort by edge descending — best plays first
         const betRows = enriched
@@ -6601,10 +6604,9 @@ function FirstInning() {
         } else if (betRows.length > 0 && avgEdgePct < 2) {
           aiInsights.push({ type: "warn", text: "Thin edge today (avg +" + avgEdgePct.toFixed(1) + "%). Consider sizing down or skipping marginal games." });
         }
-        if (currentBankroll != null && bankroll != null && Math.abs(currentBankroll - bankroll) >= 5) {
-          const change = currentBankroll - bankroll;
-          aiInsights.push({ type: change >= 0 ? "good" : "warn",
-            text: "Bankroll " + (change >= 0 ? "up" : "down") + " $" + Math.abs(change).toFixed(0) + " from your starting $" + bankroll.toFixed(0) + " based on settled history." });
+        if (gradedHistory.length > 0 && Math.abs(historyPL) >= 1) {
+          aiInsights.push({ type: historyPL >= 0 ? "good" : "warn",
+            text: "Kalshi history shows " + (historyPL >= 0 ? "+" : "") + "$" + historyPL.toFixed(2) + " P&L across " + gradedHistory.length + " settled bet" + (gradedHistory.length === 1 ? "" : "s") + "." });
         }
         if (remaining != null && remaining <= 0 && bankroll) {
           aiInsights.push({ type: "warn", text: "No remaining balance. Wait for open positions to settle before placing more bets." });
@@ -6640,15 +6642,36 @@ function FirstInning() {
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: "var(--moss)" }}>Bankroll Builder</span>
               <span style={{ fontSize: 11, color: "var(--dim)" }}>— bet sizing, risk management, and growth planning</span>
-              {currentBankroll != null && (
-                <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>CURRENT BALANCE</span>
-                  <span title={"Starting $" + (bankroll || 0).toFixed(0) + " + $" + historyPL.toFixed(2) + " P&L from " + gradedHistory.length + " settled bet" + (gradedHistory.length === 1 ? "" : "s")} style={{ cursor: "help", fontSize: 18, fontWeight: 800, color: currentBankroll >= (bankroll || 0) ? "var(--moss)" : "var(--rose)" }}>
-                    ${currentBankroll.toFixed(0)}
-                    {historyPL !== 0 && <span style={{ fontSize: 12, fontWeight: 600, marginLeft: 4 }}>({historyPL >= 0 ? "+" : ""}{historyPL.toFixed(2)})</span>}
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                {gradedHistory.length > 0 && (
+                  <span title={"Tracked P&L from " + gradedHistory.length + " settled Kalshi bet" + (gradedHistory.length === 1 ? "" : "s") + " in your history. This is informational — your bankroll is whatever you enter below."} style={{ cursor: "help", fontSize: 12, color: historyPL >= 0 ? "var(--moss)" : "var(--rose)", fontWeight: 700 }}>
+                    History P&L: {historyPL >= 0 ? "+" : ""}${historyPL.toFixed(2)}
                   </span>
-                </span>
-              )}
+                )}
+                <button
+                  onClick={async () => {
+                    setSyncingBalance(true); setSyncMsg(null);
+                    try {
+                      const d = await fetch("/api/desk/nrfi/kalshi-balance").then((r) => r.json());
+                      if (d.balance != null) {
+                        const v = Math.round(d.balance * 100) / 100;
+                        setBankroll(v);
+                        saveBankrollSettings({ startingBankroll: v, riskLevel, growthSpeed });
+                        setSyncMsg({ ok: true, text: "Synced: $" + v.toFixed(2) });
+                      } else {
+                        setSyncMsg({ ok: false, text: d.error || "Could not fetch balance" });
+                      }
+                    } catch { setSyncMsg({ ok: false, text: "Network error" }); }
+                    setSyncingBalance(false);
+                    setTimeout(() => setSyncMsg(null), 4000);
+                  }}
+                  disabled={syncingBalance}
+                  style={{ fontSize: 11, padding: "4px 10px", background: "rgba(80,160,80,0.12)", border: "1px solid rgba(80,160,80,0.35)", borderRadius: 6, color: "var(--moss)", cursor: syncingBalance ? "not-allowed" : "pointer", fontWeight: 700, opacity: syncingBalance ? 0.6 : 1 }}
+                >
+                  {syncingBalance ? "Syncing…" : "↻ Sync Kalshi Balance"}
+                </button>
+                {syncMsg && <span style={{ fontSize: 11, color: syncMsg.ok ? "var(--moss)" : "var(--rose)" }}>{syncMsg.text}</span>}
+              </div>
             </div>
             {/* Row 1: inputs */}
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 14 }}>
