@@ -8426,8 +8426,9 @@ function FirstInning() {
     const recE = (rec || []).find(x => x.id === "nrfi-" + r.gamePk);
     const gameTime = r.startUtc ? new Date(r.startUtc).toLocaleTimeString([], {
       hour: "numeric",
-      minute: "2-digit"
-    }) : null;
+      minute: "2-digit",
+      timeZone: "America/Los_Angeles"
+    }) + " PT" : null;
     const countdown = r.startUtc && !r.final && r.currentInning === 0 ? fmtCountdown(r.startUtc, now) : null;
 
     // ── Verdict graphic: tagline + emoji based on call, confidence, result ──
