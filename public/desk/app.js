@@ -10268,7 +10268,12 @@ function FirstInning() {
           color: "var(--moss)",
           fontWeight: 700
         }
-      }, "+$", totalToWin.toFixed(2)));
+      }, "+$", totalToWin.toFixed(2)), " \xB7 combined ", /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: "var(--moss)",
+          fontWeight: 700
+        }
+      }, "$", (openPositions.totalExposure + totalToWin).toFixed(2)));
     })()), openPositions && openPositions.error && /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 11,

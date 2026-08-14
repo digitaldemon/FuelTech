@@ -7082,7 +7082,7 @@ function FirstInning() {
                   const totalToWin = openPositions.positions.reduce((s, p) => s + (p.estimatedPayout || 0), 0);
                   return (
                     <span style={{ fontSize: 11, color: "var(--dim)" }}>
-                      {openPositions.positions.length} open · <span style={{ color: "var(--fg)" }}>${openPositions.totalExposure.toFixed(2)}</span> at risk · to win <span style={{ color: "var(--moss)", fontWeight: 700 }}>+${totalToWin.toFixed(2)}</span>
+                      {openPositions.positions.length} open · <span style={{ color: "var(--fg)" }}>${openPositions.totalExposure.toFixed(2)}</span> at risk · to win <span style={{ color: "var(--moss)", fontWeight: 700 }}>+${totalToWin.toFixed(2)}</span> · combined <span style={{ color: "var(--moss)", fontWeight: 700 }}>${(openPositions.totalExposure + totalToWin).toFixed(2)}</span>
                     </span>
                   );
                 })()}
