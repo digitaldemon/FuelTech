@@ -9166,7 +9166,86 @@ function FirstInning() {
         fontWeight: 800,
         color: "var(--moss)"
       }
-    }, "+$", (bankroll * effectiveDailyEv).toFixed(0)))), profitGoal > 0 && /*#__PURE__*/React.createElement("div", {
+    }, "+$", (bankroll * effectiveDailyEv).toFixed(0)))), betRows.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginBottom: 10
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.08em",
+        marginBottom: 6
+      }
+    }, "TODAY'S BETS"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 4
+      }
+    }, betRows.map((r, i) => {
+      const betPct = (r.kelly * riskMult * 100).toFixed(1);
+      const betAmt = bankroll ? Math.round(bankroll * r.kelly * riskMult * 100) / 100 : null;
+      const winProb = r.call === "NRFI" ? r.pFinal : 1 - r.pFinal;
+      const edge = r.market ? r.market.edge : null;
+      const awayA = r.awayAbbr || r.away;
+      const homeA = r.homeAbbr || r.home;
+      return /*#__PURE__*/React.createElement("div", {
+        key: i,
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "8px 12px",
+          background: "rgba(255,255,255,0.04)",
+          borderRadius: 7,
+          border: "1px solid rgba(255,255,255,0.06)",
+          flexWrap: "wrap"
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontWeight: 700,
+          fontSize: 13,
+          minWidth: 110
+        }
+      }, awayA, " @ ", homeA), /*#__PURE__*/React.createElement("span", {
+        style: {
+          padding: "2px 8px",
+          borderRadius: 20,
+          fontSize: 11,
+          fontWeight: 800,
+          background: r.call === "NRFI" ? "rgba(80,160,80,0.15)" : "rgba(220,60,60,0.15)",
+          color: r.call === "NRFI" ? "var(--moss)" : "var(--rose)",
+          border: "1px solid " + (r.call === "NRFI" ? "rgba(80,160,80,0.4)" : "rgba(220,60,60,0.4)")
+        }
+      }, r.call), /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontSize: 12,
+          color: "var(--dim)"
+        },
+        title: "Model confidence \u2014 how strongly we favor this call"
+      }, (winProb * 100).toFixed(0), "% confidence"), edge != null && /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontSize: 12,
+          color: edge >= 3 ? "var(--moss)" : "var(--dim)"
+        },
+        title: "How much our model probability exceeds the market on this call"
+      }, "+", edge.toFixed(1), "% edge"), /*#__PURE__*/React.createElement("span", {
+        style: {
+          marginLeft: "auto",
+          fontWeight: 800,
+          fontSize: 14,
+          color: "var(--moss)"
+        },
+        title: "Suggested bet at " + riskLevel + " risk: " + betPct + "% of bankroll" + (betAmt ? " = $" + betAmt : "")
+      }, betAmt != null ? "$" + betAmt : betPct + "%"), r.market && /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontSize: 11,
+          color: "var(--dim)"
+        }
+      }, "@ ", r.market.yesPrice.toFixed(0), "\xA2 YES"));
+    }))), profitGoal > 0 && /*#__PURE__*/React.createElement("div", {
       style: {
         padding: "10px 14px",
         background: "rgba(120,130,150,0.07)",

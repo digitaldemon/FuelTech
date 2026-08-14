@@ -6536,6 +6536,38 @@ function FirstInning() {
                 )}
               </div>
             )}
+            {/* Row 2b: per-bet breakdown */}
+            {betRows.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 6 }}>TODAY'S BETS</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {betRows.map((r, i) => {
+                    const betPct = (r.kelly * riskMult * 100).toFixed(1);
+                    const betAmt = bankroll ? Math.round(bankroll * r.kelly * riskMult * 100) / 100 : null;
+                    const winProb = r.call === "NRFI" ? r.pFinal : 1 - r.pFinal;
+                    const edge = r.market ? r.market.edge : null;
+                    const awayA = r.awayAbbr || r.away;
+                    const homeA = r.homeAbbr || r.home;
+                    return (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "rgba(255,255,255,0.04)", borderRadius: 7, border: "1px solid rgba(255,255,255,0.06)", flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: 700, fontSize: 13, minWidth: 110 }}>{awayA} @ {homeA}</span>
+                        <span style={{ padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 800, background: r.call === "NRFI" ? "rgba(80,160,80,0.15)" : "rgba(220,60,60,0.15)", color: r.call === "NRFI" ? "var(--moss)" : "var(--rose)", border: "1px solid " + (r.call === "NRFI" ? "rgba(80,160,80,0.4)" : "rgba(220,60,60,0.4)") }}>
+                          {r.call}
+                        </span>
+                        <span style={{ fontSize: 12, color: "var(--dim)" }} title="Model confidence — how strongly we favor this call">{(winProb * 100).toFixed(0)}% confidence</span>
+                        {edge != null && <span style={{ fontSize: 12, color: edge >= 3 ? "var(--moss)" : "var(--dim)" }} title="How much our model probability exceeds the market on this call">+{edge.toFixed(1)}% edge</span>}
+                        <span style={{ marginLeft: "auto", fontWeight: 800, fontSize: 14, color: "var(--moss)" }} title={"Suggested bet at " + riskLevel + " risk: " + betPct + "% of bankroll" + (betAmt ? " = $" + betAmt : "")}>
+                          {betAmt != null ? "$" + betAmt : betPct + "%"}
+                        </span>
+                        {r.market && (
+                          <span style={{ fontSize: 11, color: "var(--dim)" }}>@ {r.market.yesPrice.toFixed(0)}¢ YES</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {/* Row 3: goal planner output */}
             {profitGoal > 0 && (
               <div style={{ padding: "10px 14px", background: "rgba(120,130,150,0.07)", borderRadius: 8, border: "1px solid rgba(120,130,150,0.15)", fontSize: 12 }}>
