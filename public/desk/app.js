@@ -31,7 +31,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-14.nrfi-edge10-bankroll-v9";
+const BUILD = "2026-08-14.nrfi-edge10-bankroll-v10";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -206,19 +206,15 @@ details.fold > summary:hover { color:var(--bone); }
 
 /* pick cards — the landing board. Hierarchy: winner name and the tier
    badge dominate; everything else is quiet metadata. */
-.pick { display:flex; gap:14px; align-items:center; justify-content:space-between;
-  border:1px solid var(--slate-600); border-left:3px solid var(--slate-600); border-radius:12px;
-  padding:13px 15px; margin-top:10px;
-  background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0) 60%), var(--slate-800);
-  transition:border-color .15s, box-shadow .15s; }
-.pick:hover { border-color:var(--dim); }
+.pick { display:block;
+  border:1px solid rgba(255,255,255,0.07); border-left:3px solid var(--slate-600); border-radius:14px;
+  padding:16px 18px; margin-top:10px; background:rgba(15,19,30,0.65);
+  transition:border-color .2s, box-shadow .2s; }
+.pick:hover { border-color:rgba(255,255,255,0.14); box-shadow:0 6px 28px rgba(0,0,0,.35); }
 .pick.t-strongest { border-left-color:var(--moss);
-  box-shadow:0 0 0 1px rgba(127,185,139,.16), 0 6px 20px rgba(0,0,0,.24); }
+  box-shadow:0 0 0 1px rgba(127,185,139,.1), 0 4px 20px rgba(0,0,0,.3); }
 .pick.t-strong { border-left-color:var(--moss); }
 .pick.t-lean { border-left-color:var(--amber); }
-.pick .who-big { font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:16.5px;
-  letter-spacing:-.012em; line-height:1.25; }
-.pick .meta-line { font-size:11.5px; color:var(--dim); margin-top:3px; line-height:1.55; }
 .tierbox { text-align:center; flex:0 0 auto; min-width:76px; padding:8px 10px; border-radius:11px;
   border:1px solid; font-family:'JetBrains Mono',monospace; background:rgba(0,0,0,.18); }
 .tierbox .pct { font-size:20px; font-weight:700; display:block; line-height:1.02;
@@ -7926,6 +7922,8 @@ function FirstInning() {
   const refreshedFor = useRef(new Set());
   const [bankroll, setBankroll] = useState(null);
   const [riskLevel, setRiskLevel] = useState("moderate");
+  const [profitGoal, setProfitGoal] = useState(null);
+  const [growthSpeed, setGrowthSpeed] = useState("steady");
   const now = useNow(1000);
   async function loadRecord() {
     try {
@@ -8187,8 +8185,8 @@ function FirstInning() {
         display: "flex",
         justifyContent: "space-between",
         alignItems: "flex-start",
-        gap: 8,
-        marginBottom: 8
+        gap: 12,
+        marginBottom: 12
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
@@ -8200,46 +8198,80 @@ function FirstInning() {
         display: "flex",
         flexWrap: "wrap",
         alignItems: "center",
-        gap: 6,
-        marginBottom: 2
+        gap: 7,
+        marginBottom: 5
       }
     }, /*#__PURE__*/React.createElement("span", {
+      title: "Model call: " + r.v.label + ". " + r.v.blurb,
       style: {
+        cursor: "help",
         fontWeight: 800,
-        fontSize: 16,
-        color: r.v.color
+        fontSize: 11,
+        letterSpacing: "0.08em",
+        color: r.v.color,
+        textTransform: "uppercase",
+        background: r.v.color + "18",
+        border: "1px solid " + r.v.color + "55",
+        borderRadius: 20,
+        padding: "2px 9px"
       }
-    }, r.v.label), /*#__PURE__*/React.createElement("span", {
+    }, r.v.label), gameTime && /*#__PURE__*/React.createElement("span", {
       style: {
-        fontWeight: 700,
-        fontSize: 15
+        fontSize: 12,
+        color: "var(--dim)"
       }
-    }, r.away, " @ ", r.home), gameTime && /*#__PURE__*/React.createElement("span", {
+    }, gameTime, countdown && /*#__PURE__*/React.createElement("span", {
+      title: "Time until first pitch",
       style: {
-        color: "var(--dim)",
-        fontSize: 12
-      }
-    }, "\xB7 ", gameTime, countdown && /*#__PURE__*/React.createElement("span", {
-      style: {
+        cursor: "help",
+        marginLeft: 5,
         color: !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)",
         fontWeight: !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400
       }
-    }, " · ", countdown))), /*#__PURE__*/React.createElement("div", {
+    }, "\xB7 ", countdown))), /*#__PURE__*/React.createElement("div", {
+      title: r.away + " (away) @ " + r.home + " (home)",
+      style: {
+        fontWeight: 800,
+        fontSize: 20,
+        letterSpacing: "-0.02em",
+        lineHeight: 1.1,
+        marginBottom: 3
+      }
+    }, r.awayAbbr || r.away, " ", /*#__PURE__*/React.createElement("span", {
       style: {
         color: "var(--dim)",
-        fontSize: 12
+        fontWeight: 300
       }
-    }, r.v.blurb)), /*#__PURE__*/React.createElement("span", {
-      className: "tierbox",
+    }, "@"), " ", r.homeAbbr || r.home), /*#__PURE__*/React.createElement("div", {
       style: {
-        color: r.tier.c,
-        borderColor: r.tier.c,
+        fontSize: 11,
+        color: "var(--dim)"
+      }
+    }, r.away, " @ ", r.home)), /*#__PURE__*/React.createElement("div", {
+      title: "Confidence: " + r.pMax.toFixed(0) + "% — " + (r.tier.t === "STRONGEST" ? "Elite signal, high confidence bet." : r.tier.t === "STRONG" ? "Strong signal, confident bet." : r.tier.t === "LEAN" ? "Slight lean, smaller position." : "Too close to call — pass."),
+      style: {
+        cursor: "help",
+        textAlign: "center",
+        border: "2px solid " + r.tier.c,
+        borderRadius: 12,
+        padding: "8px 14px",
         flexShrink: 0
       }
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "pct"
-    }, r.pMax.toFixed(0), "%"), /*#__PURE__*/React.createElement("span", {
-      className: "lbl"
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 800,
+        fontSize: 26,
+        color: r.tier.c,
+        lineHeight: 1
+      }
+    }, r.pMax.toFixed(0), "%"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        letterSpacing: "0.12em",
+        color: r.tier.c,
+        marginTop: 3,
+        opacity: 0.9
+      }
     }, r.tier.t))), r.pitProfiles && /*#__PURE__*/React.createElement("div", {
       style: {
         display: "grid",
@@ -8282,59 +8314,99 @@ function FirstInning() {
       return /*#__PURE__*/React.createElement("div", {
         key: i,
         style: {
-          background: "rgba(120,130,150,0.08)",
-          borderRadius: 7,
-          padding: "9px 11px"
+          background: "rgba(255,255,255,0.04)",
+          borderRadius: 10,
+          padding: "12px 13px",
+          border: "1px solid rgba(255,255,255,0.06)"
         }
       }, /*#__PURE__*/React.createElement("div", {
         style: {
-          fontSize: 10,
-          fontWeight: 700,
-          color: "var(--dim)",
-          letterSpacing: "0.1em",
-          marginBottom: 3
-        }
-      }, side), /*#__PURE__*/React.createElement("div", {
-        style: {
-          fontWeight: 700,
-          fontSize: 13,
-          marginBottom: 5,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap"
-        },
-        title: name
-      }, name), headline != null && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-        style: {
-          fontWeight: 800,
-          fontSize: 30,
-          color: headlineC,
-          lineHeight: 1
-        }
-      }, headline, "%"), /*#__PURE__*/React.createElement("div", {
-        style: {
-          fontSize: 11,
-          color: "var(--dim)",
-          marginTop: 2,
-          marginBottom: 7
-        }
-      }, "clean 1st inning \xB7 last 30 days \xB7 ", headlineN, "gs")), windows.length > 0 && /*#__PURE__*/React.createElement("div", {
-        style: {
           display: "flex",
-          gap: 6,
+          justifyContent: "space-between",
+          alignItems: "flex-start",
           marginBottom: 8
         }
-      }, windows.map(w => /*#__PURE__*/React.createElement("div", {
-        key: w.label,
+      }, /*#__PURE__*/React.createElement("div", {
         style: {
-          textAlign: "center",
+          minWidth: 0,
           flex: 1
         }
       }, /*#__PURE__*/React.createElement("div", {
         style: {
           fontSize: 9,
+          fontWeight: 700,
           color: "var(--dim)",
-          letterSpacing: "0.06em",
+          letterSpacing: "0.1em",
+          marginBottom: 3
+        }
+      }, side, " STARTER"), /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontWeight: 700,
+          fontSize: 13,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap"
+        },
+        title: name
+      }, name)), p.grade !== "—" && /*#__PURE__*/React.createElement("span", {
+        title: "1st-inning pitcher grade: " + p.grade + " — " + (p.summary || "") + (p.vsNote || "") + " · A+/A = elite, B = solid, C = average, D/F = struggles early.",
+        style: {
+          cursor: "help",
+          fontWeight: 800,
+          fontSize: 12,
+          color: p.gradeColor,
+          background: p.gradeColor + "18",
+          border: "1.5px solid " + p.gradeColor,
+          borderRadius: 6,
+          padding: "2px 7px",
+          marginLeft: 8,
+          flexShrink: 0
+        }
+      }, p.grade)), headline != null && /*#__PURE__*/React.createElement("div", {
+        title: "Last 30 starts: kept the 1st inning scoreless " + headline + "% of the time (" + headlineN + " games). Green = elite, amber = average, red = struggles.",
+        style: {
+          cursor: "help",
+          marginBottom: 8
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontWeight: 800,
+          fontSize: 34,
+          color: headlineC,
+          lineHeight: 1
+        }
+      }, headline, "%"), /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 10,
+          color: "var(--dim)",
+          marginTop: 2
+        }
+      }, "clean 1st inning \xB7 L30 \xB7 ", headlineN, " starts")), windows.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: {
+          display: "grid",
+          gridTemplateColumns: "repeat(4,1fr)",
+          gap: 3,
+          marginBottom: 9
+        }
+      }, windows.map(w => /*#__PURE__*/React.createElement("div", {
+        key: w.label,
+        title: {
+          SZN: "Full season clean 1st inning rate",
+          L50: "Last 50 starts clean %",
+          L30: "Last 30 starts clean %",
+          L10: "Last 10 starts clean % — most recent form"
+        }[w.label] + " — " + (w.pct != null ? w.pct + "% in " + w.n + " games" : "no data"),
+        style: {
+          cursor: "help",
+          textAlign: "center",
+          background: "rgba(255,255,255,0.04)",
+          borderRadius: 6,
+          padding: "4px 0"
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 9,
+          color: "var(--dim)",
           marginBottom: 1
         }
       }, w.label), /*#__PURE__*/React.createElement("div", {
@@ -8346,256 +8418,318 @@ function FirstInning() {
       }, w.pct != null ? w.pct + "%" : "—"), /*#__PURE__*/React.createElement("div", {
         style: {
           fontSize: 9,
-          color: "var(--dim)"
+          color: "var(--dim)",
+          opacity: 0.7
         }
       }, w.n != null ? w.n + "g" : "")))), /*#__PURE__*/React.createElement("div", {
         style: {
           display: "flex",
           flexWrap: "wrap",
-          alignItems: "center",
           gap: 5
         }
-      }, p.grade !== "—" && /*#__PURE__*/React.createElement("span", {
-        title: "1st-inning grade — " + (p.summary || "") + (p.vsNote || ""),
-        style: {
-          cursor: "help",
-          fontWeight: 800,
-          fontSize: 12,
-          color: p.gradeColor,
-          border: "1.5px solid",
-          borderRadius: 3,
-          padding: "1px 5px"
-        }
-      }, p.grade), kbb != null && /*#__PURE__*/React.createElement("span", {
-        title: "K/9 minus BB/9: " + p.k9.toFixed(1) + " K/9, " + p.bb9.toFixed(1) + " BB/9 — higher means more dominant. League avg ~5.3",
+      }, kbb != null && /*#__PURE__*/React.createElement("span", {
+        title: "K/9 minus BB/9 = " + kbb + ". Strikeouts minus walks per 9 innings — how dominant the pitcher is. " + p.k9.toFixed(1) + " K/9, " + p.bb9.toFixed(1) + " BB/9. League avg ~5.3. Higher = more dominant.",
         style: {
           cursor: "help",
           fontSize: 11,
-          color: "var(--dim)"
+          color: "var(--dim)",
+          background: "rgba(255,255,255,0.05)",
+          borderRadius: 4,
+          padding: "1px 6px"
         }
-      }, "K-BB ", kbb, "/9"), p.whip != null && /*#__PURE__*/React.createElement("span", {
-        title: "Walks + Hits per inning pitched in the 1st inning. Lower = harder to score against.",
+      }, "K-BB ", kbb), p.whip != null && /*#__PURE__*/React.createElement("span", {
+        title: "WHIP = " + p.whip.toFixed(2) + ". Walks + Hits per inning in the 1st. League avg ~1.28. Lower = harder to score against. Elite is under 1.00.",
         style: {
           cursor: "help",
           fontSize: 11,
-          color: "var(--dim)"
+          color: p.whip <= 1.10 ? "var(--moss)" : p.whip >= 1.50 ? "var(--rose)" : "var(--dim)",
+          background: "rgba(255,255,255,0.05)",
+          borderRadius: 4,
+          padding: "1px 6px"
         }
       }, "WHIP ", p.whip.toFixed(2)), p.fstrike != null && /*#__PURE__*/React.createElement("span", {
-        title: "First-pitch strike rate: " + p.fstrike.toFixed(1) + "%. Gets ahead in counts early. League avg ~60%.",
+        title: "First-pitch strike rate = " + p.fstrike.toFixed(1) + "%. How often the pitcher throws a strike on the very first pitch of an at-bat. Gets ahead in counts early = harder to score. League avg ~60%. Green = above average.",
         style: {
           cursor: "help",
           fontSize: 11,
-          color: p.fstrike >= 64 ? "var(--moss)" : p.fstrike <= 56 ? "var(--rose)" : "var(--dim)"
+          color: p.fstrike >= 64 ? "var(--moss)" : p.fstrike <= 56 ? "var(--rose)" : "var(--dim)",
+          background: "rgba(255,255,255,0.05)",
+          borderRadius: 4,
+          padding: "1px 6px"
         }
       }, "FPS ", p.fstrike.toFixed(0), "%"), p.whiff != null && /*#__PURE__*/React.createElement("span", {
-        title: "Whiff rate: " + p.whiff.toFixed(1) + "% of swings miss. League avg ~24.5%.",
+        title: "Whiff rate = " + p.whiff.toFixed(1) + "%. Percentage of swings that completely miss the ball. Higher = harder to make contact = fewer hits = fewer runs. League avg ~24.5%. Green = above average.",
         style: {
           cursor: "help",
           fontSize: 11,
-          color: p.whiff >= 28 ? "var(--moss)" : p.whiff <= 20 ? "var(--rose)" : "var(--dim)"
+          color: p.whiff >= 28 ? "var(--moss)" : p.whiff <= 20 ? "var(--rose)" : "var(--dim)",
+          background: "rgba(255,255,255,0.05)",
+          borderRadius: 4,
+          padding: "1px 6px"
         }
       }, "Whiff ", p.whiff.toFixed(0), "%")));
-    })), (r.awayYrfiPct != null || r.homeYrfiPct != null) && /*#__PURE__*/React.createElement("div", {
+    })), /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
-        gap: 10,
         flexWrap: "wrap",
-        fontSize: 11,
+        gap: 0,
+        alignItems: "stretch",
+        fontSize: 12,
         marginBottom: 8,
-        padding: "5px 10px",
-        background: "rgba(120,130,150,0.05)",
-        borderRadius: 5
+        background: "rgba(255,255,255,0.04)",
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.06)",
+        overflow: "hidden"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      title: "Our model's probability of " + r.call + " happening in the 1st inning — built from pitcher splits, lineups, park, weather, and Kalshi market price.",
+      style: {
+        cursor: "help",
+        padding: "8px 12px",
+        borderRight: "1px solid rgba(255,255,255,0.06)"
       }
     }, /*#__PURE__*/React.createElement("span", {
       style: {
         color: "var(--dim)",
-        fontWeight: 600
+        fontSize: 10,
+        display: "block",
+        marginBottom: 1
       }
-    }, "1st-inn offense:"), r.awayYrfiPct != null && /*#__PURE__*/React.createElement("span", {
-      title: "Season 1st-inning YRFI rate for " + r.away + " — Poisson estimate from avg runs/game in the 1st.",
+    }, "MODEL"), /*#__PURE__*/React.createElement("span", {
       style: {
-        cursor: "help",
-        color: r.awayYrfiPct >= 38 ? "var(--rose)" : r.awayYrfiPct <= 25 ? "var(--moss)" : "var(--dim)"
-      }
-    }, r.awayAbbr || r.away, ": ", /*#__PURE__*/React.createElement("b", null, r.awayYrfiPct, "%"), " YRFI", r.awayOffSample ? /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: "var(--dim)",
-        fontWeight: 400
-      }
-    }, " (", r.awayOffSample, "g)") : null), r.homeYrfiPct != null && /*#__PURE__*/React.createElement("span", {
-      title: "Season 1st-inning YRFI rate for " + r.home + " — Poisson estimate from avg runs/game in the 1st.",
-      style: {
-        cursor: "help",
-        color: r.homeYrfiPct >= 38 ? "var(--rose)" : r.homeYrfiPct <= 25 ? "var(--moss)" : "var(--dim)"
-      }
-    }, r.homeAbbr || r.home, ": ", /*#__PURE__*/React.createElement("b", null, r.homeYrfiPct, "%"), " YRFI", r.homeOffSample ? /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: "var(--dim)",
-        fontWeight: 400
-      }
-    }, " (", r.homeOffSample, "g)") : null)), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 8,
-        alignItems: "center",
-        fontSize: 12,
-        marginBottom: 8,
-        padding: "6px 10px",
-        background: "rgba(120,130,150,0.06)",
-        borderRadius: 5
-      }
-    }, /*#__PURE__*/React.createElement("span", null, "Model ", /*#__PURE__*/React.createElement("b", {
-      style: {
+        fontWeight: 800,
         color: r.v.color
       }
-    }, r.pMax.toFixed(0), "% ", r.call)), r.market ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: "var(--dim)"
-      }
-    }, "\xB7 Market ", r.market.marketNRFI.toFixed(0), "% NRFI"), /*#__PURE__*/React.createElement("span", {
-      title: "How much our probability exceeds the market on our call side",
+    }, r.pMax.toFixed(0), "% ", r.call)), r.market && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+      title: "Kalshi prediction market: traders collectively say there's a " + r.market.marketNRFI.toFixed(0) + "% chance no run scores in the 1st inning. This is our starting point — we bet only when our model disagrees by a meaningful margin.",
       style: {
         cursor: "help",
-        color: r.market.edge >= 3 ? "var(--moss)" : r.market.edge <= -3 ? "var(--rose)" : "var(--dim)",
-        fontWeight: 700
+        padding: "8px 12px",
+        borderRight: "1px solid rgba(255,255,255,0.06)"
       }
-    }, "\xB7 ", r.market.edge > 0 ? "+" : "", r.market.edge.toFixed(0), "% edge"), /*#__PURE__*/React.createElement("span", {
+    }, /*#__PURE__*/React.createElement("span", {
       style: {
-        color: "var(--dim)"
-      }
-    }, "\xB7 YES ", r.market.yesPrice.toFixed(0), "c (Kalshi)")) : /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: "var(--dim)"
-      }
-    }, "\xB7 no market data"), r.method === "sim" && /*#__PURE__*/React.createElement("span", {
-      title: "Probabilities via base-out Markov simulation of actual batters vs pitcher",
-      style: {
-        cursor: "help",
+        color: "var(--dim)",
         fontSize: 10,
+        display: "block",
+        marginBottom: 1
+      }
+    }, "MARKET"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontWeight: 700,
+        color: "var(--bone)"
+      }
+    }, r.market.marketNRFI.toFixed(0), "% NRFI")), /*#__PURE__*/React.createElement("span", {
+      title: "Edge = how much our model probability exceeds the market on our call side. " + (r.market.edge > 0 ? "Positive edge means we think the true probability is higher than what the market is paying." : "Negative edge means the market already prices this better than our model.") + " We only bet when edge is meaningfully positive.",
+      style: {
+        cursor: "help",
+        padding: "8px 12px",
+        borderRight: "1px solid rgba(255,255,255,0.06)"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "var(--dim)",
+        fontSize: 10,
+        display: "block",
+        marginBottom: 1
+      }
+    }, "EDGE"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontWeight: 700,
+        color: r.market.edge >= 3 ? "var(--moss)" : r.market.edge <= -3 ? "var(--rose)" : "var(--dim)"
+      }
+    }, r.market.edge > 0 ? "+" : "", r.market.edge.toFixed(0), "%")), /*#__PURE__*/React.createElement("span", {
+      title: "Kalshi YES price = " + r.market.yesPrice.toFixed(0) + "¢. Buying YES means you think a run WILL score in the 1st. Buying NO (at " + (100 - r.market.yesPrice).toFixed(0) + "¢) means you think no run scores = NRFI.",
+      style: {
+        cursor: "help",
+        padding: "8px 12px",
+        borderRight: "1px solid rgba(255,255,255,0.06)"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "var(--dim)",
+        fontSize: 10,
+        display: "block",
+        marginBottom: 1
+      }
+    }, "KALSHI YES"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontWeight: 700,
+        color: "var(--bone)"
+      }
+    }, r.market.yesPrice.toFixed(0), "\xA2")), r.kelly != null && (() => {
+      const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
+      const betPct = (r.kelly * riskMult * 100).toFixed(1);
+      const betAmt = bankroll ? Math.round(bankroll * r.kelly * riskMult * 100) / 100 : null;
+      return /*#__PURE__*/React.createElement("span", {
+        title: "Suggested bet size based on your edge and risk level. At " + riskLevel + " risk: bet " + betPct + "% of your bankroll" + (betAmt ? " = $" + betAmt : "") + ". This is mathematically sized to your edge — larger edge = larger bet. Never bet more than you can afford to lose.",
+        style: {
+          cursor: "help",
+          padding: "8px 12px"
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: "var(--dim)",
+          fontSize: 10,
+          display: "block",
+          marginBottom: 1
+        }
+      }, "BET SIZE"), /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontWeight: 800,
+          color: "var(--moss)"
+        }
+      }, betAmt ? "$" + betAmt : betPct + "%"));
+    })()), r.method === "sim" && /*#__PURE__*/React.createElement("span", {
+      title: "Probabilities calculated via base-out Markov simulation \u2014 models each batter's actual PA rates vs this pitcher's allow rates across all possible 1st-inning scenarios.",
+      style: {
+        cursor: "help",
+        padding: "8px 8px",
+        display: "flex",
+        alignItems: "center"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 9,
         color: "var(--dim)",
         border: "1px solid rgba(120,130,150,.3)",
         borderRadius: 3,
-        padding: "0 4px"
+        padding: "1px 4px"
       }
-    }, "SIM"), r.kelly != null && (() => {
-      const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
-      const kellyPct = (r.kelly * riskMult * 100).toFixed(1);
-      const betAmt = bankroll ? (bankroll * r.kelly * riskMult).toFixed(2) : null;
-      return /*#__PURE__*/React.createElement("span", {
-        title: "Kelly criterion bet size. Full Kelly: " + (r.kelly * 100).toFixed(1) + "% · Risk level: " + riskLevel + " (" + (riskMult * 100).toFixed(0) + "% Kelly)",
-        style: {
-          cursor: "help",
-          fontSize: 10,
-          color: "var(--moss)",
-          border: "1px solid rgba(80,160,80,.4)",
-          borderRadius: 3,
-          padding: "0 5px",
-          fontWeight: 700
-        }
-      }, "Kelly ", kellyPct, "%", betAmt ? " · $" + betAmt : "");
-    })()), /*#__PURE__*/React.createElement("div", {
+    }, "SIM"))), /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
         flexWrap: "wrap",
         gap: 6,
         alignItems: "center",
-        marginBottom: 8
+        marginBottom: 10
       }
-    }, !r.lineupPosted && /*#__PURE__*/React.createElement("div", {
-      title: "Official starting lineups not yet posted \u2014 model uses projected batting order, which is less reliable",
+    }, (r.awayYrfiPct != null || r.homeYrfiPct != null) && /*#__PURE__*/React.createElement("div", {
+      title: "How often each team scores a run in the 1st inning this season. Red = high-scoring offense (bad for NRFI), green = low-scoring (good for NRFI).",
       style: {
+        cursor: "help",
+        display: "inline-flex",
+        gap: 8,
+        alignItems: "center",
+        padding: "3px 10px",
+        background: "rgba(255,255,255,0.04)",
+        border: "1px solid rgba(255,255,255,0.06)",
+        borderRadius: 20,
+        fontSize: 11
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "var(--dim)",
+        fontSize: 10,
+        fontWeight: 700
+      }
+    }, "1ST-INN"), r.awayYrfiPct != null && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: r.awayYrfiPct >= 38 ? "var(--rose)" : r.awayYrfiPct <= 25 ? "var(--moss)" : "var(--dim)",
+        fontWeight: 600
+      }
+    }, r.awayAbbr || r.away, " ", r.awayYrfiPct, "%"), r.awayYrfiPct != null && r.homeYrfiPct != null && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "var(--dim)"
+      }
+    }, "\xB7"), r.homeYrfiPct != null && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: r.homeYrfiPct >= 38 ? "var(--rose)" : r.homeYrfiPct <= 25 ? "var(--moss)" : "var(--dim)",
+        fontWeight: 600
+      }
+    }, r.homeAbbr || r.home, " ", r.homeYrfiPct, "%")), !r.lineupPosted && /*#__PURE__*/React.createElement("span", {
+      title: "Official starting lineups haven't been posted yet. The model is using projected batting orders, which are less accurate than the real lineup. Check back closer to game time.",
+      style: {
+        cursor: "help",
         display: "inline-flex",
         alignItems: "center",
         gap: 4,
-        padding: "2px 8px",
-        background: "rgba(230,160,0,0.15)",
-        border: "1px solid var(--amber)",
-        borderRadius: 4,
+        padding: "3px 10px",
+        background: "rgba(230,160,0,0.1)",
+        border: "1px solid rgba(230,160,0,0.4)",
+        borderRadius: 20,
         fontSize: 11,
         fontWeight: 700,
-        color: "var(--amber)",
-        cursor: "help"
+        color: "var(--amber)"
       }
-    }, "\u26A0 LINEUPS PENDING"), r.market && r.market.mktMove != null && Math.abs(r.market.mktMove) >= 5 && /*#__PURE__*/React.createElement("div", {
-      title: "Market moved " + (r.market.mktMove > 0 ? "+" : "") + r.market.mktMove.toFixed(0) + " pts YES since first fetch. Positive = market pricing more YRFI (sharp money?). Negative = market moving toward NRFI.",
-      style: {
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        padding: "2px 8px",
-        background: r.market.mktMove > 0 ? "rgba(220,60,60,0.12)" : "rgba(80,160,80,0.12)",
-        border: "1px solid " + (r.market.mktMove > 0 ? "var(--rose)" : "var(--moss)"),
-        borderRadius: 4,
-        fontSize: 11,
-        fontWeight: 700,
-        color: r.market.mktMove > 0 ? "var(--rose)" : "var(--moss)",
-        cursor: "help"
-      }
-    }, r.market.mktMove > 0 ? "↑" : "↓", " MKT ", r.market.mktMove > 0 ? "+" : "", r.market.mktMove.toFixed(0), "pts ", r.market.mktMove > 0 ? "YRFI" : "NRFI"), r.parkEnv && (() => {
+    }, "\u26A0 LINEUPS PENDING"), r.parkEnv && (() => {
       const f = r.parkEnv.factor;
       const label = f >= 1.06 ? "HITTER FRIENDLY" : f >= 1.02 ? "SLIGHT HITTER LEAN" : f <= 0.95 ? "PITCHER FRIENDLY" : f <= 0.98 ? "SLIGHT PITCHER LEAN" : null;
       if (!label) return null;
       const isHitter = label.includes("HITTER");
       const color = isHitter ? "var(--rose)" : "var(--moss)";
-      const parkDir = r.parkEnv.park > 1.03 ? "hitter-friendly park" : r.parkEnv.park < 0.97 ? "pitcher-friendly park" : "neutral park";
-      const tip = "Park factor " + r.parkEnv.park.toFixed(2) + " (" + parkDir + ")" + (r.parkEnv.note && r.parkEnv.note !== "neutral" ? " · " + r.parkEnv.note : "") + " · Combined " + f.toFixed(2) + (f > 1 ? " — inflates run probability" : " — suppresses run probability");
-      return /*#__PURE__*/React.createElement("div", {
+      const tip = "Park + weather combined factor: " + f.toFixed(2) + ". " + (isHitter ? "This stadium and today's weather tend to inflate scoring — harder to get a clean first inning." : "This stadium and today's weather tend to suppress scoring — easier to get a clean first inning.") + " Park factor: " + r.parkEnv.park.toFixed(2) + (r.parkEnv.note && r.parkEnv.note !== "neutral" ? " · Weather: " + r.parkEnv.note : "");
+      return /*#__PURE__*/React.createElement("span", {
         title: tip,
         style: {
+          cursor: "help",
           display: "inline-flex",
           alignItems: "center",
           gap: 4,
-          padding: "2px 8px",
-          background: isHitter ? "rgba(220,60,60,0.12)" : "rgba(80,160,80,0.12)",
-          border: "1px solid " + color,
-          borderRadius: 4,
+          padding: "3px 10px",
+          background: isHitter ? "rgba(220,60,60,0.1)" : "rgba(80,160,80,0.1)",
+          border: "1px solid " + color + "66",
+          borderRadius: 20,
           fontSize: 11,
           fontWeight: 700,
-          color,
-          cursor: "help"
+          color
         }
-      }, label, r.parkEnv.note && r.parkEnv.note !== "neutral" && /*#__PURE__*/React.createElement("span", {
-        style: {
-          fontWeight: 400,
-          fontSize: 10,
-          opacity: 0.85
-        }
-      }, " \xB7 ", r.parkEnv.note));
-    })(), r.tails && r.tails.map((t, i) => /*#__PURE__*/React.createElement("span", {
-      key: i,
+      }, label);
+    })(), r.market && r.market.mktMove != null && Math.abs(r.market.mktMove) >= 5 && /*#__PURE__*/React.createElement("span", {
+      title: "Market moved " + (r.market.mktMove > 0 ? "+" : "") + r.market.mktMove.toFixed(0) + " cents since the page first loaded. " + (r.market.mktMove > 0 ? "Rising YES price = more people betting a run WILL score. Could be sharp money coming in on YRFI." : "Falling YES price = more people betting no run scores. Market moving in our favor."),
       style: {
-        padding: "2px 8px",
-        border: "1px solid",
-        borderColor: t.pick.side === r.call ? "var(--moss)" : "var(--amber)",
-        borderRadius: 4,
+        cursor: "help",
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "3px 10px",
+        background: r.market.mktMove > 0 ? "rgba(220,60,60,0.1)" : "rgba(80,160,80,0.1)",
+        border: "1px solid " + (r.market.mktMove > 0 ? "var(--rose)" : "var(--moss)") + "66",
+        borderRadius: 20,
+        fontSize: 11,
+        fontWeight: 700,
+        color: r.market.mktMove > 0 ? "var(--rose)" : "var(--moss)"
+      }
+    }, r.market.mktMove > 0 ? "↑" : "↓", " MKT ", r.market.mktMove > 0 ? "+" : "", r.market.mktMove.toFixed(0), "\xA2"), (r.tails || []).map((t, i) => /*#__PURE__*/React.createElement("span", {
+      key: i,
+      title: t.name + " has a " + t.pick.side + " pick on this game" + (t.pick.side === r.call ? " — agrees with our model." : " — disagrees with our model, use caution."),
+      style: {
+        cursor: "help",
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "3px 10px",
+        border: "1px solid " + (t.pick.side === r.call ? "rgba(127,185,139,0.5)" : "rgba(230,160,0,0.5)"),
+        borderRadius: 20,
         fontSize: 11,
         fontWeight: 600,
         color: t.pick.side === r.call ? "var(--moss)" : "var(--amber)"
       }
-    }, t.name, ": ", t.pick.side, t.pick.odds != null ? " (" + (t.pick.odds > 0 ? "+" : "") + t.pick.odds + ")" : "", " ", t.pick.side === r.call ? "✓" : "⚠")), graded && /*#__PURE__*/React.createElement("span", {
+    }, t.name, ": ", t.pick.side, " ", t.pick.side === r.call ? "✓" : "⚠")), graded && /*#__PURE__*/React.createElement("span", {
+      title: "Game result: " + r.inning1runs + " run" + (r.inning1runs === 1 ? "" : "s") + " scored in the 1st inning.",
       style: {
+        cursor: "help",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "3px 10px",
+        background: r.inning1runs === 0 ? "rgba(80,160,80,0.12)" : "rgba(220,60,60,0.12)",
+        border: "1px solid " + (r.inning1runs === 0 ? "rgba(80,160,80,0.5)" : "rgba(220,60,60,0.5)"),
+        borderRadius: 20,
+        fontSize: 11,
         fontWeight: 700,
-        fontSize: 13,
         color: r.inning1runs === 0 ? "var(--moss)" : "var(--rose)"
       }
-    }, r.inning1runs === 0 ? "✓ NRFI" : "✗ YRFI", " \u2014 ", r.inning1runs, " run", r.inning1runs === 1 ? "" : "s", " in the 1st", recE && recE.mktAtPick != null && recE.mktAtClose != null && /*#__PURE__*/React.createElement("span", {
+    }, r.inning1runs === 0 ? "✓ NRFI" : "✗ YRFI", " \u2014 ", r.inning1runs, " run", r.inning1runs === 1 ? "" : "s", recE && recE.mktAtPick != null && recE.mktAtClose != null && /*#__PURE__*/React.createElement("span", {
+      title: "Closing-line value: the market moved " + (recE.mktAtClose - recE.mktAtPick > 0 ? "in our favor" : "against us") + " by " + Math.abs(recE.mktAtClose - recE.mktAtPick).toFixed(1) + "% between when we logged the pick and first pitch. Positive CLV means we had genuine edge.",
       style: {
         color: recE.mktAtClose - recE.mktAtPick >= 0 ? "var(--moss)" : "var(--rose)",
-        fontSize: 11,
-        marginLeft: 5
+        cursor: "help"
       }
     }, "CLV ", recE.mktAtClose - recE.mktAtPick > 0 ? "+" : "", (recE.mktAtClose - recE.mktAtPick).toFixed(1), "%"))), /*#__PURE__*/React.createElement("div", {
       style: {
-        display: "none"
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "meta-line"
-    }, "placeholder")), /*#__PURE__*/React.createElement("div", {
-      style: {
         display: "flex",
         gap: 8,
-        flexWrap: "wrap"
+        flexWrap: "wrap",
+        alignItems: "center"
       }
     }, /*#__PURE__*/React.createElement("button", {
       className: "btn btn-ghost btn-sm",
@@ -8610,143 +8744,56 @@ function FirstInning() {
       style: {
         textDecoration: "none"
       }
-    }, "Open on Kalshi \u2197")), isOpen && /*#__PURE__*/React.createElement("div", {
+    }, "Trade on Kalshi \u2197")), isOpen && /*#__PURE__*/React.createElement("div", {
       style: {
-        marginTop: 8
+        marginTop: 14,
+        borderTop: "1px solid rgba(255,255,255,0.07)",
+        paddingTop: 12
       }
-    }, r.pitProfiles && /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement("div", {
       style: {
-        background: "rgba(120,130,150,.06)",
-        borderRadius: 6,
-        padding: "8px 10px",
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.1em",
         marginBottom: 8
       }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontWeight: 700,
-        fontSize: 11,
-        color: "var(--dim)",
-        letterSpacing: 1,
-        marginBottom: 6
-      }
-    }, "FIRST INNING PITCHER PROFILE"), [r.pitProfiles.away, r.pitProfiles.home].map((p, i) => /*#__PURE__*/React.createElement("div", {
-      key: i,
-      style: {
-        marginBottom: i === 0 ? 8 : 0
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        marginBottom: 2
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontWeight: 700,
-        fontSize: 13
-      }
-    }, p.name), p.hand && /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: "var(--dim)",
-        fontSize: 11
-      }
-    }, "(", p.hand, "HP)"), p.grade !== "—" && /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontWeight: 800,
-        fontSize: 13,
-        color: p.gradeColor,
-        border: "1.5px solid",
-        borderRadius: 4,
-        padding: "0 5px"
-      }
-    }, p.grade), p.cleanPct != null && /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: p.cleanPct >= 55 ? "var(--moss)" : p.cleanPct <= 42 ? "var(--rose)" : "var(--dim)",
-        fontSize: 11
-      }
-    }, "~", p.cleanPct, "% clean starts")), /*#__PURE__*/React.createElement("div", {
-      style: {
-        color: "var(--dim)",
-        fontSize: 11
-      }
-    }, p.summary, p.vsNote && /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: "var(--amber)"
-      }
-    }, p.vsNote)), p.rolling && (() => {
-      const wins = [{
-        label: "SZN",
-        ...p.rolling.szn
-      }, {
-        label: "L50",
-        ...p.rolling.l50
-      }, {
-        label: "L30",
-        ...p.rolling.l30
-      }, {
-        label: "L10",
-        ...p.rolling.l10
-      }];
-      const pColor = v => v >= 65 ? "var(--moss)" : v >= 50 ? "var(--fg)" : v >= 38 ? "var(--amber)" : "var(--rose)";
-      return /*#__PURE__*/React.createElement("div", {
-        style: {
-          display: "flex",
-          gap: 16,
-          marginTop: 5
-        }
-      }, wins.map(w => /*#__PURE__*/React.createElement("div", {
-        key: w.label,
-        style: {
-          textAlign: "center",
-          minWidth: 32
-        }
-      }, /*#__PURE__*/React.createElement("div", {
-        style: {
-          fontSize: 10,
-          color: "var(--dim)",
-          marginBottom: 1
-        }
-      }, w.label), /*#__PURE__*/React.createElement("div", {
-        style: {
-          fontWeight: 700,
-          fontSize: 13,
-          color: w.pct != null ? pColor(w.pct) : "var(--dim)"
-        }
-      }, w.pct != null ? w.pct + "%" : "—"), /*#__PURE__*/React.createElement("div", {
-        style: {
-          fontSize: 10,
-          color: "var(--dim)"
-        }
-      }, w.n, "g"))));
-    })()))), r.checks.map((ck, i) => /*#__PURE__*/React.createElement("div", {
+    }, "RESEARCH SIGNALS"), r.checks.map((ck, i) => /*#__PURE__*/React.createElement("div", {
       key: i,
       style: {
         display: "flex",
-        gap: 8,
-        padding: "5px 0",
-        borderTop: "1px solid rgba(120,130,150,.18)",
+        gap: 10,
+        padding: "6px 0",
+        borderBottom: "1px solid rgba(255,255,255,0.05)",
         fontSize: 12
       }
-    }, /*#__PURE__*/React.createElement("span", {
+    }, /*#__PURE__*/React.createElement("div", {
       style: {
-        width: 5,
-        borderRadius: 3,
+        width: 3,
+        borderRadius: 2,
         background: leanColor(ck.lean),
-        flex: "0 0 5px"
+        flexShrink: 0
       }
-    }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1
+      }
+    }, /*#__PURE__*/React.createElement("span", {
       style: {
         fontWeight: 600
       }
-    }, ck.label, " ", /*#__PURE__*/React.createElement("span", {
+    }, ck.label), /*#__PURE__*/React.createElement("span", {
       style: {
         color: leanColor(ck.lean),
-        fontSize: 10
+        fontSize: 10,
+        marginLeft: 6,
+        fontWeight: 700
       }
-    }, "\xB7 ", leanLabel(ck.lean))), /*#__PURE__*/React.createElement("div", {
+    }, "\xB7 ", leanLabel(ck.lean)), /*#__PURE__*/React.createElement("div", {
       style: {
-        color: "var(--dim)"
+        color: "var(--dim)",
+        marginTop: 2,
+        fontSize: 11
       }
     }, ck.detail))))));
   };
@@ -8824,84 +8871,421 @@ function FirstInning() {
       fontSize: 12,
       color: importMsg.ok ? "var(--moss)" : "var(--rose)"
     }
-  }, importMsg.text)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 8,
-      flexWrap: "wrap",
-      alignItems: "center",
-      margin: "6px 0 2px",
-      padding: "7px 10px",
-      background: "rgba(80,160,80,0.07)",
-      borderRadius: 6,
-      border: "1px solid rgba(80,160,80,0.2)"
+  }, importMsg.text)), (() => {
+    const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
+    const betRows = enriched.filter(r => r.v && r.v.isBet && r.kelly != null);
+    const totalBetPct = betRows.reduce((s, r) => s + r.kelly * riskMult, 0);
+    const totalBetAmt = bankroll ? bankroll * totalBetPct : null;
+    const avgEdgePct = betRows.length > 0 ? betRows.reduce((s, r) => s + (r.market ? r.market.edge : 0), 0) / betRows.length : 0;
+    // Goal planner logic
+    // Estimate avg daily profit % = sum of edge-sized expected value across all bets
+    const dailyEvPct = betRows.reduce((s, r) => {
+      if (!r.kelly || !r.market) return s;
+      const betPct = r.kelly * riskMult;
+      const winProb = r.call === "NRFI" ? r.pFinal : 1 - r.pFinal;
+      const odds = r.call === "NRFI" ? r.market.yesPrice / (100 - r.market.yesPrice) : (100 - r.market.yesPrice) / r.market.yesPrice;
+      return s + betPct * (winProb * odds - (1 - winProb));
+    }, 0);
+    // Speed multiplier: conservative = half theoretical speed, fast = 1.5x (more bets, higher risk accepted)
+    const speedMult = growthSpeed === "slow" ? 0.4 : growthSpeed === "fast" ? 1.4 : 1.0;
+    const effectiveDailyEv = dailyEvPct * speedMult;
+    // Days to goal estimate
+    let daysToGoal = null;
+    let recBankroll = null;
+    if (profitGoal && bankroll && effectiveDailyEv > 0) {
+      const dailyProfit = bankroll * effectiveDailyEv;
+      daysToGoal = Math.ceil(profitGoal / dailyProfit);
+      recBankroll = null;
+    } else if (profitGoal && !bankroll && effectiveDailyEv > 0) {
+      // Suggest a bankroll to hit goal in a reasonable timeframe
+      const targetDays = growthSpeed === "slow" ? 90 : growthSpeed === "fast" ? 20 : 45;
+      recBankroll = Math.ceil(profitGoal / (effectiveDailyEv * targetDays));
     }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 12,
-      fontWeight: 700,
-      color: "var(--moss)"
-    }
-  }, "Bankroll Builder"), /*#__PURE__*/React.createElement("label", {
-    style: {
-      display: "flex",
-      alignItems: "center",
-      gap: 4,
-      fontSize: 12
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--dim)"
-    }
-  }, "Bankroll $"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    min: "0",
-    placeholder: "e.g. 500",
-    value: bankroll || "",
-    onChange: e => setBankroll(Number(e.target.value) || null),
-    style: {
-      width: 80,
-      fontSize: 12,
-      padding: "2px 6px",
-      background: "var(--bg)",
-      border: "1px solid rgba(120,130,150,.4)",
-      borderRadius: 4,
-      color: "var(--fg)"
-    }
-  })), /*#__PURE__*/React.createElement("label", {
-    style: {
-      display: "flex",
-      alignItems: "center",
-      gap: 4,
-      fontSize: 12
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--dim)"
-    }
-  }, "Risk"), /*#__PURE__*/React.createElement("select", {
-    value: riskLevel,
-    onChange: e => setRiskLevel(e.target.value),
-    style: {
-      fontSize: 12,
-      padding: "2px 6px",
-      background: "var(--bg)",
-      border: "1px solid rgba(120,130,150,.4)",
-      borderRadius: 4,
-      color: "var(--fg)"
-    }
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "conservative"
-  }, "Conservative (\xBC Kelly)"), /*#__PURE__*/React.createElement("option", {
-    value: "moderate"
-  }, "Moderate (\xBD Kelly)"), /*#__PURE__*/React.createElement("option", {
-    value: "aggressive"
-  }, "Aggressive (Full Kelly)"))), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      color: "var(--dim)"
-    }
-  }, bankroll ? "Bet sizes shown on each card. Kelly = edge-sized position; " + (riskLevel === "conservative" ? "¼ Kelly = safest long-run sizing." : riskLevel === "aggressive" ? "Full Kelly = max theoretical growth, highest variance." : "½ Kelly = balanced risk/reward.") : "Enter a bankroll to see per-game bet sizes.")), phase === "scanning" && /*#__PURE__*/React.createElement("p", {
+    // Recommended # of bets based on speed
+    const recBetCount = growthSpeed === "slow" ? "1-2" : growthSpeed === "fast" ? "all rated games" : "2-4";
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        margin: "6px 0 2px",
+        padding: "14px 16px",
+        background: "rgba(80,160,80,0.05)",
+        borderRadius: 10,
+        border: "1px solid rgba(80,160,80,0.2)"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        marginBottom: 12
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 13,
+        fontWeight: 800,
+        color: "var(--moss)"
+      }
+    }, "Bankroll Builder"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
+        color: "var(--dim)"
+      }
+    }, "\u2014 bet sizing, risk management, and growth planning")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 14,
+        flexWrap: "wrap",
+        alignItems: "flex-end",
+        marginBottom: 14
+      }
+    }, /*#__PURE__*/React.createElement("label", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 4
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.08em"
+      }
+    }, "BANKROLL"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        background: "var(--bg)",
+        border: "1px solid rgba(120,130,150,.4)",
+        borderRadius: 6,
+        overflow: "hidden"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        padding: "0 8px",
+        color: "var(--dim)",
+        fontWeight: 700,
+        borderRight: "1px solid rgba(120,130,150,.3)",
+        lineHeight: "34px"
+      }
+    }, "$"), /*#__PURE__*/React.createElement("input", {
+      type: "number",
+      min: "0",
+      placeholder: "500",
+      value: bankroll || "",
+      onChange: e => setBankroll(Number(e.target.value) || null),
+      style: {
+        width: 80,
+        fontSize: 14,
+        padding: "6px 8px",
+        background: "transparent",
+        border: "none",
+        color: "var(--fg)",
+        fontWeight: 700,
+        outline: "none"
+      }
+    }))), /*#__PURE__*/React.createElement("label", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 4
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.08em"
+      }
+    }, "RISK LEVEL"), /*#__PURE__*/React.createElement("select", {
+      value: riskLevel,
+      onChange: e => setRiskLevel(e.target.value),
+      style: {
+        fontSize: 12,
+        padding: "6px 10px",
+        background: "var(--bg)",
+        border: "1px solid rgba(120,130,150,.4)",
+        borderRadius: 6,
+        color: "var(--fg)",
+        height: 34
+      }
+    }, /*#__PURE__*/React.createElement("option", {
+      value: "conservative"
+    }, "Conservative \u2014 smaller bets"), /*#__PURE__*/React.createElement("option", {
+      value: "moderate"
+    }, "Moderate \u2014 balanced (recommended)"), /*#__PURE__*/React.createElement("option", {
+      value: "aggressive"
+    }, "Aggressive \u2014 maximum sizing"))), /*#__PURE__*/React.createElement("label", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 4
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.08em"
+      }
+    }, "PROFIT GOAL"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        background: "var(--bg)",
+        border: "1px solid rgba(120,130,150,.4)",
+        borderRadius: 6,
+        overflow: "hidden"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        padding: "0 8px",
+        color: "var(--dim)",
+        fontWeight: 700,
+        borderRight: "1px solid rgba(120,130,150,.3)",
+        lineHeight: "34px"
+      }
+    }, "$"), /*#__PURE__*/React.createElement("input", {
+      type: "number",
+      min: "0",
+      placeholder: "1000",
+      value: profitGoal || "",
+      onChange: e => setProfitGoal(Number(e.target.value) || null),
+      style: {
+        width: 80,
+        fontSize: 14,
+        padding: "6px 8px",
+        background: "transparent",
+        border: "none",
+        color: "var(--fg)",
+        fontWeight: 700,
+        outline: "none"
+      }
+    }))), /*#__PURE__*/React.createElement("label", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 4
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.08em"
+      }
+    }, "GROWTH SPEED"), /*#__PURE__*/React.createElement("select", {
+      value: growthSpeed,
+      onChange: e => setGrowthSpeed(e.target.value),
+      style: {
+        fontSize: 12,
+        padding: "6px 10px",
+        background: "var(--bg)",
+        border: "1px solid rgba(120,130,150,.4)",
+        borderRadius: 6,
+        color: "var(--fg)",
+        height: 34
+      }
+    }, /*#__PURE__*/React.createElement("option", {
+      value: "slow"
+    }, "Slow & safe \u2014 fewer bets, lower exposure"), /*#__PURE__*/React.createElement("option", {
+      value: "steady"
+    }, "Steady \u2014 balanced approach"), /*#__PURE__*/React.createElement("option", {
+      value: "fast"
+    }, "Fast \u2014 more bets, higher variance")))), betRows.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 0,
+        flexWrap: "wrap",
+        background: "rgba(255,255,255,0.04)",
+        borderRadius: 8,
+        border: "1px solid rgba(255,255,255,0.06)",
+        overflow: "hidden",
+        marginBottom: 10
+      }
+    }, [{
+      label: "BETS TODAY",
+      value: betRows.length,
+      color: "var(--moss)",
+      tip: "Number of bet-rated games on today's slate"
+    }, {
+      label: "TOTAL AT RISK",
+      value: totalBetAmt != null ? "$" + totalBetAmt.toFixed(0) : (totalBetPct * 100).toFixed(1) + "%",
+      color: totalBetPct > 0.25 ? "var(--amber)" : "var(--fg)",
+      tip: "Total bankroll committed across all bets today (" + (totalBetPct * 100).toFixed(1) + "% of bankroll)"
+    }, {
+      label: "AVG BET",
+      value: totalBetAmt != null ? "$" + (totalBetAmt / betRows.length).toFixed(0) : (totalBetPct / betRows.length * 100).toFixed(1) + "%",
+      color: "var(--fg)",
+      tip: "Average bet per game. Varies by edge — stronger edge = bigger suggested bet"
+    }, {
+      label: "AVG EDGE",
+      value: "+" + avgEdgePct.toFixed(1) + "%",
+      color: avgEdgePct >= 5 ? "var(--moss)" : avgEdgePct >= 2 ? "var(--fg)" : "var(--dim)",
+      tip: "Average model edge over the market across all bet-rated games today"
+    }].map((stat, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      title: stat.tip,
+      style: {
+        flex: "1 1 80px",
+        padding: "10px 14px",
+        borderRight: i < 3 ? "1px solid rgba(255,255,255,0.06)" : "none",
+        cursor: "help"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.1em",
+        marginBottom: 3
+      }
+    }, stat.label), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 20,
+        fontWeight: 800,
+        color: stat.color
+      }
+    }, stat.value))), bankroll && effectiveDailyEv > 0 && /*#__PURE__*/React.createElement("div", {
+      title: "Estimated daily profit at " + riskLevel + " risk and " + growthSpeed + " speed, based on today's edge. Actual results will vary — this is a mathematical expectation, not a guarantee.",
+      style: {
+        flex: "1 1 80px",
+        padding: "10px 14px",
+        cursor: "help"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.1em",
+        marginBottom: 3
+      }
+    }, "EST. DAILY PROFIT"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 20,
+        fontWeight: 800,
+        color: "var(--moss)"
+      }
+    }, "+$", (bankroll * effectiveDailyEv).toFixed(0)))), profitGoal > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: "10px 14px",
+        background: "rgba(120,130,150,0.07)",
+        borderRadius: 8,
+        border: "1px solid rgba(120,130,150,0.15)",
+        fontSize: 12
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 700,
+        color: "var(--fg)",
+        marginBottom: 6,
+        fontSize: 13
+      }
+    }, "Goal Planner \u2014 $", profitGoal.toLocaleString(), " target"), betRows.length === 0 || effectiveDailyEv <= 0 ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "var(--dim)"
+      }
+    }, "Run a scan first to see edge-based projections for your goal.") : recBankroll ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "var(--dim)"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "var(--moss)",
+        fontWeight: 700
+      }
+    }, "Suggested starting bankroll: $", recBankroll.toLocaleString()), " ", "\u2014 at ", riskLevel, " risk and ", growthSpeed, " speed, you'd reach $", profitGoal.toLocaleString(), " in roughly", " ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: "var(--fg)"
+      }
+    }, growthSpeed === "slow" ? "90" : growthSpeed === "fast" ? "20" : "45", " days"), ".", " ", "Recommended bets per day: ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: "var(--fg)"
+      }
+    }, recBetCount), ".") : daysToGoal ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "var(--dim)",
+        marginBottom: 4
+      }
+    }, "At ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: "var(--fg)"
+      }
+    }, riskLevel), " risk and ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: "var(--fg)"
+      }
+    }, growthSpeed), " speed with a $", bankroll.toLocaleString(), " bankroll:"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 20,
+        flexWrap: "wrap"
+      }
+    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.08em"
+      }
+    }, "ESTIMATED DAYS"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 22,
+        fontWeight: 800,
+        color: daysToGoal > 90 ? "var(--amber)" : "var(--moss)"
+      }
+    }, daysToGoal > 365 ? "365+" : daysToGoal)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.08em"
+      }
+    }, "DAILY PROFIT TARGET"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 22,
+        fontWeight: 800,
+        color: "var(--fg)"
+      }
+    }, "$", (bankroll * effectiveDailyEv).toFixed(0))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.08em"
+      }
+    }, "BETS PER DAY"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 22,
+        fontWeight: 800,
+        color: "var(--fg)"
+      }
+    }, recBetCount))), daysToGoal > 90 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 6,
+        color: "var(--amber)",
+        fontSize: 11
+      }
+    }, "\u26A0 This will take over ", Math.round(daysToGoal / 30), " months at current pace.", riskLevel !== "aggressive" ? " Try increasing risk level or speed to reach your goal faster." : " Consider setting a lower goal or larger starting bankroll."), daysToGoal <= 14 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 6,
+        color: "var(--amber)",
+        fontSize: 11
+      }
+    }, "\u26A0 Projecting under 2 weeks \u2014 this requires sustained high edge. Real results will vary. Never bet more than you can afford to lose.")) : null), /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 8,
+        fontSize: 11,
+        color: "var(--dim)",
+        lineHeight: 1.5
+      }
+    }, riskLevel === "conservative" ? "Conservative: smaller bets keep variance low. Ideal for new bettors or uncertain slates." : riskLevel === "aggressive" ? "Aggressive: maximum sizing for your edge. Highest long-run growth but also highest day-to-day swings." : "Moderate: a solid middle ground — lets your edge compound without ruinous variance.", totalBetPct > 0.25 && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "var(--amber)",
+        marginLeft: 6
+      }
+    }, "\u26A0 Over 25% of bankroll at risk today \u2014 consider lowering risk level.")));
+  })(), phase === "scanning" && /*#__PURE__*/React.createElement("p", {
     className: "help"
   }, "Researching ", prog && prog.total ? prog.done + "/" + prog.total : "", " games \u2014 pulling splits, lineups, travel & weather\u2026"), err && /*#__PURE__*/React.createElement("p", {
     className: "help",
@@ -8990,7 +9374,7 @@ function FirstInning() {
     style: {
       color: "var(--fg)"
     }
-  }, "Kelly"), " (shown in model bar) = mathematically optimal bet size as % of bankroll. \xBC Kelly recommended for most bettors. Enter bankroll above for dollar amounts."), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", {
+  }, "Bet Size"), " (shown per card) = suggested wager as % of bankroll, sized to your edge. Larger edge = larger recommended bet. Enter your bankroll in Bankroll Builder above to see dollar amounts."), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", {
     style: {
       color: "var(--fg)"
     }

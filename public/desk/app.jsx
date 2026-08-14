@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-14.nrfi-edge10-bankroll-v9";
+const BUILD = "2026-08-14.nrfi-edge10-bankroll-v10";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -198,19 +198,15 @@ details.fold > summary:hover { color:var(--bone); }
 
 /* pick cards — the landing board. Hierarchy: winner name and the tier
    badge dominate; everything else is quiet metadata. */
-.pick { display:flex; gap:14px; align-items:center; justify-content:space-between;
-  border:1px solid var(--slate-600); border-left:3px solid var(--slate-600); border-radius:12px;
-  padding:13px 15px; margin-top:10px;
-  background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0) 60%), var(--slate-800);
-  transition:border-color .15s, box-shadow .15s; }
-.pick:hover { border-color:var(--dim); }
+.pick { display:block;
+  border:1px solid rgba(255,255,255,0.07); border-left:3px solid var(--slate-600); border-radius:14px;
+  padding:16px 18px; margin-top:10px; background:rgba(15,19,30,0.65);
+  transition:border-color .2s, box-shadow .2s; }
+.pick:hover { border-color:rgba(255,255,255,0.14); box-shadow:0 6px 28px rgba(0,0,0,.35); }
 .pick.t-strongest { border-left-color:var(--moss);
-  box-shadow:0 0 0 1px rgba(127,185,139,.16), 0 6px 20px rgba(0,0,0,.24); }
+  box-shadow:0 0 0 1px rgba(127,185,139,.1), 0 4px 20px rgba(0,0,0,.3); }
 .pick.t-strong { border-left-color:var(--moss); }
 .pick.t-lean { border-left-color:var(--amber); }
-.pick .who-big { font-family:'Bricolage Grotesque',sans-serif; font-weight:700; font-size:16.5px;
-  letter-spacing:-.012em; line-height:1.25; }
-.pick .meta-line { font-size:11.5px; color:var(--dim); margin-top:3px; line-height:1.55; }
 .tierbox { text-align:center; flex:0 0 auto; min-width:76px; padding:8px 10px; border-radius:11px;
   border:1px solid; font-family:'JetBrains Mono',monospace; background:rgba(0,0,0,.18); }
 .tierbox .pct { font-size:20px; font-weight:700; display:block; line-height:1.02;
@@ -6049,6 +6045,8 @@ function FirstInning() {
   const refreshedFor = useRef(new Set());
   const [bankroll, setBankroll] = useState(null);
   const [riskLevel, setRiskLevel] = useState("moderate");
+  const [profitGoal, setProfitGoal] = useState(null);
+  const [growthSpeed, setGrowthSpeed] = useState("steady");
   const now = useNow(1000);
 
   async function loadRecord() {
@@ -6218,32 +6216,30 @@ function FirstInning() {
     const countdown = r.startUtc && !r.final && r.currentInning === 0 ? fmtCountdown(r.startUtc, now) : null;
     return (
       <div className={"pick " + r.tier.cls} key={r.gamePk}>
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
+        {/* ── Header ── */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 2 }}>
-              <span style={{ fontWeight: 800, fontSize: 16, color: r.v.color }}>{r.v.label}</span>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>{r.away} @ {r.home}</span>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 7, marginBottom: 5 }}>
+              <span title={"Model call: " + r.v.label + ". " + r.v.blurb} style={{ cursor: "help", fontWeight: 800, fontSize: 11, letterSpacing: "0.08em", color: r.v.color, textTransform: "uppercase", background: r.v.color + "18", border: "1px solid " + r.v.color + "55", borderRadius: 20, padding: "2px 9px" }}>{r.v.label}</span>
               {gameTime && (
-                <span style={{ color: "var(--dim)", fontSize: 12 }}>
-                  · {gameTime}
-                  {countdown && (
-                    <span style={{ color: !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)", fontWeight: !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400 }}>
-                      {" · "}{countdown}
-                    </span>
-                  )}
+                <span style={{ fontSize: 12, color: "var(--dim)" }}>
+                  {gameTime}
+                  {countdown && <span title="Time until first pitch" style={{ cursor: "help", marginLeft: 5, color: !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)", fontWeight: !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400 }}>· {countdown}</span>}
                 </span>
               )}
             </div>
-            <div style={{ color: "var(--dim)", fontSize: 12 }}>{r.v.blurb}</div>
+            <div title={r.away + " (away) @ " + r.home + " (home)"} style={{ fontWeight: 800, fontSize: 20, letterSpacing: "-0.02em", lineHeight: 1.1, marginBottom: 3 }}>
+              {r.awayAbbr || r.away} <span style={{ color: "var(--dim)", fontWeight: 300 }}>@</span> {r.homeAbbr || r.home}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--dim)" }}>{r.away} @ {r.home}</div>
           </div>
-          <span className="tierbox" style={{ color: r.tier.c, borderColor: r.tier.c, flexShrink: 0 }}>
-            <span className="pct">{r.pMax.toFixed(0)}%</span>
-            <span className="lbl">{r.tier.t}</span>
-          </span>
+          <div title={"Confidence: " + r.pMax.toFixed(0) + "% — " + (r.tier.t === "STRONGEST" ? "Elite signal, high confidence bet." : r.tier.t === "STRONG" ? "Strong signal, confident bet." : r.tier.t === "LEAN" ? "Slight lean, smaller position." : "Too close to call — pass.")} style={{ cursor: "help", textAlign: "center", border: "2px solid " + r.tier.c, borderRadius: 12, padding: "8px 14px", flexShrink: 0 }}>
+            <div style={{ fontWeight: 800, fontSize: 26, color: r.tier.c, lineHeight: 1 }}>{r.pMax.toFixed(0)}%</div>
+            <div style={{ fontSize: 9, letterSpacing: "0.12em", color: r.tier.c, marginTop: 3, opacity: 0.9 }}>{r.tier.t}</div>
+          </div>
         </div>
 
-        {/* Pitcher columns */}
+        {/* ── Pitcher panels ── */}
         {r.pitProfiles && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
             {[
@@ -6258,42 +6254,38 @@ function FirstInning() {
               const pClr = (v) => v >= 65 ? "var(--moss)" : v >= 50 ? "var(--fg)" : v >= 38 ? "var(--amber)" : "var(--rose)";
               const windows = rl ? [{ label: "SZN", ...rl.szn }, { label: "L50", ...rl.l50 }, { label: "L30", ...rl.l30 }, { label: "L10", ...rl.l10 }] : [];
               return (
-                <div key={i} style={{ background: "rgba(120,130,150,0.08)", borderRadius: 7, padding: "9px 11px" }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 3 }}>{side}</div>
-                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={name}>{name}</div>
+                <div key={i} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 10, padding: "12px 13px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 3 }}>{side} STARTER</div>
+                      <div style={{ fontWeight: 700, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={name}>{name}</div>
+                    </div>
+                    {p.grade !== "—" && (
+                      <span title={"1st-inning pitcher grade: " + p.grade + " — " + (p.summary || "") + (p.vsNote || "") + " · A+/A = elite, B = solid, C = average, D/F = struggles early."} style={{ cursor: "help", fontWeight: 800, fontSize: 12, color: p.gradeColor, background: p.gradeColor + "18", border: "1.5px solid " + p.gradeColor, borderRadius: 6, padding: "2px 7px", marginLeft: 8, flexShrink: 0 }}>{p.grade}</span>
+                    )}
+                  </div>
                   {headline != null && (
-                    <>
-                      <div style={{ fontWeight: 800, fontSize: 30, color: headlineC, lineHeight: 1 }}>{headline}%</div>
-                      <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2, marginBottom: 7 }}>clean 1st inning · last 30 days · {headlineN}gs</div>
-                    </>
+                    <div title={"Last 30 starts: kept the 1st inning scoreless " + headline + "% of the time (" + headlineN + " games). Green = elite, amber = average, red = struggles."} style={{ cursor: "help", marginBottom: 8 }}>
+                      <div style={{ fontWeight: 800, fontSize: 34, color: headlineC, lineHeight: 1 }}>{headline}%</div>
+                      <div style={{ fontSize: 10, color: "var(--dim)", marginTop: 2 }}>clean 1st inning · L30 · {headlineN} starts</div>
+                    </div>
                   )}
                   {windows.length > 0 && (
-                    <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 3, marginBottom: 9 }}>
                       {windows.map((w) => (
-                        <div key={w.label} style={{ textAlign: "center", flex: 1 }}>
-                          <div style={{ fontSize: 9, color: "var(--dim)", letterSpacing: "0.06em", marginBottom: 1 }}>{w.label}</div>
+                        <div key={w.label} title={{ SZN: "Full season clean 1st inning rate", L50: "Last 50 starts clean %", L30: "Last 30 starts clean %", L10: "Last 10 starts clean % — most recent form" }[w.label] + " — " + (w.pct != null ? w.pct + "% in " + w.n + " games" : "no data")} style={{ cursor: "help", textAlign: "center", background: "rgba(255,255,255,0.04)", borderRadius: 6, padding: "4px 0" }}>
+                          <div style={{ fontSize: 9, color: "var(--dim)", marginBottom: 1 }}>{w.label}</div>
                           <div style={{ fontWeight: 700, fontSize: 12, color: w.pct != null ? pClr(w.pct) : "var(--dim)" }}>{w.pct != null ? w.pct + "%" : "—"}</div>
-                          <div style={{ fontSize: 9, color: "var(--dim)" }}>{w.n != null ? w.n + "g" : ""}</div>
+                          <div style={{ fontSize: 9, color: "var(--dim)", opacity: 0.7 }}>{w.n != null ? w.n + "g" : ""}</div>
                         </div>
                       ))}
                     </div>
                   )}
-                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 5 }}>
-                    {p.grade !== "—" && (
-                      <span title={"1st-inning grade — " + (p.summary || "") + (p.vsNote || "")} style={{ cursor: "help", fontWeight: 800, fontSize: 12, color: p.gradeColor, border: "1.5px solid", borderRadius: 3, padding: "1px 5px" }}>{p.grade}</span>
-                    )}
-                    {kbb != null && (
-                      <span title={"K/9 minus BB/9: " + p.k9.toFixed(1) + " K/9, " + p.bb9.toFixed(1) + " BB/9 — higher means more dominant. League avg ~5.3"} style={{ cursor: "help", fontSize: 11, color: "var(--dim)" }}>K-BB {kbb}/9</span>
-                    )}
-                    {p.whip != null && (
-                      <span title="Walks + Hits per inning pitched in the 1st inning. Lower = harder to score against." style={{ cursor: "help", fontSize: 11, color: "var(--dim)" }}>WHIP {p.whip.toFixed(2)}</span>
-                    )}
-                    {p.fstrike != null && (
-                      <span title={"First-pitch strike rate: " + p.fstrike.toFixed(1) + "%. Gets ahead in counts early. League avg ~60%."} style={{ cursor: "help", fontSize: 11, color: p.fstrike >= 64 ? "var(--moss)" : p.fstrike <= 56 ? "var(--rose)" : "var(--dim)" }}>FPS {p.fstrike.toFixed(0)}%</span>
-                    )}
-                    {p.whiff != null && (
-                      <span title={"Whiff rate: " + p.whiff.toFixed(1) + "% of swings miss. League avg ~24.5%."} style={{ cursor: "help", fontSize: 11, color: p.whiff >= 28 ? "var(--moss)" : p.whiff <= 20 ? "var(--rose)" : "var(--dim)" }}>Whiff {p.whiff.toFixed(0)}%</span>
-                    )}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    {kbb != null && <span title={"K/9 minus BB/9 = " + kbb + ". Strikeouts minus walks per 9 innings — how dominant the pitcher is. " + p.k9.toFixed(1) + " K/9, " + p.bb9.toFixed(1) + " BB/9. League avg ~5.3. Higher = more dominant."} style={{ cursor: "help", fontSize: 11, color: "var(--dim)", background: "rgba(255,255,255,0.05)", borderRadius: 4, padding: "1px 6px" }}>K-BB {kbb}</span>}
+                    {p.whip != null && <span title={"WHIP = " + p.whip.toFixed(2) + ". Walks + Hits per inning in the 1st. League avg ~1.28. Lower = harder to score against. Elite is under 1.00."} style={{ cursor: "help", fontSize: 11, color: p.whip <= 1.10 ? "var(--moss)" : p.whip >= 1.50 ? "var(--rose)" : "var(--dim)", background: "rgba(255,255,255,0.05)", borderRadius: 4, padding: "1px 6px" }}>WHIP {p.whip.toFixed(2)}</span>}
+                    {p.fstrike != null && <span title={"First-pitch strike rate = " + p.fstrike.toFixed(1) + "%. How often the pitcher throws a strike on the very first pitch of an at-bat. Gets ahead in counts early = harder to score. League avg ~60%. Green = above average."} style={{ cursor: "help", fontSize: 11, color: p.fstrike >= 64 ? "var(--moss)" : p.fstrike <= 56 ? "var(--rose)" : "var(--dim)", background: "rgba(255,255,255,0.05)", borderRadius: 4, padding: "1px 6px" }}>FPS {p.fstrike.toFixed(0)}%</span>}
+                    {p.whiff != null && <span title={"Whiff rate = " + p.whiff.toFixed(1) + "%. Percentage of swings that completely miss the ball. Higher = harder to make contact = fewer hits = fewer runs. League avg ~24.5%. Green = above average."} style={{ cursor: "help", fontSize: 11, color: p.whiff >= 28 ? "var(--moss)" : p.whiff <= 20 ? "var(--rose)" : "var(--dim)", background: "rgba(255,255,255,0.05)", borderRadius: 4, padding: "1px 6px" }}>Whiff {p.whiff.toFixed(0)}%</span>}
                   </div>
                 </div>
               );
@@ -6301,57 +6293,54 @@ function FirstInning() {
           </div>
         )}
 
-        {/* Team 1st-inning YRFI rates */}
-        {(r.awayYrfiPct != null || r.homeYrfiPct != null) && (
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 11, marginBottom: 8, padding: "5px 10px", background: "rgba(120,130,150,0.05)", borderRadius: 5 }}>
-            <span style={{ color: "var(--dim)", fontWeight: 600 }}>1st-inn offense:</span>
-            {r.awayYrfiPct != null && (
-              <span title={"Season 1st-inning YRFI rate for " + r.away + " — Poisson estimate from avg runs/game in the 1st."} style={{ cursor: "help", color: r.awayYrfiPct >= 38 ? "var(--rose)" : r.awayYrfiPct <= 25 ? "var(--moss)" : "var(--dim)" }}>
-                {r.awayAbbr || r.away}: <b>{r.awayYrfiPct}%</b> YRFI{r.awayOffSample ? <span style={{ color: "var(--dim)", fontWeight: 400 }}> ({r.awayOffSample}g)</span> : null}
-              </span>
-            )}
-            {r.homeYrfiPct != null && (
-              <span title={"Season 1st-inning YRFI rate for " + r.home + " — Poisson estimate from avg runs/game in the 1st."} style={{ cursor: "help", color: r.homeYrfiPct >= 38 ? "var(--rose)" : r.homeYrfiPct <= 25 ? "var(--moss)" : "var(--dim)" }}>
-                {r.homeAbbr || r.home}: <b>{r.homeYrfiPct}%</b> YRFI{r.homeOffSample ? <span style={{ color: "var(--dim)", fontWeight: 400 }}> ({r.homeOffSample}g)</span> : null}
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Model / market */}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", fontSize: 12, marginBottom: 8, padding: "6px 10px", background: "rgba(120,130,150,0.06)", borderRadius: 5 }}>
-          <span>Model <b style={{ color: r.v.color }}>{r.pMax.toFixed(0)}% {r.call}</b></span>
-          {r.market ? (
+        {/* ── Stats strip ── */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 0, alignItems: "stretch", fontSize: 12, marginBottom: 8, background: "rgba(255,255,255,0.04)", borderRadius: 10, border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
+          <span title={"Our model's probability of " + r.call + " happening in the 1st inning — built from pitcher splits, lineups, park, weather, and Kalshi market price."} style={{ cursor: "help", padding: "8px 12px", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
+            <span style={{ color: "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>MODEL</span>
+            <span style={{ fontWeight: 800, color: r.v.color }}>{r.pMax.toFixed(0)}% {r.call}</span>
+          </span>
+          {r.market && (
             <>
-              <span style={{ color: "var(--dim)" }}>· Market {r.market.marketNRFI.toFixed(0)}% NRFI</span>
-              <span title="How much our probability exceeds the market on our call side" style={{ cursor: "help", color: r.market.edge >= 3 ? "var(--moss)" : r.market.edge <= -3 ? "var(--rose)" : "var(--dim)", fontWeight: 700 }}>· {r.market.edge > 0 ? "+" : ""}{r.market.edge.toFixed(0)}% edge</span>
-              <span style={{ color: "var(--dim)" }}>· YES {r.market.yesPrice.toFixed(0)}c (Kalshi)</span>
-            </>
-          ) : <span style={{ color: "var(--dim)" }}>· no market data</span>}
-          {r.method === "sim" && <span title="Probabilities via base-out Markov simulation of actual batters vs pitcher" style={{ cursor: "help", fontSize: 10, color: "var(--dim)", border: "1px solid rgba(120,130,150,.3)", borderRadius: 3, padding: "0 4px" }}>SIM</span>}
-          {r.kelly != null && (() => {
-            const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
-            const kellyPct = (r.kelly * riskMult * 100).toFixed(1);
-            const betAmt = bankroll ? (bankroll * r.kelly * riskMult).toFixed(2) : null;
-            return (
-              <span title={"Kelly criterion bet size. Full Kelly: " + (r.kelly * 100).toFixed(1) + "% · Risk level: " + riskLevel + " (" + (riskMult * 100).toFixed(0) + "% Kelly)"} style={{ cursor: "help", fontSize: 10, color: "var(--moss)", border: "1px solid rgba(80,160,80,.4)", borderRadius: 3, padding: "0 5px", fontWeight: 700 }}>
-                Kelly {kellyPct}%{betAmt ? " · $" + betAmt : ""}
+              <span title={"Kalshi prediction market: traders collectively say there's a " + r.market.marketNRFI.toFixed(0) + "% chance no run scores in the 1st inning. This is our starting point — we bet only when our model disagrees by a meaningful margin."} style={{ cursor: "help", padding: "8px 12px", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
+                <span style={{ color: "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>MARKET</span>
+                <span style={{ fontWeight: 700, color: "var(--bone)" }}>{r.market.marketNRFI.toFixed(0)}% NRFI</span>
               </span>
-            );
-          })()}
+              <span title={"Edge = how much our model probability exceeds the market on our call side. " + (r.market.edge > 0 ? "Positive edge means we think the true probability is higher than what the market is paying." : "Negative edge means the market already prices this better than our model.") + " We only bet when edge is meaningfully positive."} style={{ cursor: "help", padding: "8px 12px", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
+                <span style={{ color: "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>EDGE</span>
+                <span style={{ fontWeight: 700, color: r.market.edge >= 3 ? "var(--moss)" : r.market.edge <= -3 ? "var(--rose)" : "var(--dim)" }}>{r.market.edge > 0 ? "+" : ""}{r.market.edge.toFixed(0)}%</span>
+              </span>
+              <span title={"Kalshi YES price = " + r.market.yesPrice.toFixed(0) + "¢. Buying YES means you think a run WILL score in the 1st. Buying NO (at " + (100 - r.market.yesPrice).toFixed(0) + "¢) means you think no run scores = NRFI."} style={{ cursor: "help", padding: "8px 12px", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
+                <span style={{ color: "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>KALSHI YES</span>
+                <span style={{ fontWeight: 700, color: "var(--bone)" }}>{r.market.yesPrice.toFixed(0)}¢</span>
+              </span>
+              {r.kelly != null && (() => {
+                const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
+                const betPct = (r.kelly * riskMult * 100).toFixed(1);
+                const betAmt = bankroll ? Math.round(bankroll * r.kelly * riskMult * 100) / 100 : null;
+                return (
+                  <span title={"Suggested bet size based on your edge and risk level. At " + riskLevel + " risk: bet " + betPct + "% of your bankroll" + (betAmt ? " = $" + betAmt : "") + ". This is mathematically sized to your edge — larger edge = larger bet. Never bet more than you can afford to lose."} style={{ cursor: "help", padding: "8px 12px" }}>
+                    <span style={{ color: "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>BET SIZE</span>
+                    <span style={{ fontWeight: 800, color: "var(--moss)" }}>{betAmt ? "$" + betAmt : betPct + "%"}</span>
+                  </span>
+                );
+              })()}
+            </>
+          )}
+          {r.method === "sim" && <span title="Probabilities calculated via base-out Markov simulation — models each batter's actual PA rates vs this pitcher's allow rates across all possible 1st-inning scenarios." style={{ cursor: "help", padding: "8px 8px", display: "flex", alignItems: "center" }}><span style={{ fontSize: 9, color: "var(--dim)", border: "1px solid rgba(120,130,150,.3)", borderRadius: 3, padding: "1px 4px" }}>SIM</span></span>}
         </div>
 
-        {/* Badges */}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 8 }}>
-          {!r.lineupPosted && (
-            <div title="Official starting lineups not yet posted — model uses projected batting order, which is less reliable" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", background: "rgba(230,160,0,0.15)", border: "1px solid var(--amber)", borderRadius: 4, fontSize: 11, fontWeight: 700, color: "var(--amber)", cursor: "help" }}>
-              ⚠ LINEUPS PENDING
+        {/* ── 1st-inn offense + badges row ── */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 10 }}>
+          {(r.awayYrfiPct != null || r.homeYrfiPct != null) && (
+            <div title="How often each team scores a run in the 1st inning this season. Red = high-scoring offense (bad for NRFI), green = low-scoring (good for NRFI)." style={{ cursor: "help", display: "inline-flex", gap: 8, alignItems: "center", padding: "3px 10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, fontSize: 11 }}>
+              <span style={{ color: "var(--dim)", fontSize: 10, fontWeight: 700 }}>1ST-INN</span>
+              {r.awayYrfiPct != null && <span style={{ color: r.awayYrfiPct >= 38 ? "var(--rose)" : r.awayYrfiPct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>{r.awayAbbr || r.away} {r.awayYrfiPct}%</span>}
+              {r.awayYrfiPct != null && r.homeYrfiPct != null && <span style={{ color: "var(--dim)" }}>·</span>}
+              {r.homeYrfiPct != null && <span style={{ color: r.homeYrfiPct >= 38 ? "var(--rose)" : r.homeYrfiPct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>{r.homeAbbr || r.home} {r.homeYrfiPct}%</span>}
             </div>
           )}
-          {r.market && r.market.mktMove != null && Math.abs(r.market.mktMove) >= 5 && (
-            <div title={"Market moved " + (r.market.mktMove > 0 ? "+" : "") + r.market.mktMove.toFixed(0) + " pts YES since first fetch. Positive = market pricing more YRFI (sharp money?). Negative = market moving toward NRFI."} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", background: r.market.mktMove > 0 ? "rgba(220,60,60,0.12)" : "rgba(80,160,80,0.12)", border: "1px solid " + (r.market.mktMove > 0 ? "var(--rose)" : "var(--moss)"), borderRadius: 4, fontSize: 11, fontWeight: 700, color: r.market.mktMove > 0 ? "var(--rose)" : "var(--moss)", cursor: "help" }}>
-              {r.market.mktMove > 0 ? "↑" : "↓"} MKT {r.market.mktMove > 0 ? "+" : ""}{r.market.mktMove.toFixed(0)}pts {r.market.mktMove > 0 ? "YRFI" : "NRFI"}
-            </div>
+          {!r.lineupPosted && (
+            <span title="Official starting lineups haven't been posted yet. The model is using projected batting orders, which are less accurate than the real lineup. Check back closer to game time." style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", background: "rgba(230,160,0,0.1)", border: "1px solid rgba(230,160,0,0.4)", borderRadius: 20, fontSize: 11, fontWeight: 700, color: "var(--amber)" }}>⚠ LINEUPS PENDING</span>
           )}
           {r.parkEnv && (() => {
             const f = r.parkEnv.factor;
@@ -6359,24 +6348,24 @@ function FirstInning() {
             if (!label) return null;
             const isHitter = label.includes("HITTER");
             const color = isHitter ? "var(--rose)" : "var(--moss)";
-            const parkDir = r.parkEnv.park > 1.03 ? "hitter-friendly park" : r.parkEnv.park < 0.97 ? "pitcher-friendly park" : "neutral park";
-            const tip = "Park factor " + r.parkEnv.park.toFixed(2) + " (" + parkDir + ")" + (r.parkEnv.note && r.parkEnv.note !== "neutral" ? " · " + r.parkEnv.note : "") + " · Combined " + f.toFixed(2) + (f > 1 ? " — inflates run probability" : " — suppresses run probability");
-            return (
-              <div title={tip} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", background: isHitter ? "rgba(220,60,60,0.12)" : "rgba(80,160,80,0.12)", border: "1px solid " + color, borderRadius: 4, fontSize: 11, fontWeight: 700, color, cursor: "help" }}>
-                {label}{r.parkEnv.note && r.parkEnv.note !== "neutral" && <span style={{ fontWeight: 400, fontSize: 10, opacity: 0.85 }}> · {r.parkEnv.note}</span>}
-              </div>
-            );
+            const tip = "Park + weather combined factor: " + f.toFixed(2) + ". " + (isHitter ? "This stadium and today's weather tend to inflate scoring — harder to get a clean first inning." : "This stadium and today's weather tend to suppress scoring — easier to get a clean first inning.") + " Park factor: " + r.parkEnv.park.toFixed(2) + (r.parkEnv.note && r.parkEnv.note !== "neutral" ? " · Weather: " + r.parkEnv.note : "");
+            return <span title={tip} style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", background: isHitter ? "rgba(220,60,60,0.1)" : "rgba(80,160,80,0.1)", border: "1px solid " + color + "66", borderRadius: 20, fontSize: 11, fontWeight: 700, color }}>{label}</span>;
           })()}
-          {r.tails && r.tails.map((t, i) => (
-            <span key={i} style={{ padding: "2px 8px", border: "1px solid", borderColor: t.pick.side === r.call ? "var(--moss)" : "var(--amber)", borderRadius: 4, fontSize: 11, fontWeight: 600, color: t.pick.side === r.call ? "var(--moss)" : "var(--amber)" }}>
-              {t.name}: {t.pick.side}{t.pick.odds != null ? " (" + (t.pick.odds > 0 ? "+" : "") + t.pick.odds + ")" : ""} {t.pick.side === r.call ? "✓" : "⚠"}
+          {r.market && r.market.mktMove != null && Math.abs(r.market.mktMove) >= 5 && (
+            <span title={"Market moved " + (r.market.mktMove > 0 ? "+" : "") + r.market.mktMove.toFixed(0) + " cents since the page first loaded. " + (r.market.mktMove > 0 ? "Rising YES price = more people betting a run WILL score. Could be sharp money coming in on YRFI." : "Falling YES price = more people betting no run scores. Market moving in our favor.")} style={{ cursor: "help", display: "inline-flex", alignItems: "center", padding: "3px 10px", background: r.market.mktMove > 0 ? "rgba(220,60,60,0.1)" : "rgba(80,160,80,0.1)", border: "1px solid " + (r.market.mktMove > 0 ? "var(--rose)" : "var(--moss)") + "66", borderRadius: 20, fontSize: 11, fontWeight: 700, color: r.market.mktMove > 0 ? "var(--rose)" : "var(--moss)" }}>
+              {r.market.mktMove > 0 ? "↑" : "↓"} MKT {r.market.mktMove > 0 ? "+" : ""}{r.market.mktMove.toFixed(0)}¢
+            </span>
+          )}
+          {(r.tails || []).map((t, i) => (
+            <span key={i} title={t.name + " has a " + t.pick.side + " pick on this game" + (t.pick.side === r.call ? " — agrees with our model." : " — disagrees with our model, use caution.")} style={{ cursor: "help", display: "inline-flex", alignItems: "center", padding: "3px 10px", border: "1px solid " + (t.pick.side === r.call ? "rgba(127,185,139,0.5)" : "rgba(230,160,0,0.5)"), borderRadius: 20, fontSize: 11, fontWeight: 600, color: t.pick.side === r.call ? "var(--moss)" : "var(--amber)" }}>
+              {t.name}: {t.pick.side} {t.pick.side === r.call ? "✓" : "⚠"}
             </span>
           ))}
           {graded && (
-            <span style={{ fontWeight: 700, fontSize: 13, color: r.inning1runs === 0 ? "var(--moss)" : "var(--rose)" }}>
-              {r.inning1runs === 0 ? "✓ NRFI" : "✗ YRFI"} — {r.inning1runs} run{r.inning1runs === 1 ? "" : "s"} in the 1st
+            <span title={"Game result: " + r.inning1runs + " run" + (r.inning1runs === 1 ? "" : "s") + " scored in the 1st inning."} style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", background: r.inning1runs === 0 ? "rgba(80,160,80,0.12)" : "rgba(220,60,60,0.12)", border: "1px solid " + (r.inning1runs === 0 ? "rgba(80,160,80,0.5)" : "rgba(220,60,60,0.5)"), borderRadius: 20, fontSize: 11, fontWeight: 700, color: r.inning1runs === 0 ? "var(--moss)" : "var(--rose)" }}>
+              {r.inning1runs === 0 ? "✓ NRFI" : "✗ YRFI"} — {r.inning1runs} run{r.inning1runs === 1 ? "" : "s"}
               {recE && recE.mktAtPick != null && recE.mktAtClose != null && (
-                <span style={{ color: (recE.mktAtClose - recE.mktAtPick) >= 0 ? "var(--moss)" : "var(--rose)", fontSize: 11, marginLeft: 5 }}>
+                <span title={"Closing-line value: the market moved " + (recE.mktAtClose - recE.mktAtPick > 0 ? "in our favor" : "against us") + " by " + Math.abs(recE.mktAtClose - recE.mktAtPick).toFixed(1) + "% between when we logged the pick and first pitch. Positive CLV means we had genuine edge."} style={{ color: (recE.mktAtClose - recE.mktAtPick) >= 0 ? "var(--moss)" : "var(--rose)", cursor: "help" }}>
                   CLV {(recE.mktAtClose - recE.mktAtPick) > 0 ? "+" : ""}{(recE.mktAtClose - recE.mktAtPick).toFixed(1)}%
                 </span>
               )}
@@ -6384,73 +6373,29 @@ function FirstInning() {
           )}
         </div>
 
-        {/* old layout placeholder */}
-        <div style={{ display: "none" }}>
-          <div className="meta-line">placeholder</div>
-        </div>
-
-        {/* Buttons */}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="btn btn-ghost btn-sm"
-            onClick={() => setOpen((o) => Object.assign({}, o, { [r.gamePk]: !o[r.gamePk] }))}>
+        {/* ── Actions ── */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <button className="btn btn-ghost btn-sm" onClick={() => setOpen((o) => Object.assign({}, o, { [r.gamePk]: !o[r.gamePk] }))}>
             {isOpen ? "Hide research" : "Show research"}
           </button>
           {tradeLink && (
             <a className="btn btn-sm" href={tradeLink} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
-              Open on Kalshi ↗
+              Trade on Kalshi ↗
             </a>
           )}
         </div>
+
+        {/* ── Expanded research ── */}
         {isOpen && (
-          <div style={{ marginTop: 8 }}>
-            {r.pitProfiles && (
-              <div style={{ background: "rgba(120,130,150,.06)", borderRadius: 6, padding: "8px 10px", marginBottom: 8 }}>
-                <div style={{ fontWeight: 700, fontSize: 11, color: "var(--dim)", letterSpacing: 1, marginBottom: 6 }}>FIRST INNING PITCHER PROFILE</div>
-                {[r.pitProfiles.away, r.pitProfiles.home].map((p, i) => (
-                  <div key={i} style={{ marginBottom: i === 0 ? 8 : 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
-                      <span style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</span>
-                      {p.hand && <span style={{ color: "var(--dim)", fontSize: 11 }}>({p.hand}HP)</span>}
-                      {p.grade !== "—" && (
-                        <span style={{ fontWeight: 800, fontSize: 13, color: p.gradeColor, border: "1.5px solid", borderRadius: 4, padding: "0 5px" }}>{p.grade}</span>
-                      )}
-                      {p.cleanPct != null && (
-                        <span style={{ color: p.cleanPct >= 55 ? "var(--moss)" : p.cleanPct <= 42 ? "var(--rose)" : "var(--dim)", fontSize: 11 }}>~{p.cleanPct}% clean starts</span>
-                      )}
-                    </div>
-                    <div style={{ color: "var(--dim)", fontSize: 11 }}>{p.summary}{p.vsNote && <span style={{ color: "var(--amber)" }}>{p.vsNote}</span>}</div>
-                    {p.rolling && (() => {
-                      const wins = [
-                        { label: "SZN", ...p.rolling.szn },
-                        { label: "L50", ...p.rolling.l50 },
-                        { label: "L30", ...p.rolling.l30 },
-                        { label: "L10", ...p.rolling.l10 },
-                      ];
-                      const pColor = (v) => v >= 65 ? "var(--moss)" : v >= 50 ? "var(--fg)" : v >= 38 ? "var(--amber)" : "var(--rose)";
-                      return (
-                        <div style={{ display: "flex", gap: 16, marginTop: 5 }}>
-                          {wins.map((w) => (
-                            <div key={w.label} style={{ textAlign: "center", minWidth: 32 }}>
-                              <div style={{ fontSize: 10, color: "var(--dim)", marginBottom: 1 }}>{w.label}</div>
-                              <div style={{ fontWeight: 700, fontSize: 13, color: w.pct != null ? pColor(w.pct) : "var(--dim)" }}>
-                                {w.pct != null ? w.pct + "%" : "—"}
-                              </div>
-                              <div style={{ fontSize: 10, color: "var(--dim)" }}>{w.n}g</div>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                ))}
-              </div>
-            )}
+          <div style={{ marginTop: 14, borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 12 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 8 }}>RESEARCH SIGNALS</div>
             {r.checks.map((ck, i) => (
-              <div key={i} style={{ display: "flex", gap: 8, padding: "5px 0", borderTop: "1px solid rgba(120,130,150,.18)", fontSize: 12 }}>
-                <span style={{ width: 5, borderRadius: 3, background: leanColor(ck.lean), flex: "0 0 5px" }} />
-                <div>
-                  <div style={{ fontWeight: 600 }}>{ck.label} <span style={{ color: leanColor(ck.lean), fontSize: 10 }}>· {leanLabel(ck.lean)}</span></div>
-                  <div style={{ color: "var(--dim)" }}>{ck.detail}</div>
+              <div key={i} style={{ display: "flex", gap: 10, padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.05)", fontSize: 12 }}>
+                <div style={{ width: 3, borderRadius: 2, background: leanColor(ck.lean), flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontWeight: 600 }}>{ck.label}</span>
+                  <span style={{ color: leanColor(ck.lean), fontSize: 10, marginLeft: 6, fontWeight: 700 }}>· {leanLabel(ck.lean)}</span>
+                  <div style={{ color: "var(--dim)", marginTop: 2, fontSize: 11 }}>{ck.detail}</div>
                 </div>
               </div>
             ))}
@@ -6494,26 +6439,158 @@ function FirstInning() {
         {importMsg && <span style={{ fontSize: 12, color: importMsg.ok ? "var(--moss)" : "var(--rose)" }}>{importMsg.text}</span>}
       </div>
       {/* Bankroll builder */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", margin: "6px 0 2px", padding: "7px 10px", background: "rgba(80,160,80,0.07)", borderRadius: 6, border: "1px solid rgba(80,160,80,0.2)" }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--moss)" }}>Bankroll Builder</span>
-        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
-          <span style={{ color: "var(--dim)" }}>Bankroll $</span>
-          <input type="number" min="0" placeholder="e.g. 500" value={bankroll || ""} onChange={(e) => setBankroll(Number(e.target.value) || null)}
-            style={{ width: 80, fontSize: 12, padding: "2px 6px", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 4, color: "var(--fg)" }} />
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
-          <span style={{ color: "var(--dim)" }}>Risk</span>
-          <select value={riskLevel} onChange={(e) => setRiskLevel(e.target.value)}
-            style={{ fontSize: 12, padding: "2px 6px", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 4, color: "var(--fg)" }}>
-            <option value="conservative">Conservative (¼ Kelly)</option>
-            <option value="moderate">Moderate (½ Kelly)</option>
-            <option value="aggressive">Aggressive (Full Kelly)</option>
-          </select>
-        </label>
-        <span style={{ fontSize: 11, color: "var(--dim)" }}>
-          {bankroll ? "Bet sizes shown on each card. Kelly = edge-sized position; " + (riskLevel === "conservative" ? "¼ Kelly = safest long-run sizing." : riskLevel === "aggressive" ? "Full Kelly = max theoretical growth, highest variance." : "½ Kelly = balanced risk/reward.") : "Enter a bankroll to see per-game bet sizes."}
-        </span>
-      </div>
+      {(() => {
+        const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
+        const betRows = enriched.filter((r) => r.v && r.v.isBet && r.kelly != null);
+        const totalBetPct = betRows.reduce((s, r) => s + r.kelly * riskMult, 0);
+        const totalBetAmt = bankroll ? bankroll * totalBetPct : null;
+        const avgEdgePct = betRows.length > 0 ? betRows.reduce((s, r) => s + (r.market ? r.market.edge : 0), 0) / betRows.length : 0;
+        // Goal planner logic
+        // Estimate avg daily profit % = sum of edge-sized expected value across all bets
+        const dailyEvPct = betRows.reduce((s, r) => {
+          if (!r.kelly || !r.market) return s;
+          const betPct = r.kelly * riskMult;
+          const winProb = r.call === "NRFI" ? r.pFinal : 1 - r.pFinal;
+          const odds = r.call === "NRFI" ? r.market.yesPrice / (100 - r.market.yesPrice) : (100 - r.market.yesPrice) / r.market.yesPrice;
+          return s + betPct * (winProb * odds - (1 - winProb));
+        }, 0);
+        // Speed multiplier: conservative = half theoretical speed, fast = 1.5x (more bets, higher risk accepted)
+        const speedMult = growthSpeed === "slow" ? 0.4 : growthSpeed === "fast" ? 1.4 : 1.0;
+        const effectiveDailyEv = dailyEvPct * speedMult;
+        // Days to goal estimate
+        let daysToGoal = null;
+        let recBankroll = null;
+        if (profitGoal && bankroll && effectiveDailyEv > 0) {
+          const dailyProfit = bankroll * effectiveDailyEv;
+          daysToGoal = Math.ceil(profitGoal / dailyProfit);
+          recBankroll = null;
+        } else if (profitGoal && !bankroll && effectiveDailyEv > 0) {
+          // Suggest a bankroll to hit goal in a reasonable timeframe
+          const targetDays = growthSpeed === "slow" ? 90 : growthSpeed === "fast" ? 20 : 45;
+          recBankroll = Math.ceil(profitGoal / (effectiveDailyEv * targetDays));
+        }
+        // Recommended # of bets based on speed
+        const recBetCount = growthSpeed === "slow" ? "1-2" : growthSpeed === "fast" ? "all rated games" : "2-4";
+        return (
+          <div style={{ margin: "6px 0 2px", padding: "14px 16px", background: "rgba(80,160,80,0.05)", borderRadius: 10, border: "1px solid rgba(80,160,80,0.2)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "var(--moss)" }}>Bankroll Builder</span>
+              <span style={{ fontSize: 11, color: "var(--dim)" }}>— bet sizing, risk management, and growth planning</span>
+            </div>
+            {/* Row 1: inputs */}
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 14 }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>BANKROLL</span>
+                <div style={{ display: "flex", alignItems: "center", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 6, overflow: "hidden" }}>
+                  <span style={{ padding: "0 8px", color: "var(--dim)", fontWeight: 700, borderRight: "1px solid rgba(120,130,150,.3)", lineHeight: "34px" }}>$</span>
+                  <input type="number" min="0" placeholder="500" value={bankroll || ""} onChange={(e) => setBankroll(Number(e.target.value) || null)}
+                    style={{ width: 80, fontSize: 14, padding: "6px 8px", background: "transparent", border: "none", color: "var(--fg)", fontWeight: 700, outline: "none" }} />
+                </div>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>RISK LEVEL</span>
+                <select value={riskLevel} onChange={(e) => setRiskLevel(e.target.value)}
+                  style={{ fontSize: 12, padding: "6px 10px", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 6, color: "var(--fg)", height: 34 }}>
+                  <option value="conservative">Conservative — smaller bets</option>
+                  <option value="moderate">Moderate — balanced (recommended)</option>
+                  <option value="aggressive">Aggressive — maximum sizing</option>
+                </select>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>PROFIT GOAL</span>
+                <div style={{ display: "flex", alignItems: "center", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 6, overflow: "hidden" }}>
+                  <span style={{ padding: "0 8px", color: "var(--dim)", fontWeight: 700, borderRight: "1px solid rgba(120,130,150,.3)", lineHeight: "34px" }}>$</span>
+                  <input type="number" min="0" placeholder="1000" value={profitGoal || ""} onChange={(e) => setProfitGoal(Number(e.target.value) || null)}
+                    style={{ width: 80, fontSize: 14, padding: "6px 8px", background: "transparent", border: "none", color: "var(--fg)", fontWeight: 700, outline: "none" }} />
+                </div>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>GROWTH SPEED</span>
+                <select value={growthSpeed} onChange={(e) => setGrowthSpeed(e.target.value)}
+                  style={{ fontSize: 12, padding: "6px 10px", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 6, color: "var(--fg)", height: 34 }}>
+                  <option value="slow">Slow &amp; safe — fewer bets, lower exposure</option>
+                  <option value="steady">Steady — balanced approach</option>
+                  <option value="fast">Fast — more bets, higher variance</option>
+                </select>
+              </label>
+            </div>
+            {/* Row 2: live stats */}
+            {betRows.length > 0 && (
+              <div style={{ display: "flex", gap: 0, flexWrap: "wrap", background: "rgba(255,255,255,0.04)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden", marginBottom: 10 }}>
+                {[
+                  { label: "BETS TODAY", value: betRows.length, color: "var(--moss)", tip: "Number of bet-rated games on today's slate" },
+                  { label: "TOTAL AT RISK", value: totalBetAmt != null ? "$" + totalBetAmt.toFixed(0) : (totalBetPct * 100).toFixed(1) + "%", color: totalBetPct > 0.25 ? "var(--amber)" : "var(--fg)", tip: "Total bankroll committed across all bets today (" + (totalBetPct * 100).toFixed(1) + "% of bankroll)" },
+                  { label: "AVG BET", value: totalBetAmt != null ? "$" + (totalBetAmt / betRows.length).toFixed(0) : ((totalBetPct / betRows.length) * 100).toFixed(1) + "%", color: "var(--fg)", tip: "Average bet per game. Varies by edge — stronger edge = bigger suggested bet" },
+                  { label: "AVG EDGE", value: "+" + avgEdgePct.toFixed(1) + "%", color: avgEdgePct >= 5 ? "var(--moss)" : avgEdgePct >= 2 ? "var(--fg)" : "var(--dim)", tip: "Average model edge over the market across all bet-rated games today" },
+                ].map((stat, i) => (
+                  <div key={i} title={stat.tip} style={{ flex: "1 1 80px", padding: "10px 14px", borderRight: i < 3 ? "1px solid rgba(255,255,255,0.06)" : "none", cursor: "help" }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 3 }}>{stat.label}</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: stat.color }}>{stat.value}</div>
+                  </div>
+                ))}
+                {bankroll && effectiveDailyEv > 0 && (
+                  <div title={"Estimated daily profit at " + riskLevel + " risk and " + growthSpeed + " speed, based on today's edge. Actual results will vary — this is a mathematical expectation, not a guarantee."} style={{ flex: "1 1 80px", padding: "10px 14px", cursor: "help" }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 3 }}>EST. DAILY PROFIT</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: "var(--moss)" }}>+${(bankroll * effectiveDailyEv).toFixed(0)}</div>
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Row 3: goal planner output */}
+            {profitGoal > 0 && (
+              <div style={{ padding: "10px 14px", background: "rgba(120,130,150,0.07)", borderRadius: 8, border: "1px solid rgba(120,130,150,0.15)", fontSize: 12 }}>
+                <div style={{ fontWeight: 700, color: "var(--fg)", marginBottom: 6, fontSize: 13 }}>Goal Planner — ${profitGoal.toLocaleString()} target</div>
+                {betRows.length === 0 || effectiveDailyEv <= 0 ? (
+                  <div style={{ color: "var(--dim)" }}>Run a scan first to see edge-based projections for your goal.</div>
+                ) : recBankroll ? (
+                  <div style={{ color: "var(--dim)" }}>
+                    <span style={{ color: "var(--moss)", fontWeight: 700 }}>Suggested starting bankroll: ${recBankroll.toLocaleString()}</span>
+                    {" "}— at {riskLevel} risk and {growthSpeed} speed, you'd reach ${profitGoal.toLocaleString()} in roughly{" "}
+                    <b style={{ color: "var(--fg)" }}>{growthSpeed === "slow" ? "90" : growthSpeed === "fast" ? "20" : "45"} days</b>.
+                    {" "}Recommended bets per day: <b style={{ color: "var(--fg)" }}>{recBetCount}</b>.
+                  </div>
+                ) : daysToGoal ? (
+                  <div>
+                    <div style={{ color: "var(--dim)", marginBottom: 4 }}>
+                      At <b style={{ color: "var(--fg)" }}>{riskLevel}</b> risk and <b style={{ color: "var(--fg)" }}>{growthSpeed}</b> speed with a ${bankroll.toLocaleString()} bankroll:
+                    </div>
+                    <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>ESTIMATED DAYS</div>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: daysToGoal > 90 ? "var(--amber)" : "var(--moss)" }}>{daysToGoal > 365 ? "365+" : daysToGoal}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>DAILY PROFIT TARGET</div>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: "var(--fg)" }}>${(bankroll * effectiveDailyEv).toFixed(0)}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>BETS PER DAY</div>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: "var(--fg)" }}>{recBetCount}</div>
+                      </div>
+                    </div>
+                    {daysToGoal > 90 && (
+                      <div style={{ marginTop: 6, color: "var(--amber)", fontSize: 11 }}>
+                        ⚠ This will take over {Math.round(daysToGoal / 30)} months at current pace.
+                        {riskLevel !== "aggressive" ? " Try increasing risk level or speed to reach your goal faster." : " Consider setting a lower goal or larger starting bankroll."}
+                      </div>
+                    )}
+                    {daysToGoal <= 14 && (
+                      <div style={{ marginTop: 6, color: "var(--amber)", fontSize: 11 }}>
+                        ⚠ Projecting under 2 weeks — this requires sustained high edge. Real results will vary. Never bet more than you can afford to lose.
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            )}
+            {/* Row 4: advice */}
+            <div style={{ marginTop: 8, fontSize: 11, color: "var(--dim)", lineHeight: 1.5 }}>
+              {riskLevel === "conservative" ? "Conservative: smaller bets keep variance low. Ideal for new bettors or uncertain slates." : riskLevel === "aggressive" ? "Aggressive: maximum sizing for your edge. Highest long-run growth but also highest day-to-day swings." : "Moderate: a solid middle ground — lets your edge compound without ruinous variance."}
+              {totalBetPct > 0.25 && <span style={{ color: "var(--amber)", marginLeft: 6 }}>⚠ Over 25% of bankroll at risk today — consider lowering risk level.</span>}
+            </div>
+          </div>
+        );
+      })()}
       {phase === "scanning" && <p className="help">Researching {prog && prog.total ? prog.done + "/" + prog.total : ""} games — pulling splits, lineups, travel &amp; weather…</p>}
       {err && <p className="help" style={{ color: "var(--rose)" }}>Couldn't build the board: {err}</p>}
       {phase === "done" && sellers.length > 0 && sellers.every((s) => !s.active) && <p className="help" style={{ color: "var(--amber)" }}>No active seller subscriptions — showing the model board only.</p>}
@@ -6530,7 +6607,7 @@ function FirstInning() {
             <span style={{ color: "var(--rose)", fontWeight: 700 }}>HITTER FRIENDLY</span> = park+weather inflate runs. Hover for detail.
           </div>
           <div><span style={{ color: "var(--amber)", fontWeight: 700 }}>⚠ LINEUPS PENDING</span> = official lineup not yet posted; model uses projected order (less reliable).</div>
-          <div><b style={{ color: "var(--fg)" }}>Kelly</b> (shown in model bar) = mathematically optimal bet size as % of bankroll. ¼ Kelly recommended for most bettors. Enter bankroll above for dollar amounts.</div>
+          <div><b style={{ color: "var(--fg)" }}>Bet Size</b> (shown per card) = suggested wager as % of bankroll, sized to your edge. Larger edge = larger recommended bet. Enter your bankroll in Bankroll Builder above to see dollar amounts.</div>
           <div><b style={{ color: "var(--fg)" }}>1st-inn offense</b> = each team's season YRFI rate (Poisson estimate from avg runs scored in the 1st). Red = high-scoring, green = low-scoring team.</div>
           <div><b style={{ color: "var(--fg)" }}>↑/↓ MKT</b> = market moved ≥5 pts since first page load. Indicates smart money flow between your sessions.</div>
         </div>
