@@ -8389,6 +8389,9 @@ function Ledger({ ledger, setLedger, fw }) {
     setChecking(false);
   }
 
+  // Row cap on the ledger table. The heading states the cap whenever it bites,
+  // so the count above the table can't imply rows that were never rendered.
+  const LEDGER_ROWS = 80;
   const done = ledger.filter((e) => e.status === "resolved" && e.outcome !== null);
   const stats = useMemo(() => {
     if (!done.length) return null;
@@ -8396,17 +8399,22 @@ function Ledger({ ledger, setLedger, fw }) {
     // Brier comparison only over genuine analyses — synced positions have
     // fair === price by construction and would flatten the gap.
     const scored = done.filter((e) => e.call !== "SYNCED");
+    const syncedDone = done.filter((e) => e.call === "SYNCED");
     const model = scored.length ? scored.reduce((s, e) => s + brier(e.fair, e.outcome), 0) / scored.length : null;
     const mkt = scored.length ? scored.reduce((s, e) => s + brier(e.price, e.outcome), 0) / scored.length : null;
-    // A "call" bets the side it named: BUY YES/NO from analyses, the actual
-    // held side for positions synced from Kalshi.
-    const acted = done.filter((e) => e.call === "BUY YES" || e.call === "BUY NO" ||
-      (e.call === "SYNCED" && e.taken && e.taken.side));
-    const calledSide = (e) => e.call === "BUY YES" ? 1 : e.call === "BUY NO" ? 0
-      : e.taken && e.taken.side === "YES" ? 1 : 0;
+    // A "call" bets the side it named. Synced Kalshi positions carry no desk
+    // opinion (fair === price by construction), so counting them here made the
+    // hit rate a portfolio stat rather than a measure of the model — and they
+    // outnumber genuine calls roughly 3:1. Tracked separately below instead.
+    const acted = scored.filter((e) => e.call === "BUY YES" || e.call === "BUY NO");
+    const calledSide = (e) => e.call === "BUY YES" ? 1 : 0;
     const wins = acted.filter((e) => calledSide(e) === e.outcome).length;
-    return { n: done.length, model, mkt, acted: acted.length, wins,
-      hit: acted.length ? wins / acted.length : null };
+    const syncedActed = syncedDone.filter((e) => e.taken && e.taken.side);
+    const syncedWins = syncedActed.filter((e) => (e.taken.side === "YES" ? 1 : 0) === e.outcome).length;
+    // n counts what the scores above are actually computed over.
+    return { n: scored.length, synced: syncedDone.length, model, mkt,
+      acted: acted.length, wins, hit: acted.length ? wins / acted.length : null,
+      syncedActed: syncedActed.length, syncedWins };
   }, [done]);
 
   async function clearAll() {
@@ -8431,8 +8439,9 @@ function Ledger({ ledger, setLedger, fw }) {
         ) : (
           <div className="scorecard" style={{ marginTop: 16 }}>
             <div>
-              <span className="k eyebrow">Settled</span>
+              <span className="k eyebrow">Calls settled</span>
               <div className="n">{stats.n}</div>
+              {stats.synced > 0 && <span className="eyebrow">{stats.synced} synced not scored</span>}
             </div>
             <div>
               <span className="k eyebrow">My score</span>
@@ -8459,6 +8468,8 @@ function Ledger({ ledger, setLedger, fw }) {
               : stats.model < stats.mkt
               ? "Right now I score better than the market's own prices. Don't read much into it yet; a few dozen calls prove nothing."
               : "Right now the market's prices score better than mine. Until that flips, treat every gap I show you as noise."}
+            {stats.synced > 0 && " " + stats.synced + " synced Kalshi position" + (stats.synced === 1 ? " is" : "s are") +
+              " excluded (" + stats.syncedWins + "/" + stats.syncedActed + " settled) — they carry no desk opinion, so scoring them would measure your book, not the model."}
           </p>
         )}
         <div style={{ marginTop: 18, display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -8471,7 +8482,8 @@ function Ledger({ ledger, setLedger, fw }) {
       </div>
 
       <div className="panel">
-        <p className="sect">Every call I have made ({ledger.length})</p>
+        <p className="sect">Every call I have made ({ledger.length}
+          {ledger.length > LEDGER_ROWS ? " · showing the most recent " + LEDGER_ROWS : ""})</p>
         {ledger.length === 0 ? (
           <p className="thesis" style={{ color: "var(--dim)", marginTop: 10 }}>
             Nothing yet. Analyze a market and it lands here so you can hold me to it later.
@@ -8482,7 +8494,7 @@ function Ledger({ ledger, setLedger, fw }) {
               <tr><th>Market</th><th>I said</th><th>Price → my price</th><th>Topic</th><th>Happened?</th></tr>
             </thead>
             <tbody>
-              {ledger.slice(0, 80).map((e) => (
+              {ledger.slice(0, LEDGER_ROWS).map((e) => (
                 <tr key={e.id}>
                   <td>
                     {e.name === e.question ? e.question : e.question + " — " + e.name}

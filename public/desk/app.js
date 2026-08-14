@@ -12378,6 +12378,10 @@ function Ledger({
     setNote(updates.length ? updates.length + " market" + (updates.length === 1 ? "" : "s") + " resolved and scored." : open.length ? "Nothing has settled yet. " + open.length + " still open." : "No open calls to check.");
     setChecking(false);
   }
+
+  // Row cap on the ledger table. The heading states the cap whenever it bites,
+  // so the count above the table can't imply rows that were never rendered.
+  const LEDGER_ROWS = 80;
   const done = ledger.filter(e => e.status === "resolved" && e.outcome !== null);
   const stats = useMemo(() => {
     if (!done.length) return null;
@@ -12385,20 +12389,29 @@ function Ledger({
     // Brier comparison only over genuine analyses — synced positions have
     // fair === price by construction and would flatten the gap.
     const scored = done.filter(e => e.call !== "SYNCED");
+    const syncedDone = done.filter(e => e.call === "SYNCED");
     const model = scored.length ? scored.reduce((s, e) => s + brier(e.fair, e.outcome), 0) / scored.length : null;
     const mkt = scored.length ? scored.reduce((s, e) => s + brier(e.price, e.outcome), 0) / scored.length : null;
-    // A "call" bets the side it named: BUY YES/NO from analyses, the actual
-    // held side for positions synced from Kalshi.
-    const acted = done.filter(e => e.call === "BUY YES" || e.call === "BUY NO" || e.call === "SYNCED" && e.taken && e.taken.side);
-    const calledSide = e => e.call === "BUY YES" ? 1 : e.call === "BUY NO" ? 0 : e.taken && e.taken.side === "YES" ? 1 : 0;
+    // A "call" bets the side it named. Synced Kalshi positions carry no desk
+    // opinion (fair === price by construction), so counting them here made the
+    // hit rate a portfolio stat rather than a measure of the model — and they
+    // outnumber genuine calls roughly 3:1. Tracked separately below instead.
+    const acted = scored.filter(e => e.call === "BUY YES" || e.call === "BUY NO");
+    const calledSide = e => e.call === "BUY YES" ? 1 : 0;
     const wins = acted.filter(e => calledSide(e) === e.outcome).length;
+    const syncedActed = syncedDone.filter(e => e.taken && e.taken.side);
+    const syncedWins = syncedActed.filter(e => (e.taken.side === "YES" ? 1 : 0) === e.outcome).length;
+    // n counts what the scores above are actually computed over.
     return {
-      n: done.length,
+      n: scored.length,
+      synced: syncedDone.length,
       model,
       mkt,
       acted: acted.length,
       wins,
-      hit: acted.length ? wins / acted.length : null
+      hit: acted.length ? wins / acted.length : null,
+      syncedActed: syncedActed.length,
+      syncedWins
     };
   }, [done]);
   async function clearAll() {
@@ -12432,9 +12445,11 @@ function Ledger({
     }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
     className: "k eyebrow"
-  }, "Settled"), /*#__PURE__*/React.createElement("div", {
+  }, "Calls settled"), /*#__PURE__*/React.createElement("div", {
     className: "n"
-  }, stats.n)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+  }, stats.n), stats.synced > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "eyebrow"
+  }, stats.synced, " synced not scored")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
     className: "k eyebrow"
   }, "My score"), /*#__PURE__*/React.createElement("div", {
     className: "n",
@@ -12460,7 +12475,7 @@ function Ledger({
       marginTop: 16,
       color: "var(--dim)"
     }
-  }, "These scores measure how close a probability landed to what actually happened \u2014 lower is better, and the comparison is the whole point. ", stats.model == null ? "Only synced positions have settled so far — no desk analyses to score yet." : stats.model < stats.mkt ? "Right now I score better than the market's own prices. Don't read much into it yet; a few dozen calls prove nothing." : "Right now the market's prices score better than mine. Until that flips, treat every gap I show you as noise."), /*#__PURE__*/React.createElement("div", {
+  }, "These scores measure how close a probability landed to what actually happened \u2014 lower is better, and the comparison is the whole point. ", stats.model == null ? "Only synced positions have settled so far — no desk analyses to score yet." : stats.model < stats.mkt ? "Right now I score better than the market's own prices. Don't read much into it yet; a few dozen calls prove nothing." : "Right now the market's prices score better than mine. Until that flips, treat every gap I show you as noise.", stats.synced > 0 && " " + stats.synced + " synced Kalshi position" + (stats.synced === 1 ? " is" : "s are") + " excluded (" + stats.syncedWins + "/" + stats.syncedActed + " settled) — they carry no desk opinion, so scoring them would measure your book, not the model."), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 18,
       display: "flex",
@@ -12483,7 +12498,7 @@ function Ledger({
     className: "panel"
   }, /*#__PURE__*/React.createElement("p", {
     className: "sect"
-  }, "Every call I have made (", ledger.length, ")"), ledger.length === 0 ? /*#__PURE__*/React.createElement("p", {
+  }, "Every call I have made (", ledger.length, ledger.length > LEDGER_ROWS ? " · showing the most recent " + LEDGER_ROWS : "", ")"), ledger.length === 0 ? /*#__PURE__*/React.createElement("p", {
     className: "thesis",
     style: {
       color: "var(--dim)",
@@ -12491,7 +12506,7 @@ function Ledger({
     }
   }, "Nothing yet. Analyze a market and it lands here so you can hold me to it later.") : /*#__PURE__*/React.createElement("table", {
     className: "tbl"
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Market"), /*#__PURE__*/React.createElement("th", null, "I said"), /*#__PURE__*/React.createElement("th", null, "Price \u2192 my price"), /*#__PURE__*/React.createElement("th", null, "Topic"), /*#__PURE__*/React.createElement("th", null, "Happened?"))), /*#__PURE__*/React.createElement("tbody", null, ledger.slice(0, 80).map(e => /*#__PURE__*/React.createElement("tr", {
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Market"), /*#__PURE__*/React.createElement("th", null, "I said"), /*#__PURE__*/React.createElement("th", null, "Price \u2192 my price"), /*#__PURE__*/React.createElement("th", null, "Topic"), /*#__PURE__*/React.createElement("th", null, "Happened?"))), /*#__PURE__*/React.createElement("tbody", null, ledger.slice(0, LEDGER_ROWS).map(e => /*#__PURE__*/React.createElement("tr", {
     key: e.id
   }, /*#__PURE__*/React.createElement("td", null, e.name === e.question ? e.question : e.question + " — " + e.name, /*#__PURE__*/React.createElement("span", {
     className: "sub eyebrow",
