@@ -8519,15 +8519,47 @@ function FirstInning() {
     }, /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
-        justifyContent: "space-between",
-        alignItems: "flex-start",
-        gap: 12,
-        marginBottom: 12
+        justifyContent: "center",
+        marginBottom: 10
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      title: r.v.blurb,
+      style: {
+        cursor: "help",
+        textAlign: "center",
+        border: "2px solid " + r.v.color,
+        background: r.v.color + "15",
+        borderRadius: 12,
+        padding: "6px 20px"
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
-        flex: 1,
-        minWidth: 0
+        fontWeight: 900,
+        fontSize: 12,
+        color: r.v.color,
+        lineHeight: 1,
+        letterSpacing: "0.05em",
+        textTransform: "uppercase"
+      }
+    }, r.v.label), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 800,
+        fontSize: 26,
+        color: r.v.color,
+        lineHeight: 1,
+        marginTop: 5
+      }
+    }, r.pMax.toFixed(0), "%"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        letterSpacing: "0.10em",
+        color: r.v.color,
+        marginTop: 3,
+        opacity: 0.6
+      }
+    }, r.tier.t))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginBottom: 12
       }
     }, gameTime && /*#__PURE__*/React.createElement("div", {
       style: {
@@ -8563,43 +8595,6 @@ function FirstInning() {
         color: "var(--dim)"
       }
     }, r.away, " @ ", r.home)), /*#__PURE__*/React.createElement("div", {
-      title: r.v.blurb,
-      style: {
-        cursor: "help",
-        textAlign: "center",
-        border: "2px solid " + r.v.color,
-        background: r.v.color + "15",
-        borderRadius: 12,
-        padding: "8px 14px",
-        flexShrink: 0,
-        minWidth: 88
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontWeight: 900,
-        fontSize: 12,
-        color: r.v.color,
-        lineHeight: 1,
-        letterSpacing: "0.05em",
-        textTransform: "uppercase"
-      }
-    }, r.v.label), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontWeight: 800,
-        fontSize: 26,
-        color: r.v.color,
-        lineHeight: 1,
-        marginTop: 5
-      }
-    }, r.pMax.toFixed(0), "%"), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 9,
-        letterSpacing: "0.10em",
-        color: r.v.color,
-        marginTop: 3,
-        opacity: 0.6
-      }
-    }, r.tier.t))), /*#__PURE__*/React.createElement("div", {
       style: {
         marginBottom: 12,
         padding: "10px 13px",

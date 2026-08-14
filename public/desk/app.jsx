@@ -6448,25 +6448,26 @@ function FirstInning() {
 
     return (
       <div className={"pick " + r.tier.cls} key={r.gamePk}>
-        {/* ── Header ── */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            {gameTime && (
-              <div style={{ fontSize: 11, color: "var(--dim)", marginBottom: 5 }}>
-                {gameTime}
-                {countdown && <span title="Time until first pitch" style={{ cursor: "help", marginLeft: 5, color: !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)", fontWeight: !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400 }}>· {countdown}</span>}
-              </div>
-            )}
-            <div title={r.away + " (away) @ " + r.home + " (home)"} style={{ fontWeight: 800, fontSize: 20, letterSpacing: "-0.02em", lineHeight: 1.1, marginBottom: 3 }}>
-              {r.awayAbbr || r.away} <span style={{ color: "var(--dim)", fontWeight: 300 }}>@</span> {r.homeAbbr || r.home}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--dim)" }}>{r.away} @ {r.home}</div>
-          </div>
-          <div title={r.v.blurb} style={{ cursor: "help", textAlign: "center", border: "2px solid " + r.v.color, background: r.v.color + "15", borderRadius: 12, padding: "8px 14px", flexShrink: 0, minWidth: 88 }}>
+        {/* ── Verdict badge — centered at top ── */}
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+          <div title={r.v.blurb} style={{ cursor: "help", textAlign: "center", border: "2px solid " + r.v.color, background: r.v.color + "15", borderRadius: 12, padding: "6px 20px" }}>
             <div style={{ fontWeight: 900, fontSize: 12, color: r.v.color, lineHeight: 1, letterSpacing: "0.05em", textTransform: "uppercase" }}>{r.v.label}</div>
             <div style={{ fontWeight: 800, fontSize: 26, color: r.v.color, lineHeight: 1, marginTop: 5 }}>{r.pMax.toFixed(0)}%</div>
             <div style={{ fontSize: 9, letterSpacing: "0.10em", color: r.v.color, marginTop: 3, opacity: 0.6 }}>{r.tier.t}</div>
           </div>
+        </div>
+        {/* ── Header ── */}
+        <div style={{ marginBottom: 12 }}>
+          {gameTime && (
+            <div style={{ fontSize: 11, color: "var(--dim)", marginBottom: 5 }}>
+              {gameTime}
+              {countdown && <span title="Time until first pitch" style={{ cursor: "help", marginLeft: 5, color: !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)", fontWeight: !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400 }}>· {countdown}</span>}
+            </div>
+          )}
+          <div title={r.away + " (away) @ " + r.home + " (home)"} style={{ fontWeight: 800, fontSize: 20, letterSpacing: "-0.02em", lineHeight: 1.1, marginBottom: 3 }}>
+            {r.awayAbbr || r.away} <span style={{ color: "var(--dim)", fontWeight: 300 }}>@</span> {r.homeAbbr || r.home}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--dim)" }}>{r.away} @ {r.home}</div>
         </div>
 
         {/* ── Verdict graphic + battle bar ── */}
