@@ -8211,6 +8211,96 @@ function FirstInning() {
       minute: "2-digit"
     }) : null;
     const countdown = r.startUtc && !r.final && r.currentInning === 0 ? fmtCountdown(r.startUtc, now) : null;
+
+    // ── Verdict graphic: tagline + emoji based on call, confidence, result ──
+    const vg = (() => {
+      if (graded) {
+        const won = r.call === "NRFI" && r.inning1runs === 0 || r.call === "YRFI" && r.inning1runs > 0;
+        if (won && r.call === "NRFI") return {
+          e: "⚰️",
+          tag: "OFFENSE: DECEASED · zero survivors, no witnesses",
+          c: "var(--moss)",
+          bg: "rgba(80,160,80,0.08)"
+        };
+        if (won && r.call === "YRFI") return {
+          e: "💥",
+          tag: "CARNAGE ACHIEVED · " + r.inning1runs + " run" + (r.inning1runs === 1 ? "" : "s") + " of beautiful chaos",
+          c: "var(--moss)",
+          bg: "rgba(80,160,80,0.08)"
+        };
+        if (!won && r.call === "NRFI") return {
+          e: "🩸",
+          tag: "PITCHER GOT SMOKED · model takes the L, moment of silence",
+          c: "var(--rose)",
+          bg: "rgba(220,60,60,0.08)"
+        };
+        return {
+          e: "🤡",
+          tag: "BATTER FUMBLED IT · somehow stayed scoreless, clown behavior",
+          c: "var(--rose)",
+          bg: "rgba(220,60,60,0.08)"
+        };
+      }
+      if (r.call === "NRFI") {
+        if (r.pMax >= 72 && r.v.isBet) return {
+          e: "⚰️",
+          tag: "BATTERS: DO NOT RESUSCITATE",
+          c: "var(--moss)",
+          bg: "rgba(80,160,80,0.06)"
+        };
+        if (r.v.isBet) return {
+          e: "💀",
+          tag: "OFFENSE IN CRITICAL CONDITION",
+          c: "var(--moss)",
+          bg: "rgba(80,160,80,0.06)"
+        };
+        if (r.v.strength === "LEAN") return {
+          e: "😬",
+          tag: "BATTERS ARE SWEATING BULLETS",
+          c: "var(--amber)",
+          bg: "rgba(230,160,0,0.06)"
+        };
+        return {
+          e: "🎲",
+          tag: "COIN FLIP ENERGY · god help us all",
+          c: "var(--dim)",
+          bg: "rgba(120,130,150,0.05)"
+        };
+      }
+      if (r.pMax >= 72 && r.v.isBet) return {
+        e: "🔥",
+        tag: "PITCHER: ABOUT TO GET ABSOLUTELY COOKED",
+        c: "var(--rose)",
+        bg: "rgba(220,60,60,0.06)"
+      };
+      if (r.v.isBet) return {
+        e: "💥",
+        tag: "PITCHER SURVIVAL ODDS: BLEAK",
+        c: "var(--rose)",
+        bg: "rgba(220,60,60,0.06)"
+      };
+      if (r.v.strength === "LEAN") return {
+        e: "😤",
+        tag: "BATTERS SMELL BLOOD IN THE WATER",
+        c: "var(--amber)",
+        bg: "rgba(230,160,0,0.06)"
+      };
+      return {
+        e: "🎲",
+        tag: "COIN FLIP ENERGY · god help us all",
+        c: "var(--dim)",
+        bg: "rgba(120,130,150,0.05)"
+      };
+    })();
+
+    // ── Battle HP bars: pitcher power vs offense danger ──
+    const awayPitHP = r.pitProfiles ? Math.min(100, Math.max(0, r.pitProfiles.away.cleanPct != null ? r.pitProfiles.away.cleanPct : 50)) : null;
+    const homePitHP = r.pitProfiles ? Math.min(100, Math.max(0, r.pitProfiles.home.cleanPct != null ? r.pitProfiles.home.cleanPct : 50)) : null;
+    const avgPitHP = awayPitHP != null && homePitHP != null ? Math.round((awayPitHP + homePitHP) / 2) : awayPitHP ?? homePitHP;
+    const awayOffHP = r.awayYrfiPct != null ? Math.min(100, r.awayYrfiPct * 2.2) : null;
+    const homeOffHP = r.homeYrfiPct != null ? Math.min(100, r.homeYrfiPct * 2.2) : null;
+    const avgOffHP = awayOffHP != null && homeOffHP != null ? Math.round((awayOffHP + homeOffHP) / 2) : awayOffHP ?? homeOffHP;
+    const pitWinning = avgPitHP != null && avgOffHP != null ? avgPitHP > avgOffHP : null;
     return /*#__PURE__*/React.createElement("div", {
       className: "pick " + r.tier.cls,
       key: r.gamePk
@@ -8306,7 +8396,124 @@ function FirstInning() {
         marginTop: 3,
         opacity: 0.9
       }
-    }, r.tier.t))), r.pitProfiles && /*#__PURE__*/React.createElement("div", {
+    }, r.tier.t))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginBottom: 12,
+        padding: "10px 13px",
+        background: vg.bg,
+        borderRadius: 9,
+        border: "1px solid " + vg.c + "30"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        marginBottom: avgPitHP != null || avgOffHP != null ? 10 : 0
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 22,
+        lineHeight: 1
+      }
+    }, vg.e), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
+        fontWeight: 800,
+        color: vg.c,
+        letterSpacing: "0.04em",
+        textTransform: "uppercase"
+      }
+    }, vg.tag)), (avgPitHP != null || avgOffHP != null) && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        justifyContent: "space-between",
+        marginBottom: 3
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 9,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.06em"
+      }
+    }, "PITCHING"), avgPitHP != null && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 9,
+        fontWeight: 700,
+        color: avgPitHP >= 60 ? "var(--moss)" : avgPitHP >= 45 ? "var(--amber)" : "var(--rose)"
+      }
+    }, avgPitHP, "%")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: 7,
+        borderRadius: 4,
+        background: "rgba(255,255,255,0.08)",
+        overflow: "hidden"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: "100%",
+        width: (avgPitHP || 0) + "%",
+        background: avgPitHP >= 60 ? "linear-gradient(90deg,#2d6a3f,var(--moss))" : avgPitHP >= 45 ? "linear-gradient(90deg,#8a6500,var(--amber))" : "linear-gradient(90deg,#7a1a1a,var(--rose))",
+        borderRadius: 4,
+        transition: "width 1s cubic-bezier(.2,1,.3,1)"
+      }
+    }))), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 18,
+        flexShrink: 0
+      }
+    }, pitWinning === true ? "⚔️" : pitWinning === false ? "💥" : "⚾"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        justifyContent: "space-between",
+        marginBottom: 3
+      }
+    }, avgOffHP != null && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 9,
+        fontWeight: 700,
+        color: avgOffHP >= 60 ? "var(--rose)" : avgOffHP >= 40 ? "var(--amber)" : "var(--moss)"
+      }
+    }, avgOffHP, "%"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 9,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.06em",
+        marginLeft: "auto"
+      }
+    }, "OFFENSE")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: 7,
+        borderRadius: 4,
+        background: "rgba(255,255,255,0.08)",
+        overflow: "hidden",
+        transform: "scaleX(-1)"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: "100%",
+        width: (avgOffHP || 0) + "%",
+        background: avgOffHP >= 60 ? "linear-gradient(90deg,#7a1a1a,var(--rose))" : avgOffHP >= 40 ? "linear-gradient(90deg,#8a6500,var(--amber))" : "linear-gradient(90deg,#2d6a3f,var(--moss))",
+        borderRadius: 4,
+        transition: "width 1s cubic-bezier(.2,1,.3,1)"
+      }
+    }))))), r.pitProfiles && /*#__PURE__*/React.createElement("div", {
       style: {
         display: "grid",
         gridTemplateColumns: "1fr 1fr",
@@ -8737,28 +8944,70 @@ function FirstInning() {
         fontWeight: 600,
         color: t.pick.side === r.call ? "var(--moss)" : "var(--amber)"
       }
-    }, t.name, ": ", t.pick.side, " ", t.pick.side === r.call ? "✓" : "⚠")), graded && /*#__PURE__*/React.createElement("span", {
-      title: "Game result: " + r.inning1runs + " run" + (r.inning1runs === 1 ? "" : "s") + " scored in the 1st inning.",
-      style: {
-        cursor: "help",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "3px 10px",
-        background: r.inning1runs === 0 ? "rgba(80,160,80,0.12)" : "rgba(220,60,60,0.12)",
-        border: "1px solid " + (r.inning1runs === 0 ? "rgba(80,160,80,0.5)" : "rgba(220,60,60,0.5)"),
-        borderRadius: 20,
-        fontSize: 11,
-        fontWeight: 700,
-        color: r.inning1runs === 0 ? "var(--moss)" : "var(--rose)"
-      }
-    }, r.inning1runs === 0 ? "✓ NRFI" : "✗ YRFI", " \u2014 ", r.inning1runs, " run", r.inning1runs === 1 ? "" : "s", recE && recE.mktAtPick != null && recE.mktAtClose != null && /*#__PURE__*/React.createElement("span", {
-      title: "Closing-line value: the market moved " + (recE.mktAtClose - recE.mktAtPick > 0 ? "in our favor" : "against us") + " by " + Math.abs(recE.mktAtClose - recE.mktAtPick).toFixed(1) + "% between when we logged the pick and first pitch. Positive CLV means we had genuine edge.",
-      style: {
-        color: recE.mktAtClose - recE.mktAtPick >= 0 ? "var(--moss)" : "var(--rose)",
-        cursor: "help"
-      }
-    }, "CLV ", recE.mktAtClose - recE.mktAtPick > 0 ? "+" : "", (recE.mktAtClose - recE.mktAtPick).toFixed(1), "%"))), /*#__PURE__*/React.createElement("div", {
+    }, t.name, ": ", t.pick.side, " ", t.pick.side === r.call ? "✓" : "⚠")), graded && (() => {
+      const won = r.call === "NRFI" && r.inning1runs === 0 || r.call === "YRFI" && r.inning1runs > 0;
+      const clv = recE && recE.mktAtPick != null && recE.mktAtClose != null ? recE.mktAtClose - recE.mktAtPick : null;
+      return /*#__PURE__*/React.createElement("div", {
+        style: {
+          width: "100%",
+          marginTop: 6,
+          padding: "12px 14px",
+          borderRadius: 10,
+          background: won ? "rgba(80,160,80,0.10)" : "rgba(220,60,60,0.10)",
+          border: "1px solid " + (won ? "rgba(80,160,80,0.4)" : "rgba(220,60,60,0.4)")
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap"
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontSize: 28,
+          lineHeight: 1
+        }
+      }, won ? vg.e : r.call === "NRFI" ? "🩸" : "🤡"), /*#__PURE__*/React.createElement("div", {
+        style: {
+          flex: 1
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontWeight: 900,
+          fontSize: 15,
+          color: won ? "var(--moss)" : "var(--rose)",
+          letterSpacing: "0.04em",
+          textTransform: "uppercase"
+        }
+      }, won ? r.call === "NRFI" ? "OFFENSE FLATLINED" : "BEAUTIFUL DISASTER" : r.call === "NRFI" ? "PITCHER GOT MURKED" : "STAYED SCORELESS (SOMEHOW)"), /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 11,
+          color: "var(--dim)",
+          marginTop: 2
+        }
+      }, r.inning1runs === 0 ? "Zero runs. Zero mercy. Zero survivors." : r.inning1runs + " run" + (r.inning1runs === 1 ? " crossed the plate." : "s crossed the plate."), " · " + (won ? "We called it." : "We didn't."))), /*#__PURE__*/React.createElement("div", {
+        style: {
+          textAlign: "right",
+          flexShrink: 0
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 20,
+          fontWeight: 900,
+          color: won ? "var(--moss)" : "var(--rose)"
+        }
+      }, r.inning1runs === 0 ? "✓ NRFI" : "✗ YRFI"), clv != null && /*#__PURE__*/React.createElement("div", {
+        title: "Closing line value \u2014 how the market moved between our pick and first pitch. Positive = we had real edge.",
+        style: {
+          cursor: "help",
+          fontSize: 11,
+          color: clv >= 0 ? "var(--moss)" : "var(--rose)",
+          fontWeight: 700,
+          marginTop: 2
+        }
+      }, "CLV ", clv > 0 ? "+" : "", clv.toFixed(1), "%"))));
+    })()), /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
         gap: 8,
