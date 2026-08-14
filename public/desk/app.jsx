@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-13.nrfi-countdown-v5";
+const BUILD = "2026-08-13.nrfi-parktip-v6";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -6164,7 +6164,11 @@ function FirstInning() {
               const label = f >= 1.06 ? "HITTER FRIENDLY" : f >= 1.02 ? "SLIGHT HITTER LEAN" : f <= 0.95 ? "PITCHER FRIENDLY" : f <= 0.98 ? "SLIGHT PITCHER LEAN" : null;
               const color = label && (label.includes("HITTER") ? "var(--rose)" : "var(--moss)");
               if (!label) return null;
-              const tip = (f >= 1.06 ? "Park + weather strongly favor scoring (YRFI)" : f >= 1.02 ? "Park + weather lean slightly toward scoring" : f <= 0.95 ? "Park + weather strongly suppress scoring (NRFI)" : "Park + weather lean slightly toward suppressing runs") + (r.parkEnv.note ? " · " + r.parkEnv.note : "");
+              const parkDir = r.parkEnv.park > 1.03 ? "hitter-friendly park" : r.parkEnv.park < 0.97 ? "pitcher-friendly park" : "neutral park";
+              const parkStr = "Park factor " + r.parkEnv.park.toFixed(2) + " (" + parkDir + ")";
+              const wxStr = r.parkEnv.note && r.parkEnv.note !== "neutral" ? r.parkEnv.note : "no significant weather";
+              const combinedStr = "Combined factor " + f.toFixed(2) + (f > 1 ? " — inflates run probability" : " — suppresses run probability");
+              const tip = parkStr + " · " + wxStr + " · " + combinedStr;
               return (
                 <div title={tip} style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4, marginLeft: 6, padding: "2px 7px", background: color === "var(--rose)" ? "rgba(220,60,60,0.12)" : "rgba(80,160,80,0.12)", border: "1px solid " + color, borderRadius: 4, fontSize: 11, fontWeight: 700, color, letterSpacing: "0.04em", cursor: "help" }}>
                   {label}
