@@ -6789,6 +6789,13 @@ const _pitI01 = new Map(); // pid:season -> {rate,sample,era,whip}
 const _teamI01 = new Map(); // teamId:season -> {rate,sample,ops}
 const _obpCache = new Map();
 const _travelCache = new Map();
+const _linescore = new Map(); // gamePk -> Promise<linescore>
+const _rolling = new Map(); // pid:season -> rolling NRFI windows
+// Shared linescore fetch — stores the Promise so concurrent callers dedup.
+function getLinescore(gamePk) {
+  if (!_linescore.has(gamePk)) _linescore.set(gamePk, getJson("https://statsapi.mlb.com/api/v1/game/" + gamePk + "/linescore").catch(() => null));
+  return _linescore.get(gamePk);
+}
 async function pitcherFirstInning(pid, season) {
   if (pid == null) return null;
   const k = pid + ":" + season;
@@ -6909,6 +6916,65 @@ async function pitcherMeta(pid, season) {
     id: pid
   };
   _pitMeta.set(k, val);
+  return val;
+}
+
+// Rolling first-inning clean % (SZN / L50 / L30 / L10) from actual game linescores.
+// Fetches the pitcher's game log to get start gamePks, then pulls each linescore
+// to check whether the first inning was scoreless. Shared linescore cache ensures
+// games appearing for both pitchers are only fetched once per page load.
+async function pitcherRollingNRFI(pid, season) {
+  if (pid == null) return null;
+  const k = pid + ":" + season;
+  if (_rolling.has(k)) return _rolling.get(k);
+  let val = null;
+  try {
+    const gl = await getJson("https://statsapi.mlb.com/api/v1/people/" + pid + "/stats?stats=gameLog&group=pitching&season=" + season);
+    const splits = gl.stats && gl.stats[0] && gl.stats[0].splits || [];
+    // Only actual starts; extract gamePk and home/away flag.
+    const items = splits.filter(s => Number(s.stat && s.stat.gamesStarted) === 1).map(s => ({
+      gamePk: s.game && s.game.gamePk,
+      isHome: !!s.isHome
+    })).filter(x => x.gamePk);
+    if (items.length) {
+      // Fire all linescore fetches concurrently (shared cache deduplicates).
+      const results = await Promise.all(items.map(async item => {
+        try {
+          const ls = await getLinescore(item.gamePk);
+          const inn1 = ls && ls.innings && ls.innings[0];
+          if (!inn1) return null;
+          // Home pitcher faces away batters (top of 1st); away pitcher faces home batters (bot).
+          const r = item.isHome ? Number(inn1.away && inn1.away.runs || 0) : Number(inn1.home && inn1.home.runs || 0);
+          return r === 0; // true = clean first inning
+        } catch {
+          return null;
+        }
+      }));
+      const valid = results.filter(x => x !== null);
+      if (valid.length) {
+        const pct = arr => arr.length ? Math.round(arr.filter(Boolean).length / arr.length * 100) : null;
+        val = {
+          szn: {
+            pct: pct(valid),
+            n: valid.length
+          },
+          l50: {
+            pct: pct(valid.slice(-50)),
+            n: Math.min(valid.length, 50)
+          },
+          l30: {
+            pct: pct(valid.slice(-30)),
+            n: Math.min(valid.length, 30)
+          },
+          l10: {
+            pct: pct(valid.slice(-10)),
+            n: Math.min(valid.length, 10)
+          }
+        };
+      }
+    }
+  } catch {/* leave null */}
+  _rolling.set(k, val);
   return val;
 }
 
@@ -7426,12 +7492,12 @@ function nrfiEvaluate(ctx) {
     away: {
       name: ctx.awayPP,
       hand: ctx.awayMeta && ctx.awayMeta.hand,
-      ...pitcherI01Profile(ctx.awayPit, ctx.awayMeta && ctx.awayMeta.seasonEra)
+      ...pitcherI01Profile(ctx.awayPit, ctx.awayMeta && ctx.awayMeta.seasonEra, ctx.awayRolling)
     },
     home: {
       name: ctx.homePP,
       hand: ctx.homeMeta && ctx.homeMeta.hand,
-      ...pitcherI01Profile(ctx.homePit, ctx.homeMeta && ctx.homeMeta.seasonEra)
+      ...pitcherI01Profile(ctx.homePit, ctx.homeMeta && ctx.homeMeta.seasonEra, ctx.homeRolling)
     }
   };
   return {
@@ -7459,7 +7525,7 @@ const I01_LG = {
 };
 
 // Composite first-inning pitcher grade: A+/A/B+/B/C/D/F with supporting stats.
-function pitcherI01Profile(pit, seasonEra) {
+function pitcherI01Profile(pit, seasonEra, rolling) {
   if (!pit || !pit.sample) return {
     grade: "—",
     score: 50,
@@ -7490,7 +7556,8 @@ function pitcherI01Profile(pit, seasonEra) {
     score,
     cleanPct,
     summary: parts.join("  ·  "),
-    vsNote
+    vsNote,
+    rolling: rolling || null
   };
 }
 function nrfiTier(pMax) {
@@ -7686,7 +7753,7 @@ async function scanNrfi(onProgress) {
     const awayPP = away && away.probablePitcher,
       homePP = home && home.probablePitcher;
     const lu = g.lineups || {};
-    const [awayPit, homePit, awayMeta, homeMeta, awayOff, homeOff, awayTravel, homeTravel] = await Promise.all([pitcherFirstInning(awayPP && awayPP.id, season), pitcherFirstInning(homePP && homePP.id, season), pitcherMeta(awayPP && awayPP.id, season), pitcherMeta(homePP && homePP.id, season), teamOffenseSplits(away && away.team && away.team.id, season), teamOffenseSplits(home && home.team && home.team.id, season), travelRest(away && away.team && away.team.id, date, g.venue && g.venue.id), travelRest(home && home.team && home.team.id, date, g.venue && g.venue.id)]);
+    const [awayPit, homePit, awayMeta, homeMeta, awayRolling, homeRolling, awayOff, homeOff, awayTravel, homeTravel] = await Promise.all([pitcherFirstInning(awayPP && awayPP.id, season), pitcherFirstInning(homePP && homePP.id, season), pitcherMeta(awayPP && awayPP.id, season), pitcherMeta(homePP && homePP.id, season), pitcherRollingNRFI(awayPP && awayPP.id, season), pitcherRollingNRFI(homePP && homePP.id, season), teamOffenseSplits(away && away.team && away.team.id, season), teamOffenseSplits(home && home.team && home.team.id, season), travelRest(away && away.team && away.team.id, date, g.venue && g.venue.id), travelRest(home && home.team && home.team.id, date, g.venue && g.venue.id)]);
     // Lineups vs the opposing starter's hand (needs the hands resolved first).
     const [awayLineup, homeLineup] = await Promise.all([topOrderStrength(lu.awayPlayers, season, homeMeta && homeMeta.hand, homeMeta && homeMeta.id), topOrderStrength(lu.homePlayers, season, awayMeta && awayMeta.hand, awayMeta && awayMeta.id)]);
     const wx = weatherPark(g, home && home.team && home.team.abbreviation);
@@ -7709,6 +7776,8 @@ async function scanNrfi(onProgress) {
       awayTravel,
       homeTravel,
       wx,
+      awayRolling,
+      homeRolling,
       awayPeri: awayPP ? periById[awayPP.id] : null,
       homePeri: homePP ? periById[homePP.id] : null,
       lg,
@@ -8146,7 +8215,52 @@ function FirstInning() {
       style: {
         color: "var(--amber)"
       }
-    }, p.vsNote))))), r.checks.map((ck, i) => /*#__PURE__*/React.createElement("div", {
+    }, p.vsNote)), p.rolling && (() => {
+      const wins = [{
+        label: "SZN",
+        ...p.rolling.szn
+      }, {
+        label: "L50",
+        ...p.rolling.l50
+      }, {
+        label: "L30",
+        ...p.rolling.l30
+      }, {
+        label: "L10",
+        ...p.rolling.l10
+      }];
+      const pColor = v => v >= 65 ? "var(--moss)" : v >= 50 ? "var(--fg)" : v >= 38 ? "var(--amber)" : "var(--rose)";
+      return /*#__PURE__*/React.createElement("div", {
+        style: {
+          display: "flex",
+          gap: 16,
+          marginTop: 5
+        }
+      }, wins.map(w => /*#__PURE__*/React.createElement("div", {
+        key: w.label,
+        style: {
+          textAlign: "center",
+          minWidth: 32
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 10,
+          color: "var(--dim)",
+          marginBottom: 1
+        }
+      }, w.label), /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontWeight: 700,
+          fontSize: 13,
+          color: w.pct != null ? pColor(w.pct) : "var(--dim)"
+        }
+      }, w.pct != null ? w.pct + "%" : "—"), /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 10,
+          color: "var(--dim)"
+        }
+      }, w.n, "g"))));
+    })()))), r.checks.map((ck, i) => /*#__PURE__*/React.createElement("div", {
       key: i,
       style: {
         display: "flex",
