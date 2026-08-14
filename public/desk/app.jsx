@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-10.careful-15m";
+const BUILD = "2026-08-13.nrfi-first-inning";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -2209,12 +2209,13 @@ function App() {
         </header>
 
         <nav className="tabs">
-          {[["picks", "Predictions"], ["analyze", "Ask an event"], ["parlay", "Combos"], ["commodities", "15-Minute"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "Accuracy"]].map(([k, l]) => (
+          {[["picks", "Predictions"], ["nrfi", "First Inning"], ["analyze", "Ask an event"], ["parlay", "Combos"], ["commodities", "15-Minute"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "Accuracy"]].map(([k, l]) => (
             <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
           ))}
         </nav>
 
         {tab === "picks" && <Picks ledger={ledger} onPick={(m) => { setPending(m); setTab("analyze"); }} />}
+        {tab === "nrfi" && <FirstInning />}
         {tab === "analyze" && <Analyze fw={fw} onSave={saveEntry} pending={pending} clearPending={() => setPending(null)} ledger={ledger} />}
         {tab === "parlay" && <Parlay onPick={(m) => { setPending(m); setTab("analyze"); }} />}
         {tab === "commodities" && <Commodities onPick={(m) => { setPending(m); setTab("analyze"); }} />}
@@ -5171,6 +5172,754 @@ function Commodities({ onPick }) {
    worth picking — books-consensus true odds, net edge after fees, the
    scanner's decision, and the full-analysis verdict when one exists. Free
    to refresh; deep dive hands the market to the Analyze pipeline. */
+/* ================= First Inning — NRFI / YRFI ==================
+   A calibrated first-inning run model built from MLB StatsAPI split data,
+   then refined by a multi-check research pass: pitching, both teams' 1st-
+   inning offense, posted lineup (top of the order — also captures late
+   scratches/injuries), travel & rest, and weather/park. NRFIKINGKY's live
+   picks (JuiceReel) ride along as a tailing signal. Self-graded from the
+   real first-inning line score. */
+
+const NRFI_LG_LAMBDA = 0.52;  // league avg runs per team in the 1st inning
+const NRFI_LG_P0 = 0.72;      // league P(no run in a half-inning) -> ~52% NRFI
+const NRFI_PIT_REG = 12;      // heavy regression — 1st-inning rate is a tiebreaker, not the thesis
+const NRFI_OFF_REG = 6;       // regression games for a team's 1st-inning offense
+const NRFI_LG_OBP = 0.318;    // league on-base baseline for lineup strength
+// Run-scoring park factors by home-team abbreviation (1.0 = neutral,
+// directional estimates compressed toward 1 for a single inning).
+const NRFI_PARK = {
+  COL: 1.14, BOS: 1.06, CIN: 1.06, KC: 1.04, ARI: 1.04, BAL: 1.03, PHI: 1.03,
+  TEX: 1.02, TOR: 1.02, LAA: 1.02, MIN: 1.02, ATL: 1.01, HOU: 1.01, CHC: 1.01,
+  NYY: 1.01, WSH: 1.01, MIL: 1.00, CWS: 1.00, LAD: 0.99, STL: 0.99, PIT: 0.99,
+  TB: 0.98, CLE: 0.98, DET: 0.97, NYM: 0.97, OAK: 0.97, ATH: 0.97, SAC: 0.97,
+  MIA: 0.95, SEA: 0.94, SD: 0.94, SF: 0.93,
+};
+const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+
+const _pitI01 = new Map();   // pid:season -> {rate,sample,era,whip}
+const _teamI01 = new Map();  // teamId:season -> {rate,sample,ops}
+const _obpCache = new Map();
+const _travelCache = new Map();
+
+async function pitcherFirstInning(pid, season) {
+  if (pid == null) return null;
+  const k = pid + ":" + season;
+  if (_pitI01.has(k)) return _pitI01.get(k);
+  let val = null;
+  try {
+    const d = await getJson("https://statsapi.mlb.com/api/v1/people/" + pid +
+      "/stats?stats=statSplits&group=pitching&sitCodes=i01&season=" + season);
+    const st = d.stats && d.stats[0] && d.stats[0].splits && d.stats[0].splits[0] && d.stats[0].splits[0].stat;
+    if (st && st.gamesPlayed) {
+      const bf = Number(st.battersFaced || 0);
+      val = { rate: Number(st.runs || 0) / st.gamesPlayed, sample: st.gamesPlayed,
+        era: st.era != null ? Number(st.era) : null, whip: st.whip != null ? Number(st.whip) : null,
+        krate: bf ? Number(st.strikeOuts || 0) / bf : null,
+        obpA: bf ? (Number(st.hits || 0) + Number(st.baseOnBalls || 0) + Number(st.hitByPitch || 0)) / bf : null };
+    }
+  } catch { /* leave null */ }
+  _pitI01.set(k, val);
+  return val;
+}
+
+// One call gets 1st-inning offense AND platoon splits (OPS vs LHP/RHP).
+async function teamOffenseSplits(teamId, season) {
+  if (teamId == null) return null;
+  const k = teamId + ":" + season;
+  if (_teamI01.has(k)) return _teamI01.get(k);
+  let val = null;
+  try {
+    const d = await getJson("https://statsapi.mlb.com/api/v1/teams/" + teamId +
+      "/stats?stats=statSplits&group=hitting&sitCodes=i01,vr,vl&season=" + season);
+    const splits = (d.stats && d.stats[0] && d.stats[0].splits) || [];
+    const find = (re) => { const s = splits.find((x) => re.test((x.split && x.split.description) || "")); return s && s.stat; };
+    const i01 = find(/first inning/i), vr = find(/right/i), vl = find(/left/i);
+    if (i01 && i01.gamesPlayed) {
+      val = { rate: Number(i01.runs || 0) / i01.gamesPlayed, sample: i01.gamesPlayed,
+        opsVsR: vr && vr.ops != null ? Number(vr.ops) : null,
+        opsVsL: vl && vl.ops != null ? Number(vl.ops) : null };
+    }
+  } catch { /* leave null */ }
+  _teamI01.set(k, val);
+  return val;
+}
+
+// Starter handedness (people) + recent form (last-3-start ERA from gameLog).
+const _pitMeta = new Map();
+const parseIp = (ip) => { const m = String(ip == null ? "0" : ip).split("."); return Number(m[0] || 0) + (m[1] === "1" ? 1 / 3 : m[1] === "2" ? 2 / 3 : 0); };
+async function pitcherMeta(pid, season) {
+  if (pid == null) return { hand: null, form: null };
+  const k = pid + ":" + season;
+  if (_pitMeta.has(k)) return _pitMeta.get(k);
+  let hand = null, form = null, seasonEra = null, gs = null, g = null, ip = null;
+  try {
+    const [p, gl] = await Promise.all([
+      getJson("https://statsapi.mlb.com/api/v1/people/" + pid + "?hydrate=stats(group=[pitching],type=[season],season=" + season + ")"),
+      getJson("https://statsapi.mlb.com/api/v1/people/" + pid + "/stats?stats=gameLog&group=pitching&season=" + season),
+    ]);
+    const pp = p.people && p.people[0];
+    hand = (pp && pp.pitchHand && pp.pitchHand.code) || null;
+    const sst = pp && pp.stats && pp.stats[0] && pp.stats[0].splits && pp.stats[0].splits[0] && pp.stats[0].splits[0].stat;
+    seasonEra = sst && sst.era != null ? Number(sst.era) : null;
+    if (sst) { gs = sst.gamesStarted != null ? Number(sst.gamesStarted) : null; g = sst.gamesPlayed != null ? Number(sst.gamesPlayed) : null; ip = sst.inningsPitched != null ? parseIp(sst.inningsPitched) : null; }
+    const sp = (gl.stats && gl.stats[0] && gl.stats[0].splits) || [];
+    const last = sp.slice(-3);
+    if (last.length) {
+      let er = 0, lip = 0;
+      last.forEach((s) => { er += Number((s.stat && s.stat.earnedRuns) || 0); lip += parseIp(s.stat && s.stat.inningsPitched); });
+      if (lip > 0) form = (er * 9) / lip;
+    }
+  } catch { /* leave nulls */ }
+  const val = { hand, form, seasonEra, gs, g, ip };
+  _pitMeta.set(k, val);
+  return val;
+}
+
+// Platoon edge: an offense's OPS vs the opposing starter's hand, relative to
+// its own two-hand average. >1 favours a run (YRFI), <1 favours NRFI.
+function platoonFactor(off, oppHand) {
+  if (!off || !oppHand || off.opsVsR == null || off.opsVsL == null) return { f: 1, note: "platoon data n/a" };
+  const ops = oppHand === "L" ? off.opsVsL : off.opsVsR;
+  const base = (off.opsVsR + off.opsVsL) / 2;
+  if (!base) return { f: 1, note: "platoon data n/a" };
+  return { f: nClamp(ops / base, 0.85, 1.18), note: "OPS " + ops.toFixed(3) + " vs " + (oppHand === "L" ? "LHP" : "RHP") };
+}
+// Recent form: hot starter (low ERA) suppresses the 1st, cold starter inflates it.
+function formFactor(era) {
+  if (era == null) return { f: 1, note: "recent form n/a" };
+  return { f: nClamp(1 + ((era - 4.15) / 4.15) * 0.25, 0.85, 1.2), note: "last 3 starts " + era.toFixed(2) + " ERA" };
+}
+// Pitcher THESIS — stable season peripherals (the real predictors), not the
+// noisy first-inning run rate: strikeouts + whiff + first-pitch strikes suppress
+// runs; walks + barrels (HR risk, no sequencing needed) inflate; grounders (DPs)
+// suppress. `lg` = league averages for each.
+function pitchSkillFactor(peri, lg) {
+  if (!peri || !lg) return { f: 1, note: "peripherals n/a" };
+  let f = 1;
+  const dev = (v, base, w, dir) => { if (v != null && base) f *= nClamp(1 + dir * ((v - base) / base) * w, 0.88, 1.14); };
+  dev(peri.k, lg.k, 0.35, -1);            // strikeouts prevent the sequencing a run requires
+  dev(peri.whiff, lg.whiff, 0.12, -1);
+  dev(peri.fstrike, lg.fstrike, 0.20, -1); // first-pitch strikes avoid walk traffic
+  dev(peri.bb, lg.bb, 0.30, 1);           // walks are the #1 way a clean 1st gets traffic
+  dev(peri.barrel, lg.barrel, 0.25, 1);   // a leadoff barrel/HR scores with no sequencing
+  dev(peri.gb, lg.gb, 0.15, -1);          // grounders -> double plays end innings
+  const note = peri.k != null
+    ? "K " + peri.k.toFixed(0) + "% · BB " + (peri.bb != null ? peri.bb.toFixed(0) : "-") + "% · barrel " + (peri.barrel != null ? peri.barrel.toFixed(0) : "-") + "% · GB " + (peri.gb != null ? peri.gb.toFixed(0) : "-") + "%"
+    : "n/a";
+  return { f: nClamp(f, 0.80, 1.20), note };
+}
+// Opener / bullpen game: a starter who's really a reliever (few starts, low
+// innings/appearance) throwing max-effort for one inning is a strong, often
+// underrated NRFI arm.
+function openerGameFactor(meta) {
+  if (!meta || meta.gs == null || meta.g == null) return { f: 1, note: "", opener: false };
+  const startShare = meta.g > 0 ? meta.gs / meta.g : 1;
+  const ipPerG = meta.g > 0 && meta.ip != null ? meta.ip / meta.g : null;
+  const opener = meta.gs === 0 || (ipPerG != null && ipPerG < 3.2) || startShare < 0.5;
+  return opener ? { f: 0.93, note: "likely opener/bullpen game", opener: true } : { f: 1, note: "starter", opener: false };
+}
+// Clean opener vs slow starter: a starter whose 1st-inning ERA runs well below
+// his overall ERA specializes in clean opening frames (NRFI); above it = slow starter.
+function openerFactor(i01Era, seasonEra) {
+  if (i01Era == null || seasonEra == null || seasonEra <= 0) return { f: 1, note: "n/a" };
+  const ratio = i01Era / seasonEra;
+  const tag = ratio <= 0.8 ? "clean opener" : ratio >= 1.25 ? "slow starter" : "typical";
+  return { f: nClamp(1 + (ratio - 1) * 0.15, 0.9, 1.12), note: "1st-inn " + i01Era.toFixed(2) + " vs " + seasonEra.toFixed(2) + " ERA (" + tag + ")" };
+}
+
+// Top-of-order strength from the posted lineup (first 3 due up). One batched
+// people call. Because it reads the ACTUAL lineup, late scratches/injuries are
+// already reflected — the bench bat simply appears instead of the star.
+// Leadoff-weighted (0.5/0.3/0.2) top-of-order OBP vs the OPPOSING STARTER'S
+// HAND — the single sharpest offensive signal for a first-inning run.
+async function topOrderStrength(players, season, oppHand) {
+  const ordered = (players || []).slice(0, 3).map((p) => p && p.id).filter(Boolean);
+  if (ordered.length < 3) return { factor: 1, obp: null, note: "lineup not posted" };
+  const sit = oppHand === "L" ? "vl" : oppHand === "R" ? "vr" : null;
+  const k = ordered.join(",") + ":" + (sit || "all") + ":" + season;
+  if (_obpCache.has(k)) return _obpCache.get(k);
+  let val = { factor: 1, obp: null, note: "lineup not posted" };
+  try {
+    const type = sit ? "type=[statSplits],sitCodes=[" + sit + "]" : "type=[season]";
+    const d = await getJson("https://statsapi.mlb.com/api/v1/people?personIds=" + ordered.join(",") +
+      "&hydrate=stats(group=[hitting]," + type + ",season=" + season + ")");
+    const byId = {};
+    (d.people || []).forEach((p) => {
+      const s = p.stats && p.stats[0] && p.stats[0].splits && p.stats[0].splits[0] && p.stats[0].splits[0].stat;
+      if (s && s.obp != null) byId[p.id] = Number(s.obp);
+    });
+    const w = [0.5, 0.3, 0.2];
+    let num = 0, den = 0;
+    ordered.forEach((id, i) => { if (byId[id] != null) { num += byId[id] * w[i]; den += w[i]; } });
+    if (den > 0) {
+      const obp = num / den;
+      val = { factor: nClamp(obp / NRFI_LG_OBP, 0.82, 1.24), obp,
+        note: "1-3 OBP " + obp.toFixed(3) + (sit ? " vs " + (oppHand === "L" ? "LHP" : "RHP") : "") };
+    }
+  } catch { /* leave neutral */ }
+  _obpCache.set(k, val);
+  return val;
+}
+
+// Travel & rest: fatigue nudges early offense down slightly (favours NRFI).
+async function travelRest(teamId, todayStr, venueId) {
+  if (teamId == null) return { factor: 1, note: "" };
+  const k = teamId + ":" + todayStr;
+  if (_travelCache.has(k)) return _travelCache.get(k);
+  let val = { factor: 1, note: "settled" };
+  try {
+    const d0 = new Date(todayStr + "T12:00:00Z");
+    const start = new Date(d0.getTime() - 3 * 864e5).toISOString().slice(0, 10);
+    const d = await getJson("https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=" + teamId +
+      "&startDate=" + start + "&endDate=" + todayStr + "&hydrate=venue");
+    const games = [];
+    (d.dates || []).forEach((dt) => (dt.games || []).forEach((g) => games.push({ date: dt.date, g })));
+    const prev = games.filter((x) => x.date < todayStr).sort((a, b) => a.date.localeCompare(b.date)).pop();
+    if (prev) {
+      const restDays = Math.round((d0 - new Date(prev.date + "T12:00:00Z")) / 864e5);
+      const prevVenue = prev.g.venue && prev.g.venue.id;
+      const traveled = prevVenue && venueId && prevVenue !== venueId;
+      if (restDays <= 1 && traveled) val = { factor: 0.93, note: "played yesterday + traveled" };
+      else if (restDays <= 1) val = { factor: 0.98, note: "played yesterday" };
+      else if (restDays >= 3) val = { factor: 1.03, note: restDays + " days rest" };
+      else val = { factor: 1, note: restDays + "d rest" };
+    }
+  } catch { /* leave neutral */ }
+  _travelCache.set(k, val);
+  return val;
+}
+
+function weatherPark(game, homeAbbr) {
+  const parkFactor = NRFI_PARK[homeAbbr] || 1;
+  let wFactor = 1, note = "neutral park";
+  const w = game.weather || {};
+  const temp = w.temp != null ? Number(w.temp) : null;
+  const cond = String(w.condition || "");
+  const wind = String(w.wind || "");
+  if (/Dome|Roof Closed/i.test(cond)) { wFactor = 0.97; note = "indoors"; }
+  else {
+    if (temp != null) { if (temp >= 85) wFactor *= 1.05; else if (temp <= 50) wFactor *= 0.94; }
+    // MLB's wind string is already field-relative ("Out To CF", "In From CF",
+    // "L To R"). Wind to/from center scores hardest in the early innings.
+    const mph = Number((wind.match(/(\d+)/) || [])[1] || 0);
+    if (mph >= 8) {
+      if (/out to c/i.test(wind)) wFactor *= 1.08;
+      else if (/in from c/i.test(wind)) wFactor *= 0.92;
+      else if (/out to/i.test(wind)) wFactor *= 1.04;
+      else if (/in from/i.test(wind)) wFactor *= 0.97;
+      // crosswind (L To R / R To L) ~ neutral
+    }
+    note = (temp != null ? temp + "°" : "") + (wind ? " · " + wind : "");
+  }
+  return { factor: parkFactor * wFactor, park: parkFactor, note: note || "neutral" };
+}
+
+function nrfiRegress(rate, sample, reg) {
+  if (rate == null) return NRFI_LG_LAMBDA;
+  return (rate * sample + NRFI_LG_LAMBDA * reg) / (sample + reg);
+}
+// log5-style matchup of an offense rate vs a pitcher rate around league mean
+function halfNoRun(offLambda, pitLambda, env) {
+  let lam = (offLambda * pitLambda) / NRFI_LG_LAMBDA;
+  lam *= (env || 1);
+  lam = nClamp(lam, 0.05, 1.9);
+  return Math.pow(NRFI_LG_P0, lam / NRFI_LG_LAMBDA);
+}
+
+// Full research pass for one game -> probability + informative checks.
+function nrfiEvaluate(ctx) {
+  const awayOffBase = nrfiRegress(ctx.awayOff && ctx.awayOff.rate, (ctx.awayOff && ctx.awayOff.sample) || 0, NRFI_OFF_REG);
+  const homeOffBase = nrfiRegress(ctx.homeOff && ctx.homeOff.rate, (ctx.homeOff && ctx.homeOff.sample) || 0, NRFI_OFF_REG);
+  const awayPitBase = nrfiRegress(ctx.awayPit && ctx.awayPit.rate, (ctx.awayPit && ctx.awayPit.sample) || 0, NRFI_PIT_REG);
+  const homePitBase = nrfiRegress(ctx.homePit && ctx.homePit.rate, (ctx.homePit && ctx.homePit.sample) || 0, NRFI_PIT_REG);
+
+  // Platoon: each offense vs the opposing starter's hand. Recent form + skill peripherals per starter.
+  const awayPlat = platoonFactor(ctx.awayOff, ctx.homeMeta && ctx.homeMeta.hand);
+  const homePlat = platoonFactor(ctx.homeOff, ctx.awayMeta && ctx.awayMeta.hand);
+  const awayForm = formFactor(ctx.awayMeta && ctx.awayMeta.form);
+  const homeForm = formFactor(ctx.homeMeta && ctx.homeMeta.form);
+  const awaySkill = pitchSkillFactor(ctx.awayPeri, ctx.lg);
+  const homeSkill = pitchSkillFactor(ctx.homePeri, ctx.lg);
+  const awayOpen = openerFactor(ctx.awayPit && ctx.awayPit.era, ctx.awayMeta && ctx.awayMeta.seasonEra);
+  const homeOpen = openerFactor(ctx.homePit && ctx.homePit.era, ctx.homeMeta && ctx.homeMeta.seasonEra);
+  const awayOpenG = openerGameFactor(ctx.awayMeta);
+  const homeOpenG = openerGameFactor(ctx.homeMeta);
+
+  // Blend each side's adjustments by DEVIATION-from-neutral (not raw product)
+  // so correlated signals don't compound, then cap the net swing. Platoon weight
+  // is lower now that lineups are measured directly vs the starter's hand.
+  const offMult = (lineup, plat, travel) =>
+    nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.4 + (travel.factor - 1) * 0.6, 0.80, 1.30);
+  const pitMult = (skill, form, opener, openG) =>
+    nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.6 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0, 0.78, 1.25);
+  const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel);
+  const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel);
+  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG);
+  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG);
+  const umpFactor = ctx.umpFactor || 1;
+  const env = nClamp(1 + (ctx.wx.factor - 1) + (umpFactor - 1), 0.85, 1.20);
+  const p0top = halfNoRun(awayOff, homePit, env); // away bats vs home starter
+  const p0bot = halfNoRun(homeOff, awayPit, env); // home bats vs away starter
+  const pNRFI = p0top * p0bot;
+
+  // Data-confidence: a decisive number on missing inputs isn't a real edge.
+  let conf = 1;
+  const thin = (p) => !p || (p.sample || 0) < 6;
+  if (thin(ctx.awayPit)) conf -= 0.2;
+  if (thin(ctx.homePit)) conf -= 0.2;
+  if (!ctx.awayOff) conf -= 0.1;
+  if (!ctx.homeOff) conf -= 0.1;
+  if (ctx.awayLineup.obp == null) conf -= 0.12;
+  if (ctx.homeLineup.obp == null) conf -= 0.12;
+  if (ctx.awayPeri == null) conf -= 0.05;
+  if (ctx.homePeri == null) conf -= 0.05;
+  conf = nClamp(conf, 0, 1);
+
+  const lean = (v, hi, lo) => (v >= hi ? "yrfi" : v <= lo ? "nrfi" : "neutral");
+  const facLean = (f) => (f >= 1.05 ? "yrfi" : f <= 0.96 ? "nrfi" : "neutral");
+  const hand = (m) => (m && m.hand ? " (" + m.hand + "HP)" : "");
+  const checks = [
+    { label: "Starting pitching (1st inning)",
+      detail: ctx.homePP + hand(ctx.homeMeta) + " " + awayPit0(ctx.homePit) + " · " + ctx.awayPP + hand(ctx.awayMeta) + " " + awayPit0(ctx.awayPit),
+      lean: lean((awayPitBase + homePitBase) / 2, 0.6, 0.42) },
+    { label: "Pitcher skill (K/BB/barrel/GB)",
+      detail: ctx.homePP + ": " + homeSkill.note + " · " + ctx.awayPP + ": " + awaySkill.note,
+      lean: facLean((awaySkill.f + homeSkill.f) / 2) },
+    { label: "Opener / bullpen game",
+      detail: ctx.homePP + ": " + homeOpenG.note + " · " + ctx.awayPP + ": " + awayOpenG.note,
+      lean: (awayOpenG.opener || homeOpenG.opener) ? "nrfi" : "neutral" },
+    { label: "Starter recent form",
+      detail: ctx.homePP + ": " + homeForm.note + " · " + ctx.awayPP + ": " + awayForm.note,
+      lean: facLean((awayForm.f + homeForm.f) / 2) },
+    { label: "Clean opener vs slow starter",
+      detail: ctx.homePP + ": " + homeOpen.note + " · " + ctx.awayPP + ": " + awayOpen.note,
+      lean: facLean((awayOpen.f + homeOpen.f) / 2) },
+    { label: "1st-inning offense",
+      detail: ctx.awayName + " " + rate2(ctx.awayOff) + " R · " + ctx.homeName + " " + rate2(ctx.homeOff) + " R",
+      lean: lean((awayOffBase + homeOffBase) / 2, 0.6, 0.44) },
+    { label: "Platoon / handedness",
+      detail: ctx.awayName + ": " + awayPlat.note + " · " + ctx.homeName + ": " + homePlat.note,
+      lean: facLean((awayPlat.f + homePlat.f) / 2) },
+    { label: "Lineups (leadoff-weighted)",
+      detail: ctx.awayName + ": " + ctx.awayLineup.note + " · " + ctx.homeName + ": " + ctx.homeLineup.note,
+      lean: facLean((ctx.awayLineup.factor + ctx.homeLineup.factor) / 2) },
+    { label: "Travel & rest",
+      detail: ctx.awayName + ": " + ctx.awayTravel.note + " · " + ctx.homeName + ": " + ctx.homeTravel.note,
+      lean: (ctx.awayTravel.factor * ctx.homeTravel.factor) < 0.97 ? "nrfi" : "neutral" },
+    { label: "Weather & park", detail: ctx.wx.note, lean: facLean(ctx.wx.factor) },
+    { label: "Umpire",
+      detail: ctx.umpName ? (ctx.umpName + (ctx.umpNote ? " — " + ctx.umpNote : (umpFactor === 1 ? " (tendency n/a)" : ""))) : "not posted",
+      lean: umpFactor <= 0.97 ? "nrfi" : umpFactor >= 1.03 ? "yrfi" : "neutral" },
+  ];
+  const call = pNRFI >= 0.5 ? "nrfi" : "yrfi";
+  const nonNeutral = checks.filter((c) => c.lean !== "neutral");
+  const agree = nonNeutral.filter((c) => c.lean === call).length;
+  return { pNRFI, checks, aligned: { agree, total: nonNeutral.length }, confidence: conf };
+}
+const rate2 = (o) => (o && o.rate != null ? o.rate.toFixed(2) : "—");
+const awayPit0 = (o) => (o && o.rate != null ? o.rate.toFixed(2) + " R/1st" : "TBD");
+
+function nrfiTier(pMax) {
+  return pMax >= 70 ? { t: "STRONGEST", cls: "t-strongest", c: "var(--moss)" }
+    : pMax >= 63 ? { t: "STRONG", cls: "t-strong", c: "var(--moss)" }
+    : pMax >= 57 ? { t: "LEAN", cls: "t-lean", c: "var(--amber)" }
+    : { t: "TOSS-UP", cls: "", c: "var(--dim)" };
+}
+
+// Calibration prior from the offline backtest (scripts/desk-nrfi-backtest.js,
+// 186 games): actual 51.1% vs model 50.7%, Brier 0.230 < 0.250 base, 66%
+// pick-side accuracy. The tiny shift confirms the model is already honest.
+// Used until enough LIVE picks are graded to calibrate on real results.
+const NRFI_CALIB_SEED = { c: 0.016, n: 186, active: true, source: "backtest" };
+
+// Empirical calibration: once enough calls are graded, shift the model's
+// probabilities (in logit space) so its average prediction matches the actual
+// NRFI hit rate — i.e. make "70%" really mean 70%. Uses the RAW model pNRFI
+// logged per pick vs whether the 1st was scoreless. Inactive under 25 games,
+// and shrunk by sample size so it can't overcorrect early.
+function nrfiCalibration(record) {
+  const g = (record || []).filter((e) => e.pNRFI != null && e.firstInningRuns != null);
+  if (g.length < 25) return { c: 0, n: g.length, active: false };
+  const cp = (x) => nClamp(x, 0.05, 0.95);
+  const meanPred = g.reduce((s, e) => s + e.pNRFI, 0) / g.length;
+  const actual = g.filter((e) => e.firstInningRuns === 0).length / g.length;
+  const shrink = Math.min(1, g.length / 100);
+  const c = nClamp((logit(cp(actual)) - logit(cp(meanPred))) * shrink, -0.6, 0.6);
+  return { c, n: g.length, active: true };
+}
+function applyCalibration(pNRFI, calib) {
+  if (!calib || !calib.active) return pNRFI;
+  return nClamp(unlogit(logit(nClamp(pNRFI, 0.02, 0.98)) + calib.c), 0.02, 0.98);
+}
+
+// Plain-English "what to do" for a game: turns model confidence + check
+// consensus into an obvious BET / LEAN / PASS call in one line.
+function nrfiVerdict(r) {
+  const p = r.pMax;                       // model confidence on the called side
+  const side = r.call;                    // "NRFI" | "YRFI"
+  const outcome = side === "NRFI" ? "No run scores in the 1st" : "A run scores in the 1st";
+  const ORDER = ["PASS", "LEAN", "BET", "STRONG"];
+  const down = (s, n) => ORDER[Math.max(0, ORDER.indexOf(s) - n)];
+
+  // 1) Raw strength from the probability alone.
+  let strength = p >= 70 ? "STRONG" : p >= 63 ? "BET" : p >= 57 ? "LEAN" : "PASS";
+  const notes = [];
+
+  // 2) Consensus gate: a decisive number with split signals is fragile.
+  const total = r.aligned ? r.aligned.total : 0;
+  const agree = r.aligned ? r.aligned.agree : 0;
+  const frac = total ? agree / total : 1;
+  if (total >= 3 && frac < 0.5 && strength !== "PASS") { strength = down(strength, 1); notes.push("signals split"); }
+
+  // 3) Confidence gate: don't fire a strong wager on missing data.
+  const conf = r.confidence != null ? r.confidence : 1;
+  if (conf < 0.35) { strength = "PASS"; notes.push("thin data"); }
+  else if (conf < 0.55 && (strength === "STRONG" || strength === "BET")) { strength = "LEAN"; notes.push("limited data"); }
+  // STRONG demands both high confidence AND strong agreement.
+  if (strength === "STRONG" && !(conf >= 0.7 && frac >= 0.6)) { strength = "BET"; notes.push("not full confidence"); }
+
+  // 4) Value gate: a great matchup at an efficient/short price is NOT a wager.
+  // The probability stays model-only; the market only decides if there's value.
+  if (r.market) {
+    const edge = r.market.edge;           // model% - market% on our side
+    const mktProb = r.market.marketSide;  // market's implied % on our side
+    if (edge < 2) { strength = "PASS"; notes.push("market efficient — no value"); }
+    else if (mktProb >= 62 && edge < 5) { strength = "PASS"; notes.push("juice too short"); }
+    else if ((strength === "STRONG" || strength === "BET") && edge < 3) { strength = down(strength, 1); notes.push("thin value"); }
+    else if (edge >= 3) notes.push("value +" + edge.toFixed(0) + "% vs market");
+  }
+
+  const isBet = strength === "STRONG" || strength === "BET";
+  const label = strength === "STRONG" ? "★ BET " + side
+    : strength === "BET" ? "BET " + side
+    : strength === "LEAN" ? "Lean " + side
+    : "Pass — too close";
+  const color = isBet ? "var(--moss)" : strength === "LEAN" ? "var(--amber)" : "var(--dim)";
+  const word = strength === "STRONG" ? "strong" : strength === "BET" ? "solid" : strength === "LEAN" ? "slight" : "no";
+  const confLbl = conf >= 0.8 ? "high" : conf >= 0.55 ? "medium" : "low";
+  const al = total ? " " + agree + "/" + total + " checks agree." : "";
+  const tail = " Confidence: " + confLbl + "." + (notes.length ? " (" + notes.join("; ") + ")" : "");
+  const blurb = (strength === "PASS"
+    ? outcome + " only " + p.toFixed(0) + "% — basically a coin flip." + al
+    : outcome + " — " + p.toFixed(0) + "% (" + word + " lean)." + al) + tail;
+  return { strength, side, isBet, label, color, blurb, confLbl };
+}
+
+// Match one of NRFIKINGKY's picks to a scheduled game by team-name overlap.
+function nrfiTokens(name) {
+  return String(name || "").toLowerCase().replace(/[^a-z ]/g, " ").split(/\s+/).filter((w) => w.length >= 3);
+}
+function nrfiTeamMatch(a, b) {
+  const A = nrfiTokens(a), B = nrfiTokens(b);
+  return A.some((w) => B.includes(w));
+}
+function matchKingPick(row, kingOpen) {
+  for (const kp of kingOpen || []) {
+    if ((kp.teams || []).length !== 2) continue;
+    const hitAway = kp.teams.some((t) => nrfiTeamMatch(t, row.away));
+    const hitHome = kp.teams.some((t) => nrfiTeamMatch(t, row.home));
+    if (hitAway && hitHome) return kp;
+  }
+  return null;
+}
+
+// Scan today's MLB slate and run the research pass on every game.
+async function scanNrfi(onProgress) {
+  const season = new Date().getUTCFullYear();
+  const date = today();
+  const [sch, whiffRes, umpRes] = await Promise.all([
+    getJson("https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=" + date +
+      "&hydrate=probablePitcher,linescore,team,lineups,weather,venue,officials"),
+    fetch("/api/desk/savant").then((r) => r.json()).catch(() => null),
+    fetch("/api/desk/umpires").then((r) => r.json()).catch(() => null),
+  ]);
+  const periById = (whiffRes && whiffRes.byId) || {};
+  const lg = (whiffRes && whiffRes.lg) || { k: 22, bb: 8, barrel: 7.5, gb: 44, whiff: 24.5, fstrike: 60 };
+  const umpTable = (umpRes && umpRes.umpires) || {};
+  const games = (sch.dates && sch.dates[0] && sch.dates[0].games) || [];
+  let done = 0;
+  const rows = await mapLimit(games, 4, async (g) => {
+    const away = g.teams && g.teams.away, home = g.teams && g.teams.home;
+    const awayPP = away && away.probablePitcher, homePP = home && home.probablePitcher;
+    const lu = g.lineups || {};
+    const [awayPit, homePit, awayMeta, homeMeta, awayOff, homeOff, awayTravel, homeTravel] =
+      await Promise.all([
+        pitcherFirstInning(awayPP && awayPP.id, season),
+        pitcherFirstInning(homePP && homePP.id, season),
+        pitcherMeta(awayPP && awayPP.id, season),
+        pitcherMeta(homePP && homePP.id, season),
+        teamOffenseSplits(away && away.team && away.team.id, season),
+        teamOffenseSplits(home && home.team && home.team.id, season),
+        travelRest(away && away.team && away.team.id, date, g.venue && g.venue.id),
+        travelRest(home && home.team && home.team.id, date, g.venue && g.venue.id),
+      ]);
+    // Lineups vs the opposing starter's hand (needs the hands resolved first).
+    const [awayLineup, homeLineup] = await Promise.all([
+      topOrderStrength(lu.awayPlayers, season, homeMeta && homeMeta.hand),
+      topOrderStrength(lu.homePlayers, season, awayMeta && awayMeta.hand),
+    ]);
+    const wx = weatherPark(g, home && home.team && home.team.abbreviation);
+    const hpUmp = (g.officials || []).find((o) => o.officialType === "Home Plate");
+    const umpName = hpUmp && hpUmp.official && hpUmp.official.fullName;
+    const umpEntry = umpName ? umpTable[umpName] : null;
+    const ctx = {
+      awayName: away && away.team && away.team.name, homeName: home && home.team && home.team.name,
+      awayPP: (awayPP && awayPP.fullName) || "TBD", homePP: (homePP && homePP.fullName) || "TBD",
+      awayOff, homeOff, awayPit, homePit, awayMeta, homeMeta,
+      awayLineup, homeLineup, awayTravel, homeTravel, wx,
+      awayPeri: awayPP ? periById[awayPP.id] : null,
+      homePeri: homePP ? periById[homePP.id] : null,
+      lg,
+      umpName: umpName || null, umpFactor: umpEntry ? umpEntry.runFactor : 1, umpNote: umpEntry ? umpEntry.note : "",
+    };
+    const ev = nrfiEvaluate(ctx);
+    const ls = g.linescore || {};
+    const inn1 = (ls.innings || [])[0];
+    const state = g.status && g.status.abstractGameState;
+    done++; if (onProgress) onProgress(done, games.length);
+    return {
+      gamePk: g.gamePk, date, startUtc: g.gameDate,
+      away: ctx.awayName, home: ctx.homeName,
+      awayAbbr: away && away.team && away.team.abbreviation, homeAbbr: home && home.team && home.team.abbreviation,
+      awayPP: ctx.awayPP, homePP: ctx.homePP,
+      pNRFI: ev.pNRFI, pYRFI: 1 - ev.pNRFI, checks: ev.checks, aligned: ev.aligned, confidence: ev.confidence,
+      hasPitchers: !!(awayPP && awayPP.id && homePP && homePP.id),
+      dataOk: !!(awayOff && homeOff && awayPit && homePit),
+      lineupPosted: (ctx.awayLineup.obp != null && ctx.homeLineup.obp != null),
+      state, currentInning: ls.currentInning || 0,
+      inning1runs: inn1 ? (Number((inn1.away && inn1.away.runs) || 0) + Number((inn1.home && inn1.home.runs) || 0)) : null,
+      final: state === "Final",
+    };
+  });
+  return rows;
+}
+
+// Kalshi's own first-inning market (series KXMLBRFI). YES = a run scores, so
+// market NRFI% = 100 - yes price. Lets the model be checked against the market.
+async function fetchKalshiRFI() {
+  const root = "https://api.elections.kalshi.com/trade-api/v2";
+  try {
+    const r = await fetch(px(root + "/markets?series_ticker=KXMLBRFI&status=open&limit=200"));
+    if (!r.ok) return [];
+    const d = await r.json();
+    return (d.markets || []).map(kaMarket)
+      .filter((m) => m.price != null && m.price > 0)
+      .map((m) => ({ ticker: m.id, link: m.link, date: tickerDate(m.id),
+        codes: teamCodes(m.id), yesPrice: m.price, marketNRFI: 100 - m.price }));
+  } catch { return []; }
+}
+// Match a Kalshi RFI market to a scheduled game by ET date + both team codes.
+function matchRFI(row, list) {
+  const rd = String(row.date || "").replace(/-/g, "");
+  for (const k of list || []) {
+    if (k.date && rd && k.date !== rd) continue;
+    if (codeHit(k.codes, [row.awayAbbr, row.homeAbbr]) >= 1.2) return k;
+  }
+  return null;
+}
+
+function FirstInning() {
+  const [rows, setRows] = useState([]);
+  const [king, setKing] = useState(null);
+  const [rec, setRec] = useState(null);
+  const [phase, setPhase] = useState("idle");
+  const [prog, setProg] = useState(null);
+  const [err, setErr] = useState(null);
+  const [open, setOpen] = useState({});
+  const [rfi, setRfi] = useState([]);
+  const recRef = useRef(null);
+
+  async function loadRecord() {
+    try { const d = await fetch("/api/desk/nrfi").then((r) => r.json()); recRef.current = d.record || []; setRec(recRef.current); }
+    catch { recRef.current = []; setRec([]); }
+  }
+  async function loadKing() {
+    try { const d = await fetch("/api/desk/nrfiking").then((r) => r.json()); setKing(d && !d.error ? d : null); }
+    catch { setKing(null); }
+  }
+  async function reconcile(rs) {
+    if (!recRef.current) return;
+    const recl = recRef.current.slice(); const changed = [];
+    for (const r of rs) {
+      const call = r.pNRFI >= r.pYRFI ? "NRFI" : "YRFI";
+      const pMax = Math.max(r.pNRFI, r.pYRFI) * 100;
+      const id = "nrfi-" + r.gamePk;
+      let e = recl.find((x) => x.id === id);
+      if (!e && r.state === "Preview" && r.hasPitchers && r.dataOk && pMax >= 57) {
+        e = { id, at: Date.now(), date: r.date.replace(/-/g, ""), gamePk: r.gamePk,
+          game: r.away + " @ " + r.home, call, prob: Math.round(pMax * 10) / 10,
+          pNRFI: Math.round(r.pNRFI * 1000) / 1000, result: null };
+        recl.unshift(e); changed.push(e);
+      }
+      if (e && e.result == null && r.inning1runs != null && (r.currentInning > 1 || r.final)) {
+        const nrfiHit = r.inning1runs === 0;
+        e.result = (e.call === "NRFI") === nrfiHit ? "won" : "lost";
+        e.firstInningRuns = r.inning1runs;
+        changed.push(e);
+      }
+    }
+    if (changed.length) {
+      recRef.current = recl; setRec(recl.slice());
+      try { await fetch("/api/desk/nrfi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changed) }); } catch { /* keeps in memory */ }
+    }
+  }
+  async function run() {
+    setPhase("scanning"); setErr(null); setProg({ done: 0, total: 0 });
+    try {
+      const [r, rfiList] = await Promise.all([
+        scanNrfi((done, total) => setProg({ done, total })),
+        fetchKalshiRFI(),
+      ]);
+      setRows(r); setRfi(rfiList || []); setPhase("done");
+      await reconcile(r);
+    } catch (e) { setErr(String((e && e.message) || e)); setPhase("error"); }
+  }
+  useEffect(() => { loadKing(); loadRecord().then(run); }, []);
+
+  const settled = (rec || []).filter((r) => r.result === "won" || r.result === "lost");
+  const wins = settled.filter((r) => r.result === "won").length;
+  const losses = settled.length - wins;
+  const kingOpen = (king && king.open) || [];
+
+  const liveCalib = nrfiCalibration(rec || []);
+  const calib = liveCalib.active ? liveCalib : NRFI_CALIB_SEED; // live once ≥25 graded, else backtest prior
+  const enriched = rows.map((r) => {
+    const pcal = applyCalibration(r.pNRFI, calib); // empirically-adjusted NRFI prob
+    const call = pcal >= 0.5 ? "NRFI" : "YRFI";
+    const pMax = Math.max(pcal, 1 - pcal) * 100;
+    const mk = matchRFI(r, rfi);
+    let market = null;
+    if (mk) {
+      // edge = how much more confident the model is than the market on OUR side
+      const modelSide = call === "NRFI" ? pcal * 100 : (1 - pcal) * 100;
+      const marketSide = call === "NRFI" ? mk.marketNRFI : (100 - mk.marketNRFI);
+      market = { ticker: mk.ticker, link: mk.link, yesPrice: mk.yesPrice, marketNRFI: mk.marketNRFI, marketSide, edge: modelSide - marketSide };
+    }
+    const base = Object.assign({}, r, { call, pMax, pCal: pcal, kp: matchKingPick(r, kingOpen), tier: nrfiTier(pMax), market });
+    base.v = nrfiVerdict(base);
+    return base;
+  });
+  const byConf = (a, b) => b.pMax - a.pMax;
+  const tailed = enriched.filter((r) => r.kp).sort(byConf);
+  const rest = enriched.filter((r) => !r.kp);
+  const betNRFI = rest.filter((r) => r.v.isBet && r.call === "NRFI").sort(byConf);
+  const betYRFI = rest.filter((r) => r.v.isBet && r.call === "YRFI").sort(byConf);
+  const leans = rest.filter((r) => r.v.strength === "LEAN").sort(byConf);
+  const passes = rest.filter((r) => r.v.strength === "PASS").sort(byConf);
+
+  const leanColor = (l) => (l === "nrfi" ? "var(--moss)" : l === "yrfi" ? "var(--rose)" : "var(--dim)");
+  const leanLabel = (l) => (l === "nrfi" ? "NRFI lean" : l === "yrfi" ? "YRFI lean" : "neutral");
+
+  const card = (r) => {
+    const isOpen = !!open[r.gamePk];
+    const graded = r.inning1runs != null && (r.currentInning > 1 || r.final);
+    const tradeLink = (r.market && r.market.link) || (r.kp && r.kp.kalshiTicker ? kalshiEventLink(r.kp.kalshiTicker) : null);
+    return (
+      <div className={"pick " + r.tier.cls} key={r.gamePk}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div className="who-big" style={{ color: r.v.color }}>
+              {r.v.label} <span style={{ color: "var(--dim)", fontWeight: 400, fontSize: 13 }}>· {r.away} @ {r.home}</span>
+            </div>
+            <div className="meta-line" style={{ color: r.v.color, marginTop: 2 }}>{r.v.blurb}</div>
+            <div className="meta-line">{r.awayPP} vs {r.homePP}{r.lineupPosted ? "" : " · lineups pending"}</div>
+            {r.kp && (
+              <div style={{ marginTop: 4, fontSize: 12 }}>
+                <span style={{ color: r.kp.side === r.call ? "var(--moss)" : "var(--amber)", fontWeight: 600 }}>
+                  NRFIKINGKY: {r.kp.side}{r.kp.odds != null ? " (" + (r.kp.odds > 0 ? "+" : "") + r.kp.odds + ")" : ""}
+                </span>
+                <span style={{ color: "var(--dim)" }}>{r.kp.side === r.call ? " ✓ agrees" : " · model leans " + r.call}</span>
+              </div>
+            )}
+            {r.market && (
+              <div className="meta-line" style={{ marginTop: 3 }}>
+                <span style={{ color: "var(--dim)" }}>Market (Kalshi): NRFI {r.market.marketNRFI.toFixed(0)}% (YES {r.market.yesPrice.toFixed(0)}c)</span>
+                <span style={{ color: r.market.edge >= 3 ? "var(--moss)" : r.market.edge <= -3 ? "var(--rose)" : "var(--dim)", fontWeight: 600 }}>
+                  {" · "}{r.market.edge > 0 ? "+" : ""}{r.market.edge.toFixed(0)}% value vs market
+                </span>
+              </div>
+            )}
+            {graded && (
+              <div className="meta-line" style={{ marginTop: 3 }}>
+                1st inning: {r.inning1runs} run{r.inning1runs === 1 ? "" : "s"} — {r.inning1runs === 0 ? "NRFI" : "YRFI"} hit
+              </div>
+            )}
+          </div>
+          <span className="tierbox" style={{ color: r.tier.c, borderColor: r.tier.c }}>
+            <span className="pct">{r.pMax.toFixed(0)}%</span>
+            <span className="lbl">{r.tier.t}</span>
+          </span>
+        </div>
+        <button className="btn btn-ghost btn-sm" style={{ marginTop: 8 }}
+          onClick={() => setOpen((o) => Object.assign({}, o, { [r.gamePk]: !o[r.gamePk] }))}>
+          {isOpen ? "Hide research" : "Show research"}
+        </button>
+        {tradeLink && (
+          <a className="btn btn-sm" href={tradeLink} target="_blank" rel="noreferrer"
+            style={{ marginTop: 8, marginLeft: 8, display: "inline-block", textDecoration: "none" }}>
+            Open on Kalshi ↗
+          </a>
+        )}
+        {isOpen && (
+          <div style={{ marginTop: 8 }}>
+            {r.checks.map((ck, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, padding: "5px 0", borderTop: "1px solid rgba(120,130,150,.18)", fontSize: 12 }}>
+                <span style={{ width: 5, borderRadius: 3, background: leanColor(ck.lean), flex: "0 0 5px" }} />
+                <div>
+                  <div style={{ fontWeight: 600 }}>{ck.label} <span style={{ color: leanColor(ck.lean), fontSize: 10 }}>· {leanLabel(ck.lean)}</span></div>
+                  <div style={{ color: "var(--dim)" }}>{ck.detail}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const sect = (title, arr, color) => arr.length > 0 && (
+    <div className="panel" style={{ marginTop: 12 }}>
+      <p className="sect" style={{ margin: 0, color }}>{title} ({arr.length})</p>
+      <div style={{ marginTop: 8, display: "grid", gap: 8 }}>{arr.map(card)}</div>
+    </div>
+  );
+
+  return (
+    <div>
+      <p className="help">
+        Calibrated first-inning (NRFI/YRFI) model from MLB StatsAPI + Statcast. Every game runs a full research
+        pass — starting pitching (1st-inning splits), pitcher skill (1st-inn K%, Statcast whiff, control), recent
+        form, both teams' 1st-inning offense, platoon/handedness, leadoff-weighted lineups (also catches
+        scratches), travel &amp; rest, weather/park, and the home-plate umpire. The pick comes only from these
+        checks; Kalshi's KXMLBRFI market and NRFIKINGKY's picks are shown as separate cross-checks, not inputs.
+        Every call is graded against the real 1st-inning score.
+      </p>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", margin: "8px 0 4px" }}>
+        <span style={{ fontSize: 13 }}>Model 1st-inning record: <b style={{ color: wins >= losses ? "var(--moss)" : "var(--rose)" }}>{wins}-{losses}</b></span>
+        {king && king.record && <span style={{ fontSize: 13, color: "var(--dim)" }}>NRFIKINGKY tracked: {king.record.wins}-{king.record.losses}{king.stale ? " (cached)" : ""}</span>}
+        <span style={{ fontSize: 13, color: "var(--dim)" }}>{liveCalib.active ? "Calibrated: " + liveCalib.n + " live graded games" : "Calibrated: backtest (" + NRFI_CALIB_SEED.n + " games) · +" + liveCalib.n + " live"}</span>
+        <button className="btn btn-ghost btn-sm" onClick={run} disabled={phase === "scanning"}>{phase === "scanning" ? "Researching…" : "Refresh"}</button>
+      </div>
+      {phase === "scanning" && <p className="help">Researching {prog && prog.total ? prog.done + "/" + prog.total : ""} games — pulling splits, lineups, travel &amp; weather…</p>}
+      {err && <p className="help" style={{ color: "var(--rose)" }}>Couldn't build the board: {err}</p>}
+      {!king && phase === "done" && <p className="help" style={{ color: "var(--amber)" }}>NRFIKINGKY feed unavailable right now — showing the model board only.</p>}
+      {phase === "done" && rows.length === 0 && <p className="help">No MLB games on today's slate.</p>}
+      {rows.length > 0 && (
+        <p className="help" style={{ marginTop: 4 }}>
+          <b style={{ color: "var(--moss)" }}>★ BET</b> = strong (≥70%) · <b style={{ color: "var(--moss)" }}>BET</b> = solid (≥63%) ·{" "}
+          <b style={{ color: "var(--amber)" }}>Lean</b> = slight (≥57%) · <b style={{ color: "var(--dim)" }}>Pass</b> = coin flip.
+          NRFI = no run in the 1st, YRFI = a run scores.
+        </p>
+      )}
+      {sect("NRFIKINGKY is tailing", tailed, "var(--amber)")}
+      {sect("✅ Bet NRFI — no run in the 1st", betNRFI, "var(--moss)")}
+      {sect("✅ Bet YRFI — a run in the 1st", betYRFI, "var(--moss)")}
+      {sect("Lighter leans", leans, "var(--amber)")}
+      {sect("Too close — pass", passes, "var(--dim)")}
+    </div>
+  );
+}
+
 function Picks({ ledger, onPick }) {
   // Warm start: the last scan renders instantly while a fresh one runs.
   // Validate every cached entry — a stale cache written by an older build

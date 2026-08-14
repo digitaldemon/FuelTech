@@ -60,11 +60,24 @@ const code = [
   slice("function pickDecision(", "\n}"),
   slice("const LEAGUES = [", "\n];"),
   slice("function detectLeague(", "\n}"),
+  slice("const NRFI_LG_LAMBDA = 0.52;", "const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));"),
+  slice("function nrfiRegress(", "\n}"),
+  slice("function halfNoRun(", "\n}"),
+  slice("function nrfiTier(", "\n}"),
+  slice("function nrfiVerdict(", "\n}"),
+  slice("function platoonFactor(", "\n}"),
+  slice("function formFactor(", "\n}"),
+  slice("function pitchSkillFactor(", "\n}"),
+  slice("function openerGameFactor(", "\n}"),
+  slice("function openerFactor(", "\n}"),
+  slice("function nrfiCalibration(", "\n}"),
+  slice("function applyCalibration(", "\n}"),
+  slice("function matchRFI(", "\n}"),
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, platoonFactor, formFactor, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, matchRFI } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, platoonFactor, formFactor, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, matchRFI })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -269,6 +282,91 @@ ok(gameWinnerAbbr([{ abbr: "MIL", score: 5 }, { abbr: "MIN", score: 3 }]) === "M
 ok(gameWinnerAbbr([{ abbr: "ARS", score: 2 }, { abbr: "CHE", score: 2 }]) === "TIE", "level final -> TIE");
 ok(gameWinnerAbbr([{ abbr: "MIL", score: null }, { abbr: "MIN", score: 3 }]) === null, "missing score -> no grade");
 ok(pickWon("MIL", "MIL") === true && pickWon("MIN", "MIL") === false, "pick graded against the winner");
+
+// NRFI / YRFI first-inning model
+ok(Math.abs(halfNoRun(0.52, 0.52, 1) - 0.72) < 1e-9, "half-inning no-run at league rates = league P0 (0.72)");
+const nrfiLeague = halfNoRun(0.52, 0.52, 1) * halfNoRun(0.52, 0.52, 1);
+ok(Math.abs(nrfiLeague - 0.5184) < 1e-3, "two league-average halves -> ~51.8% NRFI (matches real base rate)");
+ok(nrfiRegress(null, 0, 6) === 0.52, "missing rate regresses fully to the league mean");
+ok(Math.abs(nrfiRegress(0.2, 20, 4) - 0.2533) < 1e-3, "small-sample rate pulled toward league (Montero 0.20 -> 0.25)");
+ok(halfNoRun(0.5, 0.15, 1) > halfNoRun(0.5, 0.52, 1), "an elite 1st-inning starter raises the no-run probability");
+ok(halfNoRun(0.5, 0.5, 1.1) < halfNoRun(0.5, 0.5, 1), "hitter-friendly park/weather lowers the no-run probability");
+ok(nrfiTier(75).t === "STRONGEST" && nrfiTier(64).t === "STRONG" && nrfiTier(58).t === "LEAN" && nrfiTier(52).t === "TOSS-UP",
+  "NRFI tiers threshold correctly (70/63/57)");
+const rfiList = [{ ticker: "KXMLBRFI-26AUG161920SEAHOU", date: "20260816",
+  codes: teamCodes("KXMLBRFI-26AUG161920SEAHOU"), yesPrice: 45, marketNRFI: 55 }];
+ok(matchRFI({ date: "2026-08-16", awayAbbr: "SEA", homeAbbr: "HOU" }, rfiList) === rfiList[0],
+  "matchRFI pairs the Kalshi KXMLBRFI market to the game by ET date + both teams");
+ok(matchRFI({ date: "2026-08-17", awayAbbr: "SEA", homeAbbr: "HOU" }, rfiList) === null,
+  "matchRFI rejects a market from a different date");
+ok(matchRFI({ date: "2026-08-16", awayAbbr: "NYY", homeAbbr: "BOS" }, rfiList) === null,
+  "matchRFI rejects a game whose teams don't match the market");
+
+// Plain-English verdicts
+const vStrong = nrfiVerdict({ pMax: 75, call: "NRFI", market: null });
+ok(vStrong.isBet && vStrong.label === "★ BET NRFI", "75% -> ★ BET NRFI");
+const vPass = nrfiVerdict({ pMax: 52, call: "YRFI", market: null });
+ok(!vPass.isBet && /Pass/.test(vPass.label), "52% -> pass, too close");
+const vLean = nrfiVerdict({ pMax: 59, call: "NRFI", market: null });
+ok(vLean.strength === "LEAN" && vLean.label === "Lean NRFI", "59% -> Lean NRFI");
+// The market never changes the model's PROBABILITY (pMax/call are inputs), but
+// it DOES gate the wager: no value / market above the model -> PASS.
+const vNoValue = nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 6, total: 8 }, market: { edge: -20, marketSide: 95 } });
+ok(vNoValue.strength === "PASS", "market well above the model (no value) -> PASS, though the 75% prediction still stands");
+// With no market at all, the pick is purely model-driven.
+ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 6, total: 8 } }).strength === "STRONG",
+  "no market -> model-only STRONG");
+const vAligned = nrfiVerdict({ pMax: 66, call: "NRFI", aligned: { agree: 5, total: 6 } });
+ok(/5\/6 checks agree/.test(vAligned.blurb), "verdict reports how many stats checks agree");
+// Wager-decision gates (the fine-tune)
+ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.3, aligned: { agree: 5, total: 6 } }).strength === "PASS",
+  "thin data (conf 0.3) forces a PASS even at 75%");
+ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.5, aligned: { agree: 5, total: 6 } }).strength === "LEAN",
+  "limited data (conf 0.5) caps a strong number at LEAN");
+const vSplit = nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 2, total: 8 } });
+ok(vSplit.strength === "BET" && /signals split/.test(vSplit.blurb), "split checks downgrade STRONG -> BET");
+ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 7, total: 8 } }).strength === "STRONG",
+  "decisive number + high confidence + agreement -> STRONG");
+ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 4, total: 8 } }).strength === "BET",
+  "STRONG requires >=60% agreement, else BET");
+// Value gate — market decides whether there's a wager (probability stays model-only)
+ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 6, total: 8 }, market: { edge: 1, marketSide: 70 } }).strength === "PASS",
+  "efficient market (edge <2) -> PASS despite a great matchup");
+ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 6, total: 8 }, market: { edge: 4, marketSide: 66 } }).strength === "PASS",
+  "short juice (66% price, edge <5) -> PASS");
+ok(nrfiVerdict({ pMax: 66, call: "NRFI", confidence: 0.9, aligned: { agree: 6, total: 8 }, market: { edge: 2.5, marketSide: 55 } }).strength === "LEAN",
+  "thin value (edge <3) downgrades BET -> LEAN");
+const vVal = nrfiVerdict({ pMax: 66, call: "NRFI", confidence: 0.9, aligned: { agree: 6, total: 8 }, market: { edge: 6, marketSide: 55 } });
+ok(vVal.isBet && /value \+6% vs market/.test(vVal.blurb), "real edge keeps the bet and surfaces the value");
+
+// Platoon & recent-form checks
+ok(platoonFactor({ opsVsR: 0.780, opsVsL: 0.680 }, "R").f > 1, "strong vs RHP -> run-favouring platoon factor");
+ok(platoonFactor({ opsVsR: 0.780, opsVsL: 0.680 }, "L").f < 1, "weak vs LHP -> NRFI-favouring platoon factor");
+ok(platoonFactor(null, "R").f === 1, "missing platoon data -> neutral factor");
+ok(formFactor(3.0).f < 1 && formFactor(6.0).f > 1, "hot starter suppresses, cold starter inflates the 1st");
+ok(formFactor(null).f === 1, "missing form -> neutral factor");
+
+// Pitcher skill: season peripherals as the thesis (K/BB/barrel/GB/whiff/f-strike)
+const lgP = { k: 22, bb: 8, barrel: 7.5, gb: 44, whiff: 24.5, fstrike: 60 };
+ok(pitchSkillFactor({ k: 30, bb: 5, barrel: 5, gb: 50, whiff: 32, fstrike: 65 }, lgP).f < 1, "elite peripherals suppress runs");
+ok(pitchSkillFactor({ k: 14, bb: 12, barrel: 11, gb: 38, whiff: 18, fstrike: 55 }, lgP).f > 1, "poor peripherals inflate runs");
+ok(pitchSkillFactor(null, lgP).f === 1, "no peripherals -> neutral skill factor");
+// Opener / bullpen-game detection
+ok(openerGameFactor({ gs: 0, g: 40, ip: 42 }).opener === true && openerGameFactor({ gs: 0, g: 40, ip: 42 }).f < 1,
+  "a reliever listed as starter -> opener flag, NRFI nudge");
+ok(openerGameFactor({ gs: 25, g: 26, ip: 150 }).opener === false, "a true starter is not flagged an opener");
+ok(openerFactor(2.0, 4.0).f < 1 && openerFactor(6.0, 3.0).f > 1, "clean opener (low 1st-inn ERA) suppresses; slow starter inflates");
+
+// Empirical calibration
+ok(nrfiCalibration([]).active === false, "no graded games -> calibration inactive");
+ok(nrfiCalibration(Array.from({ length: 10 }, () => ({ pNRFI: 0.6, firstInningRuns: 0 }))).active === false,
+  "under 25 graded games -> calibration still inactive");
+// model predicted 60% NRFI but only 50% actually hit -> should shift down
+const overRec = Array.from({ length: 40 }, (_, i) => ({ pNRFI: 0.60, firstInningRuns: i < 20 ? 0 : 1 }));
+const calO = nrfiCalibration(overRec);
+ok(calO.active && calO.c < 0, "over-predicting model -> negative calibration shift");
+ok(applyCalibration(0.60, calO) < 0.60, "calibration pulls a 60% prediction down toward reality");
+ok(applyCalibration(0.60, { active: false }) === 0.60, "inactive calibration leaves the probability unchanged");
 ok(pickWon("CWS", "CHW") === true, "grading respects cross-feed aliases");
 ok(pickWon("TIE", "TIE") === true && pickWon("MIL", "TIE") === false, "draw pick only wins on a draw");
 
