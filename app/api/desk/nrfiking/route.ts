@@ -66,13 +66,16 @@ function extractFirstInning(rows: any[]): KingPick[] {
 
 async function buildSeller(s: { name: string; id: string }) {
   try {
-    const [openRaw, settledRaw] = await Promise.all([
+    const [p0, p1, settledRaw] = await Promise.all([
       jget(`${JR}/bets/${s.id}?page=0`),
+      jget(`${JR}/bets/${s.id}?page=1`).catch(() => null),
       jget(`${JR}/bets/${s.id}/settled?page=0`).catch(() => null),
     ]);
-    const openRows = openRaw?.data?.bets?.data?.rows;
+    const openRows = p0?.data?.bets?.data?.rows;
     if (!Array.isArray(openRows)) return { name: s.name, id: s.id, active: false, open: [], record: null };
-    const open = extractFirstInning(openRows).filter((p) => p.result === "Pending");
+    const p1Rows = p1?.data?.bets?.data?.rows || [];
+    const allOpenRows = [...openRows, ...p1Rows];
+    const open = extractFirstInning(allOpenRows).filter((p) => p.result === "Pending");
     const settled = extractFirstInning(settledRaw?.data?.bets?.data?.rows || []);
     let wins = 0, losses = 0, pushes = 0;
     for (const x of settled) { if (/won/i.test(x.result)) wins++; else if (/lost/i.test(x.result)) losses++; else if (/push/i.test(x.result)) pushes++; }
