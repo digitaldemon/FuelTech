@@ -8295,6 +8295,11 @@ function FirstInning() {
     loadTails();
     loadBankrollSettings();
     loadRecord().then(run);
+    loadOpenPositions();
+  }, []);
+  useEffect(() => {
+    const id = setInterval(loadOpenPositions, 30 * 1000);
+    return () => clearInterval(id);
   }, []);
 
   // T-45: auto-refresh once when any pregame game is within 45 minutes of first pitch.
@@ -8415,6 +8420,7 @@ function FirstInning() {
   const card = r => {
     const isOpen = !!open[r.gamePk];
     const graded = r.inning1runs != null && (r.currentInning > 1 || r.final);
+    const openPos = r.market && openPositions && !openPositions.error ? (openPositions.positions || []).find(p => p.ticker === r.market.ticker) : null;
     const tailTicker = (r.tails || []).map(t => t.pick.kalshiTicker).find(Boolean);
     const tradeLink = r.market && r.market.link || (tailTicker ? kalshiEventLink(tailTicker) : null);
     const recE = (rec || []).find(x => x.id === "nrfi-" + r.gamePk);
@@ -9332,7 +9338,51 @@ function FirstInning() {
         flexWrap: "wrap",
         alignItems: "center"
       }
-    }, /*#__PURE__*/React.createElement("button", {
+    }, openPos && /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: "100%",
+        marginBottom: 6,
+        padding: "7px 12px",
+        background: "rgba(80,160,80,0.10)",
+        border: "1px solid rgba(80,160,80,0.35)",
+        borderRadius: 8,
+        display: "flex",
+        gap: 16,
+        alignItems: "center",
+        flexWrap: "wrap"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
+        fontWeight: 900,
+        color: "var(--moss)",
+        letterSpacing: "0.04em"
+      }
+    }, "\uD83D\uDCB0 IN POSITION"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12,
+        color: "var(--dim)"
+      }
+    }, "Risked ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: "var(--fg)"
+      }
+    }, "$", openPos.totalCost != null ? openPos.totalCost.toFixed(2) : "—")), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12,
+        color: "var(--dim)"
+      }
+    }, "To win ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: "var(--moss)"
+      }
+    }, "+$", openPos.estimatedPayout != null ? openPos.estimatedPayout.toFixed(2) : openPos.totalCost != null ? (openPos.contracts - openPos.totalCost).toFixed(2) : "—")), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        color: "var(--dim)",
+        marginLeft: "auto"
+      }
+    }, openPos.contracts, " contracts \xB7 ", openPos.call)), /*#__PURE__*/React.createElement("button", {
       className: "btn btn-ghost btn-sm",
       onClick: () => setOpen(o => Object.assign({}, o, {
         [r.gamePk]: !o[r.gamePk]
