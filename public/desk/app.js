@@ -7910,12 +7910,6 @@ function nrfiVerdict(r) {
       strength = down(strength, 1);
       notes.push("thin value");
     } else if (edge >= 3) notes.push("value +" + edge.toFixed(0) + "% vs market");
-    // Reliability gate: the 60-65% model range historically breaks even without
-    // market confirmation. Require market to be at least 58% before calling BET.
-    if (r.market && strength === "BET" && p >= 60 && p < 65 && mktProb < 58) {
-      strength = "LEAN";
-      notes.push("market not confirming high-confidence pick");
-    }
   }
   const isBet = strength === "STRONG" || strength === "BET";
   const label = strength === "STRONG" ? "★ BET " + side : strength === "BET" ? "BET " + side : strength === "LEAN" ? "Lean " + side : "Pass — too close";
