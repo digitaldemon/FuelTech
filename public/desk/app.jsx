@@ -6290,7 +6290,7 @@ function NrfiCalendar({ rec }) {
         </div>
         {mTotal > 0 && (
           <div style={{ display: "flex", gap: 14, alignItems: "center", fontSize: 12 }}>
-            <span style={{ fontWeight: 700, color: mWins >= mTotal - mWins ? "var(--moss)" : "var(--rose)" }}>{mWins} of {mTotal} ({Math.round(mWins / mTotal * 100)}%)</span>
+            <span style={{ fontWeight: 700 }}><span style={{ color: "var(--moss)" }}>{mWins}W</span> / <span style={{ color: "var(--rose)" }}>{mTotal - mWins}L</span> <span style={{ color: mWins >= mTotal - mWins ? "var(--moss)" : "var(--rose)" }}>({Math.round(mWins / mTotal * 100)}%)</span></span>
             {mHasPL && <span style={{ fontWeight: 700, color: mPL >= 0 ? "var(--moss)" : "var(--rose)" }}>{mPL >= 0 ? "+" : ""}${mPL.toFixed(2)} P&L</span>}
           </div>
         )}
@@ -6320,7 +6320,7 @@ function NrfiCalendar({ rec }) {
               <div style={{ fontSize: 10, color: isToday ? "var(--moss)" : "var(--dim)", fontWeight: isToday ? 700 : 400, marginBottom: 2 }}>{d}</div>
               {settled.length > 0 && (
                 <>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: ratio >= 0.6 ? "var(--moss)" : ratio <= 0.4 ? "var(--rose)" : "var(--fg)", lineHeight: 1 }}>{wins}-{losses}</div>
+                  <div style={{ fontSize: 11, fontWeight: 800, lineHeight: 1 }}><span style={{ color: "var(--moss)" }}>{wins}W</span><span style={{ color: "var(--dim)", fontSize: 9 }}>/</span><span style={{ color: "var(--rose)" }}>{losses}L</span></div>
                   {hasPL && <div style={{ fontSize: 9, fontWeight: 700, color: pl >= 0 ? "var(--moss)" : "var(--rose)", marginTop: 1 }}>{pl >= 0 ? "+" : ""}${Math.abs(pl) >= 10 ? Math.round(Math.abs(pl)) : Math.abs(pl).toFixed(1)}</div>}
                 </>
               )}
@@ -6978,9 +6978,9 @@ function FirstInning() {
         by a real margin, and track closing-line value (CLV), the honest edge test. Graded against the real 1st-inning score.
       </p>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", margin: "8px 0 4px" }}>
-        {(() => { const tot = wins + losses; const pct = tot > 0 ? Math.round(wins / tot * 100) : 0; return <span style={{ fontSize: 13 }}>Model record: <b style={{ color: wins >= losses ? "var(--moss)" : "var(--rose)" }}>{wins} of {tot}{tot > 0 ? " (" + pct + "%)" : ""}</b></span>; })()}
+        {(() => { const tot = wins + losses; const pct = tot > 0 ? Math.round(wins / tot * 100) : 0; return <span style={{ fontSize: 13 }}>Model record: <b style={{ color: wins >= losses ? "var(--moss)" : "var(--rose)" }}><span style={{ color: "var(--moss)" }}>{wins}W</span> / <span style={{ color: "var(--rose)" }}>{losses}L</span>{tot > 0 ? " (" + pct + "%)" : ""}</b></span>; })()}
         {kalshiSettled.length > 0 && (
-          <span style={{ fontSize: 13 }}>Kalshi bets: <b style={{ color: kWins >= kLosses ? "var(--moss)" : "var(--rose)" }}>{kWins}-{kLosses}</b></span>
+          <span style={{ fontSize: 13 }}>Kalshi bets: <b><span style={{ color: "var(--moss)" }}>{kWins}W</span> / <span style={{ color: "var(--rose)" }}>{kLosses}L</span></b></span>
         )}
         {sellers.map((s) => (
           <span key={s.id} style={{ fontSize: 13, color: s.active ? "var(--dim)" : "var(--amber)" }}>
