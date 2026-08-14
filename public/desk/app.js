@@ -31,7 +31,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-14.nrfi-edge11-backtest-v4";
+const BUILD = "2026-08-14.nrfi-edge12-backtest-v5";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -7451,7 +7451,9 @@ function nrfiEvaluate(ctx) {
   // Day game: games before ~4pm local (approximated as UTC < 20:00) run slightly higher scoring.
   const utcHour = ctx.startUtc ? new Date(ctx.startUtc).getUTCHours() : null;
   const isDayGame = utcHour != null && utcHour < 20;
-  const dayGameShift = isDayGame ? 0.025 : 0; // logit-space YRFI lean for day games
+  // Day game: backtest confirmed -4.3pp NRFI rate vs night (2,041 day / 1,974 night across 4,015 games).
+  // A logit shift of -0.15 ≈ -3.5pp at p=0.50 — conservative vs the raw 4.3pp to avoid over-fitting.
+  const dayGameShift = isDayGame ? 0.15 : 0;
   const awaySkill = pitchSkillFactor(ctx.awayPeri, ctx.lg);
   const homeSkill = pitchSkillFactor(ctx.homePeri, ctx.lg);
   const awayOpen = openerFactor(ctx.awayPit && ctx.awayPit.era, ctx.awayMeta && ctx.awayMeta.seasonEra);
@@ -7465,7 +7467,14 @@ function nrfiEvaluate(ctx) {
   // so correlated signals don't compound, then cap the net swing. Platoon weight
   // is lower now that lineups are measured directly vs the starter's hand.
   const offMult = (lineup, plat, travel) => nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.4 + (travel.factor - 1) * 0.6, 0.80, 1.30);
-  const pitMult = (skill, form, opener, openG, load, rest) => nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.4 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (rest.f - 1) * 0.8, 0.78, 1.25);
+  // Weights tuned from 4,015-game backtest (logistic regression on normalized features):
+  // - skill (K%, BB%, barrel, GB): dominant after pitBase — keep at 1.0
+  // - form (FIP/ERA L3): LR coeff -0.018 = counterproductive once pitBase controlled → cut to 0.10
+  // - opener (1st-inn ERA vs season ERA): still useful signal → keep at 0.5
+  // - openG (bullpen game pattern): strong → keep at 1.0
+  // - load (season IP): small but logical → keep at 0.7
+  // - rest: LR coeff -0.066, extra-rest games showed LOWER NRFI rate → cut to 0.10 (effectively off)
+  const pitMult = (skill, form, opener, openG, load, rest) => nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (rest.f - 1) * 0.10, 0.78, 1.25);
   const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel);
   const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel);
   const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest);
@@ -7704,20 +7713,21 @@ function nrfiTier(pMax) {
   };
 }
 
-// Calibration prior from backtest v3 (381 games, 30-day window, all signals):
-// Backtest v4: 3,753 games (2025 full season + 2026 to-date).
-// 2025: +0.24% avg bias (nearly flat). 2026: +2.77% avg bias (model under-predicts).
-// Combined weighted: +1.34pp → logit-shift of ~+0.050. Win rates at pMax≥63:
-// 63.6% (2025) and 71.8% (2026). pMax≥70: 71.8% and 81.8%.
+// Backtest v5: 4,015 games (2025 full season + 2026 Apr 1 – Aug 13).
+// AUC-ROC: 0.6188. Brier skill score: +4.6% over naive baseline.
+// 2025 bias: +0.0pp (perfect). 2026 bias: +2.1pp (model slightly conservative).
+// Combined: model under-predicts by ~1pp → keep c=0.050 logit shift.
+// Win rates: pMax≥63 = 67.4% (479 bets); pMax≥70 = 75.9% (79 bets).
+// Key tuning from LR: form weight 0.4→0.10, rest weight 0.8→0.10, day-game shift 0.025→0.15.
 // Live calibration takes over after 25 graded picks.
 const NRFI_CALIB_SEED = {
   c: 0.050,
-  n: 3753,
+  n: 4015,
   active: true,
-  source: "backtest-v4"
+  source: "backtest-v5"
 };
 
-// Pitcher backtest rankings — 3,753 MLB games (2025 full + 2026 to-date).
+// Pitcher backtest rankings — 4,015 MLB games (2025 full + 2026 Apr 1 – Aug 13).
 // clean = % of 1st innings kept scoreless. n = starts evaluated.
 // tier: "elite" ≥70%, "sharp" 65-69%, "leaky" 30-35%, "danger" <30%.
 const PITCHER_BT = (() => {
@@ -7731,19 +7741,19 @@ const PITCHER_BT = (() => {
   };
   // ── ELITE (≥70% clean 1st innings) ──
   add("Keider Montero", 83, 12, "elite");
-  add("Logan Henderson", 82, 11, "elite");
-  add("Chris Sale", 76, 37, "elite"); // combined 2025+2026
+  add("Logan Henderson", 73, 15, "elite"); // v5: revised down from 82%(11)
+  add("Chris Sale", 76, 41, "elite");
   add("Paul Skenes", 77, 30, "elite");
-  add("Gerrit Cole", 79, 14, "elite");
+  add("Gerrit Cole", 75, 16, "elite"); // v5: revised from 79%(14)
   add("Casey Mize", 75, 16, "elite");
-  add("Shohei Ohtani", 75, 12, "elite");
+  add("Shohei Ohtani", 70, 30, "elite"); // v5: revised down from 75%(12)
   add("Nathan Eovaldi", 75, 20, "elite");
   add("Ranger Suárez", 75, 24, "elite");
   add("Ranger Suarez", 75, 24, "elite");
   add("Gavin Williams", 73, 22, "elite");
-  add("Kyle Leahy", 73, 22, "elite");
-  add("Trevor Rogers", 72, 18, "elite");
-  add("Tarik Skubal", 70, 30, "elite");
+  add("Kyle Leahy", 75, 24, "elite"); // v5: revised up from 73%(22)
+  add("Jake Bennett", 71, 14, "elite"); // v5: NEW
+  add("Tarik Skubal", 72, 32, "elite"); // v5: revised from 70%(30)
   add("Noah Cameron", 71, 21, "elite");
   add("Shane Drohan", 71, 14, "elite");
   add("Logan Webb", 71, 17, "elite");
@@ -7752,12 +7762,16 @@ const PITCHER_BT = (() => {
   add("Hunter Brown", 70, 10, "elite");
   add("Carmen Mlodzinski", 70, 10, "elite");
   // ── SHARP (65-69%) ──
+  add("Trevor Rogers", 69, 39, "sharp"); // v5: revised down from 72%(18) — demoted from ELITE
+  add("Jared Jones", 69, 13, "sharp"); // v5: NEW
+  add("Gage Jump", 69, 16, "sharp"); // v5: NEW
+  add("Christian Scott", 69, 16, "sharp"); // v5: NEW
   add("Bowden Francis", 69, 13, "sharp");
   add("Edward Cabrera", 69, 13, "sharp");
   add("Michael Wacha", 68, 28, "sharp");
   add("Tyler Glasnow", 67, 15, "sharp");
   add("Ryan Bergert", 67, 15, "sharp");
-  add("Janson Junk", 67, 15, "sharp");
+  add("Janson Junk", 69, 32, "sharp"); // v5: revised from 67%(15)
   add("Quinn Priester", 65, 23, "sharp");
   add("Tanner Bibee", 65, 31, "sharp");
   add("Tyler Mahle", 64, 14, "sharp");
@@ -7770,16 +7784,21 @@ const PITCHER_BT = (() => {
   add("Mitchell Parker", 33, 27, "leaky");
   add("Tyler Anderson", 32, 25, "leaky");
   add("Clayton Kershaw", 30, 20, "leaky");
-  add("Justin Wrobleski", 26, 19, "leaky");
+  add("Justin Wrobleski", 25, 20, "leaky"); // v5: revised from 26%(19)
   add("Adrian Houser", 27, 15, "leaky");
+  add("Tomoyuki Sugano", 29, 48, "leaky"); // v5: major revision up from 20%(20) — promoted from DANGER
   // ── DANGER (<30%) ──
+  add("Carson Whisenhunt", 9, 11, "danger"); // v5: NEW
   add("Stephen Kolek", 10, 10, "danger");
   add("Hunter Dobbins", 18, 11, "danger");
   add("Bradley Blalock", 18, 11, "danger");
   add("Reynaldo López", 20, 10, "danger");
   add("Reynaldo Lopez", 20, 10, "danger");
   add("Kumar Rocker", 20, 20, "danger");
-  add("Tomoyuki Sugano", 20, 20, "danger");
+  add("Joe Boyle", 23, 13, "danger"); // v5: NEW
+  add("Carson Palmquist", 25, 12, "danger"); // v5: NEW
+  add("Luinder Avila", 27, 11, "danger"); // v5: NEW
+  add("Luis Gil", 28, 18, "danger"); // v5: NEW
   add("Cam Schlittler", 21, 14, "danger");
   add("David Peterson", 21, 14, "danger");
   add("Eric Lauer", 21, 14, "danger");
