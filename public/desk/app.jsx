@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-14.nrfi-kalshi-import-v8";
+const BUILD = "2026-08-14.nrfi-edge10-bankroll-v9";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -101,12 +101,11 @@ details.fold > summary:hover { color:var(--bone); }
   letter-spacing:-.02em; margin:0; }
 .cd-title span { background:linear-gradient(120deg, #FFC95A, #EFA02F); -webkit-background-clip:text; background-clip:text; color:transparent; }
 
-.tabs { display:flex; gap:5px; margin-bottom:20px; overflow-x:auto; padding:5px;
-  background:rgba(0,0,0,.18); border:1px solid var(--line); border-radius:13px; scrollbar-width:none; }
-.tabs::-webkit-scrollbar { display:none; }
+.tabs { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:20px; padding:5px;
+  background:rgba(0,0,0,.18); border:1px solid var(--line); border-radius:13px; }
 .tabs button { background:none; border:none; color:var(--dim); border-radius:9px;
-  font-family:'Inter Tight',sans-serif; font-size:13.5px; font-weight:600; letter-spacing:0;
-  padding:9px 14px; cursor:pointer; white-space:nowrap; transition:background .15s, color .15s; }
+  font-family:'Inter Tight',sans-serif; font-size:13px; font-weight:600; letter-spacing:0;
+  padding:7px 12px; cursor:pointer; white-space:nowrap; transition:background .15s, color .15s; }
 .tabs button.on { color:#1B202B; background:linear-gradient(180deg, #FFC95A, #F2A83D);
   box-shadow:0 2px 10px rgba(242,179,61,.28); }
 .tabs button:hover:not(.on) { color:var(--bone); background:rgba(255,255,255,.05); }
@@ -2229,7 +2228,7 @@ function App() {
         </header>
 
         <nav className="tabs">
-          {[["picks", "Predictions"], ["nrfi", "First Inning"], ["analyze", "Ask an event"], ["parlay", "Combos"], ["commodities", "15-Minute"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["browse", "Find a market"], ["frameworks", "What I check"], ["ledger", "Accuracy"]].map(([k, l]) => (
+          {[["picks", "Predictions"], ["nrfi", "First Inning"], ["analyze", "Ask an event"], ["parlay", "Combos"], ["commodities", "15-Minute"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["ledger", "Accuracy"]].map(([k, l]) => (
             <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
           ))}
         </nav>
@@ -5349,6 +5348,7 @@ async function pitcherRollingNRFI(pid, season) {
           l50: { pct: pct(valid.slice(-50)),   n: Math.min(valid.length, 50) },
           l30: { pct: pct(valid.slice(-30)),   n: Math.min(valid.length, 30) },
           l10: { pct: pct(valid.slice(-10)),   n: Math.min(valid.length, 10) },
+          lastClean: valid.length > 0 ? valid[valid.length - 1] : null,
         };
       }
     }
@@ -5728,13 +5728,26 @@ function nrfiEvaluate(ctx) {
     { label: "Umpire",
       detail: ctx.umpName ? (ctx.umpName + (ctx.umpNote ? " — " + ctx.umpNote : (umpFactor === 1 ? " (tendency n/a)" : ""))) : "not posted",
       lean: umpFactor <= 0.97 ? "nrfi" : umpFactor >= 1.03 ? "yrfi" : "neutral" },
-  ];
+    (() => {
+      const aLast = ctx.awayRolling && ctx.awayRolling.lastClean;
+      const hLast = ctx.homeRolling && ctx.homeRolling.lastClean;
+      if (aLast == null && hLast == null) return null;
+      const notes = [
+        aLast != null ? ctx.awayPP + ": last start " + (aLast ? "clean ✓" : "allowed run ✗") : null,
+        hLast != null ? ctx.homePP + ": last start " + (hLast ? "clean ✓" : "allowed run ✗") : null,
+      ].filter(Boolean);
+      const bothClean = aLast === true && hLast === true;
+      const bothDirty = aLast === false && hLast === false;
+      return { label: "Last start momentum", detail: notes.join(" · "),
+        lean: bothClean ? "nrfi" : bothDirty ? "yrfi" : "neutral" };
+    })(),
+  ].filter(Boolean);
   const call = pNRFI >= 0.5 ? "nrfi" : "yrfi";
   const nonNeutral = checks.filter((c) => c.lean !== "neutral");
   const agree = nonNeutral.filter((c) => c.lean === call).length;
   const pitProfiles = {
-    away: { name: ctx.awayPP, hand: ctx.awayMeta && ctx.awayMeta.hand, ...pitcherI01Profile(ctx.awayPit, ctx.awayMeta && ctx.awayMeta.seasonEra, ctx.awayRolling) },
-    home: { name: ctx.homePP, hand: ctx.homeMeta && ctx.homeMeta.hand, ...pitcherI01Profile(ctx.homePit, ctx.homeMeta && ctx.homeMeta.seasonEra, ctx.homeRolling) },
+    away: { name: ctx.awayPP, hand: ctx.awayMeta && ctx.awayMeta.hand, ...pitcherI01Profile(ctx.awayPit, ctx.awayMeta && ctx.awayMeta.seasonEra, ctx.awayRolling, ctx.awayPeri) },
+    home: { name: ctx.homePP, hand: ctx.homeMeta && ctx.homeMeta.hand, ...pitcherI01Profile(ctx.homePit, ctx.homeMeta && ctx.homeMeta.seasonEra, ctx.homeRolling, ctx.homePeri) },
   };
   return { pNRFI, checks, aligned: { agree, total: nonNeutral.length }, confidence: conf, method, pitProfiles };
 }
@@ -5745,8 +5758,9 @@ const awayPit0 = (o) => (o && o.rate != null ? o.rate.toFixed(2) + " R/1st" : "T
 const I01_LG = { rate: 0.52, whip: 1.28, k9: 8.4, bb9: 3.1, hr9: 1.10 };
 
 // Composite first-inning pitcher grade: A+/A/B+/B/C/D/F with supporting stats.
-function pitcherI01Profile(pit, seasonEra, rolling) {
-  if (!pit || !pit.sample) return { grade: "—", score: 50, cleanPct: null, summary: "no first-inning data" };
+// peri = Statcast data { fstrike, whiff, barrel, gb, k, bb } — improves grade accuracy.
+function pitcherI01Profile(pit, seasonEra, rolling, peri) {
+  if (!pit || !pit.sample) return { grade: "—", score: 50, cleanPct: null, summary: "no first-inning data", fstrike: null, whiff: null };
   const cl = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
   let score = 50;
   if (pit.rate  != null) score += cl((I01_LG.rate - pit.rate)   / I01_LG.rate,  -1,  1) * 25;
@@ -5754,11 +5768,13 @@ function pitcherI01Profile(pit, seasonEra, rolling) {
   if (pit.k9    != null) score += cl((pit.k9   - I01_LG.k9)     / I01_LG.k9,    -1,  1) * 10;
   if (pit.bb9   != null) score += cl((I01_LG.bb9 - pit.bb9)     / I01_LG.bb9,   -1,  1) * 10;
   if (pit.hr9   != null) score += cl((I01_LG.hr9 - pit.hr9)     / I01_LG.hr9,  -0.5, 0.5) * 5;
+  // Statcast: FPS% (get-ahead rate) and whiff% (swing-and-miss) add 15 pts total headroom.
+  if (peri && peri.fstrike != null) score += cl((peri.fstrike - 60) / 60, -1, 1) * 8;
+  if (peri && peri.whiff   != null) score += cl((peri.whiff - 24.5) / 24.5, -1, 1) * 7;
   score = cl(Math.round(score), 0, 100);
-  const grade = score >= 82 ? "A+" : score >= 72 ? "A" : score >= 62 ? "B+" : score >= 52 ? "B" : score >= 42 ? "C" : score >= 30 ? "D" : "F";
-  const gradeColor = score >= 72 ? "var(--moss)" : score >= 52 ? "var(--amber)" : "var(--rose)";
+  const grade = score >= 84 ? "A+" : score >= 74 ? "A" : score >= 63 ? "B+" : score >= 52 ? "B" : score >= 42 ? "C" : score >= 30 ? "D" : "F";
+  const gradeColor = score >= 74 ? "var(--moss)" : score >= 52 ? "var(--amber)" : "var(--rose)";
   const cleanPct = Math.round(Math.exp(-pit.rate) * 100);
-  // vs-season context
   let vsNote = "";
   if (seasonEra != null && pit.era != null) {
     const diff = pit.era - seasonEra;
@@ -5775,9 +5791,23 @@ function pitcherI01Profile(pit, seasonEra, rolling) {
     pit.bb9    != null ? "BB/9 "  + pit.bb9.toFixed(1)    : null,
     pit.hr9    != null ? "HR/9 "  + pit.hr9.toFixed(2)    : null,
     "~" + cleanPct + "% clean",
+    peri && peri.fstrike != null ? "FPS " + peri.fstrike.toFixed(0) + "%" : null,
+    peri && peri.whiff   != null ? "Whiff " + peri.whiff.toFixed(0) + "%" : null,
   ].filter(Boolean);
   return { grade, gradeColor, score, cleanPct, summary: parts.join("  ·  "), vsNote, rolling: rolling || null,
-    k9: pit.k9 ?? null, bb9: pit.bb9 ?? null, whip: pit.whip ?? null, rate: pit.rate ?? null, sample: pit.sample };
+    k9: pit.k9 ?? null, bb9: pit.bb9 ?? null, whip: pit.whip ?? null, rate: pit.rate ?? null, sample: pit.sample,
+    fstrike: peri ? (peri.fstrike ?? null) : null, whiff: peri ? (peri.whiff ?? null) : null };
+}
+
+// Kelly criterion fraction for an NRFI or YRFI bet.
+// Returns full Kelly as a decimal (e.g. 0.08 = 8% of bankroll). Cap at 0.25.
+function kellyNRFI(pModel, yesPrice, call) {
+  if (!yesPrice || yesPrice <= 0 || yesPrice >= 100) return null;
+  const noPrice = 100 - yesPrice;
+  const p = call === "NRFI" ? pModel : 1 - pModel;
+  const b = call === "NRFI" ? yesPrice / noPrice : noPrice / yesPrice;
+  const f = (p * b - (1 - p)) / b;
+  return f > 0 ? Math.min(f, 0.25) : null;
 }
 
 function nrfiTier(pMax) {
@@ -5966,6 +5996,10 @@ async function scanNrfi(onProgress) {
       awayAbbr: away && away.team && away.team.abbreviation, homeAbbr: home && home.team && home.team.abbreviation,
       awayPP: ctx.awayPP, homePP: ctx.homePP,
       pNRFI: ev.pNRFI, pYRFI: 1 - ev.pNRFI, checks: ev.checks, aligned: ev.aligned, confidence: ev.confidence, method: ev.method, pitProfiles: ev.pitProfiles, parkEnv: ctx.wx,
+      awayYrfiPct: awayOff && awayOff.rate != null ? Math.round((1 - Math.exp(-awayOff.rate)) * 100) : null,
+      homeYrfiPct: homeOff && homeOff.rate != null ? Math.round((1 - Math.exp(-homeOff.rate)) * 100) : null,
+      awayOffSample: awayOff ? awayOff.sample : null,
+      homeOffSample: homeOff ? homeOff.sample : null,
       hasPitchers: !!(awayPP && awayPP.id && homePP && homePP.id),
       dataOk: !!(awayOff && homeOff && awayPit && homePit),
       lineupPosted: (ctx.awayLineup.obp != null && ctx.homeLineup.obp != null),
@@ -6011,6 +6045,10 @@ function FirstInning() {
   const [open, setOpen] = useState({});
   const [rfi, setRfi] = useState([]);
   const recRef = useRef(null);
+  const priceSnap = useRef({});
+  const refreshedFor = useRef(new Set());
+  const [bankroll, setBankroll] = useState(null);
+  const [riskLevel, setRiskLevel] = useState("moderate");
   const now = useNow(1000);
 
   async function loadRecord() {
@@ -6069,6 +6107,12 @@ function FirstInning() {
         scanNrfi((done, total) => setProg({ done, total })),
         fetchKalshiRFI(),
       ]);
+      // Snapshot prices on first fetch only (subsequent fetches detect movement).
+      if (Object.keys(priceSnap.current).length === 0) {
+        const snap = {};
+        for (const m of rfiList || []) snap[m.ticker] = m.yesPrice;
+        priceSnap.current = snap;
+      }
       setRows(r); setRfi(rfiList || []); setPhase("done");
       await reconcile(r, rfiList || []);
     } catch (e) { setErr(String((e && e.message) || e)); setPhase("error"); }
@@ -6086,6 +6130,25 @@ function FirstInning() {
   }
 
   useEffect(() => { loadTails(); loadRecord().then(run); }, []);
+
+  // T-45: auto-refresh once when any pregame game is within 45 minutes of first pitch.
+  useEffect(() => {
+    if (phase !== "done" || rows.length === 0) return;
+    const id = setInterval(() => {
+      const t = Date.now();
+      const thresh = 45 * 60 * 1000;
+      for (const row of rows) {
+        if (!row.startUtc || row.final || row.currentInning > 0) continue;
+        const diff = new Date(row.startUtc).getTime() - t;
+        if (diff > 0 && diff <= thresh && !refreshedFor.current.has(row.gamePk)) {
+          refreshedFor.current.add(row.gamePk);
+          run();
+          return;
+        }
+      }
+    }, 60000);
+    return () => clearInterval(id);
+  }, [phase, rows]);
 
   const settled = (rec || []).filter((r) => r.result === "won" || r.result === "lost");
   const modelSettled = settled.filter((r) => r.source !== "kalshi-import");
@@ -6105,16 +6168,32 @@ function FirstInning() {
     const pMax = Math.max(pFinal, 1 - pFinal) * 100;
     let market = null;
     if (mk) {
-      // edge = how much the MODEL diverges from the market on our side (the value trigger)
       const modelSide = call === "NRFI" ? pcal * 100 : (1 - pcal) * 100;
       const marketSide = call === "NRFI" ? mk.marketNRFI : (100 - mk.marketNRFI);
-      market = { ticker: mk.ticker, link: mk.link, yesPrice: mk.yesPrice, marketNRFI: mk.marketNRFI, marketSide, edge: modelSide - marketSide };
+      const snapPrice = priceSnap.current[mk.ticker];
+      const mktMove = snapPrice != null ? mk.yesPrice - snapPrice : null;
+      market = { ticker: mk.ticker, link: mk.link, yesPrice: mk.yesPrice, marketNRFI: mk.marketNRFI, marketSide, edge: modelSide - marketSide, mktMove };
     }
+    const kelly = market ? kellyNRFI(pcal, market.yesPrice, call) : null;
     const tails = sellers.filter((s) => s.active).map((s) => ({ name: s.name, pick: matchKingPick(r, s.open || []) })).filter((t) => t.pick);
-    const base = Object.assign({}, r, { call, pMax, pModel: pcal, pFinal, pCal: pcal, tails, tier: nrfiTier(pMax), market });
+    const base = Object.assign({}, r, { call, pMax, pModel: pcal, pFinal, pCal: pcal, tails, tier: nrfiTier(pMax), market, kelly });
     base.v = nrfiVerdict(base);
     return base;
   });
+  // Correlated NRFI parlay pairs: two BET NRFI games with both pitchers graded B or higher.
+  const nrfiBetRows = enriched.filter((r) => r.v && r.v.isBet && r.call === "NRFI");
+  const parlayPairs = [];
+  for (let i = 0; i < nrfiBetRows.length - 1; i++) {
+    for (let j = i + 1; j < nrfiBetRows.length; j++) {
+      const a = nrfiBetRows[i], b = nrfiBetRows[j];
+      const aMin = a.pitProfiles ? Math.min(a.pitProfiles.away.score, a.pitProfiles.home.score) : 0;
+      const bMin = b.pitProfiles ? Math.min(b.pitProfiles.away.score, b.pitProfiles.home.score) : 0;
+      if (aMin >= 52 && bMin >= 52 && (a.pMax + b.pMax) / 2 >= 60) {
+        const combProb = (a.pFinal * b.pFinal * 100).toFixed(1);
+        parlayPairs.push({ a, b, combProb });
+      }
+    }
+  }
   // Closing-line value on graded picks: did the market move toward our side after we logged it?
   const clvSet = (rec || []).filter((r) => r.mktAtPick != null && r.mktAtClose != null && (r.result === "won" || r.result === "lost"));
   const avgCLV = clvSet.length ? clvSet.reduce((a, r) => a + (r.mktAtClose - r.mktAtPick), 0) / clvSet.length : null;
@@ -6209,10 +6288,33 @@ function FirstInning() {
                     {p.whip != null && (
                       <span title="Walks + Hits per inning pitched in the 1st inning. Lower = harder to score against." style={{ cursor: "help", fontSize: 11, color: "var(--dim)" }}>WHIP {p.whip.toFixed(2)}</span>
                     )}
+                    {p.fstrike != null && (
+                      <span title={"First-pitch strike rate: " + p.fstrike.toFixed(1) + "%. Gets ahead in counts early. League avg ~60%."} style={{ cursor: "help", fontSize: 11, color: p.fstrike >= 64 ? "var(--moss)" : p.fstrike <= 56 ? "var(--rose)" : "var(--dim)" }}>FPS {p.fstrike.toFixed(0)}%</span>
+                    )}
+                    {p.whiff != null && (
+                      <span title={"Whiff rate: " + p.whiff.toFixed(1) + "% of swings miss. League avg ~24.5%."} style={{ cursor: "help", fontSize: 11, color: p.whiff >= 28 ? "var(--moss)" : p.whiff <= 20 ? "var(--rose)" : "var(--dim)" }}>Whiff {p.whiff.toFixed(0)}%</span>
+                    )}
                   </div>
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Team 1st-inning YRFI rates */}
+        {(r.awayYrfiPct != null || r.homeYrfiPct != null) && (
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 11, marginBottom: 8, padding: "5px 10px", background: "rgba(120,130,150,0.05)", borderRadius: 5 }}>
+            <span style={{ color: "var(--dim)", fontWeight: 600 }}>1st-inn offense:</span>
+            {r.awayYrfiPct != null && (
+              <span title={"Season 1st-inning YRFI rate for " + r.away + " — Poisson estimate from avg runs/game in the 1st."} style={{ cursor: "help", color: r.awayYrfiPct >= 38 ? "var(--rose)" : r.awayYrfiPct <= 25 ? "var(--moss)" : "var(--dim)" }}>
+                {r.awayAbbr || r.away}: <b>{r.awayYrfiPct}%</b> YRFI{r.awayOffSample ? <span style={{ color: "var(--dim)", fontWeight: 400 }}> ({r.awayOffSample}g)</span> : null}
+              </span>
+            )}
+            {r.homeYrfiPct != null && (
+              <span title={"Season 1st-inning YRFI rate for " + r.home + " — Poisson estimate from avg runs/game in the 1st."} style={{ cursor: "help", color: r.homeYrfiPct >= 38 ? "var(--rose)" : r.homeYrfiPct <= 25 ? "var(--moss)" : "var(--dim)" }}>
+                {r.homeAbbr || r.home}: <b>{r.homeYrfiPct}%</b> YRFI{r.homeOffSample ? <span style={{ color: "var(--dim)", fontWeight: 400 }}> ({r.homeOffSample}g)</span> : null}
+              </span>
+            )}
           </div>
         )}
 
@@ -6227,6 +6329,16 @@ function FirstInning() {
             </>
           ) : <span style={{ color: "var(--dim)" }}>· no market data</span>}
           {r.method === "sim" && <span title="Probabilities via base-out Markov simulation of actual batters vs pitcher" style={{ cursor: "help", fontSize: 10, color: "var(--dim)", border: "1px solid rgba(120,130,150,.3)", borderRadius: 3, padding: "0 4px" }}>SIM</span>}
+          {r.kelly != null && (() => {
+            const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
+            const kellyPct = (r.kelly * riskMult * 100).toFixed(1);
+            const betAmt = bankroll ? (bankroll * r.kelly * riskMult).toFixed(2) : null;
+            return (
+              <span title={"Kelly criterion bet size. Full Kelly: " + (r.kelly * 100).toFixed(1) + "% · Risk level: " + riskLevel + " (" + (riskMult * 100).toFixed(0) + "% Kelly)"} style={{ cursor: "help", fontSize: 10, color: "var(--moss)", border: "1px solid rgba(80,160,80,.4)", borderRadius: 3, padding: "0 5px", fontWeight: 700 }}>
+                Kelly {kellyPct}%{betAmt ? " · $" + betAmt : ""}
+              </span>
+            );
+          })()}
         </div>
 
         {/* Badges */}
@@ -6234,6 +6346,11 @@ function FirstInning() {
           {!r.lineupPosted && (
             <div title="Official starting lineups not yet posted — model uses projected batting order, which is less reliable" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", background: "rgba(230,160,0,0.15)", border: "1px solid var(--amber)", borderRadius: 4, fontSize: 11, fontWeight: 700, color: "var(--amber)", cursor: "help" }}>
               ⚠ LINEUPS PENDING
+            </div>
+          )}
+          {r.market && r.market.mktMove != null && Math.abs(r.market.mktMove) >= 5 && (
+            <div title={"Market moved " + (r.market.mktMove > 0 ? "+" : "") + r.market.mktMove.toFixed(0) + " pts YES since first fetch. Positive = market pricing more YRFI (sharp money?). Negative = market moving toward NRFI."} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", background: r.market.mktMove > 0 ? "rgba(220,60,60,0.12)" : "rgba(80,160,80,0.12)", border: "1px solid " + (r.market.mktMove > 0 ? "var(--rose)" : "var(--moss)"), borderRadius: 4, fontSize: 11, fontWeight: 700, color: r.market.mktMove > 0 ? "var(--rose)" : "var(--moss)", cursor: "help" }}>
+              {r.market.mktMove > 0 ? "↑" : "↓"} MKT {r.market.mktMove > 0 ? "+" : ""}{r.market.mktMove.toFixed(0)}pts {r.market.mktMove > 0 ? "YRFI" : "NRFI"}
             </div>
           )}
           {r.parkEnv && (() => {
@@ -6376,6 +6493,27 @@ function FirstInning() {
         <button className="btn btn-ghost btn-sm" onClick={importKalshiBets} disabled={importing} title="Pull your closed NRFI/YRFI bets from Kalshi and add them to the history">{importing ? "Importing…" : "Import Kalshi bets"}</button>
         {importMsg && <span style={{ fontSize: 12, color: importMsg.ok ? "var(--moss)" : "var(--rose)" }}>{importMsg.text}</span>}
       </div>
+      {/* Bankroll builder */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", margin: "6px 0 2px", padding: "7px 10px", background: "rgba(80,160,80,0.07)", borderRadius: 6, border: "1px solid rgba(80,160,80,0.2)" }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--moss)" }}>Bankroll Builder</span>
+        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+          <span style={{ color: "var(--dim)" }}>Bankroll $</span>
+          <input type="number" min="0" placeholder="e.g. 500" value={bankroll || ""} onChange={(e) => setBankroll(Number(e.target.value) || null)}
+            style={{ width: 80, fontSize: 12, padding: "2px 6px", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 4, color: "var(--fg)" }} />
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+          <span style={{ color: "var(--dim)" }}>Risk</span>
+          <select value={riskLevel} onChange={(e) => setRiskLevel(e.target.value)}
+            style={{ fontSize: 12, padding: "2px 6px", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 4, color: "var(--fg)" }}>
+            <option value="conservative">Conservative (¼ Kelly)</option>
+            <option value="moderate">Moderate (½ Kelly)</option>
+            <option value="aggressive">Aggressive (Full Kelly)</option>
+          </select>
+        </label>
+        <span style={{ fontSize: 11, color: "var(--dim)" }}>
+          {bankroll ? "Bet sizes shown on each card. Kelly = edge-sized position; " + (riskLevel === "conservative" ? "¼ Kelly = safest long-run sizing." : riskLevel === "aggressive" ? "Full Kelly = max theoretical growth, highest variance." : "½ Kelly = balanced risk/reward.") : "Enter a bankroll to see per-game bet sizes."}
+        </span>
+      </div>
       {phase === "scanning" && <p className="help">Researching {prog && prog.total ? prog.done + "/" + prog.total : ""} games — pulling splits, lineups, travel &amp; weather…</p>}
       {err && <p className="help" style={{ color: "var(--rose)" }}>Couldn't build the board: {err}</p>}
       {phase === "done" && sellers.length > 0 && sellers.every((s) => !s.active) && <p className="help" style={{ color: "var(--amber)" }}>No active seller subscriptions — showing the model board only.</p>}
@@ -6392,6 +6530,24 @@ function FirstInning() {
             <span style={{ color: "var(--rose)", fontWeight: 700 }}>HITTER FRIENDLY</span> = park+weather inflate runs. Hover for detail.
           </div>
           <div><span style={{ color: "var(--amber)", fontWeight: 700 }}>⚠ LINEUPS PENDING</span> = official lineup not yet posted; model uses projected order (less reliable).</div>
+          <div><b style={{ color: "var(--fg)" }}>Kelly</b> (shown in model bar) = mathematically optimal bet size as % of bankroll. ¼ Kelly recommended for most bettors. Enter bankroll above for dollar amounts.</div>
+          <div><b style={{ color: "var(--fg)" }}>1st-inn offense</b> = each team's season YRFI rate (Poisson estimate from avg runs scored in the 1st). Red = high-scoring, green = low-scoring team.</div>
+          <div><b style={{ color: "var(--fg)" }}>↑/↓ MKT</b> = market moved ≥5 pts since first page load. Indicates smart money flow between your sessions.</div>
+        </div>
+      )}
+      {parlayPairs.length > 0 && (
+        <div className="panel" style={{ marginTop: 12, border: "1px solid rgba(80,160,80,0.3)", background: "rgba(80,160,80,0.04)" }}>
+          <p className="sect" style={{ margin: 0, color: "var(--moss)" }}>Correlated NRFI parlays ({parlayPairs.length} pair{parlayPairs.length !== 1 ? "s" : ""})</p>
+          <p style={{ fontSize: 11, color: "var(--dim)", margin: "4px 0 8px" }}>These pairs are strong NRFI signals with solid pitcher grades on both sides — correlated independence assumed.</p>
+          {parlayPairs.map((pair, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderTop: i > 0 ? "1px solid rgba(120,130,150,.12)" : "none", fontSize: 12 }}>
+              <span style={{ color: "var(--moss)", fontWeight: 700 }}>★</span>
+              <span>{pair.a.away} @ {pair.a.home} ({pair.a.pMax.toFixed(0)}% NRFI)</span>
+              <span style={{ color: "var(--dim)" }}>+</span>
+              <span>{pair.b.away} @ {pair.b.home} ({pair.b.pMax.toFixed(0)}% NRFI)</span>
+              <span style={{ color: "var(--dim)" }}>= ~{pair.combProb}% parlay hit</span>
+            </div>
+          ))}
         </div>
       )}
       {sect("Sharps tailing (your subs)", tailed, "var(--amber)")}
