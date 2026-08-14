@@ -34,6 +34,16 @@ export async function DELETE(req: Request) {
   if (!(await requireDeskUser(req))) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const id = new URL(req.url).searchParams.get("id");
+  if (id) {
+    const record = await readStore<NrfiRec[]>("nrfi_record", []);
+    const filtered = record.filter((x) => x.id !== id);
+    if (filtered.length === record.length) {
+      return Response.json({ error: "Not found", id }, { status: 404 });
+    }
+    await writeStore("nrfi_record", filtered);
+    return Response.json({ ok: true, removed: 1, remaining: filtered.length });
+  }
   await writeStore("nrfi_record", []);
   return Response.json({ ok: true });
 }
