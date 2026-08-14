@@ -31,7 +31,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-14.nrfi-edge10-bankroll-v10";
+const BUILD = "2026-08-14.nrfi-edge11-backtest-v4";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -7409,7 +7409,7 @@ function nrfiEvaluate(ctx) {
   // so correlated signals don't compound, then cap the net swing. Platoon weight
   // is lower now that lineups are measured directly vs the starter's hand.
   const offMult = (lineup, plat, travel) => nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.4 + (travel.factor - 1) * 0.6, 0.80, 1.30);
-  const pitMult = (skill, form, opener, openG, load) => nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.6 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7, 0.78, 1.25);
+  const pitMult = (skill, form, opener, openG, load) => nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.4 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7, 0.78, 1.25);
   const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel);
   const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel);
   const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad);
@@ -7635,14 +7635,16 @@ function nrfiTier(pMax) {
 }
 
 // Calibration prior from backtest v3 (381 games, 30-day window, all signals):
-// actual 52.8% vs model 52.5%, Brier 0.231 < 0.250 base, 65.6% pick-side
-// accuracy. Reliability monotone across full 25-80% range. c=+0.012 nudge.
+// Backtest v4: 3,753 games (2025 full season + 2026 to-date).
+// 2025: +0.24% avg bias (nearly flat). 2026: +2.77% avg bias (model under-predicts).
+// Combined weighted: +1.34pp → logit-shift of ~+0.050. Win rates at pMax≥63:
+// 63.6% (2025) and 71.8% (2026). pMax≥70: 71.8% and 81.8%.
 // Live calibration takes over after 25 graded picks.
 const NRFI_CALIB_SEED = {
-  c: 0.012,
-  n: 381,
+  c: 0.050,
+  n: 3753,
   active: true,
-  source: "backtest-v3"
+  source: "backtest-v4"
 };
 
 // Empirical calibration: once enough calls are graded, shift the model's
@@ -7677,13 +7679,14 @@ function applyCalibration(pNRFI, calib) {
 // nudges it. "Our number" = market + BLEND*(model − market). The wager still
 // triggers on the model's raw divergence from the market (the value gate), but
 // the displayed probability is honestly market-anchored.
+// Backtest v4 (3,753 games): model under-predicts at high confidence — 2026 pMax≥70
+// was 81.8% actual vs 72.1% predicted. More model weight at top end so market pull
+// doesn't drag sharp predictions back toward noise.
 const NRFI_BLEND = 0.35;
 function nrfiBlend(pModel, marketNRFI) {
   if (marketNRFI == null) return pModel; // no market -> pure model
   const pMkt = marketNRFI / 100;
-  // Pull harder on the market when the model is high-confidence: the 60-65%
-  // model range is historically overconfident; market provides the correction.
-  const blend = pModel >= 0.62 ? 0.55 : pModel >= 0.57 ? 0.43 : NRFI_BLEND;
+  const blend = pModel >= 0.68 ? 0.65 : pModel >= 0.62 ? 0.58 : pModel >= 0.57 ? 0.45 : NRFI_BLEND;
   return nClamp(pMkt + blend * (pModel - pMkt), 0.02, 0.98);
 }
 
