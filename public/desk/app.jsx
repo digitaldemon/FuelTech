@@ -7247,7 +7247,9 @@ function FirstInning() {
         </div>
       )}
       {sect("Sharps tailing (your subs)", tailed, "var(--amber)")}
-      {sect("Today's card — ranked by confidence", [...rest].sort(byConf), "var(--dim)")}
+      {sect("Bets — ranked by confidence", [...betNRFI, ...betYRFI].sort(byConf), "var(--moss)")}
+      {sect("Leans", leans, "var(--amber)")}
+      {sect("Pass", passes, "var(--dim)")}
     </div>
   );
 }
