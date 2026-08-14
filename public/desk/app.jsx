@@ -7078,11 +7078,14 @@ function FirstInning() {
                 >
                   {loadingPositions ? "Loading…" : openPositions ? "↻ Refresh" : "Load from Kalshi"}
                 </button>
-                {openPositions && !openPositions.error && openPositions.positions.length > 0 && (
-                  <span style={{ fontSize: 11, color: "var(--dim)" }}>
-                    {openPositions.positions.length} open · ${openPositions.totalExposure.toFixed(2)} at risk
-                  </span>
-                )}
+                {openPositions && !openPositions.error && openPositions.positions.length > 0 && (() => {
+                  const totalToWin = openPositions.positions.reduce((s, p) => s + (p.estimatedPayout || 0), 0);
+                  return (
+                    <span style={{ fontSize: 11, color: "var(--dim)" }}>
+                      {openPositions.positions.length} open · <span style={{ color: "var(--fg)" }}>${openPositions.totalExposure.toFixed(2)}</span> at risk · to win <span style={{ color: "var(--moss)", fontWeight: 700 }}>+${totalToWin.toFixed(2)}</span>
+                    </span>
+                  );
+                })()}
               </div>
               {openPositions && openPositions.error && (
                 <div style={{ fontSize: 11, color: "var(--rose)", padding: "6px 10px", background: "rgba(220,60,60,0.08)", borderRadius: 6 }}>{openPositions.error}</div>

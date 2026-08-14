@@ -10252,12 +10252,24 @@ function FirstInning() {
         cursor: loadingPositions ? "not-allowed" : "pointer",
         opacity: loadingPositions ? 0.6 : 1
       }
-    }, loadingPositions ? "Loading…" : openPositions ? "↻ Refresh" : "Load from Kalshi"), openPositions && !openPositions.error && openPositions.positions.length > 0 && /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 11,
-        color: "var(--dim)"
-      }
-    }, openPositions.positions.length, " open \xB7 $", openPositions.totalExposure.toFixed(2), " at risk")), openPositions && openPositions.error && /*#__PURE__*/React.createElement("div", {
+    }, loadingPositions ? "Loading…" : openPositions ? "↻ Refresh" : "Load from Kalshi"), openPositions && !openPositions.error && openPositions.positions.length > 0 && (() => {
+      const totalToWin = openPositions.positions.reduce((s, p) => s + (p.estimatedPayout || 0), 0);
+      return /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontSize: 11,
+          color: "var(--dim)"
+        }
+      }, openPositions.positions.length, " open \xB7 ", /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: "var(--fg)"
+        }
+      }, "$", openPositions.totalExposure.toFixed(2)), " at risk \xB7 to win ", /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: "var(--moss)",
+          fontWeight: 700
+        }
+      }, "+$", totalToWin.toFixed(2)));
+    })()), openPositions && openPositions.error && /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 11,
         color: "var(--rose)",
