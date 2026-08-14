@@ -8527,32 +8527,11 @@ function FirstInning() {
         flex: 1,
         minWidth: 0
       }
-    }, /*#__PURE__*/React.createElement("div", {
+    }, gameTime && /*#__PURE__*/React.createElement("div", {
       style: {
-        display: "flex",
-        flexWrap: "wrap",
-        alignItems: "center",
-        gap: 7,
-        marginBottom: 5
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      title: "Model call: " + r.v.label + ". " + r.v.blurb,
-      style: {
-        cursor: "help",
-        fontWeight: 800,
         fontSize: 11,
-        letterSpacing: "0.08em",
-        color: r.v.color,
-        textTransform: "uppercase",
-        background: r.v.color + "18",
-        border: "1px solid " + r.v.color + "55",
-        borderRadius: 20,
-        padding: "2px 9px"
-      }
-    }, r.v.label), gameTime && /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 12,
-        color: "var(--dim)"
+        color: "var(--dim)",
+        marginBottom: 5
       }
     }, gameTime, countdown && /*#__PURE__*/React.createElement("span", {
       title: "Time until first pitch",
@@ -8562,7 +8541,7 @@ function FirstInning() {
         color: !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)",
         fontWeight: !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400
       }
-    }, "\xB7 ", countdown))), /*#__PURE__*/React.createElement("div", {
+    }, "\xB7 ", countdown)), /*#__PURE__*/React.createElement("div", {
       title: r.away + " (away) @ " + r.home + " (home)",
       style: {
         fontWeight: 800,
@@ -8582,29 +8561,41 @@ function FirstInning() {
         color: "var(--dim)"
       }
     }, r.away, " @ ", r.home)), /*#__PURE__*/React.createElement("div", {
-      title: "Confidence: " + r.pMax.toFixed(0) + "% — " + (r.tier.t === "STRONGEST" ? "Elite signal, high confidence bet." : r.tier.t === "STRONG" ? "Strong signal, confident bet." : r.tier.t === "LEAN" ? "Slight lean, smaller position." : "Too close to call — pass."),
+      title: r.v.blurb,
       style: {
         cursor: "help",
         textAlign: "center",
-        border: "2px solid " + r.tier.c,
+        border: "2px solid " + r.v.color,
+        background: r.v.color + "15",
         borderRadius: 12,
         padding: "8px 14px",
-        flexShrink: 0
+        flexShrink: 0,
+        minWidth: 88
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
+        fontWeight: 900,
+        fontSize: 12,
+        color: r.v.color,
+        lineHeight: 1,
+        letterSpacing: "0.05em",
+        textTransform: "uppercase"
+      }
+    }, r.v.label), /*#__PURE__*/React.createElement("div", {
+      style: {
         fontWeight: 800,
         fontSize: 26,
-        color: r.tier.c,
-        lineHeight: 1
+        color: r.v.color,
+        lineHeight: 1,
+        marginTop: 5
       }
     }, r.pMax.toFixed(0), "%"), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 9,
-        letterSpacing: "0.12em",
-        color: r.tier.c,
+        letterSpacing: "0.10em",
+        color: r.v.color,
         marginTop: 3,
-        opacity: 0.9
+        opacity: 0.6
       }
     }, r.tier.t))), /*#__PURE__*/React.createElement("div", {
       style: {
@@ -10655,7 +10646,7 @@ function FirstInning() {
     style: {
       color: "var(--dim)"
     }
-  }, "= ~", pair.combProb, "% parlay hit")))), sect("Sharps tailing (your subs)", tailed, "var(--amber)"), sect("✅ Bet NRFI — no run in the 1st", betNRFI, "var(--moss)"), sect("✅ Bet YRFI — a run in the 1st", betYRFI, "var(--moss)"), sect("Lighter leans", leans, "var(--amber)"), sect("Too close — pass", passes, "var(--dim)"));
+  }, "= ~", pair.combProb, "% parlay hit")))), sect("Sharps tailing (your subs)", tailed, "var(--amber)"), sect("Today's card — ranked by confidence", [...rest].sort(byConf), "var(--dim)"));
 }
 function Picks({
   ledger,

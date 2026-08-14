@@ -6451,23 +6451,21 @@ function FirstInning() {
         {/* ── Header ── */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 7, marginBottom: 5 }}>
-              <span title={"Model call: " + r.v.label + ". " + r.v.blurb} style={{ cursor: "help", fontWeight: 800, fontSize: 11, letterSpacing: "0.08em", color: r.v.color, textTransform: "uppercase", background: r.v.color + "18", border: "1px solid " + r.v.color + "55", borderRadius: 20, padding: "2px 9px" }}>{r.v.label}</span>
-              {gameTime && (
-                <span style={{ fontSize: 12, color: "var(--dim)" }}>
-                  {gameTime}
-                  {countdown && <span title="Time until first pitch" style={{ cursor: "help", marginLeft: 5, color: !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)", fontWeight: !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400 }}>· {countdown}</span>}
-                </span>
-              )}
-            </div>
+            {gameTime && (
+              <div style={{ fontSize: 11, color: "var(--dim)", marginBottom: 5 }}>
+                {gameTime}
+                {countdown && <span title="Time until first pitch" style={{ cursor: "help", marginLeft: 5, color: !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)", fontWeight: !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400 }}>· {countdown}</span>}
+              </div>
+            )}
             <div title={r.away + " (away) @ " + r.home + " (home)"} style={{ fontWeight: 800, fontSize: 20, letterSpacing: "-0.02em", lineHeight: 1.1, marginBottom: 3 }}>
               {r.awayAbbr || r.away} <span style={{ color: "var(--dim)", fontWeight: 300 }}>@</span> {r.homeAbbr || r.home}
             </div>
             <div style={{ fontSize: 11, color: "var(--dim)" }}>{r.away} @ {r.home}</div>
           </div>
-          <div title={"Confidence: " + r.pMax.toFixed(0) + "% — " + (r.tier.t === "STRONGEST" ? "Elite signal, high confidence bet." : r.tier.t === "STRONG" ? "Strong signal, confident bet." : r.tier.t === "LEAN" ? "Slight lean, smaller position." : "Too close to call — pass.")} style={{ cursor: "help", textAlign: "center", border: "2px solid " + r.tier.c, borderRadius: 12, padding: "8px 14px", flexShrink: 0 }}>
-            <div style={{ fontWeight: 800, fontSize: 26, color: r.tier.c, lineHeight: 1 }}>{r.pMax.toFixed(0)}%</div>
-            <div style={{ fontSize: 9, letterSpacing: "0.12em", color: r.tier.c, marginTop: 3, opacity: 0.9 }}>{r.tier.t}</div>
+          <div title={r.v.blurb} style={{ cursor: "help", textAlign: "center", border: "2px solid " + r.v.color, background: r.v.color + "15", borderRadius: 12, padding: "8px 14px", flexShrink: 0, minWidth: 88 }}>
+            <div style={{ fontWeight: 900, fontSize: 12, color: r.v.color, lineHeight: 1, letterSpacing: "0.05em", textTransform: "uppercase" }}>{r.v.label}</div>
+            <div style={{ fontWeight: 800, fontSize: 26, color: r.v.color, lineHeight: 1, marginTop: 5 }}>{r.pMax.toFixed(0)}%</div>
+            <div style={{ fontSize: 9, letterSpacing: "0.10em", color: r.v.color, marginTop: 3, opacity: 0.6 }}>{r.tier.t}</div>
           </div>
         </div>
 
@@ -7238,10 +7236,7 @@ function FirstInning() {
         </div>
       )}
       {sect("Sharps tailing (your subs)", tailed, "var(--amber)")}
-      {sect("✅ Bet NRFI — no run in the 1st", betNRFI, "var(--moss)")}
-      {sect("✅ Bet YRFI — a run in the 1st", betYRFI, "var(--moss)")}
-      {sect("Lighter leans", leans, "var(--amber)")}
-      {sect("Too close — pass", passes, "var(--dim)")}
+      {sect("Today's card — ranked by confidence", [...rest].sort(byConf), "var(--dim)")}
     </div>
   );
 }
