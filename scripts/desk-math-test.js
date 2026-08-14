@@ -72,12 +72,14 @@ const code = [
   slice("function openerFactor(", "\n}"),
   slice("function nrfiCalibration(", "\n}"),
   slice("function applyCalibration(", "\n}"),
+  slice("const NRFI_BLEND = 0.35;", "const NRFI_BLEND = 0.35;"),
+  slice("function nrfiBlend(", "\n}"),
   slice("function matchRFI(", "\n}"),
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, platoonFactor, formFactor, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, matchRFI } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, platoonFactor, formFactor, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, matchRFI })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, platoonFactor, formFactor, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, platoonFactor, formFactor, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -367,6 +369,12 @@ const calO = nrfiCalibration(overRec);
 ok(calO.active && calO.c < 0, "over-predicting model -> negative calibration shift");
 ok(applyCalibration(0.60, calO) < 0.60, "calibration pulls a 60% prediction down toward reality");
 ok(applyCalibration(0.60, { active: false }) === 0.60, "inactive calibration leaves the probability unchanged");
+
+// Market-as-prior blend (anchor to market, model nudges)
+ok(nrfiBlend(0.70, null) === 0.70, "no market -> pure model");
+ok(Math.abs(nrfiBlend(0.70, 55) - 0.6025) < 1e-6, "model 70%, market 55% -> anchored to ~60% (market prior)");
+ok(nrfiBlend(0.70, 55) < 0.70 && nrfiBlend(0.70, 55) > 0.55, "blend sits between market prior and model, closer to market");
+ok(Math.abs(nrfiBlend(0.30, 55) - 0.4625) < 1e-6, "bearish model still anchored toward the market");
 ok(pickWon("CWS", "CHW") === true, "grading respects cross-feed aliases");
 ok(pickWon("TIE", "TIE") === true && pickWon("MIL", "TIE") === false, "draw pick only wins on a draw");
 

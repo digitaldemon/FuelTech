@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-13.nrfi-first-inning";
+const BUILD = "2026-08-13.nrfi-market-clv";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5552,6 +5552,17 @@ function applyCalibration(pNRFI, calib) {
   return nClamp(unlogit(logit(nClamp(pNRFI, 0.02, 0.98)) + calib.c), 0.02, 0.98);
 }
 
+// Market-as-prior: the de-vig market (efficient) is the anchor; the model only
+// nudges it. "Our number" = market + BLEND*(model − market). The wager still
+// triggers on the model's raw divergence from the market (the value gate), but
+// the displayed probability is honestly market-anchored.
+const NRFI_BLEND = 0.35;
+function nrfiBlend(pModel, marketNRFI) {
+  if (marketNRFI == null) return pModel;      // no market -> pure model
+  const pMkt = marketNRFI / 100;
+  return nClamp(pMkt + NRFI_BLEND * (pModel - pMkt), 0.02, 0.98);
+}
+
 // Plain-English "what to do" for a game: turns model confidence + check
 // consensus into an obvious BET / LEAN / PASS call in one line.
 function nrfiVerdict(r) {
@@ -5720,7 +5731,7 @@ function matchRFI(row, list) {
 
 function FirstInning() {
   const [rows, setRows] = useState([]);
-  const [king, setKing] = useState(null);
+  const [sellers, setSellers] = useState([]);
   const [rec, setRec] = useState(null);
   const [phase, setPhase] = useState("idle");
   const [prog, setProg] = useState(null);
@@ -5733,34 +5744,49 @@ function FirstInning() {
     try { const d = await fetch("/api/desk/nrfi").then((r) => r.json()); recRef.current = d.record || []; setRec(recRef.current); }
     catch { recRef.current = []; setRec([]); }
   }
-  async function loadKing() {
-    try { const d = await fetch("/api/desk/nrfiking").then((r) => r.json()); setKing(d && !d.error ? d : null); }
-    catch { setKing(null); }
+  async function loadTails() {
+    try { const d = await fetch("/api/desk/nrfiking").then((r) => r.json()); setSellers((d && d.sellers) || []); }
+    catch { setSellers([]); }
   }
-  async function reconcile(rs) {
+  async function reconcile(rs, rfiList) {
     if (!recRef.current) return;
     const recl = recRef.current.slice(); const changed = [];
+    const lc = nrfiCalibration(recl); const calibNow = lc.active ? lc : NRFI_CALIB_SEED;
+    const r1 = (x) => Math.round(x * 10) / 10;
     for (const r of rs) {
-      const call = r.pNRFI >= r.pYRFI ? "NRFI" : "YRFI";
-      const pMax = Math.max(r.pNRFI, r.pYRFI) * 100;
+      const pcal = applyCalibration(r.pNRFI, calibNow);
+      const mk = matchRFI(r, rfiList || []);
+      const pFinal = nrfiBlend(pcal, mk ? mk.marketNRFI : null);
+      const call = pFinal >= 0.5 ? "NRFI" : "YRFI";
+      const pMax = Math.max(pFinal, 1 - pFinal) * 100;
+      const mktSide = mk ? (call === "NRFI" ? mk.marketNRFI : 100 - mk.marketNRFI) : null;
+      const started = r.currentInning >= 1 || r.final || (r.state && r.state !== "Preview");
       const id = "nrfi-" + r.gamePk;
       let e = recl.find((x) => x.id === id);
       if (!e && r.state === "Preview" && r.hasPitchers && r.dataOk && pMax >= 57) {
         e = { id, at: Date.now(), date: r.date.replace(/-/g, ""), gamePk: r.gamePk,
-          game: r.away + " @ " + r.home, call, prob: Math.round(pMax * 10) / 10,
-          pNRFI: Math.round(r.pNRFI * 1000) / 1000, result: null };
+          game: r.away + " @ " + r.home, call, prob: r1(pMax),
+          pNRFI: Math.round(r.pNRFI * 1000) / 1000,
+          mktAtPick: mktSide != null ? r1(mktSide) : null,
+          mktLatest: mktSide != null ? r1(mktSide) : null, mktAtClose: null, result: null };
         recl.unshift(e); changed.push(e);
+      } else if (e && e.result == null) {
+        // Track the market for CLV: update the live price pregame, freeze it at first pitch.
+        if (mktSide != null && !started && e.mktLatest !== r1(mktSide)) { e.mktLatest = r1(mktSide); changed.push(e); }
+        if (e.mktAtClose == null && started) { e.mktAtClose = e.mktLatest != null ? e.mktLatest : (mktSide != null ? r1(mktSide) : null); if (e.mktAtClose != null) changed.push(e); }
       }
       if (e && e.result == null && r.inning1runs != null && (r.currentInning > 1 || r.final)) {
         const nrfiHit = r.inning1runs === 0;
         e.result = (e.call === "NRFI") === nrfiHit ? "won" : "lost";
         e.firstInningRuns = r.inning1runs;
+        if (e.mktAtClose == null && e.mktAtPick != null) e.mktAtClose = e.mktLatest != null ? e.mktLatest : e.mktAtPick;
         changed.push(e);
       }
     }
     if (changed.length) {
       recRef.current = recl; setRec(recl.slice());
-      try { await fetch("/api/desk/nrfi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changed) }); } catch { /* keeps in memory */ }
+      const uniq = Array.from(new Map(changed.map((e) => [e.id, e])).values());
+      try { await fetch("/api/desk/nrfi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(uniq) }); } catch { /* keeps in memory */ }
     }
   }
   async function run() {
@@ -5771,37 +5797,41 @@ function FirstInning() {
         fetchKalshiRFI(),
       ]);
       setRows(r); setRfi(rfiList || []); setPhase("done");
-      await reconcile(r);
+      await reconcile(r, rfiList || []);
     } catch (e) { setErr(String((e && e.message) || e)); setPhase("error"); }
   }
-  useEffect(() => { loadKing(); loadRecord().then(run); }, []);
+  useEffect(() => { loadTails(); loadRecord().then(run); }, []);
 
   const settled = (rec || []).filter((r) => r.result === "won" || r.result === "lost");
   const wins = settled.filter((r) => r.result === "won").length;
   const losses = settled.length - wins;
-  const kingOpen = (king && king.open) || [];
 
   const liveCalib = nrfiCalibration(rec || []);
   const calib = liveCalib.active ? liveCalib : NRFI_CALIB_SEED; // live once ≥25 graded, else backtest prior
   const enriched = rows.map((r) => {
-    const pcal = applyCalibration(r.pNRFI, calib); // empirically-adjusted NRFI prob
-    const call = pcal >= 0.5 ? "NRFI" : "YRFI";
-    const pMax = Math.max(pcal, 1 - pcal) * 100;
+    const pcal = applyCalibration(r.pNRFI, calib);        // model's own NRFI prob
     const mk = matchRFI(r, rfi);
+    const pFinal = nrfiBlend(pcal, mk ? mk.marketNRFI : null); // market prior + model nudge
+    const call = pFinal >= 0.5 ? "NRFI" : "YRFI";
+    const pMax = Math.max(pFinal, 1 - pFinal) * 100;
     let market = null;
     if (mk) {
-      // edge = how much more confident the model is than the market on OUR side
+      // edge = how much the MODEL diverges from the market on our side (the value trigger)
       const modelSide = call === "NRFI" ? pcal * 100 : (1 - pcal) * 100;
       const marketSide = call === "NRFI" ? mk.marketNRFI : (100 - mk.marketNRFI);
       market = { ticker: mk.ticker, link: mk.link, yesPrice: mk.yesPrice, marketNRFI: mk.marketNRFI, marketSide, edge: modelSide - marketSide };
     }
-    const base = Object.assign({}, r, { call, pMax, pCal: pcal, kp: matchKingPick(r, kingOpen), tier: nrfiTier(pMax), market });
+    const tails = sellers.filter((s) => s.active).map((s) => ({ name: s.name, pick: matchKingPick(r, s.open || []) })).filter((t) => t.pick);
+    const base = Object.assign({}, r, { call, pMax, pModel: pcal, pFinal, pCal: pcal, tails, tier: nrfiTier(pMax), market });
     base.v = nrfiVerdict(base);
     return base;
   });
+  // Closing-line value on graded picks: did the market move toward our side after we logged it?
+  const clvSet = (rec || []).filter((r) => r.mktAtPick != null && r.mktAtClose != null && (r.result === "won" || r.result === "lost"));
+  const avgCLV = clvSet.length ? clvSet.reduce((a, r) => a + (r.mktAtClose - r.mktAtPick), 0) / clvSet.length : null;
   const byConf = (a, b) => b.pMax - a.pMax;
-  const tailed = enriched.filter((r) => r.kp).sort(byConf);
-  const rest = enriched.filter((r) => !r.kp);
+  const tailed = enriched.filter((r) => r.tails && r.tails.length).sort(byConf);
+  const rest = enriched.filter((r) => !(r.tails && r.tails.length));
   const betNRFI = rest.filter((r) => r.v.isBet && r.call === "NRFI").sort(byConf);
   const betYRFI = rest.filter((r) => r.v.isBet && r.call === "YRFI").sort(byConf);
   const leans = rest.filter((r) => r.v.strength === "LEAN").sort(byConf);
@@ -5813,7 +5843,9 @@ function FirstInning() {
   const card = (r) => {
     const isOpen = !!open[r.gamePk];
     const graded = r.inning1runs != null && (r.currentInning > 1 || r.final);
-    const tradeLink = (r.market && r.market.link) || (r.kp && r.kp.kalshiTicker ? kalshiEventLink(r.kp.kalshiTicker) : null);
+    const tailTicker = (r.tails || []).map((t) => t.pick.kalshiTicker).find(Boolean);
+    const tradeLink = (r.market && r.market.link) || (tailTicker ? kalshiEventLink(tailTicker) : null);
+    const recE = (rec || []).find((x) => x.id === "nrfi-" + r.gamePk);
     return (
       <div className={"pick " + r.tier.cls} key={r.gamePk}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
@@ -5823,25 +5855,31 @@ function FirstInning() {
             </div>
             <div className="meta-line" style={{ color: r.v.color, marginTop: 2 }}>{r.v.blurb}</div>
             <div className="meta-line">{r.awayPP} vs {r.homePP}{r.lineupPosted ? "" : " · lineups pending"}</div>
-            {r.kp && (
+            {r.tails && r.tails.length > 0 && (
               <div style={{ marginTop: 4, fontSize: 12 }}>
-                <span style={{ color: r.kp.side === r.call ? "var(--moss)" : "var(--amber)", fontWeight: 600 }}>
-                  NRFIKINGKY: {r.kp.side}{r.kp.odds != null ? " (" + (r.kp.odds > 0 ? "+" : "") + r.kp.odds + ")" : ""}
-                </span>
-                <span style={{ color: "var(--dim)" }}>{r.kp.side === r.call ? " ✓ agrees" : " · model leans " + r.call}</span>
+                {r.tails.map((t, i) => (
+                  <span key={i} style={{ marginRight: 12, color: t.pick.side === r.call ? "var(--moss)" : "var(--amber)", fontWeight: 600 }}>
+                    {t.name}: {t.pick.side}{t.pick.odds != null ? " (" + (t.pick.odds > 0 ? "+" : "") + t.pick.odds + ")" : ""}{t.pick.side === r.call ? " ✓" : " ⚠"}
+                  </span>
+                ))}
               </div>
             )}
             {r.market && (
               <div className="meta-line" style={{ marginTop: 3 }}>
-                <span style={{ color: "var(--dim)" }}>Market (Kalshi): NRFI {r.market.marketNRFI.toFixed(0)}% (YES {r.market.yesPrice.toFixed(0)}c)</span>
+                <span style={{ color: "var(--dim)" }}>Market prior {r.market.marketNRFI.toFixed(0)}% · model {(r.pModel * 100).toFixed(0)}% · our # {r.pMax.toFixed(0)}% (YES {r.market.yesPrice.toFixed(0)}c)</span>
                 <span style={{ color: r.market.edge >= 3 ? "var(--moss)" : r.market.edge <= -3 ? "var(--rose)" : "var(--dim)", fontWeight: 600 }}>
-                  {" · "}{r.market.edge > 0 ? "+" : ""}{r.market.edge.toFixed(0)}% value vs market
+                  {" · "}{r.market.edge > 0 ? "+" : ""}{r.market.edge.toFixed(0)}% value
                 </span>
               </div>
             )}
             {graded && (
               <div className="meta-line" style={{ marginTop: 3 }}>
                 1st inning: {r.inning1runs} run{r.inning1runs === 1 ? "" : "s"} — {r.inning1runs === 0 ? "NRFI" : "YRFI"} hit
+                {recE && recE.mktAtPick != null && recE.mktAtClose != null && (
+                  <span style={{ color: (recE.mktAtClose - recE.mktAtPick) >= 0 ? "var(--moss)" : "var(--rose)" }}>
+                    {" · CLV "}{(recE.mktAtClose - recE.mktAtPick) > 0 ? "+" : ""}{(recE.mktAtClose - recE.mktAtPick).toFixed(1)}%
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -5890,19 +5928,24 @@ function FirstInning() {
         Calibrated first-inning (NRFI/YRFI) model from MLB StatsAPI + Statcast. Every game runs a full research
         pass — starting pitching (1st-inning splits), pitcher skill (1st-inn K%, Statcast whiff, control), recent
         form, both teams' 1st-inning offense, platoon/handedness, leadoff-weighted lineups (also catches
-        scratches), travel &amp; rest, weather/park, and the home-plate umpire. The pick comes only from these
-        checks; Kalshi's KXMLBRFI market and NRFIKINGKY's picks are shown as separate cross-checks, not inputs.
-        Every call is graded against the real 1st-inning score.
+        scratches), travel &amp; rest, weather/park, and the home-plate umpire. The de-vig Kalshi market is the PRIOR —
+        "our number" is market-anchored with the model as the tiebreaker; we bet only when the model clears the market
+        by a real margin, and track closing-line value (CLV), the honest edge test. Graded against the real 1st-inning score.
       </p>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", margin: "8px 0 4px" }}>
         <span style={{ fontSize: 13 }}>Model 1st-inning record: <b style={{ color: wins >= losses ? "var(--moss)" : "var(--rose)" }}>{wins}-{losses}</b></span>
-        {king && king.record && <span style={{ fontSize: 13, color: "var(--dim)" }}>NRFIKINGKY tracked: {king.record.wins}-{king.record.losses}{king.stale ? " (cached)" : ""}</span>}
+        {sellers.map((s) => (
+          <span key={s.id} style={{ fontSize: 13, color: s.active ? "var(--dim)" : "var(--amber)" }}>
+            {s.active ? (s.record ? s.name + " tail: " + s.record.wins + "-" + s.record.losses : s.name + ": active") : s.name + ": subscription not active"}
+          </span>
+        ))}
         <span style={{ fontSize: 13, color: "var(--dim)" }}>{liveCalib.active ? "Calibrated: " + liveCalib.n + " live graded games" : "Calibrated: backtest (" + NRFI_CALIB_SEED.n + " games) · +" + liveCalib.n + " live"}</span>
+        {avgCLV != null && <span style={{ fontSize: 13, color: avgCLV >= 0 ? "var(--moss)" : "var(--rose)" }}>Avg CLV: {avgCLV > 0 ? "+" : ""}{avgCLV.toFixed(1)}% ({clvSet.length})</span>}
         <button className="btn btn-ghost btn-sm" onClick={run} disabled={phase === "scanning"}>{phase === "scanning" ? "Researching…" : "Refresh"}</button>
       </div>
       {phase === "scanning" && <p className="help">Researching {prog && prog.total ? prog.done + "/" + prog.total : ""} games — pulling splits, lineups, travel &amp; weather…</p>}
       {err && <p className="help" style={{ color: "var(--rose)" }}>Couldn't build the board: {err}</p>}
-      {!king && phase === "done" && <p className="help" style={{ color: "var(--amber)" }}>NRFIKINGKY feed unavailable right now — showing the model board only.</p>}
+      {phase === "done" && sellers.length > 0 && sellers.every((s) => !s.active) && <p className="help" style={{ color: "var(--amber)" }}>No active seller subscriptions — showing the model board only.</p>}
       {phase === "done" && rows.length === 0 && <p className="help">No MLB games on today's slate.</p>}
       {rows.length > 0 && (
         <p className="help" style={{ marginTop: 4 }}>
@@ -5911,7 +5954,7 @@ function FirstInning() {
           NRFI = no run in the 1st, YRFI = a run scores.
         </p>
       )}
-      {sect("NRFIKINGKY is tailing", tailed, "var(--amber)")}
+      {sect("Sharps tailing (your subs)", tailed, "var(--amber)")}
       {sect("✅ Bet NRFI — no run in the 1st", betNRFI, "var(--moss)")}
       {sect("✅ Bet YRFI — a run in the 1st", betYRFI, "var(--moss)")}
       {sect("Lighter leans", leans, "var(--amber)")}
