@@ -6088,7 +6088,8 @@ function nrfiVerdict(r) {
   if (r.market) {
     const edge = r.market.edge;           // model% - market% on our side
     const mktProb = r.market.marketSide;  // market's implied % on our side
-    if (edge < 2) { strength = "PASS"; notes.push("market efficient — no value"); }
+    if (edge == null) { strength = "PASS"; notes.push("game under way — no pregame edge left"); }
+    else if (edge < 2) { strength = "PASS"; notes.push("market efficient — no value"); }
     else if (mktProb >= 62 && edge < 5) { strength = "PASS"; notes.push("juice too short"); }
     else if ((strength === "STRONG" || strength === "BET") && edge < 3) { strength = down(strength, 1); notes.push("thin value"); }
     else if (edge >= 3) notes.push("value +" + edge.toFixed(0) + "% vs market");
@@ -6421,6 +6422,12 @@ function FirstInning() {
     const pFinal = nrfiBlend(pcal, mk ? mk.marketNRFI : null); // market prior + model nudge
     const call = pFinal >= 0.5 ? "NRFI" : "YRFI";
     const pMax = Math.max(pFinal, 1 - pFinal) * 100;
+    // Once the first pitch is thrown the market prices the inning as it happens,
+    // while the desk still holds its pregame number and the line score only
+    // arrives after the inning closes. In that window the gap is not an edge —
+    // it is the market knowing the outcome. Quoting it produced a +85% "edge"
+    // at max bet size on a game whose first inning had already scored.
+    const started = !!(r.currentInning >= 1 || r.final || (r.state && r.state !== "Preview"));
     let market = null;
     if (mk) {
       // Edge off pFinal, not pcal: pcal is the model's unanchored opinion, and
@@ -6430,10 +6437,12 @@ function FirstInning() {
       const marketSide = call === "NRFI" ? mk.marketNRFI : (100 - mk.marketNRFI);
       const snapPrice = priceSnap.current[mk.ticker];
       const mktMove = snapPrice != null ? mk.yesPrice - snapPrice : null;
-      market = { ticker: mk.ticker, link: mk.link, yesPrice: mk.yesPrice, marketNRFI: mk.marketNRFI, marketSide, edge: modelSide - marketSide, mktMove };
+      market = { ticker: mk.ticker, link: mk.link, yesPrice: mk.yesPrice, marketNRFI: mk.marketNRFI,
+        marketSide, edge: started ? null : modelSide - marketSide, mktMove, started };
     }
-    // Size on the same anchored probability the edge is quoted from.
-    const kelly = market ? kellyNRFI(pFinal, market.yesPrice, call) : null;
+    // Size on the same anchored probability the edge is quoted from, and never
+    // size a game that is already under way.
+    const kelly = market && !started ? kellyNRFI(pFinal, market.yesPrice, call) : null;
     const tails = sellers.filter((s) => s.active).map((s) => ({ name: s.name, pick: matchKingPick(r, s.open || []) })).filter((t) => t.pick);
     const base = Object.assign({}, r, { call, pMax, pModel: pcal, pFinal, pCal: pcal, tails, tier: nrfiTier(pMax), market, kelly });
     base.v = nrfiVerdict(base);
@@ -6706,9 +6715,13 @@ function FirstInning() {
                 <span style={{ color: "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>MARKET</span>
                 <span style={{ fontWeight: 700, color: "var(--bone)" }}>{r.market.marketNRFI.toFixed(0)}% NRFI</span>
               </span>
-              <span title={"Edge = how much our model probability exceeds the market on our call side. " + (r.market.edge > 0 ? "Positive edge means we think the true probability is higher than what the market is paying." : "Negative edge means the market already prices this better than our model.") + " We only bet when edge is meaningfully positive."} style={{ cursor: "help", padding: "8px 12px", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
+              <span title={r.market.edge == null
+                ? "No edge is quoted once a game is under way: the market is pricing the inning live while our number is still the pregame one, so the gap measures what the market already knows, not value."
+                : "Edge = how much our model probability exceeds the market on our call side. " + (r.market.edge > 0 ? "Positive edge means we think the true probability is higher than what the market is paying." : "Negative edge means the market already prices this better than our model.") + " We only bet when edge is meaningfully positive."} style={{ cursor: "help", padding: "8px 12px", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
                 <span style={{ color: "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>EDGE</span>
-                <span style={{ fontWeight: 700, color: r.market.edge >= 3 ? "var(--moss)" : r.market.edge <= -3 ? "var(--rose)" : "var(--dim)" }}>{r.market.edge > 0 ? "+" : ""}{r.market.edge.toFixed(0)}%</span>
+                {r.market.edge == null
+                  ? <span style={{ fontWeight: 700, color: "var(--dim)" }}>—</span>
+                  : <span style={{ fontWeight: 700, color: r.market.edge >= 3 ? "var(--moss)" : r.market.edge <= -3 ? "var(--rose)" : "var(--dim)" }}>{r.market.edge > 0 ? "+" : ""}{r.market.edge.toFixed(0)}%</span>}
               </span>
               <span title={"Kalshi YES price = " + r.market.yesPrice.toFixed(0) + "¢. Buying YES means you think a run WILL score in the 1st. Buying NO (at " + (100 - r.market.yesPrice).toFixed(0) + "¢) means you think no run scores = NRFI."} style={{ cursor: "help", padding: "8px 12px", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
                 <span style={{ color: "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>KALSHI YES</span>
