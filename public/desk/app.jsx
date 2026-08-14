@@ -6476,16 +6476,27 @@ function FirstInning() {
     const tailTicker = (r.tails || []).map((t) => t.pick.kalshiTicker).find(Boolean);
     const tradeLink = (r.market && r.market.link) || (tailTicker ? kalshiEventLink(tailTicker) : null);
     const recE = (rec || []).find((x) => x.id === "nrfi-" + r.gamePk);
+    // Grade against the pick as it was logged, never the live recompute. The
+    // model re-evaluates every refresh, so a call that flipped between the pick
+    // and first pitch rendered a win on the card while the record counted a
+    // loss — which is how "Model record" showed an L no card on the board owned.
+    // No record at all means the desk never called this game (pMax under the 57
+    // logging bar), so it gets neither a win nor a loss.
+    const gradedCall = recE ? recE.call : null;
+    const gradedWon = !graded || !recE ? null
+      : recE.result ? recE.result === "won"
+      : (recE.call === "NRFI") === (r.inning1runs === 0);
     const gameTime = r.startUtc ? new Date(r.startUtc).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "America/Los_Angeles" }) + " PT" : null;
     const countdown = r.startUtc && !r.final && r.currentInning === 0 ? fmtCountdown(r.startUtc, now) : null;
 
     // ── Verdict graphic: tagline + emoji based on call, confidence, result ──
     const vg = (() => {
       if (graded) {
-        const won = (r.call === "NRFI" && r.inning1runs === 0) || (r.call === "YRFI" && r.inning1runs > 0);
-        if (won && r.call === "NRFI") return { e: "⚰️", tag: "OFFENSE: DECEASED · zero survivors, no witnesses", c: "var(--moss)", bg: "rgba(80,160,80,0.08)" };
-        if (won && r.call === "YRFI") return { e: "💥", tag: "CARNAGE ACHIEVED · " + r.inning1runs + " run" + (r.inning1runs === 1 ? "" : "s") + " of beautiful chaos", c: "var(--moss)", bg: "rgba(80,160,80,0.08)" };
-        if (!won && r.call === "NRFI") return { e: "🩸", tag: "PITCHER GOT SMOKED · model takes the L, moment of silence", c: "var(--rose)", bg: "rgba(220,60,60,0.08)" };
+        if (gradedWon === null) return { e: "📋", tag: "NOT CALLED · no pick was logged on this game", c: "var(--dim)", bg: "rgba(120,130,150,0.05)" };
+        const won = gradedWon;
+        if (won && gradedCall === "NRFI") return { e: "⚰️", tag: "OFFENSE: DECEASED · zero survivors, no witnesses", c: "var(--moss)", bg: "rgba(80,160,80,0.08)" };
+        if (won && gradedCall === "YRFI") return { e: "💥", tag: "CARNAGE ACHIEVED · " + r.inning1runs + " run" + (r.inning1runs === 1 ? "" : "s") + " of beautiful chaos", c: "var(--moss)", bg: "rgba(80,160,80,0.08)" };
+        if (!won && gradedCall === "NRFI") return { e: "🩸", tag: "PITCHER GOT SMOKED · model takes the L, moment of silence", c: "var(--rose)", bg: "rgba(220,60,60,0.08)" };
         return { e: "🤡", tag: "BATTER FUMBLED IT · somehow stayed scoreless, clown behavior", c: "var(--rose)", bg: "rgba(220,60,60,0.08)" };
       }
       if (r.call === "NRFI") {
@@ -6751,16 +6762,16 @@ function FirstInning() {
               {t.name}: {t.pick.side} {t.pick.side === r.call ? "✓" : "⚠"}
             </span>
           ))}
-          {graded && (() => {
-            const won = (r.call === "NRFI" && r.inning1runs === 0) || (r.call === "YRFI" && r.inning1runs > 0);
+          {graded && gradedWon !== null && (() => {
+            const won = gradedWon;
             const clv = recE && recE.mktAtPick != null && recE.mktAtClose != null ? recE.mktAtClose - recE.mktAtPick : null;
             return (
               <div style={{ width: "100%", marginTop: 6, padding: "12px 14px", borderRadius: 10, background: won ? "rgba(80,160,80,0.10)" : "rgba(220,60,60,0.10)", border: "1px solid " + (won ? "rgba(80,160,80,0.4)" : "rgba(220,60,60,0.4)") }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 28, lineHeight: 1 }}>{won ? vg.e : (r.call === "NRFI" ? "🩸" : "🤡")}</span>
+                  <span style={{ fontSize: 28, lineHeight: 1 }}>{won ? vg.e : (gradedCall === "NRFI" ? "🩸" : "🤡")}</span>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 900, fontSize: 15, color: won ? "var(--moss)" : "var(--rose)", letterSpacing: "0.04em", textTransform: "uppercase" }}>
-                      {won ? (r.call === "NRFI" ? "OFFENSE FLATLINED" : "BEAUTIFUL DISASTER") : (r.call === "NRFI" ? "PITCHER GOT MURKED" : "STAYED SCORELESS (SOMEHOW)")}
+                      {won ? (gradedCall === "NRFI" ? "OFFENSE FLATLINED" : "BEAUTIFUL DISASTER") : (gradedCall === "NRFI" ? "PITCHER GOT MURKED" : "STAYED SCORELESS (SOMEHOW)")}
                     </div>
                     <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>
                       {r.inning1runs === 0 ? "Zero runs. Zero mercy. Zero survivors." : r.inning1runs + " run" + (r.inning1runs === 1 ? " crossed the plate." : "s crossed the plate.")}
@@ -6768,7 +6779,11 @@ function FirstInning() {
                     </div>
                   </div>
                   <div style={{ textAlign: "right", flexShrink: 0 }}>
-                    <div style={{ fontSize: 20, fontWeight: 900, color: won ? "var(--moss)" : "var(--rose)" }}>{r.inning1runs === 0 ? "✓ NRFI" : "✗ YRFI"}</div>
+                    {/* The glyph tracks whether the logged pick won, not which
+                        side landed — a ✓ beside the outcome read as a win even
+                        when we had called the other side. */}
+                    <div style={{ fontSize: 20, fontWeight: 900, color: won ? "var(--moss)" : "var(--rose)" }}>{(won ? "✓ " : "✗ ") + (r.inning1runs === 0 ? "NRFI" : "YRFI")}</div>
+                    <div style={{ fontSize: 10, color: "var(--dim)", marginTop: 1 }}>called {gradedCall}</div>
                     {clv != null && (
                       <div title="Closing line value — how the market moved between our pick and first pitch. Positive = we had real edge." style={{ cursor: "help", fontSize: 11, color: clv >= 0 ? "var(--moss)" : "var(--rose)", fontWeight: 700, marginTop: 2 }}>
                         CLV {clv > 0 ? "+" : ""}{clv.toFixed(1)}%

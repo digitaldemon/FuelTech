@@ -8489,6 +8489,14 @@ function FirstInning() {
     const tailTicker = (r.tails || []).map(t => t.pick.kalshiTicker).find(Boolean);
     const tradeLink = r.market && r.market.link || (tailTicker ? kalshiEventLink(tailTicker) : null);
     const recE = (rec || []).find(x => x.id === "nrfi-" + r.gamePk);
+    // Grade against the pick as it was logged, never the live recompute. The
+    // model re-evaluates every refresh, so a call that flipped between the pick
+    // and first pitch rendered a win on the card while the record counted a
+    // loss — which is how "Model record" showed an L no card on the board owned.
+    // No record at all means the desk never called this game (pMax under the 57
+    // logging bar), so it gets neither a win nor a loss.
+    const gradedCall = recE ? recE.call : null;
+    const gradedWon = !graded || !recE ? null : recE.result ? recE.result === "won" : recE.call === "NRFI" === (r.inning1runs === 0);
     const gameTime = r.startUtc ? new Date(r.startUtc).toLocaleTimeString([], {
       hour: "numeric",
       minute: "2-digit",
@@ -8499,20 +8507,26 @@ function FirstInning() {
     // ── Verdict graphic: tagline + emoji based on call, confidence, result ──
     const vg = (() => {
       if (graded) {
-        const won = r.call === "NRFI" && r.inning1runs === 0 || r.call === "YRFI" && r.inning1runs > 0;
-        if (won && r.call === "NRFI") return {
+        if (gradedWon === null) return {
+          e: "📋",
+          tag: "NOT CALLED · no pick was logged on this game",
+          c: "var(--dim)",
+          bg: "rgba(120,130,150,0.05)"
+        };
+        const won = gradedWon;
+        if (won && gradedCall === "NRFI") return {
           e: "⚰️",
           tag: "OFFENSE: DECEASED · zero survivors, no witnesses",
           c: "var(--moss)",
           bg: "rgba(80,160,80,0.08)"
         };
-        if (won && r.call === "YRFI") return {
+        if (won && gradedCall === "YRFI") return {
           e: "💥",
           tag: "CARNAGE ACHIEVED · " + r.inning1runs + " run" + (r.inning1runs === 1 ? "" : "s") + " of beautiful chaos",
           c: "var(--moss)",
           bg: "rgba(80,160,80,0.08)"
         };
-        if (!won && r.call === "NRFI") return {
+        if (!won && gradedCall === "NRFI") return {
           e: "🩸",
           tag: "PITCHER GOT SMOKED · model takes the L, moment of silence",
           c: "var(--rose)",
@@ -9339,8 +9353,8 @@ function FirstInning() {
         fontWeight: 600,
         color: t.pick.side === r.call ? "var(--moss)" : "var(--amber)"
       }
-    }, t.name, ": ", t.pick.side, " ", t.pick.side === r.call ? "✓" : "⚠")), graded && (() => {
-      const won = r.call === "NRFI" && r.inning1runs === 0 || r.call === "YRFI" && r.inning1runs > 0;
+    }, t.name, ": ", t.pick.side, " ", t.pick.side === r.call ? "✓" : "⚠")), graded && gradedWon !== null && (() => {
+      const won = gradedWon;
       const clv = recE && recE.mktAtPick != null && recE.mktAtClose != null ? recE.mktAtClose - recE.mktAtPick : null;
       return /*#__PURE__*/React.createElement("div", {
         style: {
@@ -9363,7 +9377,7 @@ function FirstInning() {
           fontSize: 28,
           lineHeight: 1
         }
-      }, won ? vg.e : r.call === "NRFI" ? "🩸" : "🤡"), /*#__PURE__*/React.createElement("div", {
+      }, won ? vg.e : gradedCall === "NRFI" ? "🩸" : "🤡"), /*#__PURE__*/React.createElement("div", {
         style: {
           flex: 1
         }
@@ -9375,7 +9389,7 @@ function FirstInning() {
           letterSpacing: "0.04em",
           textTransform: "uppercase"
         }
-      }, won ? r.call === "NRFI" ? "OFFENSE FLATLINED" : "BEAUTIFUL DISASTER" : r.call === "NRFI" ? "PITCHER GOT MURKED" : "STAYED SCORELESS (SOMEHOW)"), /*#__PURE__*/React.createElement("div", {
+      }, won ? gradedCall === "NRFI" ? "OFFENSE FLATLINED" : "BEAUTIFUL DISASTER" : gradedCall === "NRFI" ? "PITCHER GOT MURKED" : "STAYED SCORELESS (SOMEHOW)"), /*#__PURE__*/React.createElement("div", {
         style: {
           fontSize: 11,
           color: "var(--dim)",
@@ -9392,7 +9406,13 @@ function FirstInning() {
           fontWeight: 900,
           color: won ? "var(--moss)" : "var(--rose)"
         }
-      }, r.inning1runs === 0 ? "✓ NRFI" : "✗ YRFI"), clv != null && /*#__PURE__*/React.createElement("div", {
+      }, (won ? "✓ " : "✗ ") + (r.inning1runs === 0 ? "NRFI" : "YRFI")), /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 10,
+          color: "var(--dim)",
+          marginTop: 1
+        }
+      }, "called ", gradedCall), clv != null && /*#__PURE__*/React.createElement("div", {
         title: "Closing line value \u2014 how the market moved between our pick and first pitch. Positive = we had real edge.",
         style: {
           cursor: "help",
