@@ -6799,13 +6799,25 @@ async function pitcherFirstInning(pid, season) {
     const st = d.stats && d.stats[0] && d.stats[0].splits && d.stats[0].splits[0] && d.stats[0].splits[0].stat;
     if (st && st.gamesPlayed) {
       const bf = Number(st.battersFaced || 0);
+      const ip = st.inningsPitched != null ? parseIp(st.inningsPitched) : null;
+      const k9 = ip && ip > 0 ? Number(st.strikeOuts || 0) * 9 / ip : null;
+      const bb9 = ip && ip > 0 ? Number(st.baseOnBalls || 0) * 9 / ip : null;
+      const hr9 = ip && ip > 0 ? Number(st.homeRuns || 0) * 9 / ip : null;
       val = {
         rate: Number(st.runs || 0) / st.gamesPlayed,
         sample: st.gamesPlayed,
         era: st.era != null ? Number(st.era) : null,
         whip: st.whip != null ? Number(st.whip) : null,
+        k9,
+        bb9,
+        hr9,
+        innings: ip,
         krate: bf ? Number(st.strikeOuts || 0) / bf : null,
-        obpA: bf ? (Number(st.hits || 0) + Number(st.baseOnBalls || 0) + Number(st.hitByPitch || 0)) / bf : null
+        obpA: bf ? (Number(st.hits || 0) + Number(st.baseOnBalls || 0) + Number(st.hitByPitch || 0)) / bf : null,
+        hits: Number(st.hits || 0),
+        bb: Number(st.baseOnBalls || 0),
+        k: Number(st.strikeOuts || 0),
+        hr: Number(st.homeRuns || 0)
       };
     }
   } catch {/* leave null */}
@@ -7410,6 +7422,18 @@ function nrfiEvaluate(ctx) {
   const call = pNRFI >= 0.5 ? "nrfi" : "yrfi";
   const nonNeutral = checks.filter(c => c.lean !== "neutral");
   const agree = nonNeutral.filter(c => c.lean === call).length;
+  const pitProfiles = {
+    away: {
+      name: ctx.awayPP,
+      hand: ctx.awayMeta && ctx.awayMeta.hand,
+      ...pitcherI01Profile(ctx.awayPit, ctx.awayMeta && ctx.awayMeta.seasonEra)
+    },
+    home: {
+      name: ctx.homePP,
+      hand: ctx.homeMeta && ctx.homeMeta.hand,
+      ...pitcherI01Profile(ctx.homePit, ctx.homeMeta && ctx.homeMeta.seasonEra)
+    }
+  };
   return {
     pNRFI,
     checks,
@@ -7418,11 +7442,57 @@ function nrfiEvaluate(ctx) {
       total: nonNeutral.length
     },
     confidence: conf,
-    method
+    method,
+    pitProfiles
   };
 }
 const rate2 = o => o && o.rate != null ? o.rate.toFixed(2) : "—";
 const awayPit0 = o => o && o.rate != null ? o.rate.toFixed(2) + " R/1st" : "TBD";
+
+// League-average first-inning rates (derived from model constants + MLB averages).
+const I01_LG = {
+  rate: 0.52,
+  whip: 1.28,
+  k9: 8.4,
+  bb9: 3.1,
+  hr9: 1.10
+};
+
+// Composite first-inning pitcher grade: A+/A/B+/B/C/D/F with supporting stats.
+function pitcherI01Profile(pit, seasonEra) {
+  if (!pit || !pit.sample) return {
+    grade: "—",
+    score: 50,
+    cleanPct: null,
+    summary: "no first-inning data"
+  };
+  const cl = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+  let score = 50;
+  if (pit.rate != null) score += cl((I01_LG.rate - pit.rate) / I01_LG.rate, -1, 1) * 25;
+  if (pit.whip != null) score += cl((I01_LG.whip - pit.whip) / I01_LG.whip, -1, 1) * 15;
+  if (pit.k9 != null) score += cl((pit.k9 - I01_LG.k9) / I01_LG.k9, -1, 1) * 10;
+  if (pit.bb9 != null) score += cl((I01_LG.bb9 - pit.bb9) / I01_LG.bb9, -1, 1) * 10;
+  if (pit.hr9 != null) score += cl((I01_LG.hr9 - pit.hr9) / I01_LG.hr9, -0.5, 0.5) * 5;
+  score = cl(Math.round(score), 0, 100);
+  const grade = score >= 82 ? "A+" : score >= 72 ? "A" : score >= 62 ? "B+" : score >= 52 ? "B" : score >= 42 ? "C" : score >= 30 ? "D" : "F";
+  const gradeColor = score >= 72 ? "var(--moss)" : score >= 52 ? "var(--amber)" : "var(--rose)";
+  const cleanPct = Math.round(Math.exp(-pit.rate) * 100);
+  // vs-season context
+  let vsNote = "";
+  if (seasonEra != null && pit.era != null) {
+    const diff = pit.era - seasonEra;
+    if (diff <= -1.2) vsNote = " · dominant in 1st vs season";else if (diff <= -0.4) vsNote = " · cleaner in 1st than overall";else if (diff >= 1.2) vsNote = " · slow starter vs season";else if (diff >= 0.4) vsNote = " · slightly worse in 1st";
+  }
+  const parts = [pit.sample + " starts", pit.rate != null ? pit.rate.toFixed(2) + " R/1st" : null, pit.whip != null ? "WHIP " + pit.whip.toFixed(2) : null, pit.k9 != null ? "K/9 " + pit.k9.toFixed(1) : null, pit.bb9 != null ? "BB/9 " + pit.bb9.toFixed(1) : null, pit.hr9 != null ? "HR/9 " + pit.hr9.toFixed(2) : null, "~" + cleanPct + "% clean"].filter(Boolean);
+  return {
+    grade,
+    gradeColor,
+    score,
+    cleanPct,
+    summary: parts.join("  ·  "),
+    vsNote
+  };
+}
 function nrfiTier(pMax) {
   return pMax >= 70 ? {
     t: "STRONGEST",
@@ -7668,6 +7738,7 @@ async function scanNrfi(onProgress) {
       aligned: ev.aligned,
       confidence: ev.confidence,
       method: ev.method,
+      pitProfiles: ev.pitProfiles,
       hasPitchers: !!(awayPP && awayPP.id && homePP && homePP.id),
       dataOk: !!(awayOff && homeOff && awayPit && homePit),
       lineupPosted: ctx.awayLineup.obp != null && ctx.homeLineup.obp != null,
@@ -7923,7 +7994,31 @@ function FirstInning() {
       }
     }, r.v.blurb), /*#__PURE__*/React.createElement("div", {
       className: "meta-line"
-    }, r.awayPP, " vs ", r.homePP, r.lineupPosted ? "" : " · lineups pending", r.method === "sim" ? " · base-out sim" : ""), r.tails && r.tails.length > 0 && /*#__PURE__*/React.createElement("div", {
+    }, r.pitProfiles ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, r.awayPP), r.pitProfiles.away.grade !== "—" && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontWeight: 700,
+        fontSize: 11,
+        color: r.pitProfiles.away.gradeColor,
+        border: "1px solid",
+        borderRadius: 3,
+        padding: "0 3px",
+        marginLeft: 4
+      }
+    }, r.pitProfiles.away.grade), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "var(--dim)"
+      }
+    }, " vs "), /*#__PURE__*/React.createElement("span", null, r.homePP), r.pitProfiles.home.grade !== "—" && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontWeight: 700,
+        fontSize: 11,
+        color: r.pitProfiles.home.gradeColor,
+        border: "1px solid",
+        borderRadius: 3,
+        padding: "0 3px",
+        marginLeft: 4
+      }
+    }, r.pitProfiles.home.grade)) : r.awayPP + " vs " + r.homePP, r.lineupPosted ? "" : " · lineups pending", r.method === "sim" ? " · base-out sim" : ""), r.tails && r.tails.length > 0 && /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 4,
         fontSize: 12
@@ -7991,7 +8086,67 @@ function FirstInning() {
       style: {
         marginTop: 8
       }
-    }, r.checks.map((ck, i) => /*#__PURE__*/React.createElement("div", {
+    }, r.pitProfiles && /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: "rgba(120,130,150,.06)",
+        borderRadius: 6,
+        padding: "8px 10px",
+        marginBottom: 8
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 700,
+        fontSize: 11,
+        color: "var(--dim)",
+        letterSpacing: 1,
+        marginBottom: 6
+      }
+    }, "FIRST INNING PITCHER PROFILE"), [r.pitProfiles.away, r.pitProfiles.home].map((p, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: {
+        marginBottom: i === 0 ? 8 : 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        marginBottom: 2
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontWeight: 700,
+        fontSize: 13
+      }
+    }, p.name), p.hand && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "var(--dim)",
+        fontSize: 11
+      }
+    }, "(", p.hand, "HP)"), p.grade !== "—" && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontWeight: 800,
+        fontSize: 13,
+        color: p.gradeColor,
+        border: "1.5px solid",
+        borderRadius: 4,
+        padding: "0 5px"
+      }
+    }, p.grade), p.cleanPct != null && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: p.cleanPct >= 55 ? "var(--moss)" : p.cleanPct <= 42 ? "var(--rose)" : "var(--dim)",
+        fontSize: 11
+      }
+    }, "~", p.cleanPct, "% clean starts")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "var(--dim)",
+        fontSize: 11
+      }
+    }, p.summary, p.vsNote && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "var(--amber)"
+      }
+    }, p.vsNote))))), r.checks.map((ck, i) => /*#__PURE__*/React.createElement("div", {
       key: i,
       style: {
         display: "flex",
