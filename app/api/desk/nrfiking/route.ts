@@ -76,7 +76,7 @@ async function buildSeller(s: { name: string; id: string }) {
     const p1Rows = p1?.data?.bets?.data?.rows || [];
     const allOpenRows = [...openRows, ...p1Rows];
     const open = extractFirstInning(allOpenRows).filter((p) => p.result === "Pending");
-    const settled = extractFirstInning(settledRaw?.data?.bets?.data?.rows || []);
+    const settled = extractFirstInning(settledRaw?.data?.bets?.data?.rows || []).filter((p) => p.side === "NRFI");
     let wins = 0, losses = 0, pushes = 0;
     for (const x of settled) { if (/won/i.test(x.result)) wins++; else if (/lost/i.test(x.result)) losses++; else if (/push/i.test(x.result)) pushes++; }
     return { name: s.name, id: s.id, active: true, open, record: { wins, losses, pushes, sample: settled.length } };
