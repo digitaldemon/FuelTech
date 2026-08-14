@@ -7047,8 +7047,11 @@ function formFactor(era, fip) {
     note: "L3 " + metric.toFixed(2) + " " + label
   };
 }
-// Pitcher rest days: short rest (≤3d) slightly degrades 1st-inning quality;
-// extra rest (6-7d) gives a small edge; long layoff (8+d) → rust risk.
+// Pitcher rest days: backtest v5 (4,015 games) showed counterintuitive results:
+// short rest ≤3d: tired arm → more runs → YRFI lean (f > 1 increases pitcher lambda)
+// extra rest 6-7d: 48.7% NRFI vs 50.8% normal — opposite of assumption, YRFI lean
+// long layoff 8+d: rust risk → slight YRFI lean
+// All three increase pitcher lambda (→ YRFI). Weight is 0.10 so effect is tiny (< 0.3pp).
 function restFactor(days) {
   if (days == null || days < 1 || days > 30) return {
     f: 1,
@@ -7059,7 +7062,7 @@ function restFactor(days) {
     note: days + "d rest (short)"
   };
   if (days >= 6 && days <= 7) return {
-    f: 0.97,
+    f: 1.03,
     note: days + "d extra rest"
   };
   if (days >= 8) return {
@@ -7493,8 +7496,9 @@ function nrfiEvaluate(ctx) {
     // Base-out simulation captures matchup + lineup + platoon + pitcher skill
     // from the raw rates. Apply only what the season rates DON'T contain:
     // recent form, opener/bullpen, travel, and park/weather/umpire.
-    const homeCtx = nClamp(1 + (homeForm.f - 1) * 0.6 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0 + (homeLoad.f - 1) * 0.7, 0.82, 1.2);
-    const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.6 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7, 0.82, 1.2);
+    // Form weight 0.10 (down from 0.6) matches lambda path — backtest LR showed form counterproductive.
+    const homeCtx = nClamp(1 + (homeForm.f - 1) * 0.10 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0 + (homeLoad.f - 1) * 0.7, 0.82, 1.2);
+    const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.10 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7, 0.82, 1.2);
     const s0top = simHalfNoRun(awayB, homeAllow, NRFI_LG_PA);
     const s0bot = simHalfNoRun(homeB, awayAllow, NRFI_LG_PA);
     const pRunTop = nClamp((1 - s0top) * homeCtx * ctx.awayTravel.factor * env, 0.02, 0.97);
@@ -7567,7 +7571,7 @@ function nrfiEvaluate(ctx) {
   }, awayRest.note || homeRest.note ? {
     label: "Pitcher rest days",
     detail: [ctx.awayPP + ": " + (awayRest.note || "normal rest"), ctx.homePP + ": " + (homeRest.note || "normal rest")].join(" · "),
-    lean: awayRest.f >= 1.04 || homeRest.f >= 1.04 ? "yrfi" : awayRest.f <= 0.97 && homeRest.f <= 0.97 ? "nrfi" : "neutral"
+    lean: awayRest.f >= 1.03 || homeRest.f >= 1.03 ? "yrfi" : "neutral"
   } : null, isDayGame ? {
     label: "Day game",
     detail: "Daytime first pitch — historically ~2pp higher scoring vs night games",
@@ -7843,8 +7847,8 @@ function applyCalibration(pNRFI, calib) {
 // nudges it. "Our number" = market + BLEND*(model − market). The wager still
 // triggers on the model's raw divergence from the market (the value gate), but
 // the displayed probability is honestly market-anchored.
-// Backtest v4 (3,753 games): model under-predicts at high confidence — 2026 pMax≥70
-// was 81.8% actual vs 72.1% predicted. More model weight at top end so market pull
+// Backtest v5 (4,015 games): model under-predicts at high confidence — 2026 pMax≥70
+// was 75.9% actual (79 bets). More model weight at top end so market pull
 // doesn't drag sharp predictions back toward noise.
 const NRFI_BLEND = 0.35;
 function nrfiBlend(pModel, marketNRFI) {
@@ -8914,7 +8918,7 @@ function FirstInning() {
           flexShrink: 0
         }
       }, p.grade)), btBadge && btClean != null && /*#__PURE__*/React.createElement("div", {
-        title: (btSrc === "backtest" ? "Backtest result — 3,753 MLB games (2025 full + 2026 to-date): " : "Live model estimate: ") + name + " kept the 1st inning scoreless " + btClean + "% of the time across " + btN + " starts.",
+        title: (btSrc === "backtest" ? "Backtest result — 4,015 MLB games (2025 full + 2026 to-date): " : "Live model estimate: ") + name + " kept the 1st inning scoreless " + btClean + "% of the time across " + btN + " starts.",
         style: {
           cursor: "help",
           display: "inline-flex",
