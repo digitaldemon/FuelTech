@@ -8,7 +8,7 @@ const {
 } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-13.nrfi-edge-sharpen";
+const BUILD = "2026-08-13.nrfi-backtest-v3";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -7443,15 +7443,15 @@ function nrfiTier(pMax) {
   };
 }
 
-// Calibration prior from backtest v2 (188 games, all signals active):
-// actual 51.6% vs model 52.1%, Brier 0.236 < 0.250 base, 63.4% pick-side
-// accuracy. Reliability now monotone 35-75% range. c=-0.019 tiny correction.
+// Calibration prior from backtest v3 (381 games, 30-day window, all signals):
+// actual 52.8% vs model 52.5%, Brier 0.231 < 0.250 base, 65.6% pick-side
+// accuracy. Reliability monotone across full 25-80% range. c=+0.012 nudge.
 // Live calibration takes over after 25 graded picks.
 const NRFI_CALIB_SEED = {
-  c: -0.019,
-  n: 188,
+  c: 0.012,
+  n: 381,
   active: true,
-  source: "backtest-v2"
+  source: "backtest-v3"
 };
 
 // Empirical calibration: once enough calls are graded, shift the model's
