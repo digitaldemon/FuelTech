@@ -6441,7 +6441,7 @@ function FirstInning() {
       {/* Bankroll builder */}
       {(() => {
         const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
-        const betRows = enriched.filter((r) => r.v && r.v.isBet && r.kelly != null);
+        const betRows = enriched.filter((r) => r.v && r.v.isBet && r.kelly != null && r.call === "NRFI");
         const totalBetPct = betRows.reduce((s, r) => s + r.kelly * riskMult, 0);
         const totalBetAmt = bankroll ? bankroll * totalBetPct : null;
         const avgEdgePct = betRows.length > 0 ? betRows.reduce((s, r) => s + (r.market ? r.market.edge : 0), 0) / betRows.length : 0;
