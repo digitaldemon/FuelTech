@@ -7571,7 +7571,7 @@ function nrfiEvaluate(ctx) {
   }, awayRest.note || homeRest.note ? {
     label: "Pitcher rest days",
     detail: [ctx.awayPP + ": " + (awayRest.note || "normal rest"), ctx.homePP + ": " + (homeRest.note || "normal rest")].join(" · "),
-    lean: awayRest.f >= 1.03 || homeRest.f >= 1.03 ? "yrfi" : "neutral"
+    lean: awayRest.f >= 1.05 || homeRest.f >= 1.05 ? "yrfi" : "neutral"
   } : null, isDayGame ? {
     label: "Day game",
     detail: "Daytime first pitch — historically ~2pp higher scoring vs night games",
