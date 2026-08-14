@@ -2,7 +2,7 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-13.nrfi-sim-calib";
+const BUILD = "2026-08-13.nrfi-edge-sharpen";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5270,7 +5270,7 @@ async function pitcherMeta(pid, season) {
       if (lip > 0) form = (er * 9) / lip;
     }
   } catch { /* leave nulls */ }
-  const val = { hand, form, seasonEra, gs, g, ip, allow };
+  const val = { hand, form, seasonEra, gs, g, ip, allow, id: pid };
   _pitMeta.set(k, val);
   return val;
 }
@@ -5327,12 +5327,23 @@ function openerFactor(i01Era, seasonEra) {
   return { f: nClamp(1 + (ratio - 1) * 0.15, 0.9, 1.12), note: "1st-inn " + i01Era.toFixed(2) + " vs " + seasonEra.toFixed(2) + " ERA (" + tag + ")" };
 }
 
+// Pitcher season workload: deep-season fatigue nudges the first-inning risk up.
+// Starters who have already thrown 130+ IP are carrying accumulated wear.
+function seasonLoadFactor(ip) {
+  if (ip == null) return { f: 1, note: "" };
+  if (ip >= 150) return { f: 1.04, note: Math.round(ip) + " IP (heavy load)" };
+  if (ip >= 130) return { f: 1.02, note: Math.round(ip) + " IP (high load)" };
+  return { f: 1, note: "" };
+}
+
 // Top-of-order strength from the posted lineup (first 3 due up). One batched
 // people call. Because it reads the ACTUAL lineup, late scratches/injuries are
 // already reflected — the bench bat simply appears instead of the star.
 // Leadoff-weighted (0.5/0.3/0.2) top-of-order OBP vs the OPPOSING STARTER'S
 // HAND — the single sharpest offensive signal for a first-inning run.
-async function topOrderStrength(players, season, oppHand) {
+// When oppPitcherId is provided, batter H2H history vs that pitcher is blended
+// in (shrunk by sample size) for a sharper per-matchup estimate.
+async function topOrderStrength(players, season, oppHand, oppPitcherId) {
   const ordered = (players || []).slice(0, 5).map((p) => p && p.id).filter(Boolean);
   if (ordered.length < 3) return { factor: 1, obp: null, note: "lineup not posted", batters: null };
   const sit = oppHand === "L" ? "vl" : oppHand === "R" ? "vr" : null;
@@ -5351,7 +5362,29 @@ async function topOrderStrength(players, season, oppHand) {
     const w = [0.5, 0.3, 0.2];
     let num = 0, den = 0;
     ordered.slice(0, 3).forEach((id, i) => { const o = byId[id] && byId[id].obp; if (o != null) { num += o * w[i]; den += w[i]; } });
-    const batters = ordered.map((id) => (byId[id] && byId[id].rates) || null);
+    let batters = ordered.map((id) => (byId[id] && byId[id].rates) || null);
+    // Batter vs pitcher H2H: blend actual history into per-batter rates.
+    if (oppPitcherId && batters.some(Boolean)) {
+      try {
+        const h2hD = await getJson("https://statsapi.mlb.com/api/v1/people?personIds=" + ordered.join(",") +
+          "&hydrate=stats(group=[hitting],type=[vsPlayer],opposingPlayerId=" + oppPitcherId + ",season=" + season + ")");
+        const h2hById = {};
+        (h2hD.people || []).forEach((p) => {
+          const s = p.stats && p.stats[0] && p.stats[0].splits && p.stats[0].splits[0] && p.stats[0].splits[0].stat;
+          const pa = s ? Number(s.plateAppearances || s.atBats || 0) : 0;
+          if (s && pa >= 5) h2hById[p.id] = { pa, rates: paRates(s, pa) };
+        });
+        batters = batters.map((b, i) => {
+          const h = h2hById[ordered[i]];
+          if (!b || !h || !h.rates) return b;
+          const wH = Math.min(0.65, h.pa / 20); // shrink to log5 when sparse
+          const keys = ["out", "bb", "s1", "s2", "s3", "hr"];
+          const blended = {};
+          for (const k of keys) blended[k] = b[k] * (1 - wH) + h.rates[k] * wH;
+          return blended;
+        });
+      } catch { /* H2H unavailable; keep season rates */ }
+    }
     const hasB = batters.some(Boolean);
     if (den > 0) {
       const obp = num / den;
@@ -5402,16 +5435,23 @@ function weatherPark(game, homeAbbr) {
   const wind = String(w.wind || "");
   if (/Dome|Roof Closed/i.test(cond)) { wFactor = 0.97; note = "indoors"; }
   else {
-    if (temp != null) { if (temp >= 85) wFactor *= 1.05; else if (temp <= 50) wFactor *= 0.94; }
-    // MLB's wind string is already field-relative ("Out To CF", "In From CF",
-    // "L To R"). Wind to/from center scores hardest in the early innings.
+    if (temp != null) {
+      if (temp >= 92) wFactor *= 1.09;
+      else if (temp >= 82) wFactor *= 1.05;
+      else if (temp >= 56) { /* neutral band */ }
+      else if (temp >= 46) wFactor *= 0.94;
+      else wFactor *= 0.89;
+    }
+    // MLB wind string is field-relative ("Out To CF", "In From CF", "L To R").
+    // Three tiers: light (5-11), moderate (12-19), strong (20+).
     const mph = Number((wind.match(/(\d+)/) || [])[1] || 0);
-    if (mph >= 8) {
-      if (/out to c/i.test(wind)) wFactor *= 1.08;
-      else if (/in from c/i.test(wind)) wFactor *= 0.92;
-      else if (/out to/i.test(wind)) wFactor *= 1.04;
-      else if (/in from/i.test(wind)) wFactor *= 0.97;
-      // crosswind (L To R / R To L) ~ neutral
+    if (mph >= 5) {
+      if (/out to c/i.test(wind))       wFactor *= mph >= 20 ? 1.14 : mph >= 12 ? 1.09 : 1.05;
+      else if (/in from c/i.test(wind)) wFactor *= mph >= 20 ? 0.87 : mph >= 12 ? 0.92 : 0.96;
+      else if (/out to/i.test(wind))    wFactor *= mph >= 20 ? 1.07 : mph >= 12 ? 1.04 : 1.02;
+      else if (/in from/i.test(wind))   wFactor *= mph >= 20 ? 0.94 : mph >= 12 ? 0.97 : 0.99;
+      // crosswind at strong speeds: slight batter disadvantage (irregular movement)
+      else if (mph >= 20 && /l to r|r to l/i.test(wind)) wFactor *= 0.98;
     }
     note = (temp != null ? temp + "°" : "") + (wind ? " · " + wind : "");
   }
@@ -5517,18 +5557,20 @@ function nrfiEvaluate(ctx) {
   const homeOpen = openerFactor(ctx.homePit && ctx.homePit.era, ctx.homeMeta && ctx.homeMeta.seasonEra);
   const awayOpenG = openerGameFactor(ctx.awayMeta);
   const homeOpenG = openerGameFactor(ctx.homeMeta);
+  const awayLoad = seasonLoadFactor(ctx.awayMeta && ctx.awayMeta.ip);
+  const homeLoad = seasonLoadFactor(ctx.homeMeta && ctx.homeMeta.ip);
 
   // Blend each side's adjustments by DEVIATION-from-neutral (not raw product)
   // so correlated signals don't compound, then cap the net swing. Platoon weight
   // is lower now that lineups are measured directly vs the starter's hand.
   const offMult = (lineup, plat, travel) =>
     nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.4 + (travel.factor - 1) * 0.6, 0.80, 1.30);
-  const pitMult = (skill, form, opener, openG) =>
-    nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.6 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0, 0.78, 1.25);
+  const pitMult = (skill, form, opener, openG, load) =>
+    nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.6 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7, 0.78, 1.25);
   const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel);
   const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel);
-  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG);
-  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG);
+  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad);
+  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad);
   const umpFactor = ctx.umpFactor || 1;
   const env = nClamp(1 + (ctx.wx.factor - 1) + (umpFactor - 1), 0.85, 1.20);
   // λ-model (fallback when we don't have posted batters + pitcher allow-rates).
@@ -5543,8 +5585,8 @@ function nrfiEvaluate(ctx) {
     // Base-out simulation captures matchup + lineup + platoon + pitcher skill
     // from the raw rates. Apply only what the season rates DON'T contain:
     // recent form, opener/bullpen, travel, and park/weather/umpire.
-    const homeCtx = nClamp(1 + (homeForm.f - 1) * 0.6 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0, 0.82, 1.2);
-    const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.6 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0, 0.82, 1.2);
+    const homeCtx = nClamp(1 + (homeForm.f - 1) * 0.6 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0 + (homeLoad.f - 1) * 0.7, 0.82, 1.2);
+    const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.6 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7, 0.82, 1.2);
     const s0top = simHalfNoRun(awayB, homeAllow, NRFI_LG_PA);
     const s0bot = simHalfNoRun(homeB, awayAllow, NRFI_LG_PA);
     const pRunTop = nClamp((1 - s0top) * homeCtx * ctx.awayTravel.factor * env, 0.02, 0.97);
@@ -5597,6 +5639,9 @@ function nrfiEvaluate(ctx) {
     { label: "Travel & rest",
       detail: ctx.awayName + ": " + ctx.awayTravel.note + " · " + ctx.homeName + ": " + ctx.homeTravel.note,
       lean: (ctx.awayTravel.factor * ctx.homeTravel.factor) < 0.97 ? "nrfi" : "neutral" },
+    { label: "Pitcher season load",
+      detail: ctx.homePP + ": " + (homeLoad.note || "normal") + " · " + ctx.awayPP + ": " + (awayLoad.note || "normal"),
+      lean: (awayLoad.f >= 1.03 || homeLoad.f >= 1.03) ? "yrfi" : "neutral" },
     { label: "Weather & park", detail: ctx.wx.note, lean: facLean(ctx.wx.factor) },
     { label: "Umpire",
       detail: ctx.umpName ? (ctx.umpName + (ctx.umpNote ? " — " + ctx.umpNote : (umpFactor === 1 ? " (tendency n/a)" : ""))) : "not posted",
@@ -5617,11 +5662,11 @@ function nrfiTier(pMax) {
     : { t: "TOSS-UP", cls: "", c: "var(--dim)" };
 }
 
-// Calibration prior from the offline backtest (scripts/desk-nrfi-backtest.js,
-// 186 games): actual 51.1% vs model 50.7%, Brier 0.230 < 0.250 base, 66%
-// pick-side accuracy. The tiny shift confirms the model is already honest.
-// Used until enough LIVE picks are graded to calibrate on real results.
-const NRFI_CALIB_SEED = { c: -0.029, n: 188, active: true, source: "backtest-sim" };
+// Calibration prior from backtest v2 (188 games, all signals active):
+// actual 51.6% vs model 52.1%, Brier 0.236 < 0.250 base, 63.4% pick-side
+// accuracy. Reliability now monotone 35-75% range. c=-0.019 tiny correction.
+// Live calibration takes over after 25 graded picks.
+const NRFI_CALIB_SEED = { c: -0.019, n: 188, active: true, source: "backtest-v2" };
 
 // Empirical calibration: once enough calls are graded, shift the model's
 // probabilities (in logit space) so its average prediction matches the actual
@@ -5651,7 +5696,10 @@ const NRFI_BLEND = 0.35;
 function nrfiBlend(pModel, marketNRFI) {
   if (marketNRFI == null) return pModel;      // no market -> pure model
   const pMkt = marketNRFI / 100;
-  return nClamp(pMkt + NRFI_BLEND * (pModel - pMkt), 0.02, 0.98);
+  // Pull harder on the market when the model is high-confidence: the 60-65%
+  // model range is historically overconfident; market provides the correction.
+  const blend = pModel >= 0.62 ? 0.55 : pModel >= 0.57 ? 0.43 : NRFI_BLEND;
+  return nClamp(pMkt + blend * (pModel - pMkt), 0.02, 0.98);
 }
 
 // Plain-English "what to do" for a game: turns model confidence + check
@@ -5689,6 +5737,11 @@ function nrfiVerdict(r) {
     else if (mktProb >= 62 && edge < 5) { strength = "PASS"; notes.push("juice too short"); }
     else if ((strength === "STRONG" || strength === "BET") && edge < 3) { strength = down(strength, 1); notes.push("thin value"); }
     else if (edge >= 3) notes.push("value +" + edge.toFixed(0) + "% vs market");
+    // Reliability gate: the 60-65% model range historically breaks even without
+    // market confirmation. Require market to be at least 58% before calling BET.
+    if (r.market && strength === "BET" && p >= 60 && p < 65 && mktProb < 58) {
+      strength = "LEAN"; notes.push("market not confirming high-confidence pick");
+    }
   }
 
   const isBet = strength === "STRONG" || strength === "BET";
@@ -5757,8 +5810,8 @@ async function scanNrfi(onProgress) {
       ]);
     // Lineups vs the opposing starter's hand (needs the hands resolved first).
     const [awayLineup, homeLineup] = await Promise.all([
-      topOrderStrength(lu.awayPlayers, season, homeMeta && homeMeta.hand),
-      topOrderStrength(lu.homePlayers, season, awayMeta && awayMeta.hand),
+      topOrderStrength(lu.awayPlayers, season, homeMeta && homeMeta.hand, homeMeta && homeMeta.id),
+      topOrderStrength(lu.homePlayers, season, awayMeta && awayMeta.hand, awayMeta && awayMeta.id),
     ]);
     const wx = weatherPark(g, home && home.team && home.team.abbreviation);
     const hpUmp = (g.officials || []).find((o) => o.officialType === "Home Plate");

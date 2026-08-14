@@ -26,6 +26,7 @@ const model = [
   slice("function pitchSkillFactor(", "\n}"),
   slice("function openerGameFactor(", "\n}"),
   slice("function openerFactor(", "\n}"),
+  slice("function seasonLoadFactor(", "\n}"),
   slice("function weatherPark(", "\n}"),
   slice("const rate2 = (o)", ";"),
   slice("const awayPit0 = (o)", ";"),
@@ -56,7 +57,7 @@ const teamOff = (id, se) => id == null ? Promise.resolve(null) : memo("t" + id +
     const i01 = f(/first inning/i), vr = f(/right/i), vl = f(/left/i); if (!i01 || !i01.gamesPlayed) return null;
     return { rate: (+i01.runs || 0) / i01.gamesPlayed, sample: i01.gamesPlayed, opsVsR: vr?.ops != null ? +vr.ops : null, opsVsL: vl?.ops != null ? +vl.ops : null }; } catch { return null; }
 });
-const pitMeta = (id, se) => id == null ? Promise.resolve({ hand: null, form: null, seasonEra: null, gs: null, g: null, ip: null, allow: null }) : memo("m" + id + se, async () => {
+const pitMeta = (id, se) => id == null ? Promise.resolve({ hand: null, form: null, seasonEra: null, gs: null, g: null, ip: null, allow: null, id: null }) : memo("m" + id + se, async () => {
   let hand = null, form = null, seasonEra = null, gs = null, g = null, ip = null, allow = null;
   try { const [p, gl] = await Promise.all([
       J(`https://statsapi.mlb.com/api/v1/people/${id}?hydrate=stats(group=[pitching],type=[season],season=${se})`),
@@ -65,19 +66,26 @@ const pitMeta = (id, se) => id == null ? Promise.resolve({ hand: null, form: nul
     const s = pp?.stats?.[0]?.splits?.[0]?.stat; if (s) { seasonEra = s.era != null ? +s.era : null; gs = s.gamesStarted != null ? +s.gamesStarted : null; g = s.gamesPlayed != null ? +s.gamesPlayed : null; ip = s.inningsPitched != null ? parseIp(s.inningsPitched) : null; allow = paRates(s, s.battersFaced); }
     const last = (gl.stats?.[0]?.splits || []).slice(-3); if (last.length) { let er = 0, lip = 0; last.forEach((x) => { er += +(x.stat?.earnedRuns || 0); lip += parseIp(x.stat?.inningsPitched); }); if (lip > 0) form = er * 9 / lip; }
   } catch { /* nulls */ }
-  return { hand, form, seasonEra, gs, g, ip, allow };
+  return { hand, form, seasonEra, gs, g, ip, allow, id };
 });
 const LG_OBP = 0.318, C = (x, a, b) => Math.max(a, Math.min(b, x));
-const topOrder = async (players, se, oppHand) => {
+const topOrder = async (players, se, oppHand, oppPitcherId) => {
   const ids = (players || []).slice(0, 5).map((p) => p?.id).filter(Boolean);
   if (ids.length < 3) return { factor: 1, obp: null, note: "lineup n/a", batters: null };
   const sit = oppHand === "L" ? "vl" : oppHand === "R" ? "vr" : null;
-  return memo("o" + ids.join(",") + (sit || "") + se, async () => {
+  return memo("o" + ids.join(",") + (sit || "") + (oppPitcherId || "") + se, async () => {
     try { const type = sit ? `type=[statSplits],sitCodes=[${sit}]` : "type=[season]";
       const d = await J(`https://statsapi.mlb.com/api/v1/people?personIds=${ids.join(",")}&hydrate=stats(group=[hitting],${type},season=${se})`);
       const by = {}; (d.people || []).forEach((p) => { const s = p.stats?.[0]?.splits?.[0]?.stat; if (s) by[p.id] = { obp: s.obp != null ? +s.obp : null, rates: paRates(s, s.plateAppearances) }; });
       const w = [0.5, 0.3, 0.2]; let num = 0, den = 0; ids.slice(0, 3).forEach((id, i) => { const o = by[id] && by[id].obp; if (o != null) { num += o * w[i]; den += w[i]; } });
-      const batters = ids.map((id) => (by[id] && by[id].rates) || null);
+      let batters = ids.map((id) => (by[id] && by[id].rates) || null);
+      if (oppPitcherId && batters.some(Boolean)) {
+        try {
+          const h2hD = await J(`https://statsapi.mlb.com/api/v1/people?personIds=${ids.join(",")}&hydrate=stats(group=[hitting],type=[vsPlayer],opposingPlayerId=${oppPitcherId},season=${se})`);
+          const h2h = {}; (h2hD.people || []).forEach((p) => { const s = p.stats?.[0]?.splits?.[0]?.stat; const pa = s ? Number(s.plateAppearances || s.atBats || 0) : 0; if (s && pa >= 5) h2h[p.id] = { pa, rates: paRates(s, pa) }; });
+          batters = batters.map((b, i) => { const h = h2h[ids[i]]; if (!b || !h || !h.rates) return b; const wH = Math.min(0.65, h.pa / 20); const keys = ["out","bb","s1","s2","s3","hr"]; const bl = {}; for (const k of keys) bl[k] = b[k]*(1-wH) + h.rates[k]*wH; return bl; });
+        } catch { /* H2H unavailable */ }
+      }
       const hasB = batters.some(Boolean);
       if (den > 0) { const obp = num / den; return { factor: C(obp / LG_OBP, 0.82, 1.24), obp, batters: hasB ? batters : null, note: "1-3 OBP " + obp.toFixed(3) }; }
       if (hasB) return { factor: 1, obp: null, batters, note: "lineup posted" };
@@ -132,7 +140,7 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
       const [awayPit, homePit, awayMeta, homeMeta, awayOff, homeOff, awayTravel, homeTravel] = await Promise.all([
         pitI01(ap.id, se), pitI01(hp.id, se), pitMeta(ap.id, se), pitMeta(hp.id, se),
         teamOff(a.team.id, se), teamOff(h.team.id, se), travelRest(a.team.id, date, g.venue?.id), travelRest(h.team.id, date, g.venue?.id)]);
-      const [awayLineup, homeLineup] = await Promise.all([topOrder(lu.awayPlayers, se, homeMeta.hand), topOrder(lu.homePlayers, se, awayMeta.hand)]);
+      const [awayLineup, homeLineup] = await Promise.all([topOrder(lu.awayPlayers, se, homeMeta.hand, homeMeta.id), topOrder(lu.homePlayers, se, awayMeta.hand, awayMeta.id)]);
       const hpUmp = (g.officials || []).find((o) => o.officialType === "Home Plate");
       const ctx = { awayName: a.team.name, homeName: h.team.name, awayPP: ap.fullName, homePP: hp.fullName,
         awayOff, homeOff, awayPit, homePit, awayMeta, homeMeta, awayLineup, homeLineup, awayTravel, homeTravel,
