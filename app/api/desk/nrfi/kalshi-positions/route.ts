@@ -34,6 +34,11 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+// Safely extract ticker from a position object — Kalshi uses different field names across API versions
+function getTicker(p: Record<string, unknown>): string {
+  return String(p.ticker || p.market_ticker || p.marketTicker || "");
+}
+
 export async function GET(req: Request) {
   if (!(await requireDeskUser(req)))
     return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -41,46 +46,64 @@ export async function GET(req: Request) {
   if (!creds?.keyId)
     return Response.json({ error: "No Kalshi credentials configured." }, { status: 400 });
 
+  const url = new URL(req.url);
+  const debug = url.searchParams.get("debug") === "1";
+
   try {
-    // Fetch all positions, paginate if needed
     let allPositions: Array<Record<string, unknown>> = [];
     let cursor = "";
     for (let page = 0; page < 5; page++) {
-      const url = "/trade-api/v2/portfolio/positions?count_filter=position&limit=100" +
+      const path = "/trade-api/v2/portfolio/positions?count_filter=position&limit=100" +
         (cursor ? "&cursor=" + encodeURIComponent(cursor) : "");
-      const d = await kget(creds, url);
-      const rows = (d.positions || d.market_positions || []) as Array<Record<string, unknown>>;
+      const d = await kget(creds, path);
+      // Kalshi v2 uses market_positions; older docs show positions
+      const rows = (d.market_positions || d.positions || []) as Array<Record<string, unknown>>;
       allPositions = allPositions.concat(rows);
       cursor = d.cursor || "";
       if (!cursor || rows.length < 100) break;
     }
 
-    // Filter to NRFI series only
-    const nrfi = allPositions.filter((p) =>
-      /^KXMLBRFI/i.test(String(p.ticker || ""))
-    );
+    // Debug mode: return raw tickers so we can see the format
+    if (debug) {
+      return Response.json({
+        total: allPositions.length,
+        sample: allPositions.slice(0, 20).map((p) => ({
+          ticker: getTicker(p),
+          position: p.position,
+          keys: Object.keys(p),
+        })),
+      });
+    }
+
+    // Filter: match KXMLBRFI series (handles KXMLBRFI-... and KXMLB-RFI-... formats)
+    const nrfi = allPositions.filter((p) => {
+      const t = getTicker(p).toUpperCase();
+      return t.includes("KXMLBRFI") || (t.includes("KXMLB") && t.includes("RFI"));
+    });
 
     const positions = nrfi.map((p) => {
-      const ticker = String(p.ticker || "");
-      // position > 0 = long YES (YRFI), < 0 = long NO (NRFI)
+      const ticker = getTicker(p);
       const position = num(p.position) ?? 0;
       const side = position >= 0 ? "YES" : "NO";
       const contracts = Math.abs(position);
       const call = side === "NO" ? "NRFI" : "YRFI";
 
-      // prices are in cents (0-100) in Kalshi API
-      const lastYesPrice = num(p.last_fill_price_yes) ?? null;
+      // prices in cents (0-100)
+      const lastYesPrice = num(p.last_fill_price_yes) ?? num(p.last_price) ?? null;
       const entryPrice = side === "YES"
         ? lastYesPrice
         : (lastYesPrice != null ? 100 - lastYesPrice : null);
 
-      const unrealizedPnl = num(p.unrealized_pnl);  // cents
-      const realizedPnl = num(p.realized_pnl);       // cents
+      const unrealizedPnl = num(p.unrealized_pnl);
+      const realizedPnl = num(p.realized_pnl);
       const totalCost = entryPrice != null ? contracts * (entryPrice / 100) : null;
 
-      // Build a readable game label from the ticker
-      const parts = ticker.split("-").slice(1);
-      const game = parts.slice(1).join(" @ ") || ticker;
+      // Parse game label from ticker: KXMLBRFI-26AUG14-NYY-BOS → "NYY @ BOS"
+      const parts = ticker.split("-");
+      const teamParts = parts.slice(2); // skip series + date
+      const game = teamParts.length >= 2
+        ? teamParts[0] + " @ " + teamParts[1]
+        : parts.slice(1).join(" ") || ticker;
 
       return {
         ticker,
@@ -88,11 +111,10 @@ export async function GET(req: Request) {
         side,
         call,
         contracts,
-        entryPrice,   // cents
-        totalCost,    // dollars
-        unrealizedPnl: unrealizedPnl != null ? unrealizedPnl / 100 : null,  // dollars
+        entryPrice,
+        totalCost,
+        unrealizedPnl: unrealizedPnl != null ? unrealizedPnl / 100 : null,
         realizedPnl: realizedPnl != null ? realizedPnl / 100 : null,
-        marketExposure: num(p.market_exposure),
       };
     }).filter((p) => p.contracts > 0);
 
