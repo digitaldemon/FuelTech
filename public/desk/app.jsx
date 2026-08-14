@@ -6337,7 +6337,7 @@ function FirstInning() {
 
   // Auto-refresh all data every 10 minutes: keeps lineups, weather, market prices, and
   // pitcher stats current throughout the day without any manual intervention.
-  const AUTO_REFRESH_MS = 10 * 60 * 1000;
+  const AUTO_REFRESH_MS = 2 * 60 * 1000;
   useEffect(() => {
     if (phase !== "done") return;
     const allFinal = rows.length > 0 && rows.every((r) => r.final);
