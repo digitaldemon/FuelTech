@@ -6911,7 +6911,7 @@ async function pitcherMeta(pid, season) {
       gs = sst.gamesStarted != null ? Number(sst.gamesStarted) : null;
       g = sst.gamesPlayed != null ? Number(sst.gamesPlayed) : null;
       ip = sst.inningsPitched != null ? parseIp(sst.inningsPitched) : null;
-      allow = paRates(sst, sst.battersFaced);
+      allow = paRates(sst, sst.battersFaced, NRFI_PA_REG_PIT);
     }
     const sp = gl.stats && gl.stats[0] && gl.stats[0].splits || [];
     // Use starts only for form + rest day tracking (exclude relief appearances)
@@ -7217,7 +7217,7 @@ async function topOrderStrength(players, season, oppHand, oppPitcherId) {
           const pa = s ? Number(s.plateAppearances || s.atBats || 0) : 0;
           if (s && pa >= 5) h2hById[p.id] = {
             pa,
-            rates: paRates(s, pa)
+            rates: paRates(s, pa, NRFI_PA_REG_H2H)
           };
         });
         batters = batters.map((b, i) => {
@@ -7351,8 +7351,15 @@ const NRFI_LG_PA = {
   s3: 0.004,
   hr: 0.033
 };
+// Regression toward the league PA profile, in pseudo-plate-appearances.
+// The sim path (simHalfNoRun) consumes these rates raw, so a starter with one
+// outing would otherwise arrive with out≈1.0 and score a near-certain NRFI —
+// bypassing NRFI_PIT_REG, which only guards the lambda fallback path.
+const NRFI_PA_REG_PIT = 200; // ~9-10 starts before a pitcher outweighs the prior
+const NRFI_PA_REG_H2H = 50; // batter-vs-pitcher histories are tiny by nature
 // Per-PA/BF outcome rates from a raw stat line.
-function paRates(st, denom) {
+// reg = pseudo-PA of league-average prior; omit (or 0) for raw rates.
+function paRates(st, denom, reg) {
   const d = Number(denom || 0);
   if (!st || d <= 0) return null;
   const n = x => Number(x || 0);
@@ -7362,7 +7369,7 @@ function paRates(st, denom) {
   const s2 = n(st.doubles) / d;
   const s1 = Math.max(0, n(st.hits) - n(st.doubles) - n(st.triples) - n(st.homeRuns)) / d;
   const out = Math.max(0, 1 - bb - hr - s3 - s2 - s1);
-  return {
+  const raw = {
     out,
     bb,
     s1,
@@ -7370,6 +7377,13 @@ function paRates(st, denom) {
     s3,
     hr
   };
+  const k = Number(reg || 0);
+  if (k <= 0) return raw;
+  const o = {};
+  for (const key of ["out", "bb", "s1", "s2", "s3", "hr"]) {
+    o[key] = (raw[key] * d + NRFI_LG_PA[key] * k) / (d + k);
+  }
+  return o;
 }
 // Log5 matchup of a batter vs a pitcher's allowed rates, normalized to sum 1.
 function matchupPA(b, p, lg) {
@@ -7707,9 +7721,15 @@ function pitcherI01Profile(pit, seasonEra, rolling, peri) {
   if (peri && peri.fstrike != null) score += cl((peri.fstrike - 60) / 60, -1, 1) * 8;
   if (peri && peri.whiff != null) score += cl((peri.whiff - 24.5) / 24.5, -1, 1) * 7;
   score = cl(Math.round(score), 0, 100);
+  // pit.sample never entered the score above, so a single clean start scored a
+  // perfect 0.00 R/1st and 0.00 WHIP straight to A+. Cap the top of the scale
+  // until the sample clears the same bar evalNRFI's `thin` check uses.
+  const thinSample = (pit.sample || 0) < 6;
+  if (thinSample) score = Math.min(score, 62);
   const grade = score >= 84 ? "A+" : score >= 74 ? "A" : score >= 63 ? "B+" : score >= 52 ? "B" : score >= 42 ? "C" : score >= 30 ? "D" : "F";
   const gradeColor = score >= 74 ? "var(--moss)" : score >= 52 ? "var(--amber)" : "var(--rose)";
-  const cleanPct = Math.round(Math.exp(-pit.rate) * 100);
+  // Regress the rate before exponentiating — exp(-0) = 100% clean off one start.
+  const cleanPct = Math.round(Math.exp(-nrfiRegress(pit.rate, pit.sample || 0, NRFI_PIT_REG)) * 100);
   let vsNote = "";
   if (seasonEra != null && pit.era != null) {
     const diff = pit.era - seasonEra;
@@ -8394,7 +8414,10 @@ function FirstInning() {
     const pMax = Math.max(pFinal, 1 - pFinal) * 100;
     let market = null;
     if (mk) {
-      const modelSide = call === "NRFI" ? pcal * 100 : (1 - pcal) * 100;
+      // Edge off pFinal, not pcal: pcal is the model's unanchored opinion, and
+      // quoting an edge against a number the market prior never touched inflates
+      // every gap. The desk bets the anchored number, so it must price it too.
+      const modelSide = call === "NRFI" ? pFinal * 100 : (1 - pFinal) * 100;
       const marketSide = call === "NRFI" ? mk.marketNRFI : 100 - mk.marketNRFI;
       const snapPrice = priceSnap.current[mk.ticker];
       const mktMove = snapPrice != null ? mk.yesPrice - snapPrice : null;
@@ -8408,7 +8431,8 @@ function FirstInning() {
         mktMove
       };
     }
-    const kelly = market ? kellyNRFI(pcal, market.yesPrice, call) : null;
+    // Size on the same anchored probability the edge is quoted from.
+    const kelly = market ? kellyNRFI(pFinal, market.yesPrice, call) : null;
     const tails = sellers.filter(s => s.active).map(s => ({
       name: s.name,
       pick: matchKingPick(r, s.open || [])
@@ -8813,8 +8837,11 @@ function FirstInning() {
       p
     }, i) => {
       const rl = p.rolling;
-      const headline = rl && rl.l30 && rl.l30.pct != null ? rl.l30.pct : p.cleanPct;
-      const headlineN = rl && rl.l30 && rl.l30.n ? rl.l30.n : p.sample;
+      // A 1-start L30 window is not a rate. Fall back to the regressed
+      // cleanPct until the rolling window has real games behind it.
+      const rlOk = rl && rl.l30 && rl.l30.pct != null && (rl.l30.n || 0) >= 6;
+      const headline = rlOk ? rl.l30.pct : p.cleanPct;
+      const headlineN = rlOk ? rl.l30.n : p.sample;
       const headlineC = headline >= 65 ? "var(--moss)" : headline >= 50 ? "var(--amber)" : "var(--rose)";
       const kbb = p.k9 != null && p.bb9 != null ? (p.k9 - p.bb9).toFixed(1) : null;
       const pClr = v => v >= 65 ? "var(--moss)" : v >= 50 ? "var(--fg)" : v >= 38 ? "var(--amber)" : "var(--rose)";
@@ -8836,7 +8863,9 @@ function FirstInning() {
       const btClean = bt ? bt.clean : headline;
       const btN = bt ? bt.n : headlineN;
       const btSrc = bt ? "backtest" : "model";
-      const btTier = bt ? bt.tier : headline == null ? null : headline >= 70 ? "elite" : headline >= 65 ? "sharp" : headline <= 30 ? "danger" : headline <= 35 ? "leaky" : "avg";
+      // Without a backtest row the tier falls back to the live rate — only
+      // award one when there are enough starts to mean anything.
+      const btTier = bt ? bt.tier : headline == null || (headlineN || 0) < 6 ? null : headline >= 70 ? "elite" : headline >= 65 ? "sharp" : headline <= 30 ? "danger" : headline <= 35 ? "leaky" : "avg";
       const TIER_STYLES = {
         elite: {
           icon: "🔥",
