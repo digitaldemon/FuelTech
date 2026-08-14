@@ -6030,16 +6030,19 @@ function pitcherBT(name) {
 function nrfiCalibration(record) {
   const g = (record || []).filter((e) => e.pNRFI != null && e.firstInningRuns != null);
   if (g.length < 25) return { c: 0, n: g.length, active: false };
+  const lg = (p) => Math.log(p / (1 - p));  // 0-1 logit (distinct from the global 0-100 logit)
   const cp = (x) => nClamp(x, 0.05, 0.95);
   const meanPred = g.reduce((s, e) => s + e.pNRFI, 0) / g.length;
   const actual = g.filter((e) => e.firstInningRuns === 0).length / g.length;
   const shrink = Math.min(1, g.length / 100);
-  const c = nClamp((logit(cp(actual)) - logit(cp(meanPred))) * shrink, -0.6, 0.6);
+  const c = nClamp((lg(cp(actual)) - lg(cp(meanPred))) * shrink, -0.6, 0.6);
   return { c, n: g.length, active: true };
 }
 function applyCalibration(pNRFI, calib) {
   if (!calib || !calib.active) return pNRFI;
-  return nClamp(unlogit(logit(nClamp(pNRFI, 0.02, 0.98)) + calib.c), 0.02, 0.98);
+  const lg = (p) => Math.log(p / (1 - p));
+  const ul = (x) => 1 / (1 + Math.exp(-x));
+  return nClamp(ul(lg(nClamp(pNRFI, 0.02, 0.98)) + calib.c), 0.02, 0.98);
 }
 
 // Market-as-prior: the de-vig market (efficient) is the anchor; the model only
@@ -6241,6 +6244,101 @@ function matchRFI(row, list) {
   return null;
 }
 
+function NrfiCalendar({ rec }) {
+  const [viewMonth, setViewMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const byDate = {};
+  for (const e of rec || []) {
+    if (!e.date || e.skipped) continue;
+    const d = String(e.date).replace(/-/g, "").slice(0, 8);
+    if (!byDate[d]) byDate[d] = [];
+    byDate[d].push(e);
+  }
+  const { y, m } = viewMonth;
+  const firstDay = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const monthStr = new Date(y, m, 1).toLocaleString("default", { month: "long", year: "numeric" });
+  const mStr = String(m + 1).padStart(2, "0");
+  const todayKey = String(new Date().getFullYear()) + String(new Date().getMonth() + 1).padStart(2, "0") + String(new Date().getDate()).padStart(2, "0");
+  const dayKey = (d) => String(y) + mStr + String(d).padStart(2, "0");
+  const dayPL = (entries) => {
+    let pl = 0;
+    for (const e of entries) {
+      if (!(e.contracts > 0) || e.mktAtPick == null) continue;
+      const price = Math.min(0.99, Math.max(0.01, e.mktAtPick / 100));
+      pl += e.result === "won" ? e.contracts * (1 - price) : -e.contracts * price;
+    }
+    return pl;
+  };
+  const hasPLData = (entries) => entries.some((e) => e.contracts > 0 && e.mktAtPick != null && e.result);
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  let mWins = 0, mTotal = 0, mPL = 0, mHasPL = false;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const entries = (byDate[dayKey(d)] || []).filter((e) => e.result === "won" || e.result === "lost");
+    mWins += entries.filter((e) => e.result === "won").length;
+    mTotal += entries.length;
+    if (hasPLData(entries)) { mPL += dayPL(entries); mHasPL = true; }
+  }
+  return (
+    <div style={{ marginTop: 16, padding: "14px 16px", background: "rgba(255,255,255,0.03)", borderRadius: 10, border: "1px solid rgba(255,255,255,0.08)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={() => setViewMonth(({ y, m }) => m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 })} className="btn btn-ghost btn-sm" style={{ padding: "2px 8px" }}>←</button>
+          <span style={{ fontWeight: 700, fontSize: 13, minWidth: 130, textAlign: "center" }}>{monthStr}</span>
+          <button onClick={() => setViewMonth(({ y, m }) => m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 })} className="btn btn-ghost btn-sm" style={{ padding: "2px 8px" }}>→</button>
+        </div>
+        {mTotal > 0 && (
+          <div style={{ display: "flex", gap: 14, alignItems: "center", fontSize: 12 }}>
+            <span style={{ fontWeight: 700, color: mWins >= mTotal - mWins ? "var(--moss)" : "var(--rose)" }}>{mWins} of {mTotal} ({Math.round(mWins / mTotal * 100)}%)</span>
+            {mHasPL && <span style={{ fontWeight: 700, color: mPL >= 0 ? "var(--moss)" : "var(--rose)" }}>{mPL >= 0 ? "+" : ""}${mPL.toFixed(2)} P&L</span>}
+          </div>
+        )}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3 }}>
+        {["Su","Mo","Tu","We","Th","Fr","Sa"].map((d, i) => (
+          <div key={i} style={{ textAlign: "center", fontSize: 9, fontWeight: 700, color: "var(--dim)", padding: "2px 0", letterSpacing: "0.05em" }}>{d}</div>
+        ))}
+        {cells.map((d, i) => {
+          if (!d) return <div key={"p" + i} />;
+          const key = dayKey(d);
+          const all = byDate[key] || [];
+          const settled = all.filter((e) => e.result === "won" || e.result === "lost");
+          const wins = settled.filter((e) => e.result === "won").length;
+          const losses = settled.length - wins;
+          const pl = dayPL(settled);
+          const hasPL = hasPLData(settled);
+          const pending = all.filter((e) => !e.result).length;
+          const isToday = key === todayKey;
+          const ratio = settled.length > 0 ? wins / settled.length : null;
+          const bg = ratio === null ? (pending > 0 ? "rgba(230,160,0,0.07)" : "rgba(255,255,255,0.02)") : ratio >= 0.6 ? "rgba(80,160,80,0.14)" : ratio <= 0.4 ? "rgba(220,60,60,0.11)" : "rgba(120,130,150,0.1)";
+          const tip = settled.length > 0
+            ? settled.map((e) => (e.game || "?") + " → " + (e.result || "?").toUpperCase()).join("\n") + (hasPL ? "\nP&L: " + (pl >= 0 ? "+" : "") + "$" + pl.toFixed(2) : "")
+            : pending > 0 ? pending + " pending" : "";
+          return (
+            <div key={key} title={tip} style={{ cursor: settled.length > 0 ? "help" : "default", minHeight: 50, background: bg, borderRadius: 6, border: isToday ? "1.5px solid rgba(80,160,80,0.5)" : "1px solid rgba(255,255,255,0.06)", padding: "4px 3px", textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: isToday ? "var(--moss)" : "var(--dim)", fontWeight: isToday ? 700 : 400, marginBottom: 2 }}>{d}</div>
+              {settled.length > 0 && (
+                <>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: ratio >= 0.6 ? "var(--moss)" : ratio <= 0.4 ? "var(--rose)" : "var(--fg)", lineHeight: 1 }}>{wins}-{losses}</div>
+                  {hasPL && <div style={{ fontSize: 9, fontWeight: 700, color: pl >= 0 ? "var(--moss)" : "var(--rose)", marginTop: 1 }}>{pl >= 0 ? "+" : ""}${Math.abs(pl) >= 10 ? Math.round(Math.abs(pl)) : Math.abs(pl).toFixed(1)}</div>}
+                </>
+              )}
+              {settled.length === 0 && pending > 0 && <div style={{ fontSize: 9, color: "var(--amber)", marginTop: 4 }}>{pending}p</div>}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ marginTop: 8, display: "flex", gap: 14, fontSize: 10, color: "var(--dim)", flexWrap: "wrap" }}>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "rgba(80,160,80,0.3)", borderRadius: 2, marginRight: 4, verticalAlign: "middle" }} />≥60% win</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "rgba(120,130,150,0.25)", borderRadius: 2, marginRight: 4, verticalAlign: "middle" }} />mixed</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "rgba(220,60,60,0.25)", borderRadius: 2, marginRight: 4, verticalAlign: "middle" }} />≤40% win</span>
+        <span style={{ marginLeft: "auto" }}>P&L from Kalshi bets only (hover a day for detail)</span>
+      </div>
+    </div>
+  );
+}
+
 function FirstInning() {
   const [rows, setRows] = useState([]);
   const [sellers, setSellers] = useState([]);
@@ -6265,6 +6363,18 @@ function FirstInning() {
   const [loadingPositions, setLoadingPositions] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState(null);
   const now = useNow(1000);
+  const [dismissed, setDismissed] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("cd:nrfi:dismissed") || "[]")); } catch { return new Set(); }
+  });
+  function dismissGame(gamePk) {
+    const next = new Set(dismissed); next.add(String(gamePk));
+    setDismissed(next);
+    try { localStorage.setItem("cd:nrfi:dismissed", JSON.stringify([...next])); } catch {}
+    const id = "nrfi-" + gamePk;
+    if (recRef.current) recRef.current = recRef.current.map((x) => x.id === id ? { ...x, skipped: true } : x);
+    setRec((prev) => (prev || []).map((x) => x.id === id ? { ...x, skipped: true } : x));
+    fetch("/api/desk/nrfi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify([{ id, skipped: true }]) }).catch(() => {});
+  }
 
   async function loadRecord() {
     try { const d = await fetch("/api/desk/nrfi").then((r) => r.json()); recRef.current = d.record || []; setRec(recRef.current); }
@@ -6321,12 +6431,12 @@ function FirstInning() {
           mktAtPick: mktSide != null ? r1(mktSide) : null,
           mktLatest: mktSide != null ? r1(mktSide) : null, mktAtClose: null, result: null };
         recl.unshift(e); changed.push(e);
-      } else if (e && e.result == null) {
+      } else if (e && e.result == null && !e.skipped) {
         // Track the market for CLV: update the live price pregame, freeze it at first pitch.
         if (mktSide != null && !started && e.mktLatest !== r1(mktSide)) { e.mktLatest = r1(mktSide); changed.push(e); }
         if (e.mktAtClose == null && started) { e.mktAtClose = e.mktLatest != null ? e.mktLatest : (mktSide != null ? r1(mktSide) : null); if (e.mktAtClose != null) changed.push(e); }
       }
-      if (e && e.result == null && r.inning1runs != null && (r.currentInning > 1 || r.final)) {
+      if (e && e.result == null && !e.skipped && r.inning1runs != null && (r.currentInning > 1 || r.final)) {
         const nrfiHit = r.inning1runs === 0;
         e.result = (e.call === "NRFI") === nrfiHit ? "won" : "lost";
         e.firstInningRuns = r.inning1runs;
@@ -6392,7 +6502,7 @@ function FirstInning() {
     return () => clearInterval(id);
   }, [phase, rows]);
 
-  // Auto-refresh all data every 10 minutes: keeps lineups, weather, market prices, and
+  // Auto-refresh all data every 2 minutes: keeps lineups, weather, market prices, and
   // pitcher stats current throughout the day without any manual intervention.
   const AUTO_REFRESH_MS = 2 * 60 * 1000;
   useEffect(() => {
@@ -6407,7 +6517,7 @@ function FirstInning() {
   }, [phase, rows]);
 
   const settled = (rec || []).filter((r) => r.result === "won" || r.result === "lost");
-  const modelSettled = settled.filter((r) => r.source !== "kalshi-import");
+  const modelSettled = settled.filter((r) => r.source !== "kalshi-import" && !r.skipped);
   const kalshiSettled = settled.filter((r) => r.source === "kalshi-import");
   const wins = modelSettled.filter((r) => r.result === "won").length;
   const losses = modelSettled.length - wins;
@@ -6416,7 +6526,7 @@ function FirstInning() {
 
   const liveCalib = nrfiCalibration(rec || []);
   const calib = liveCalib.active ? liveCalib : NRFI_CALIB_SEED; // live once ≥25 graded, else backtest prior
-  const enriched = rows.map((r) => {
+  const enriched = rows.filter((r) => !dismissed.has(String(r.gamePk))).map((r) => {
     const pcal = applyCalibration(r.pNRFI, calib);        // model's own NRFI prob
     const mk = matchRFI(r, rfi);
     const pFinal = nrfiBlend(pcal, mk ? mk.marketNRFI : null); // market prior + model nudge
@@ -6822,6 +6932,7 @@ function FirstInning() {
           <button className="btn btn-ghost btn-sm" onClick={() => setOpen((o) => Object.assign({}, o, { [r.gamePk]: !o[r.gamePk] }))}>
             {isOpen ? "Hide research" : "Show research"}
           </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => dismissGame(r.gamePk)} title="Remove this game from the board and record tracking" style={{ color: "var(--dim)", fontSize: 11 }}>Skip ✕</button>
           {tradeLink && (
             <a className="btn btn-sm" href={tradeLink} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
               Trade on Kalshi ↗
@@ -6867,7 +6978,7 @@ function FirstInning() {
         by a real margin, and track closing-line value (CLV), the honest edge test. Graded against the real 1st-inning score.
       </p>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", margin: "8px 0 4px" }}>
-        <span style={{ fontSize: 13 }}>Model record: <b style={{ color: wins >= losses ? "var(--moss)" : "var(--rose)" }}>{wins}-{losses}</b></span>
+        {(() => { const tot = wins + losses; const pct = tot > 0 ? Math.round(wins / tot * 100) : 0; return <span style={{ fontSize: 13 }}>Model record: <b style={{ color: wins >= losses ? "var(--moss)" : "var(--rose)" }}>{wins} of {tot}{tot > 0 ? " (" + pct + "%)" : ""}</b></span>; })()}
         {kalshiSettled.length > 0 && (
           <span style={{ fontSize: 13 }}>Kalshi bets: <b style={{ color: kWins >= kLosses ? "var(--moss)" : "var(--rose)" }}>{kWins}-{kLosses}</b></span>
         )}
@@ -7101,7 +7212,7 @@ function FirstInning() {
             {betRows.length > 0 && (
               <div style={{ marginBottom: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>TODAY'S NRFI BETS</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>TODAY'S NRFI PICKS</span>
                   {alreadyHeld.length > 0 && <span style={{ fontSize: 10, color: "var(--moss)" }}>✓ {alreadyHeld.length} already placed — see open positions below</span>}
                   {allocationScale < 1 && <span style={{ fontSize: 10, color: "var(--amber)" }}>⚠ bets scaled to fit your available balance</span>}
                 </div>
@@ -7347,6 +7458,13 @@ function FirstInning() {
       {sect("Bets — ranked by confidence", [...betNRFI, ...betYRFI].sort(byConf), "var(--moss)")}
       {sect("Leans", leans, "var(--amber)")}
       {sect("Pass", passes, "var(--dim)")}
+      {rec && rec.length > 0 && (
+        <div className="panel" style={{ marginTop: 12 }}>
+          <p className="sect" style={{ margin: "0 0 2px" }}>History calendar</p>
+          <p style={{ fontSize: 11, color: "var(--dim)", margin: "0 0 4px" }}>Daily W-L and P&L from your NRFI calls. P&L only shows for Kalshi bets with contract data.</p>
+          <NrfiCalendar rec={rec} />
+        </div>
+      )}
     </div>
   );
 }

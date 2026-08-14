@@ -107,8 +107,8 @@ export async function GET(req: Request) {
             if ((side === "YES") !== isYes) continue;
             const c = num(f.count_fp ?? f.count) ?? 0;
             const price = isYes
-              ? (num(f.yes_price) ?? num(f.yes_price_dollars) !== null ? (num(f.yes_price_dollars)! * 100) : null)
-              : (num(f.no_price) ?? num(f.no_price_dollars) !== null ? (num(f.no_price_dollars)! * 100) : null);
+              ? (num(f.yes_price) ?? (num(f.yes_price_dollars) != null ? num(f.yes_price_dollars)! * 100 : null))
+              : (num(f.no_price) ?? (num(f.no_price_dollars) != null ? num(f.no_price_dollars)! * 100 : null));
             if (c > 0 && price !== null) { qty += c; cost += c * price; }
           }
           if (qty > 0) entryPrices[ticker] = cost / qty;
