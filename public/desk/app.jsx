@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-14.nrfi-card-rebuild-v7";
+const BUILD = "2026-08-14.nrfi-kalshi-import-v8";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -6073,11 +6073,27 @@ function FirstInning() {
       await reconcile(r, rfiList || []);
     } catch (e) { setErr(String((e && e.message) || e)); setPhase("error"); }
   }
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState(null);
+  async function importKalshiBets() {
+    setImporting(true); setImportMsg(null);
+    try {
+      const d = await fetch("/api/desk/nrfi/kalshi-import").then((r) => r.json());
+      setImportMsg(d.error ? { ok: false, text: d.error } : { ok: true, text: d.message });
+      if (d.imported > 0) await loadRecord();
+    } catch (e) { setImportMsg({ ok: false, text: String(e.message || e) }); }
+    finally { setImporting(false); }
+  }
+
   useEffect(() => { loadTails(); loadRecord().then(run); }, []);
 
   const settled = (rec || []).filter((r) => r.result === "won" || r.result === "lost");
-  const wins = settled.filter((r) => r.result === "won").length;
-  const losses = settled.length - wins;
+  const modelSettled = settled.filter((r) => r.source !== "kalshi-import");
+  const kalshiSettled = settled.filter((r) => r.source === "kalshi-import");
+  const wins = modelSettled.filter((r) => r.result === "won").length;
+  const losses = modelSettled.length - wins;
+  const kWins = kalshiSettled.filter((r) => r.result === "won").length;
+  const kLosses = kalshiSettled.length - kWins;
 
   const liveCalib = nrfiCalibration(rec || []);
   const calib = liveCalib.active ? liveCalib : NRFI_CALIB_SEED; // live once ≥25 graded, else backtest prior
@@ -6345,7 +6361,10 @@ function FirstInning() {
         by a real margin, and track closing-line value (CLV), the honest edge test. Graded against the real 1st-inning score.
       </p>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", margin: "8px 0 4px" }}>
-        <span style={{ fontSize: 13 }}>Model 1st-inning record: <b style={{ color: wins >= losses ? "var(--moss)" : "var(--rose)" }}>{wins}-{losses}</b></span>
+        <span style={{ fontSize: 13 }}>Model record: <b style={{ color: wins >= losses ? "var(--moss)" : "var(--rose)" }}>{wins}-{losses}</b></span>
+        {kalshiSettled.length > 0 && (
+          <span style={{ fontSize: 13 }}>Kalshi bets: <b style={{ color: kWins >= kLosses ? "var(--moss)" : "var(--rose)" }}>{kWins}-{kLosses}</b></span>
+        )}
         {sellers.map((s) => (
           <span key={s.id} style={{ fontSize: 13, color: s.active ? "var(--dim)" : "var(--amber)" }}>
             {s.active ? (s.record ? s.name + " tail: " + s.record.wins + "-" + s.record.losses : s.name + ": active") : s.name + ": subscription not active"}
@@ -6354,6 +6373,8 @@ function FirstInning() {
         <span style={{ fontSize: 13, color: "var(--dim)" }}>{liveCalib.active ? "Calibrated: " + liveCalib.n + " live graded games" : "Calibrated: backtest (" + NRFI_CALIB_SEED.n + " games) · +" + liveCalib.n + " live"}</span>
         {avgCLV != null && <span style={{ fontSize: 13, color: avgCLV >= 0 ? "var(--moss)" : "var(--rose)" }}>Avg CLV: {avgCLV > 0 ? "+" : ""}{avgCLV.toFixed(1)}% ({clvSet.length})</span>}
         <button className="btn btn-ghost btn-sm" onClick={run} disabled={phase === "scanning"}>{phase === "scanning" ? "Researching…" : "Refresh"}</button>
+        <button className="btn btn-ghost btn-sm" onClick={importKalshiBets} disabled={importing} title="Pull your closed NRFI/YRFI bets from Kalshi and add them to the history">{importing ? "Importing…" : "Import Kalshi bets"}</button>
+        {importMsg && <span style={{ fontSize: 12, color: importMsg.ok ? "var(--moss)" : "var(--rose)" }}>{importMsg.text}</span>}
       </div>
       {phase === "scanning" && <p className="help">Researching {prog && prog.total ? prog.done + "/" + prog.total : ""} games — pulling splits, lineups, travel &amp; weather…</p>}
       {err && <p className="help" style={{ color: "var(--rose)" }}>Couldn't build the board: {err}</p>}
