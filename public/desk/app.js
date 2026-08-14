@@ -7924,6 +7924,7 @@ function FirstInning() {
   const [riskLevel, setRiskLevel] = useState("moderate");
   const [profitGoal, setProfitGoal] = useState(null);
   const [growthSpeed, setGrowthSpeed] = useState("steady");
+  const [amountOut, setAmountOut] = useState(null);
   const now = useNow(1000);
   async function loadRecord() {
     try {
@@ -8874,8 +8875,9 @@ function FirstInning() {
   }, importMsg.text)), (() => {
     const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
     const betRows = enriched.filter(r => r.v && r.v.isBet && r.kelly != null && r.call === "NRFI");
+    const remaining = bankroll && amountOut != null ? Math.max(0, bankroll - amountOut) : bankroll;
     const totalBetPct = betRows.reduce((s, r) => s + r.kelly * riskMult, 0);
-    const totalBetAmt = bankroll ? bankroll * totalBetPct : null;
+    const totalBetAmt = remaining ? remaining * totalBetPct : null;
     const avgEdgePct = betRows.length > 0 ? betRows.reduce((s, r) => s + (r.market ? r.market.edge : 0), 0) / betRows.length : 0;
     // Goal planner logic
     // Estimate avg daily profit % = sum of edge-sized expected value across all bets
@@ -8893,7 +8895,7 @@ function FirstInning() {
     let daysToGoal = null;
     let recBankroll = null;
     if (profitGoal && bankroll && effectiveDailyEv > 0) {
-      const dailyProfit = bankroll * effectiveDailyEv;
+      const dailyProfit = (remaining || bankroll) * effectiveDailyEv;
       daysToGoal = Math.ceil(profitGoal / dailyProfit);
       recBankroll = null;
     } else if (profitGoal && !bankroll && effectiveDailyEv > 0) {
@@ -9091,7 +9093,74 @@ function FirstInning() {
       value: "steady"
     }, "Steady \u2014 balanced approach"), /*#__PURE__*/React.createElement("option", {
       value: "fast"
-    }, "Fast \u2014 more bets, higher variance")))), betRows.length > 0 && /*#__PURE__*/React.createElement("div", {
+    }, "Fast \u2014 more bets, higher variance"))), /*#__PURE__*/React.createElement("label", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 4
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.08em"
+      }
+    }, "ALREADY OUT"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        background: "var(--bg)",
+        border: "1px solid rgba(120,130,150,.4)",
+        borderRadius: 6,
+        overflow: "hidden"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        padding: "0 8px",
+        color: "var(--dim)",
+        fontWeight: 700,
+        borderRight: "1px solid rgba(120,130,150,.3)",
+        lineHeight: "34px"
+      }
+    }, "$"), /*#__PURE__*/React.createElement("input", {
+      type: "number",
+      min: "0",
+      placeholder: "0",
+      value: amountOut || "",
+      onChange: e => setAmountOut(Number(e.target.value) || null),
+      style: {
+        width: 80,
+        fontSize: 14,
+        padding: "6px 8px",
+        background: "transparent",
+        border: "none",
+        color: "var(--fg)",
+        fontWeight: 700,
+        outline: "none"
+      }
+    }))), bankroll && amountOut != null && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        justifyContent: "flex-end"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        fontWeight: 700,
+        color: "var(--dim)",
+        letterSpacing: "0.08em"
+      }
+    }, "AVAILABLE"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 20,
+        fontWeight: 800,
+        color: remaining <= 0 ? "var(--rose)" : remaining < bankroll * 0.15 ? "var(--amber)" : "var(--moss)",
+        lineHeight: "34px"
+      }
+    }, "$", remaining.toFixed(0)))), betRows.length > 0 && /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
         gap: 0,
@@ -9111,12 +9180,12 @@ function FirstInning() {
       label: "TOTAL AT RISK",
       value: totalBetAmt != null ? "$" + totalBetAmt.toFixed(0) : (totalBetPct * 100).toFixed(1) + "%",
       color: totalBetPct > 0.25 ? "var(--amber)" : "var(--fg)",
-      tip: "Total bankroll committed across all bets today (" + (totalBetPct * 100).toFixed(1) + "% of bankroll)"
+      tip: "Total of all suggested bets from your available $" + (remaining || 0).toFixed(0) + " (" + (totalBetPct * 100).toFixed(1) + "% of available balance)"
     }, {
       label: "AVG BET",
       value: totalBetAmt != null ? "$" + (totalBetAmt / betRows.length).toFixed(0) : (totalBetPct / betRows.length * 100).toFixed(1) + "%",
       color: "var(--fg)",
-      tip: "Average bet per game. Varies by edge — stronger edge = bigger suggested bet"
+      tip: "Average suggested bet per game from available balance. Larger edge = larger bet."
     }, {
       label: "AVG EDGE",
       value: "+" + avgEdgePct.toFixed(1) + "%",
@@ -9186,8 +9255,8 @@ function FirstInning() {
       }
     }, betRows.map((r, i) => {
       const betPct = (r.kelly * riskMult * 100).toFixed(1);
-      const betAmt = bankroll ? Math.round(bankroll * r.kelly * riskMult * 100) / 100 : null;
-      const winProb = r.call === "NRFI" ? r.pFinal : 1 - r.pFinal;
+      const betAmt = remaining ? Math.round(remaining * r.kelly * riskMult * 100) / 100 : null;
+      const winProb = r.pFinal;
       const edge = r.market ? r.market.edge : null;
       const awayA = r.awayAbbr || r.away;
       const homeA = r.homeAbbr || r.home;
@@ -9215,22 +9284,22 @@ function FirstInning() {
           borderRadius: 20,
           fontSize: 11,
           fontWeight: 800,
-          background: r.call === "NRFI" ? "rgba(80,160,80,0.15)" : "rgba(220,60,60,0.15)",
-          color: r.call === "NRFI" ? "var(--moss)" : "var(--rose)",
-          border: "1px solid " + (r.call === "NRFI" ? "rgba(80,160,80,0.4)" : "rgba(220,60,60,0.4)")
+          background: "rgba(80,160,80,0.15)",
+          color: "var(--moss)",
+          border: "1px solid rgba(80,160,80,0.4)"
         }
-      }, r.call), /*#__PURE__*/React.createElement("span", {
+      }, "NRFI"), /*#__PURE__*/React.createElement("span", {
         style: {
           fontSize: 12,
           color: "var(--dim)"
         },
-        title: "Model confidence \u2014 how strongly we favor this call"
+        title: "Model's probability that no run scores in the 1st inning"
       }, (winProb * 100).toFixed(0), "% confidence"), edge != null && /*#__PURE__*/React.createElement("span", {
         style: {
           fontSize: 12,
           color: edge >= 3 ? "var(--moss)" : "var(--dim)"
         },
-        title: "How much our model probability exceeds the market on this call"
+        title: "How much our model probability exceeds the market"
       }, "+", edge.toFixed(1), "% edge"), /*#__PURE__*/React.createElement("span", {
         style: {
           marginLeft: "auto",
@@ -9238,7 +9307,7 @@ function FirstInning() {
           fontSize: 14,
           color: "var(--moss)"
         },
-        title: "Suggested bet at " + riskLevel + " risk: " + betPct + "% of bankroll" + (betAmt ? " = $" + betAmt : "")
+        title: "Suggested bet from your available $" + (remaining || 0).toFixed(0) + " at " + riskLevel + " risk (" + betPct + "% of available)"
       }, betAmt != null ? "$" + betAmt : betPct + "%"), r.market && /*#__PURE__*/React.createElement("span", {
         style: {
           fontSize: 11,

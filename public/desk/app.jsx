@@ -6047,6 +6047,7 @@ function FirstInning() {
   const [riskLevel, setRiskLevel] = useState("moderate");
   const [profitGoal, setProfitGoal] = useState(null);
   const [growthSpeed, setGrowthSpeed] = useState("steady");
+  const [amountOut, setAmountOut] = useState(null);
   const now = useNow(1000);
 
   async function loadRecord() {
@@ -6442,8 +6443,9 @@ function FirstInning() {
       {(() => {
         const riskMult = riskLevel === "conservative" ? 0.25 : riskLevel === "aggressive" ? 1.0 : 0.5;
         const betRows = enriched.filter((r) => r.v && r.v.isBet && r.kelly != null && r.call === "NRFI");
+        const remaining = (bankroll && amountOut != null) ? Math.max(0, bankroll - amountOut) : bankroll;
         const totalBetPct = betRows.reduce((s, r) => s + r.kelly * riskMult, 0);
-        const totalBetAmt = bankroll ? bankroll * totalBetPct : null;
+        const totalBetAmt = remaining ? remaining * totalBetPct : null;
         const avgEdgePct = betRows.length > 0 ? betRows.reduce((s, r) => s + (r.market ? r.market.edge : 0), 0) / betRows.length : 0;
         // Goal planner logic
         // Estimate avg daily profit % = sum of edge-sized expected value across all bets
@@ -6461,7 +6463,7 @@ function FirstInning() {
         let daysToGoal = null;
         let recBankroll = null;
         if (profitGoal && bankroll && effectiveDailyEv > 0) {
-          const dailyProfit = bankroll * effectiveDailyEv;
+          const dailyProfit = (remaining || bankroll) * effectiveDailyEv;
           daysToGoal = Math.ceil(profitGoal / dailyProfit);
           recBankroll = null;
         } else if (profitGoal && !bankroll && effectiveDailyEv > 0) {
@@ -6513,14 +6515,30 @@ function FirstInning() {
                   <option value="fast">Fast — more bets, higher variance</option>
                 </select>
               </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>ALREADY OUT</span>
+                <div style={{ display: "flex", alignItems: "center", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 6, overflow: "hidden" }}>
+                  <span style={{ padding: "0 8px", color: "var(--dim)", fontWeight: 700, borderRight: "1px solid rgba(120,130,150,.3)", lineHeight: "34px" }}>$</span>
+                  <input type="number" min="0" placeholder="0" value={amountOut || ""} onChange={(e) => setAmountOut(Number(e.target.value) || null)}
+                    style={{ width: 80, fontSize: 14, padding: "6px 8px", background: "transparent", border: "none", color: "var(--fg)", fontWeight: 700, outline: "none" }} />
+                </div>
+              </label>
+              {bankroll && amountOut != null && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, justifyContent: "flex-end" }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>AVAILABLE</span>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: remaining <= 0 ? "var(--rose)" : remaining < bankroll * 0.15 ? "var(--amber)" : "var(--moss)", lineHeight: "34px" }}>
+                    ${remaining.toFixed(0)}
+                  </div>
+                </div>
+              )}
             </div>
             {/* Row 2: live stats */}
             {betRows.length > 0 && (
               <div style={{ display: "flex", gap: 0, flexWrap: "wrap", background: "rgba(255,255,255,0.04)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden", marginBottom: 10 }}>
                 {[
                   { label: "BETS TODAY", value: betRows.length, color: "var(--moss)", tip: "Number of bet-rated games on today's slate" },
-                  { label: "TOTAL AT RISK", value: totalBetAmt != null ? "$" + totalBetAmt.toFixed(0) : (totalBetPct * 100).toFixed(1) + "%", color: totalBetPct > 0.25 ? "var(--amber)" : "var(--fg)", tip: "Total bankroll committed across all bets today (" + (totalBetPct * 100).toFixed(1) + "% of bankroll)" },
-                  { label: "AVG BET", value: totalBetAmt != null ? "$" + (totalBetAmt / betRows.length).toFixed(0) : ((totalBetPct / betRows.length) * 100).toFixed(1) + "%", color: "var(--fg)", tip: "Average bet per game. Varies by edge — stronger edge = bigger suggested bet" },
+                  { label: "TOTAL AT RISK", value: totalBetAmt != null ? "$" + totalBetAmt.toFixed(0) : (totalBetPct * 100).toFixed(1) + "%", color: totalBetPct > 0.25 ? "var(--amber)" : "var(--fg)", tip: "Total of all suggested bets from your available $" + (remaining || 0).toFixed(0) + " (" + (totalBetPct * 100).toFixed(1) + "% of available balance)" },
+                  { label: "AVG BET", value: totalBetAmt != null ? "$" + (totalBetAmt / betRows.length).toFixed(0) : ((totalBetPct / betRows.length) * 100).toFixed(1) + "%", color: "var(--fg)", tip: "Average suggested bet per game from available balance. Larger edge = larger bet." },
                   { label: "AVG EDGE", value: "+" + avgEdgePct.toFixed(1) + "%", color: avgEdgePct >= 5 ? "var(--moss)" : avgEdgePct >= 2 ? "var(--fg)" : "var(--dim)", tip: "Average model edge over the market across all bet-rated games today" },
                 ].map((stat, i) => (
                   <div key={i} title={stat.tip} style={{ flex: "1 1 80px", padding: "10px 14px", borderRight: i < 3 ? "1px solid rgba(255,255,255,0.06)" : "none", cursor: "help" }}>
@@ -6543,20 +6561,18 @@ function FirstInning() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   {betRows.map((r, i) => {
                     const betPct = (r.kelly * riskMult * 100).toFixed(1);
-                    const betAmt = bankroll ? Math.round(bankroll * r.kelly * riskMult * 100) / 100 : null;
-                    const winProb = r.call === "NRFI" ? r.pFinal : 1 - r.pFinal;
+                    const betAmt = remaining ? Math.round(remaining * r.kelly * riskMult * 100) / 100 : null;
+                    const winProb = r.pFinal;
                     const edge = r.market ? r.market.edge : null;
                     const awayA = r.awayAbbr || r.away;
                     const homeA = r.homeAbbr || r.home;
                     return (
                       <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "rgba(255,255,255,0.04)", borderRadius: 7, border: "1px solid rgba(255,255,255,0.06)", flexWrap: "wrap" }}>
                         <span style={{ fontWeight: 700, fontSize: 13, minWidth: 110 }}>{awayA} @ {homeA}</span>
-                        <span style={{ padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 800, background: r.call === "NRFI" ? "rgba(80,160,80,0.15)" : "rgba(220,60,60,0.15)", color: r.call === "NRFI" ? "var(--moss)" : "var(--rose)", border: "1px solid " + (r.call === "NRFI" ? "rgba(80,160,80,0.4)" : "rgba(220,60,60,0.4)") }}>
-                          {r.call}
-                        </span>
-                        <span style={{ fontSize: 12, color: "var(--dim)" }} title="Model confidence — how strongly we favor this call">{(winProb * 100).toFixed(0)}% confidence</span>
-                        {edge != null && <span style={{ fontSize: 12, color: edge >= 3 ? "var(--moss)" : "var(--dim)" }} title="How much our model probability exceeds the market on this call">+{edge.toFixed(1)}% edge</span>}
-                        <span style={{ marginLeft: "auto", fontWeight: 800, fontSize: 14, color: "var(--moss)" }} title={"Suggested bet at " + riskLevel + " risk: " + betPct + "% of bankroll" + (betAmt ? " = $" + betAmt : "")}>
+                        <span style={{ padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 800, background: "rgba(80,160,80,0.15)", color: "var(--moss)", border: "1px solid rgba(80,160,80,0.4)" }}>NRFI</span>
+                        <span style={{ fontSize: 12, color: "var(--dim)" }} title="Model's probability that no run scores in the 1st inning">{(winProb * 100).toFixed(0)}% confidence</span>
+                        {edge != null && <span style={{ fontSize: 12, color: edge >= 3 ? "var(--moss)" : "var(--dim)" }} title="How much our model probability exceeds the market">+{edge.toFixed(1)}% edge</span>}
+                        <span style={{ marginLeft: "auto", fontWeight: 800, fontSize: 14, color: "var(--moss)" }} title={"Suggested bet from your available $" + (remaining || 0).toFixed(0) + " at " + riskLevel + " risk (" + betPct + "% of available)"}>
                           {betAmt != null ? "$" + betAmt : betPct + "%"}
                         </span>
                         {r.market && (
