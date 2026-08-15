@@ -261,6 +261,39 @@ const check = (ok, what, detail) => {
     "a row with no gamePk cannot be polled and is dropped",
     "a row with no gamePk would be fetched as /game/null/feed/live.");
 
+  /* ---- voice ----
+   * "Natural" as a bare substring matched Edge's whole neural family, and the
+   * first hit in that family is usually Ava or Emma. The rank has to name the
+   * male voices individually rather than trust enumeration order, so the thing
+   * worth pinning is the OUTCOME — a man — not the list. */
+  console.log("\nvoice");
+  const vs = (names) => ({ getVoices: () => names.map((n) => ({ name: n, lang: "en-US" })) });
+  const CHROME_WIN = ["Microsoft David - English (United States)", "Microsoft Mark - English (United States)",
+    "Microsoft Zira - English (United States)", "Google US English", "Google UK English Female",
+    "Google UK English Male"];
+  // Chosen by ear against the alternatives, not off a spec sheet — Mark is a
+  // local formant synth and loses to the Google network man on paper.
+  check(/Microsoft Mark/.test(c.pickVoice(vs(CHROME_WIN)).name),
+    "on Chrome/Windows the voice picked by ear (Microsoft Mark) is the one used",
+    "picked " + c.pickVoice(vs(CHROME_WIN)).name + " from the real Chrome/Windows voice set.");
+  check(!/Zira|Female|Google US English/.test(c.pickVoice(vs(CHROME_WIN)).name),
+    "no female voice can win on the real Chrome/Windows voice set",
+    "a female voice was selected: " + c.pickVoice(vs(CHROME_WIN)).name);
+  // Edge enumerates Ava before Andrew; a bare "Natural" match takes the woman.
+  const EDGE = ["Microsoft Ava Online (Natural) - English (United States)",
+    "Microsoft Andrew Online (Natural) - English (United States)",
+    "Microsoft Emma Online (Natural) - English (United States)", "Google UK English Male"];
+  check(/Andrew/.test(c.pickVoice(vs(EDGE)).name),
+    "in Edge a neural man is chosen even though a neural woman enumerates first",
+    "picked " + c.pickVoice(vs(EDGE)).name + " — enumeration order is deciding this, not the rank.");
+  check(c.pickVoice(vs(["Microsoft Zira - English (United States)",
+    "Microsoft David - English (United States)"])).name.includes("David"),
+    "with only the two old SAPI5 voices installed, the man is still chosen",
+    "fell through to the female voice when no ranked voice was present.");
+  check(c.pickVoice({ getVoices: () => [] }) === null,
+    "an unenumerated voice list returns null rather than caching a wrong choice",
+    "pickVoice committed to a voice before the engine had enumerated.");
+
   console.log("\n" + "=".repeat(78));
   if (fails) { console.log(fails + " check(s) FAILED"); process.exit(1); }
   console.log("callout reads the live feed correctly");

@@ -5458,12 +5458,26 @@ function calloutEligible(r, held) {
 // Ordered best-first; each entry is matched as a substring of the voice name.
 // Anything not on the list still beats nothing — the last resort is the
 // browser default, i.e. exactly the old behaviour.
+//
+// A man, specifically. "Natural" as a bare substring matched Edge's whole neural
+// family, and the first hit in that family is usually Ava or Emma — so the rank
+// has to name the male neural voices individually rather than trust the order
+// the engine happens to enumerate them in.
 const VOICE_RANK = [
-  "Natural",                  // Edge: Ava, Andrew, Emma... genuinely conversational
-  "Google US English",        // Chrome network voice, clearly better than SAPI5
-  "Google UK English Male",
-  "Microsoft Mark",           // best of the local SAPI5 set
-  "Microsoft Zira",
+  // Chosen by ear, on this machine, against the alternatives played back to back.
+  // Mark is a local SAPI5 voice and on paper it loses to Google UK English Male,
+  // which is a network voice and smoother. It was still preferred, and the reason
+  // is probably that the Google man is British and this is American baseball —
+  // the accent costs more than the synthesis quality buys. Do not "upgrade" this
+  // on spec sheet grounds; it was an A/B, not a guess.
+  "Microsoft Mark",
+  // Edge's neural men, for a machine without Mark. Named individually because a
+  // bare "Natural" substring matches Edge's whole neural family and the first hit
+  // in it is usually Ava or Emma.
+  "Andrew", "Brian", "Guy", "Christopher", "Eric",
+  // Then the best remaining man, then the browser default this list exists to
+  // avoid — David, the 1998 answering machine.
+  "Google UK English Male", "Microsoft David",
 ];
 let _voice = null, _voiceTried = false;
 function pickVoice(s) {

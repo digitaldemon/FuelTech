@@ -1044,10 +1044,23 @@ function calloutEligible(r,held){return!!(r.gamePk&&!r.final&&(r.v&&r.v.strength
 // Ordered best-first; each entry is matched as a substring of the voice name.
 // Anything not on the list still beats nothing — the last resort is the
 // browser default, i.e. exactly the old behaviour.
-const VOICE_RANK=["Natural",// Edge: Ava, Andrew, Emma... genuinely conversational
-"Google US English",// Chrome network voice, clearly better than SAPI5
-"Google UK English Male","Microsoft Mark",// best of the local SAPI5 set
-"Microsoft Zira"];let _voice=null,_voiceTried=false;function pickVoice(s){// getVoices() is empty until the engine enumerates, and fires voiceschanged
+//
+// A man, specifically. "Natural" as a bare substring matched Edge's whole neural
+// family, and the first hit in that family is usually Ava or Emma — so the rank
+// has to name the male neural voices individually rather than trust the order
+// the engine happens to enumerate them in.
+const VOICE_RANK=[// Chosen by ear, on this machine, against the alternatives played back to back.
+// Mark is a local SAPI5 voice and on paper it loses to Google UK English Male,
+// which is a network voice and smoother. It was still preferred, and the reason
+// is probably that the Google man is British and this is American baseball —
+// the accent costs more than the synthesis quality buys. Do not "upgrade" this
+// on spec sheet grounds; it was an A/B, not a guess.
+"Microsoft Mark",// Edge's neural men, for a machine without Mark. Named individually because a
+// bare "Natural" substring matches Edge's whole neural family and the first hit
+// in it is usually Ava or Emma.
+"Andrew","Brian","Guy","Christopher","Eric",// Then the best remaining man, then the browser default this list exists to
+// avoid — David, the 1998 answering machine.
+"Google UK English Male","Microsoft David"];let _voice=null,_voiceTried=false;function pickVoice(s){// getVoices() is empty until the engine enumerates, and fires voiceschanged
 // when it is ready — so a null result must NOT be cached as "no voice".
 const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.filter(v=>/^en/i.test(v.lang||""));const pool=en.length?en:all;for(const want of VOICE_RANK){const hit=pool.find(v=>String(v.name||"").includes(want));if(hit)return hit;}return pool.find(v=>v.default)||pool[0]||null;}function speak(text,urgent){const s=typeof window!=="undefined"&&window.speechSynthesis;if(!s||!text)return;if(!_voice){_voice=pickVoice(s);// Ask once for a re-resolve when the engine finishes enumerating.
 if(!_voice&&!_voiceTried&&s.addEventListener){_voiceTried=true;s.addEventListener("voiceschanged",()=>{_voice=pickVoice(s);},{once:true});}}if(urgent||s.pending)s.cancel();// Chrome can leave synthesis parked in a paused state after a cancel; a queued
