@@ -6478,6 +6478,8 @@ async function scanNrfi(onProgress) {
       homeYrfiPct: homeOff && homeOff.rate != null ? Math.round((1 - Math.exp(-homeOff.rate)) * 100) : null,
       awayOffSample: awayOff ? awayOff.sample : null,
       homeOffSample: homeOff ? homeOff.sample : null,
+      awayOffL10: awayOffRolling && awayOffRolling.l10 && awayOffRolling.l10.n >= 5 ? { rate: awayOffRolling.l10.rate, sznRate: awayOffRolling.szn ? awayOffRolling.szn.rate : null } : null,
+      homeOffL10: homeOffRolling && homeOffRolling.l10 && homeOffRolling.l10.n >= 5 ? { rate: homeOffRolling.l10.rate, sznRate: homeOffRolling.szn ? homeOffRolling.szn.rate : null } : null,
       hasPitchers: !!(awayPP && awayPP.id && homePP && homePP.id),
       dataOk: !!(awayOff && homeOff && awayPit && homePit),
       lineupPosted: (ctx.awayLineup.obp != null && ctx.homeLineup.obp != null),
@@ -7316,11 +7318,23 @@ function FirstInning() {
         {/* ── 1st-inn offense + badges row ── */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 10 }}>
           {(r.awayYrfiPct != null || r.homeYrfiPct != null) && (
-            <div title="How often each team scores a run in the 1st inning this season. Red = high-scoring offense (bad for NRFI), green = low-scoring (good for NRFI)." style={{ cursor: "help", display: "inline-flex", gap: 8, alignItems: "center", padding: "3px 10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, fontSize: 11 }}>
+            <div title="How often each team scores a run in the 1st inning this season. Red = high-scoring offense (bad for NRFI), green = low-scoring (good for NRFI). Arrow = L10 trend vs season avg." style={{ cursor: "help", display: "inline-flex", gap: 8, alignItems: "center", padding: "3px 10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, fontSize: 11 }}>
               <span style={{ color: "var(--dim)", fontSize: 10, fontWeight: 700 }}>1ST-INN</span>
-              {r.awayYrfiPct != null && <span style={{ color: r.awayYrfiPct >= 38 ? "var(--rose)" : r.awayYrfiPct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>{r.awayAbbr || r.away} {r.awayYrfiPct}%</span>}
+              {r.awayYrfiPct != null && (() => {
+                const l10 = r.awayOffL10;
+                const delta = l10 && l10.sznRate != null ? l10.rate - l10.sznRate : null;
+                const arrow = delta != null && Math.abs(delta) >= 0.12 ? (delta > 0 ? " ↑" : " ↓") : "";
+                const arrowClr = delta != null && Math.abs(delta) >= 0.12 ? (delta > 0 ? "var(--rose)" : "var(--moss)") : null;
+                return <span style={{ color: r.awayYrfiPct >= 38 ? "var(--rose)" : r.awayYrfiPct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>{r.awayAbbr || r.away} {r.awayYrfiPct}%{arrow && <span style={{ color: arrowClr }}>{arrow}</span>}</span>;
+              })()}
               {r.awayYrfiPct != null && r.homeYrfiPct != null && <span style={{ color: "var(--dim)" }}>·</span>}
-              {r.homeYrfiPct != null && <span style={{ color: r.homeYrfiPct >= 38 ? "var(--rose)" : r.homeYrfiPct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>{r.homeAbbr || r.home} {r.homeYrfiPct}%</span>}
+              {r.homeYrfiPct != null && (() => {
+                const l10 = r.homeOffL10;
+                const delta = l10 && l10.sznRate != null ? l10.rate - l10.sznRate : null;
+                const arrow = delta != null && Math.abs(delta) >= 0.12 ? (delta > 0 ? " ↑" : " ↓") : "";
+                const arrowClr = delta != null && Math.abs(delta) >= 0.12 ? (delta > 0 ? "var(--rose)" : "var(--moss)") : null;
+                return <span style={{ color: r.homeYrfiPct >= 38 ? "var(--rose)" : r.homeYrfiPct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>{r.homeAbbr || r.home} {r.homeYrfiPct}%{arrow && <span style={{ color: arrowClr }}>{arrow}</span>}</span>;
+              })()}
             </div>
           )}
           {!r.lineupPosted && (
