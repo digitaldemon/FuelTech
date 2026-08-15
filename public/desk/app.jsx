@@ -6197,6 +6197,11 @@ function pitcherI01Profile(pit, seasonEra, rolling, peri) {
   // Statcast: FPS% (get-ahead rate) and whiff% (swing-and-miss) add 15 pts total headroom.
   if (peri && peri.fstrike != null) score += cl((peri.fstrike - 60) / 60, -1, 1) * 8;
   if (peri && peri.whiff   != null) score += cl((peri.whiff - 24.5) / 24.5, -1, 1) * 7;
+  // L30 rolling clean % adds 10 pts headroom (current form, not season cumulative).
+  // League avg clean ~67% (exp(-0.52/0.52*0.52) ≈ 0.72 → ~67% with regression).
+  if (rolling && rolling.l30 && rolling.l30.pct != null && (rolling.l30.n || 0) >= 10) {
+    score += cl((rolling.l30.pct - 60) / 40, -1, 1) * 10;
+  }
   score = cl(Math.round(score), 0, 100);
   // pit.sample never entered the score above, so a single clean start scored a
   // perfect 0.00 R/1st and 0.00 WHIP straight to A+. Cap the top of the scale
@@ -7151,6 +7156,16 @@ function FirstInning() {
                 {r.aligned.agree}/{r.aligned.total} signals
               </div>
             )}
+            {r.checks && r.aligned && r.aligned.agree >= 2 && (() => {
+              const call = r.call.toLowerCase();
+              const top = r.checks.filter((c) => c.lean === call).slice(0, 2).map((c) => c.label);
+              if (!top.length) return null;
+              return (
+                <div title={"Top signals agreeing with " + r.call + ": " + top.join(", ")} style={{ cursor: "help", fontSize: 8, color: r.v.color, marginTop: 3, opacity: 0.55, fontWeight: 600, letterSpacing: "0.02em" }}>
+                  {top.map((l, i) => <span key={i}>{i > 0 ? " · " : ""}{l}</span>)}
+                </div>
+              );
+            })()}
           </div>
         </div>
         {/* ── Header ── */}
