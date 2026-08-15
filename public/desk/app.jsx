@@ -2247,7 +2247,7 @@ function App() {
         <header className="cd-head">
           <div>
             <div className="eyebrow">Kalshi · Polymarket</div>
-            <h1 className="cd-title">Contract <span>Desk</span></h1>
+            <h1 className="cd-title">DigitalDemon's <span>Desk</span></h1>
             <p className="help" style={{ maxWidth: 460 }}>
               I predict the outcomes of Kalshi and Polymarket events — games, totals, commodities, anything listed — and grade every prediction against what actually happens.
             </p>
