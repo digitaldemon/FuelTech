@@ -5519,6 +5519,55 @@ function pickVoice(s) {
   }
   return pool.find((v) => v.default) || pool[0] || null;
 }
+/* Dropping the backlog is right; dropping the batch was the bug.
+ *
+ * This used to be `if (urgent || s.pending) s.cancel()` before every line. A
+ * poll that delivered three new pitches called speak() three times in a tight
+ * synchronous loop: the first queued, the second saw pending=true and cancelled
+ * — which wipes the utterance MID-SENTENCE as well as the queued one — and the
+ * third did it again. Only the last pitch of each batch was ever heard, and it
+ * arrived clipped on top of a killed sentence. A quiet inning with the
+ * occasional stutter is exactly what that produces.
+ *
+ * So: a real queue with a depth cap, draining on `end`. When the backlog grows
+ * past SAY_MAX the OLDEST lines are dropped, which keeps the call at the live
+ * edge — the actual goal — instead of destroying whatever is being said now.
+ * urgent still cuts everything, because a run scoring is the ticket resolving.
+ *
+ * `_sayOn` is a latch rather than a read of s.speaking: Chrome reports speaking
+ * for a beat after `end`, and a drain that trusted it would stall the queue. */
+const SAY_MAX = 3;
+const _sayQ = [];
+let _sayOn = false, _sayGuard = null;
+function _sayDrain(s) {
+  if (_sayOn) return;
+  const text = _sayQ.shift();
+  if (text == null) return;
+  _sayOn = true;
+  const u = new window.SpeechSynthesisUtterance(text);
+  if (_voice) { u.voice = _voice; u.lang = _voice.lang || "en-US"; }
+  // 1.1 clipped the ends of words on the neural voices, which read more slowly
+  // and more naturally than the formant ones. Just above conversational.
+  u.rate = 1.02; u.pitch = 1; u.volume = 1;
+  const done = () => {
+    if (!_sayOn) return;
+    _sayOn = false;
+    if (_sayGuard) { clearTimeout(_sayGuard); _sayGuard = null; }
+    _sayDrain(s);
+  };
+  u.onend = done;
+  // An utterance that errors (or that Chrome silently drops, which it does after
+  // a cancel) never fires end, and without this the latch stays set and the
+  // callout goes silent for the rest of the inning — the same failure the
+  // s.paused nudge below was added to work around. Budget generously: ~90ms per
+  // character plus a second, so a normal line never trips it.
+  u.onerror = done;
+  _sayGuard = setTimeout(done, 1000 + text.length * 90);
+  s.speak(u);
+  // Chrome can leave synthesis parked in a paused state after a cancel; a queued
+  // utterance then never starts. Nudging it is free when it is already running.
+  if (s.paused) s.resume();
+}
 function speak(text, urgent) {
   const s = typeof window !== "undefined" && window.speechSynthesis;
   if (!s || !text) return;
@@ -5530,17 +5579,25 @@ function speak(text, urgent) {
       s.addEventListener("voiceschanged", () => { _voice = pickVoice(s); }, { once: true });
     }
   }
-  if (urgent || s.pending) s.cancel();
-  // Chrome can leave synthesis parked in a paused state after a cancel; a queued
-  // utterance then never starts and the callout goes quiet for the rest of the
-  // inning. Nudging it is free when it is already running.
-  if (s.paused) s.resume();
-  const u = new window.SpeechSynthesisUtterance(text);
-  if (_voice) { u.voice = _voice; u.lang = _voice.lang || "en-US"; }
-  // 1.1 clipped the ends of words on the neural voices, which read more slowly
-  // and more naturally than the formant ones. Just above conversational.
-  u.rate = 1.02; u.pitch = 1; u.volume = 1;
-  s.speak(u);
+  if (urgent) {
+    _sayQ.length = 0;
+    if (_sayGuard) { clearTimeout(_sayGuard); _sayGuard = null; }
+    _sayOn = false;
+    s.cancel();
+  }
+  _sayQ.push(text);
+  // Trim from the FRONT: the stale lines are the ones not worth saying.
+  while (_sayQ.length > SAY_MAX) _sayQ.shift();
+  _sayDrain(s);
+}
+// Stopping the callout has to clear the queue too, or the lines already buffered
+// keep arriving after the switch is off.
+function speakStop() {
+  const s = typeof window !== "undefined" && window.speechSynthesis;
+  _sayQ.length = 0;
+  if (_sayGuard) { clearTimeout(_sayGuard); _sayGuard = null; }
+  _sayOn = false;
+  if (s) s.cancel();
 }
 
 async function pitcherFirstInning(pid, season) {
@@ -8325,7 +8382,10 @@ function FirstInning() {
     // Switching cuts the outgoing game off mid-queue on purpose — those lines
     // describe a game no longer being listened to, and letting them drain would
     // put the new game's first pitches behind them.
-    if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
+    // speakStop, not a bare cancel: the queue lives in module scope now, and
+    // cancelling the synthesiser while leaving lines buffered means the outgoing
+    // game keeps talking over the incoming one.
+    speakStop();
     // A switch is a fresh attach: clear `opened` so the new game re-introduces
     // itself and re-anchors to the live edge on the next tick, instead of
     // resuming mid-inning from wherever it had got to while muted.
@@ -9052,7 +9112,7 @@ function FirstInning() {
               // Spelled out: "NRFI" as a word comes back from every synthesiser
               // as "nerfy". The settle lines already say it this way.
               if (next) speak("Digital Demons N-R-F-I Live. On the air.");
-              else if (window.speechSynthesis.cancel) window.speechSynthesis.cancel();
+              else speakStop();
               setCallout(next);
             }}
             title={"Digital Demons NRFI Live — the desk's own first-inning broadcast. Calls every game on the board " +
