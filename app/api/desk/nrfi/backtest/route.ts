@@ -148,8 +148,10 @@ export async function GET(req: Request) {
           const awayOffR = regress(awayOff.rate, awayOff.n, OFF_REG);
           const homeOffR = regress(homeOff.rate, homeOff.n, OFF_REG);
 
-          const p0top = halfNoRun(awayOffR, homePitR);
-          const p0bot = halfNoRun(homeOffR, awayPitR);
+          // Home advantage: home pitcher ~3% better, home offense ~2% more scoring.
+          // Mirrors the structural factors in the live model (homePitAdvantage/homeOffAdvantage).
+          const p0top = halfNoRun(awayOffR * 0.98, homePitR * 0.97); // away bats vs home pitcher
+          const p0bot = halfNoRun(homeOffR * 1.02, awayPitR * 1.03); // home bats vs away pitcher
           const rawNRFI = p0top * p0bot;
 
           // Day game shift (games before ~4pm ET = UTC < 20:00)

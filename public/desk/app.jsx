@@ -6242,10 +6242,15 @@ function pitcherI01Profile(pit, seasonEra, rolling, peri) {
   // Statcast: FPS% (get-ahead rate) and whiff% (swing-and-miss) add 15 pts total headroom.
   if (peri && peri.fstrike != null) score += cl((peri.fstrike - 60) / 60, -1, 1) * 8;
   if (peri && peri.whiff   != null) score += cl((peri.whiff - 24.5) / 24.5, -1, 1) * 7;
-  // L30 rolling clean % adds 10 pts headroom (current form, not season cumulative).
-  // League avg clean ~67% (exp(-0.52/0.52*0.52) ≈ 0.72 → ~67% with regression).
+  // L30 rolling clean % (binary 0/1) adds 10 pts: recent hot/cold form vs season.
+  // League avg clean ~67% (exp(-0.52) ≈ 0.59 → ~67% with regression toward 0.52).
   if (rolling && rolling.l30 && rolling.l30.pct != null && (rolling.l30.n || 0) >= 10) {
     score += cl((rolling.l30.pct - 60) / 40, -1, 1) * 10;
+  }
+  // L30 runs/start adds 5 pts: continuous signal (0.0 R/start vs 0.9 R/start, both
+  // non-clean, are meaningfully different). Uses same rate scale as season rate.
+  if (rolling && rolling.l30 && rolling.l30.runsPerStart != null && (rolling.l30.n || 0) >= 10) {
+    score += cl((I01_LG.rate - rolling.l30.runsPerStart) / I01_LG.rate, -1, 1) * 5;
   }
   score = cl(Math.round(score), 0, 100);
   // pit.sample never entered the score above, so a single clean start scored a
@@ -7470,7 +7475,8 @@ function FirstInning() {
           {r.confidence != null && r.confidence < 0.75 && (() => {
             const pct = Math.round(r.confidence * 100);
             const col = r.confidence < 0.50 ? "var(--rose)" : "var(--amber)";
-            return <span title={"Data confidence: " + pct + "% — model inputs are partially missing (thin pitcher sample, no lineups posted, or limited rolling data). Kelly is scaled down by " + (1 - Math.max(0.30, r.confidence)).toFixed(0)*100 + "% to compensate."} style={{ cursor: "help", padding: "8px 8px", display: "flex", alignItems: "center" }}><span style={{ fontSize: 9, color: col, border: "1px solid " + col, borderRadius: 3, padding: "1px 4px", opacity: 0.8 }}>{"CONF " + pct + "%"}</span></span>;
+            const scalePct = Math.round(Math.max(0.30, r.confidence) * 100);
+            return <span title={"Data confidence: " + pct + "% — model inputs are partially missing (thin pitcher sample, no lineups posted, or limited rolling data). Kelly bet size is scaled to " + scalePct + "% of normal."} style={{ cursor: "help", padding: "8px 8px", display: "flex", alignItems: "center" }}><span style={{ fontSize: 9, color: col, border: "1px solid " + col, borderRadius: 3, padding: "1px 4px", opacity: 0.8 }}>{"CONF " + pct + "%"}</span></span>;
           })()}
         </div>
 
