@@ -5722,15 +5722,30 @@ function offKrateFactor(off) {
   else if (r <= 0.90) return { f: 1.03, note: "K%" + pct + "% (below avg K)" };
   return { f: 1, note: "" };
 }
-// Pitching home advantage: starters allow ~3% fewer first-inning runs at their home park.
-// Season cumulative rates mix home+away starts; pitching at home today slightly outperforms.
-function homePitAdvantage(isHome) {
-  return isHome ? { f: 0.97 } : { f: 1.03 };
-}
-// Offense home advantage: teams score ~2% more often in the 1st at their home park.
-// Complements pitching home advantage; travel factor captures fatigue, this captures venue familiarity.
+/* ---- home field ----
+ * Measured over 1,821 completed games, 2026-03-28..08-15 (scripts/nrfi-env-measure.js):
+ *   away bats top 1st and scores  26.7%  [24.8, 28.8]
+ *   home bats bot 1st and scores  32.1%  [30.0, 34.3]
+ * The intervals do not overlap, so the split is real, and it is much larger than
+ * the model was applying: lambda ratio home/away = 1.245 against a shipped 1.105.
+ *
+ * This used to be TWO constants — homePitAdvantage (0.97/1.03) and
+ * homeOffAdvantage (1.02/0.98) — each guessed, each weighted 1.0, and both
+ * landing on the same half's lambda. In halfNoRun the offense and pitcher rates
+ * multiply into one number, so the two were never separately identifiable: a
+ * half-inning run rate is a single observable and the model was fitting two
+ * knobs to it. They are now one measured knob applied at the offense entry.
+ *
+ * Centred geometrically (sqrt up, 1/sqrt down) so it only REDISTRIBUTES lambda
+ * between the halves and does not shift the level. That matters because the
+ * team rates it multiplies are built from home and road games alike and already
+ * carry the league average; a pair that did not centre at 1 would add a net
+ * NRFI bias on top of the split it is meant to describe.
+ */
+const HFA_LAMBDA_RATIO = 1.245;
+const HFA_UP = Math.sqrt(HFA_LAMBDA_RATIO), HFA_DOWN = 1 / Math.sqrt(HFA_LAMBDA_RATIO);
 function homeOffAdvantage(isHome) {
-  return isHome ? { f: 1.02 } : { f: 0.98 };
+  return isHome ? { f: HFA_UP } : { f: HFA_DOWN };
 }
 // Pitcher-specific venue split: some pitchers deviate significantly from the average
 // home advantage. Uses season home or road 1st-inning clean% vs overall to quantify.
@@ -6030,36 +6045,69 @@ async function teamOffenseRolling(teamId, todayStr, season) {
   return val;
 }
 
+/* ---- park + weather ----
+ * env was the last place in the model where effects still COMPOUNDED: park x
+ * temp x wind, raw, no weight, no clamp — and env multiplies lambda in both
+ * halves, so P(NRFI) took the whole product twice. A 93-degree day with the wind
+ * out to centre reached x1.19 on temp and wind alone before a park factor that
+ * goes to ~1.12 at Coors. Everywhere else in the model, adjustments are blended
+ * by deviation-from-neutral and weighted; this now matches.
+ *
+ * Bands refit against 1,821 games (scripts/nrfi-env-measure.js), all measured on
+ * the FIRST INNING rather than the full game, which is where the old numbers
+ * came from. Measured lambda multipliers, relative to the 56-81F neutral band:
+ *
+ *   indoors        x1.09 vs outdoors — the shipped value was 0.97, i.e. the
+ *                  wrong SIGN. Not significant either way (interval spans the
+ *                  baseline), and dome parks already carry it in NRFI_PARK, so
+ *                  the special case was double-counting. Now neutral.
+ *   temp >= 82     x1.24 measured (n=392) vs x1.05-1.09 shipped — heat matters
+ *                  more than the model allowed, not less.
+ *   temp <= 55     x0.91 / x0.89 measured — the shipped cold bands were close.
+ *   wind           nothing clears noise in 1,477 outdoor games. Worse, the bands
+ *                  contradict each other: out-to-CF at 12+ mph read x0.96, BELOW
+ *                  out-to-CF at 5-11 mph (x1.10). Wind moves fly-ball carry, and
+ *                  a first inning is 6-9 plate appearances where runs come from
+ *                  reaching base, not from carry. Magnitudes cut to a third and
+ *                  weighted down; kept because the physics is real and the note
+ *                  is worth showing, not because this data supports it.
+ */
+const ENV_W_PARK = 1.00;  // park factors are the best-established of the three
+const ENV_W_TEMP = 0.60;  // real, but the band that carries it is confounded with venue and month
+const ENV_W_WIND = 0.25;  // no measurable first-inning signal; held near neutral
 function weatherPark(game, homeAbbr) {
   const parkFactor = NRFI_PARK[homeAbbr] || 1;
-  let wFactor = 1, note = "neutral park";
+  let tFactor = 1, wFactor = 1, note = "neutral park";
   const w = game.weather || {};
-  const temp = w.temp != null ? Number(w.temp) : null;
+  const temp = w.temp != null && w.temp !== "" ? Number(w.temp) : null;
   const cond = String(w.condition || "");
   const wind = String(w.wind || "");
-  if (/Dome|Roof Closed/i.test(cond)) { wFactor = 0.97; note = "indoors"; }
-  else {
-    if (temp != null) {
-      if (temp >= 92) wFactor *= 1.09;
-      else if (temp >= 82) wFactor *= 1.05;
-      else if (temp >= 56) { /* neutral band */ }
-      else if (temp >= 46) wFactor *= 0.94;
-      else wFactor *= 0.89;
+  if (/Dome|Roof Closed/i.test(cond)) {
+    // Under a roof there is no wind and the temperature is set, so both drop out;
+    // the park factor already describes the building.
+    note = "indoors (roof)";
+  } else {
+    if (temp != null && isFinite(temp)) {
+      if (temp >= 92) tFactor = 1.20;
+      else if (temp >= 82) tFactor = 1.20;
+      else if (temp >= 56) tFactor = 1;      // neutral band — the reference
+      else if (temp >= 46) tFactor = 0.92;
+      else tFactor = 0.90;
     }
     // MLB wind string is field-relative ("Out To CF", "In From CF", "L To R").
-    // Three tiers: light (5-11), moderate (12-19), strong (20+).
     const mph = Number((wind.match(/(\d+)/) || [])[1] || 0);
     if (mph >= 5) {
-      if (/out to c/i.test(wind))       wFactor *= mph >= 20 ? 1.14 : mph >= 12 ? 1.09 : 1.05;
-      else if (/in from c/i.test(wind)) wFactor *= mph >= 20 ? 0.87 : mph >= 12 ? 0.92 : 0.96;
-      else if (/out to/i.test(wind))    wFactor *= mph >= 20 ? 1.07 : mph >= 12 ? 1.04 : 1.02;
-      else if (/in from/i.test(wind))   wFactor *= mph >= 20 ? 0.94 : mph >= 12 ? 0.97 : 0.99;
-      // crosswind at strong speeds: slight batter disadvantage (irregular movement)
-      else if (mph >= 20 && /l to r|r to l/i.test(wind)) wFactor *= 0.98;
+      if (/out to c/i.test(wind))       wFactor = mph >= 20 ? 1.05 : mph >= 12 ? 1.03 : 1.02;
+      else if (/in from c/i.test(wind)) wFactor = mph >= 20 ? 0.95 : mph >= 12 ? 0.97 : 0.98;
+      else if (/out to/i.test(wind))    wFactor = mph >= 20 ? 1.03 : mph >= 12 ? 1.02 : 1.01;
+      else if (/in from/i.test(wind))   wFactor = mph >= 20 ? 0.97 : mph >= 12 ? 0.98 : 0.99;
+      else if (mph >= 20 && /l to r|r to l/i.test(wind)) wFactor = 0.99;
     }
-    note = (temp != null ? temp + "°" : "") + (wind ? " · " + wind : "");
+    note = (temp != null && isFinite(temp) ? temp + "°" : "") + (wind ? " · " + wind : "");
   }
-  return { factor: parkFactor * wFactor, park: parkFactor, note: note || "neutral" };
+  const factor = nClamp(1 + (parkFactor - 1) * ENV_W_PARK + (tFactor - 1) * ENV_W_TEMP +
+    (wFactor - 1) * ENV_W_WIND, 0.88, 1.16);
+  return { factor, park: parkFactor, temp: tFactor, wind: wFactor, note: note || "neutral" };
 }
 
 function nrfiRegress(rate, sample, reg) {
@@ -6226,15 +6274,14 @@ function nrfiEvaluate(ctx) {
   // is lower now that lineups are measured directly vs the starter's hand.
   // Platoon reduced to 0.20: lineup OBP is already computed vs the starter's hand,
   // so the platoon factor partially double-counts the hand matchup.
-  // homeAdv: home offense scores ~2% more at home park, weight 1.0 (structural).
+  // homeAdv: the measured first-inning home/away split, weight 1.0 (structural).
+  //   Carries the WHOLE home-field effect — the pitcher-side twin was removed as
+  //   unidentifiable; see homeOffAdvantage.
   // offVenue: team-specific home/road 1st-inn scoring gap, weight 0.3 (partial overlap with homeAdv).
   // kRate: team 1st-inn K% vs league avg — high K = contact scarce = NRFI lean. Weight 0.35.
   const offMult = (lineup, plat, travel, offTrend, homeAdv, venue, kRate) =>
     nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.2 + (travel.factor - 1) * 0.6 + (offTrend.f - 1) * 0.5 + (homeAdv.f - 1) * 1.0 + (venue.f - 1) * 0.3 + (kRate.f - 1) * 0.35, 0.80, 1.30);
-  // Home field edge: home pitcher knows the mound; away pitcher pitches at opponent's park.
-  const awayPitAdv = homePitAdvantage(false);
-  const homePitAdv = homePitAdvantage(true);
-  // Offense home field: home batters score slightly more at their home park (familiar crowd, no travel).
+  // Offense home field: the measured split, applied at the offense entry only.
   const awayOffAdv = homeOffAdvantage(false);
   const homeOffAdv = homeOffAdvantage(true);
   // Team-specific offense venue split: captures team's home/road 1st-inn scoring gap in rolling window.
@@ -6251,16 +6298,18 @@ function nrfiEvaluate(ctx) {
   // - load (season IP): small but logical → 0.7
   // - rest: LR coeff -0.066, extra-rest games showed LOWER NRFI rate → 0.0 (removed)
   // - trend (L10 vs SZN clean %): hot/cold streak captured here, weight 0.30
-  // - homeAdv: ~3% home park advantage for home pitcher, weight 1.0 (structural, not talent)
+  // - homeAdv: REMOVED. It multiplied the same half's lambda as the offense-side
+  //   home factor, so the two were one fact fitted twice; the measured split now
+  //   lives entirely in homeOffAdvantage.
   // - venue: pitcher-specific home/road split beyond average, weight 0.5 (smaller sample)
-  const pitMult = (skill, form, opener, openG, load, _rest, trend, homeAdv, venue) =>
-    nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30 + (homeAdv.f - 1) * 1.0 + (venue.f - 1) * 0.5, 0.78, 1.25);
+  const pitMult = (skill, form, opener, openG, load, _rest, trend, venue) =>
+    nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30 + (venue.f - 1) * 0.5, 0.78, 1.25);
   const awayOffKRate = offKrateFactor(ctx.awayOff);
   const homeOffKRate = offKrateFactor(ctx.homeOff);
   const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel, awayOffTrend, awayOffAdv, awayOffVenue, awayOffKRate);
   const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel, homeOffTrend, homeOffAdv, homeOffVenue, homeOffKRate);
-  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest, awayTrend, awayPitAdv, awayVenue);
-  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeRest, homeTrend, homePitAdv, homeVenue);
+  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest, awayTrend, awayVenue);
+  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeRest, homeTrend, homeVenue);
   const umpFactor = ctx.umpFactor || 1;
   const env = nClamp(1 + (ctx.wx.factor - 1) + (umpFactor - 1), 0.85, 1.20);
   // λ-model (fallback when we don't have posted batters + pitcher allow-rates).
@@ -6276,8 +6325,8 @@ function nrfiEvaluate(ctx) {
     // from the raw rates. Apply only what the season rates DON'T contain:
     // recent form, opener/bullpen, travel, and park/weather/umpire.
     // Form weight 0.10 (down from 0.6) matches lambda path — backtest LR showed form counterproductive.
-    const homeCtx = nClamp(1 + (homeForm.f - 1) * 0.10 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0 + (homeLoad.f - 1) * 0.7 + (homeTrend.f - 1) * 0.30 + (homePitAdv.f - 1) * 1.0 + (homeVenue.f - 1) * 0.5, 0.82, 1.2);
-    const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.10 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7 + (awayTrend.f - 1) * 0.30 + (awayPitAdv.f - 1) * 1.0 + (awayVenue.f - 1) * 0.5, 0.82, 1.2);
+    const homeCtx = nClamp(1 + (homeForm.f - 1) * 0.10 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0 + (homeLoad.f - 1) * 0.7 + (homeTrend.f - 1) * 0.30 + (homeVenue.f - 1) * 0.5, 0.82, 1.2);
+    const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.10 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7 + (awayTrend.f - 1) * 0.30 + (awayVenue.f - 1) * 0.5, 0.82, 1.2);
     const s0top = simHalfNoRun(awayB, homeAllow, NRFI_LG_PA);
     const s0bot = simHalfNoRun(homeB, awayAllow, NRFI_LG_PA);
     const pRunTop = nClamp((1 - s0top) * homeCtx * ctx.awayTravel.factor * awayOffAdv.f * env, 0.02, 0.97);
@@ -6309,8 +6358,8 @@ function nrfiEvaluate(ctx) {
     const homeSimBatters = ctx.homeBestLineup || synthLine(ctx.homeOff);
     const sTop = simHalfNoRun(awaySimBatters, homeAllow, NRFI_LG_PA);
     const sBot = simHalfNoRun(homeSimBatters, awayAllow, NRFI_LG_PA);
-    const hPC = nClamp(1 + (homeForm.f-1)*0.10 + (homeOpen.f-1)*0.5 + (homeOpenG.f-1)*1.0 + (homeLoad.f-1)*0.7 + (homeTrend.f-1)*0.30 + (homePitAdv.f-1)*1.0 + (homeVenue.f-1)*0.5, 0.82, 1.2);
-    const aPC = nClamp(1 + (awayForm.f-1)*0.10 + (awayOpen.f-1)*0.5 + (awayOpenG.f-1)*1.0 + (awayLoad.f-1)*0.7 + (awayTrend.f-1)*0.30 + (awayPitAdv.f-1)*1.0 + (awayVenue.f-1)*0.5, 0.82, 1.2);
+    const hPC = nClamp(1 + (homeForm.f-1)*0.10 + (homeOpen.f-1)*0.5 + (homeOpenG.f-1)*1.0 + (homeLoad.f-1)*0.7 + (homeTrend.f-1)*0.30 + (homeVenue.f-1)*0.5, 0.82, 1.2);
+    const aPC = nClamp(1 + (awayForm.f-1)*0.10 + (awayOpen.f-1)*0.5 + (awayOpenG.f-1)*1.0 + (awayLoad.f-1)*0.7 + (awayTrend.f-1)*0.30 + (awayVenue.f-1)*0.5, 0.82, 1.2);
     const pRT = nClamp((1-sTop) * hPC * ctx.awayTravel.factor * awayOffAdv.f * awayOffVenue.f * env, 0.02, 0.97);
     const pRB = nClamp((1-sBot) * aPC * ctx.homeTravel.factor * homeOffAdv.f * homeOffVenue.f * env, 0.02, 0.97);
     const rawP = (1-pRT) * (1-pRB);
