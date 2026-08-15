@@ -6446,11 +6446,21 @@ function kellyNRFI(pModel, yesPrice, call) {
 // Verdict ladder cut-points, on the blended pMax. One definition — the tier
 // badge, the verdict and the record accounting all read these, because they
 // drifted apart last time they were written out as literals in four places.
-const NRFI_STRONG_MIN = 70, NRFI_BET_MIN = 65, NRFI_LEAN_MIN = 57;
+//
+// These are the values 39db1fd deliberately loosened to. When the literals were
+// first hoisted into constants the numbers were taken from the ORIGINAL ce4cc85
+// ladder (70/63/57) instead of the live one (63/55/52) — a "no behaviour change"
+// refactor that silently raised the BET floor by ten points and dropped real
+// picks to LEAN. Do not retune these without a backtest; a threshold move is a
+// betting decision, not a cleanup.
+const NRFI_STRONG_MIN = 63, NRFI_BET_MIN = 55, NRFI_LEAN_MIN = 52;
+// The badge is a heat scale, not a verdict, so it carries one extra mid-band cut
+// that has no counterpart on the ladder.
+const NRFI_TIER_STRONG = 57;
 
 function nrfiTier(pMax) {
   return pMax >= NRFI_STRONG_MIN ? { t: "STRONGEST", cls: "t-strongest", c: "var(--moss)" }
-    : pMax >= 63 ? { t: "STRONG", cls: "t-strong", c: "var(--moss)" }
+    : pMax >= NRFI_TIER_STRONG ? { t: "STRONG", cls: "t-strong", c: "var(--moss)" }
     : pMax >= NRFI_LEAN_MIN ? { t: "LEAN", cls: "t-lean", c: "var(--amber)" }
     : { t: "TOSS-UP", cls: "", c: "var(--dim)" };
 }

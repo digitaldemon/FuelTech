@@ -97,6 +97,39 @@ check(nrfiTier(BET).t !== "TOSS-UP" && nrfiTier(LEAN).t !== "TOSS-UP",
   "tier badge does not read TOSS-UP on a bettable number",
   "tier(" + BET + ")=" + nrfiTier(BET).t + " tier(" + LEAN + ")=" + nrfiTier(LEAN).t);
 
+// ── 6. Known-good picks stay on the bet board ─────────────────────────────
+// Ground truth from the Telegram cards sent 2026-08-14, captured before the
+// ladder was disturbed. A refactor that quietly moves a cut-point shows up here
+// as picks falling off the board, which is how the ten-point BET drift was
+// caught. If a deliberate retune makes these fail, update the fixture in the
+// same commit and say why — do not delete the check.
+console.log("\nnotified picks (2026-08-14)");
+const NOTIFIED = [
+  { g: "BOS@PIT", prob: 63.7, mkt: 55 },
+  { g: "BAL@TB", prob: 67.4, mkt: 56 },
+  { g: "NYY@TOR", prob: 60.3, mkt: 51 },
+];
+// The notifier ships anything the board calls BET or better; LEAN and PASS are
+// board-only. Rung-for-rung equality is not asserted because the live rows carry
+// gate context (consensus, sample depth, pitcher tier) this harness cannot
+// reconstruct — a one-rung step-down is expected, falling off the board is not.
+for (const n of NOTIFIED) {
+  const s = nrfiVerdict({ pMax: n.prob, call: "NRFI",
+    aligned: { agree: 3, total: 3, rows: 18 }, confidence: 0.85,
+    pitProfiles: { away: { sample: 20 }, home: { sample: 20 } }, awayPP: "A", homePP: "B",
+    market: { marketSide: n.mkt, edgeRaw: n.prob - n.mkt, edge: (n.prob - n.mkt) * 0.65 },
+  }).strength;
+  check(s === "BET" || s === "STRONG", n.g + " (" + n.prob + "% vs " + n.mkt + "¢) is still bettable",
+    "graded " + s + " — this pick was sent as a BET and would now be withheld.");
+}
+
+// The notifier has its own floor in lib/nrfi-notify.ts (`e.prob >= 57`). It only
+// matters for rows without isBet, but if it ever rises above the BET cut it
+// silently swallows real picks in a file nobody edits when tuning the ladder.
+console.log("          notifier floor 57 vs NRFI_BET_MIN " + BET +
+  (57 > BET ? " — floor sits ABOVE the BET cut; only isBet keeps 55-56% picks sending"
+            : " — floor at or below the BET cut, no picks withheld"));
+
 console.log("\n" + "=".repeat(72));
 if (fails) { console.log(fails + " invariant(s) VIOLATED"); process.exit(1); }
 console.log("all invariants hold");
