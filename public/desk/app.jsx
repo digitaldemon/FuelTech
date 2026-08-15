@@ -6312,12 +6312,32 @@ function matchRFI(row, list) {
   return null;
 }
 
-function NrfiCalendar({ rec }) {
+function NrfiCalendar({ rec, bankroll, riskLevel }) {
   const [viewMonth, setViewMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [calView, setCalView] = useState("calendar");
+  // Risk config for estimating bet size when contracts not logged
+  const _RC = { ghost:{mult:0.10,max:0.02}, conservative:{mult:0.25,max:0.06}, moderate:{mult:0.50,max:0.12}, standard:{mult:0.75,max:0.18}, aggressive:{mult:1.00,max:0.25}, turbo:{mult:1.50,max:0.35} };
+  const _rc = _RC[riskLevel] || _RC.moderate;
+  // Estimate dollar P&L for an entry — uses exact contracts if logged, else Kelly estimate from bankroll
+  const estPL = (e) => {
+    if (!e.result || e.mktAtPick == null) return null;
+    const price = Math.min(0.99, Math.max(0.01, e.mktAtPick / 100));
+    if (e.contracts > 0) {
+      return e.result === "won" ? e.contracts * (1 - price) : -e.contracts * price;
+    }
+    if (!bankroll || bankroll <= 0 || !e.prob) return null;
+    const p = e.prob / 100;
+    const b = (1 - price) / price;
+    const kelly = b > 0 ? Math.max(0, (p * b - (1 - p)) / b) : 0;
+    const sized = Math.min(kelly * _rc.mult, _rc.max);
+    const betDollars = bankroll * sized;
+    const qty = Math.max(1, Math.round(betDollars / price));
+    return e.result === "won" ? qty * (1 - price) : -qty * price;
+  };
+  // Only show entries the user actually bet on
   const byDate = {};
   for (const e of rec || []) {
-    if (!e.date || e.skipped) continue;
+    if (!e.date || e.skipped || !e.isBet) continue;
     const d = String(e.date).replace(/-/g, "").slice(0, 8);
     if (!byDate[d]) byDate[d] = [];
     byDate[d].push(e);
@@ -6330,16 +6350,8 @@ function NrfiCalendar({ rec }) {
   const todayFull = new Date();
   const todayKey = String(todayFull.getFullYear()) + String(todayFull.getMonth() + 1).padStart(2, "0") + String(todayFull.getDate()).padStart(2, "0");
   const dayKey = (d) => String(y) + mStr + String(d).padStart(2, "0");
-  const dayPL = (entries) => {
-    let pl = 0;
-    for (const e of entries) {
-      if (!(e.contracts > 0) || e.mktAtPick == null) continue;
-      const price = Math.min(0.99, Math.max(0.01, e.mktAtPick / 100));
-      pl += e.result === "won" ? e.contracts * (1 - price) : -e.contracts * price;
-    }
-    return pl;
-  };
-  const hasPLData = (entries) => entries.some((e) => e.contracts > 0 && e.mktAtPick != null && e.result);
+  const dayPL = (entries) => { let pl = 0; for (const e of entries) { const v = estPL(e); if (v != null) pl += v; } return pl; };
+  const hasPLData = (entries) => entries.some((e) => estPL(e) != null);
   let mWins = 0, mLosses = 0, mPL = 0, mHasPL = false;
   for (let d = 1; d <= daysInMonth; d++) {
     const settled = (byDate[dayKey(d)] || []).filter((e) => e.result === "won" || e.result === "lost");
@@ -6474,9 +6486,9 @@ function NrfiCalendar({ rec }) {
               {allSettled.slice(0, 40).map((e, i) => {
                 const d = e._date;
                 const label = d ? d.slice(4, 6) + "/" + d.slice(6, 8) + "/" + d.slice(2, 4) : "—";
-                const price = (e.mktAtPick != null && e.contracts > 0) ? Math.min(0.99, Math.max(0.01, e.mktAtPick / 100)) : null;
-                const stake = price != null ? e.contracts * price : null;
-                const betPL = price != null ? (e.result === "won" ? e.contracts * (1 - price) : -e.contracts * price) : null;
+                const price = e.mktAtPick != null ? Math.min(0.99, Math.max(0.01, e.mktAtPick / 100)) : null;
+                const betPL = estPL(e);
+                const stake = (betPL != null && price != null) ? (e.contracts > 0 ? e.contracts * price : Math.abs(betPL) / (1 - price) * price) : null;
                 return (
                   <div key={i} style={{ display: "grid", gridTemplateColumns: "72px 1fr 60px 70px 84px", padding: "9px 12px", background: i % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent", borderTop: "1px solid rgba(255,255,255,0.04)", fontSize: 12, alignItems: "center" }}>
                     <div style={{ color: "var(--dim)", fontSize: 11 }}>{label}</div>
@@ -7720,7 +7732,7 @@ function FirstInning() {
       {rec && rec.length > 0 && (
         <div className="panel" style={{ marginTop: 12 }}>
           <p className="sect" style={{ margin: "0 0 6px" }}>Daily Profit Tracker</p>
-          <NrfiCalendar rec={rec} />
+          <NrfiCalendar rec={rec} bankroll={bankroll} riskLevel={riskLevel} />
         </div>
       )}
     </div>
