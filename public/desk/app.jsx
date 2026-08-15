@@ -6404,30 +6404,72 @@ function checkFamily(label) {
 // League-average first-inning rates (derived from model constants + MLB averages).
 const I01_LG = { rate: 0.52, whip: 1.28, k9: 8.4, bb9: 3.1, hr9: 1.10 };
 
+// The leak: which inputs are actually dragging an arm's first-inning grade down.
+// Takes the signed point contributions pitcherI01Profile built its score from and
+// returns the worst offenders, worst first. Because these are the same numbers
+// that produced the grade, the reason shown on the card cannot disagree with the
+// badge it explains.
+//
+// The 1.5-point floor keeps out inputs that are merely a shade below average —
+// a leak has to have actually cost the pitcher something.
+//
+// rate (R/1st) is held back as a last resort even though it is the single
+// heaviest term at 25 points, because it is not a reason: the LEAKY/BLEEDS badge
+// is computed from clean%, which is exp(-rate). Leading with it answers "why does
+// he bleed early?" with "because he gives up first-inning runs." A randomised
+// sweep found it winning nearly every ranking, drowning out the walks and the
+// missing whiffs that are the actual mechanism. So mechanisms rank first, and
+// rate is appended only when nothing else clears the floor — which is itself
+// informative: it means the damage does not show up in his peripherals.
+const NRFI_LEAK_MIN = 1.5;
+function nrfiLeaks(terms) {
+  const out = (terms || []).filter((t) => t.v <= -NRFI_LEAK_MIN)
+    .map((t) => ({ key: t.key, why: t.why, detail: t.detail, cost: Math.round(t.v * 10) / 10 }))
+    .sort((a, b) => a.cost - b.cost);
+  const mech = out.filter((t) => t.key !== "rate");
+  return mech.length ? mech : out;
+}
+
 // Composite first-inning pitcher grade: A+/A/B+/B/C/D/F with supporting stats.
 // peri = Statcast data { fstrike, whiff, barrel, gb, k, bb } — improves grade accuracy.
 function pitcherI01Profile(pit, seasonEra, rolling, peri) {
   if (!pit || !pit.sample) return { grade: "—", score: 50, cleanPct: null, summary: "no first-inning data", fstrike: null, whiff: null };
   const cl = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
-  let score = 50;
-  if (pit.rate  != null) score += cl((I01_LG.rate - pit.rate)   / I01_LG.rate,  -1,  1) * 25;
-  if (pit.whip  != null) score += cl((I01_LG.whip - pit.whip)   / I01_LG.whip,  -1,  1) * 15;
-  if (pit.k9    != null) score += cl((pit.k9   - I01_LG.k9)     / I01_LG.k9,    -1,  1) * 10;
-  if (pit.bb9   != null) score += cl((I01_LG.bb9 - pit.bb9)     / I01_LG.bb9,   -1,  1) * 10;
-  if (pit.hr9   != null) score += cl((I01_LG.hr9 - pit.hr9)     / I01_LG.hr9,  -0.5, 0.5) * 5;
+  // Every input to the grade is pushed here as a signed point contribution, and
+  // the score is their sum off a 50 base. Building it as a list rather than a
+  // running total is what lets nrfiLeak name the driver behind a LEAKY/BLEEDS
+  // badge using the model's own arithmetic — a separate "why" heuristic would
+  // eventually contradict the number it is supposed to explain.
+  const terms = [];
+  const term = (key, why, detail, v) => terms.push({ key, why, detail, v });
+  if (pit.rate  != null) term("rate", "gives up runs in the 1st", pit.rate.toFixed(2) + " R/1st vs " + I01_LG.rate.toFixed(2) + " lg",
+    cl((I01_LG.rate - pit.rate)   / I01_LG.rate,  -1,  1) * 25);
+  if (pit.whip  != null) term("whip", "puts the leadoff traffic on", "WHIP " + pit.whip.toFixed(2) + " vs " + I01_LG.whip.toFixed(2) + " lg",
+    cl((I01_LG.whip - pit.whip)   / I01_LG.whip,  -1,  1) * 15);
+  if (pit.k9    != null) term("k9", "can't miss bats early", "K/9 " + pit.k9.toFixed(1) + " vs " + I01_LG.k9.toFixed(1) + " lg",
+    cl((pit.k9   - I01_LG.k9)     / I01_LG.k9,    -1,  1) * 10);
+  if (pit.bb9   != null) term("bb9", "hands out free passes", "BB/9 " + pit.bb9.toFixed(1) + " vs " + I01_LG.bb9.toFixed(1) + " lg",
+    cl((I01_LG.bb9 - pit.bb9)     / I01_LG.bb9,   -1,  1) * 10);
+  if (pit.hr9   != null) term("hr9", "leaves one over the plate", "HR/9 " + pit.hr9.toFixed(2) + " vs " + I01_LG.hr9.toFixed(2) + " lg",
+    cl((I01_LG.hr9 - pit.hr9)     / I01_LG.hr9,  -0.5, 0.5) * 5);
   // Statcast: FPS% (get-ahead rate) and whiff% (swing-and-miss) add 15 pts total headroom.
-  if (peri && peri.fstrike != null) score += cl((peri.fstrike - 60) / 60, -1, 1) * 8;
-  if (peri && peri.whiff   != null) score += cl((peri.whiff - 24.5) / 24.5, -1, 1) * 7;
+  if (peri && peri.fstrike != null) term("fstrike", "falls behind hitters", "first-pitch strike " + peri.fstrike.toFixed(0) + "% vs 60% lg",
+    cl((peri.fstrike - 60) / 60, -1, 1) * 8);
+  if (peri && peri.whiff   != null) term("whiff", "gets hit — no swing-and-miss", "whiff " + peri.whiff.toFixed(0) + "% vs 24.5% lg",
+    cl((peri.whiff - 24.5) / 24.5, -1, 1) * 7);
   // L30 rolling clean % (binary 0/1) adds 10 pts: recent hot/cold form vs season.
   // League avg clean ~67% (exp(-0.52) ≈ 0.59 → ~67% with regression toward 0.52).
   if (rolling && rolling.l30 && rolling.l30.pct != null && (rolling.l30.n || 0) >= 10) {
-    score += cl((rolling.l30.pct - 60) / 40, -1, 1) * 10;
+    term("form", "cold right now", "L30 clean " + Math.round(rolling.l30.pct) + "% over " + rolling.l30.n + " starts vs 60% par",
+      cl((rolling.l30.pct - 60) / 40, -1, 1) * 10);
   }
   // L30 runs/start adds 5 pts: continuous signal (0.0 R/start vs 0.9 R/start, both
   // non-clean, are meaningfully different). Uses same rate scale as season rate.
   if (rolling && rolling.l30 && rolling.l30.runsPerStart != null && (rolling.l30.n || 0) >= 10) {
-    score += cl((I01_LG.rate - rolling.l30.runsPerStart) / I01_LG.rate, -1, 1) * 5;
+    term("damage", "the damage is recent", rolling.l30.runsPerStart.toFixed(2) + " R/1st over L30 vs " + I01_LG.rate.toFixed(2) + " lg",
+      cl((I01_LG.rate - rolling.l30.runsPerStart) / I01_LG.rate, -1, 1) * 5);
   }
+  let score = terms.reduce((s, t) => s + t.v, 50);
   score = cl(Math.round(score), 0, 100);
   // pit.sample never entered the score above, so a single clean start scored a
   // perfect 0.00 R/1st and 0.00 WHIP straight to A+. Cap the top of the scale
@@ -6458,7 +6500,8 @@ function pitcherI01Profile(pit, seasonEra, rolling, peri) {
     peri && peri.whiff   != null ? "Whiff " + peri.whiff.toFixed(0) + "%" : null,
   ].filter(Boolean);
   return { grade, gradeColor, score, cleanPct, summary: parts.join("  ·  "), vsNote, rolling: rolling || null,
-    k9: pit.k9 ?? null, bb9: pit.bb9 ?? null, whip: pit.whip ?? null, rate: pit.rate ?? null, sample: pit.sample,
+    leaks: nrfiLeaks(terms), k9: pit.k9 ?? null, bb9: pit.bb9 ?? null, whip: pit.whip ?? null,
+    hr9: pit.hr9 ?? null, rate: pit.rate ?? null, sample: pit.sample,
     fstrike: peri ? (peri.fstrike ?? null) : null, whiff: peri ? (peri.whiff ?? null) : null };
 }
 
@@ -7608,6 +7651,7 @@ function FirstInning() {
                 avg:    { icon: "📊", label: "AVERAGE",        color: "var(--dim)",   bg: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.12)" },
               };
               const btBadge = btTier ? TIER_STYLES[btTier] : null;
+              const topLeak = (p.leaks || [])[0];
               const headshotUrl = p.pid
                 ? "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/" + p.pid + "/headshot/67/current"
                 : "https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_213,q_auto:best/v1/people/generic/headshot/67/current";
@@ -7634,6 +7678,16 @@ function FirstInning() {
                       {btBadge && btClean != null && (
                         <div title={(btSrc === "backtest" ? "Backtest result — 4,015 MLB games (2025 full + 2026 to-date): " : "Live model estimate: ") + name + " kept the 1st inning scoreless " + btClean + "% of the time across " + btN + " starts."} style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, marginTop: 5, padding: "2px 7px", background: btBadge.bg, border: "1px solid " + btBadge.border, borderRadius: 5, fontSize: 10, fontWeight: 700, color: btBadge.color }}>
                           {btBadge.icon} {btBadge.label} · {btClean}%
+                        </div>
+                      )}
+                      {/* The leak behind the badge. A red flag with no reason attached
+                          is just a number the user has to take on faith. The letter
+                          grade counts as a red flag too: the badge reads L30 clean%
+                          while the grade reads peripherals, so an arm can carry a D/F
+                          under an AVERAGE badge and would otherwise go unexplained. */}
+                      {(btTier === "danger" || btTier === "leaky" || p.grade === "D" || p.grade === "F") && topLeak && (
+                        <div title={"Biggest drag on " + name + "'s first-inning grade: " + topLeak.detail + " (costs " + Math.abs(topLeak.cost) + " grade points)."} style={{ cursor: "help", fontSize: 10, color: btBadge ? btBadge.color : "var(--amber)", marginTop: 4, opacity: 0.95, lineHeight: 1.35 }}>
+                          <b>Leak:</b> {topLeak.why} — <span style={{ color: "var(--dim)" }}>{topLeak.detail}</span>
                         </div>
                       )}
                     </div>
@@ -7914,6 +7968,40 @@ function FirstInning() {
                 </div>
               </div>
             ))}
+            {/* Where each starter leaks. Deliberately NOT a check: these are the
+                grade's own components, so voting them would count the pitcher
+                twice — once through the twelve pitching checks and again here.
+                This is transparency on a number already in the model. */}
+            {r.pitProfiles && (() => {
+              const sides = [
+                { name: r.awayPP, p: r.pitProfiles.away },
+                { name: r.homePP, p: r.pitProfiles.home },
+              ].filter((s) => s.p && (s.p.leaks || []).length);
+              if (!sides.length) return null;
+              return (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 6 }}>WHERE THE STARTERS LEAK</div>
+                  {sides.map((s, si) => (
+                    <div key={si} style={{ padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.05)", fontSize: 12 }}>
+                      <span style={{ fontWeight: 600 }}>{s.name}</span>
+                      <span style={{ color: "var(--dim)", fontSize: 10, marginLeft: 6 }}>· grade {s.p.grade}</span>
+                      {s.p.leaks.slice(0, 3).map((lk, li) => (
+                        <div key={li} style={{ display: "flex", gap: 8, alignItems: "baseline", marginTop: 3 }}>
+                          <span style={{ color: "var(--rose)", fontSize: 10, fontWeight: 800, minWidth: 34, flexShrink: 0 }}>{lk.cost}</span>
+                          <span style={{ fontSize: 11 }}>
+                            {lk.why} <span style={{ color: "var(--dim)" }}>— {lk.detail}</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 10, color: "var(--dim)", marginTop: 6, lineHeight: 1.4 }}>
+                    Numbers are grade points lost off a 50-point average, from the same
+                    weights that produced each starter's letter grade.
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>
