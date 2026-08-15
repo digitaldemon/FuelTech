@@ -6028,7 +6028,9 @@ function pitcherBT(name) {
 // logged per pick vs whether the 1st was scoreless. Inactive under 25 games,
 // and shrunk by sample size so it can't overcorrect early.
 function nrfiCalibration(record) {
-  const g = (record || []).filter((e) => e.pNRFI != null && e.firstInningRuns != null);
+  // Exclude kalshi-import entries: their pNRFI is the market entry price, not model output.
+  // Training on market prices would teach the calibration to correct for market bias, not model bias.
+  const g = (record || []).filter((e) => e.pNRFI != null && e.firstInningRuns != null && e.source !== "kalshi-import");
   if (g.length < 25) return { c: 0, n: g.length, active: false };
   const lg = (p) => Math.log(p / (1 - p));  // 0-1 logit (distinct from the global 0-100 logit)
   const cp = (x) => nClamp(x, 0.05, 0.95);
@@ -6436,7 +6438,9 @@ function FirstInning() {
       const started = r.currentInning >= 1 || r.final || (r.state && r.state !== "Preview");
       const id = "nrfi-" + r.gamePk;
       let e = recl.find((x) => x.id === id);
-      if (!e && r.state === "Preview" && r.hasPitchers && r.dataOk && pMax >= 57) {
+      const awThin = !(r.pitProfiles && r.pitProfiles.away && (r.pitProfiles.away.sample || 0) >= 5);
+      const hmThin = !(r.pitProfiles && r.pitProfiles.home && (r.pitProfiles.home.sample || 0) >= 5);
+      if (!e && r.state === "Preview" && r.hasPitchers && r.dataOk && pMax >= 57 && !(awThin && hmThin)) {
         e = { id, at: Date.now(), date: r.date.replace(/-/g, ""), gamePk: r.gamePk,
           game: r.away + " @ " + r.home, call, prob: r1(pMax),
           pNRFI: Math.round(r.pNRFI * 1000) / 1000,
@@ -6585,10 +6589,10 @@ function FirstInning() {
     }
   }
   // Closing-line value on graded picks: did the market move toward our side after we logged it?
-  const clvSet = (rec || []).filter((r) => r.mktAtPick != null && r.mktAtClose != null && (r.result === "won" || r.result === "lost"));
+  const clvSet = (rec || []).filter((r) => r.source !== "kalshi-import" && r.mktAtPick != null && r.mktAtClose != null && (r.result === "won" || r.result === "lost"));
   const avgCLV = clvSet.length ? clvSet.reduce((a, r) => a + (r.mktAtClose - r.mktAtPick), 0) / clvSet.length : null;
   const byConf = (a, b) => b.pMax - a.pMax;
-  const tailed = enriched.filter((r) => r.tails && r.tails.length).sort(byConf);
+  const tailed = enriched.filter((r) => r.tails && r.tails.length && !r.v.thinPass).sort(byConf);
   const rest = enriched.filter((r) => !(r.tails && r.tails.length));
   const betNRFI = rest.filter((r) => r.v.isBet && r.call === "NRFI").sort(byConf);
   const betYRFI = rest.filter((r) => r.v.isBet && r.call === "YRFI").sort(byConf);
