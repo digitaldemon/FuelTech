@@ -6087,7 +6087,8 @@ function nrfiVerdict(r) {
   if (conf < 0.35) { strength = "PASS"; notes.push("thin data"); }
   else if (conf < 0.55 && (strength === "STRONG" || strength === "BET")) { strength = "LEAN"; notes.push("limited data"); }
   // Both starters under 5 starts: not enough real signal for even a lean.
-  if (awayThin && homeThin && strength === "LEAN") { strength = "PASS"; notes.push("both pitchers thin data"); }
+  let thinPass = false;
+  if (awayThin && homeThin && strength === "LEAN") { strength = "PASS"; notes.push("both pitchers thin data"); thinPass = true; }
   // STRONG demands both high confidence AND strong agreement.
   if (strength === "STRONG" && !(conf >= 0.7 && frac >= 0.6)) { strength = "BET"; notes.push("not full confidence"); }
 
@@ -6116,7 +6117,7 @@ function nrfiVerdict(r) {
   const blurb = (strength === "PASS"
     ? outcome + " only " + p.toFixed(0) + "% — basically a coin flip." + al
     : outcome + " — " + p.toFixed(0) + "% (" + word + " lean)." + al) + tail;
-  return { strength, side, isBet, label, color, blurb, confLbl };
+  return { strength, side, isBet, label, color, blurb, confLbl, thinPass };
 }
 
 // Match one of NRFIKINGKY's picks to a scheduled game by team-name overlap.
@@ -6586,7 +6587,7 @@ function FirstInning() {
   const betNRFI = rest.filter((r) => r.v.isBet && r.call === "NRFI").sort(byConf);
   const betYRFI = rest.filter((r) => r.v.isBet && r.call === "YRFI").sort(byConf);
   const leans = rest.filter((r) => r.v.strength === "LEAN").sort(byConf);
-  const passes = rest.filter((r) => r.v.strength === "PASS").sort(byConf);
+  const passes = rest.filter((r) => r.v.strength === "PASS" && !r.v.thinPass).sort(byConf);
 
   const leanColor = (l) => (l === "nrfi" ? "var(--moss)" : l === "yrfi" ? "var(--rose)" : "var(--dim)");
   const leanLabel = (l) => (l === "nrfi" ? "NRFI lean" : l === "yrfi" ? "YRFI lean" : "neutral");
