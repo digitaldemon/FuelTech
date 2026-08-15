@@ -387,6 +387,7 @@ table.tbl tbody tr:hover td { background:rgba(255,255,255,.025); }
   .tierbox .pct { font-size:17px; }
   .pit-grid { grid-template-columns:1fr !important; }
   .pit-windows { grid-template-columns:repeat(2,1fr) !important; }
+  .nrfi-stats { grid-template-columns:repeat(2,1fr) !important; }
 }
 @media (max-width:380px) {
   .cd-title { font-size:18px; }
@@ -6599,13 +6600,21 @@ function FirstInning() {
   const isModelPick = (r) => r.source !== "kalshi-import" && !r.skipped && r.strength !== "PASS" && !r.thinPass && (r.mktAtPick != null || r.isBet === true);
   const modelSettled = settled.filter(isModelPick);
   const betSettled = modelSettled.filter((r) => r.isBet === true || (r.prob != null && r.prob >= 63));
+  const leanSettled = modelSettled.filter((r) => !r.isBet && (r.prob == null || r.prob < 63));
   const kalshiSettled = settled.filter((r) => r.source === "kalshi-import" && !r.skipped);
   const wins = modelSettled.filter((r) => r.result === "won").length;
   const losses = modelSettled.length - wins;
   const betWins = betSettled.filter((r) => r.result === "won").length;
   const betLosses = betSettled.length - betWins;
+  const leanWins = leanSettled.filter((r) => r.result === "won").length;
+  const leanLosses = leanSettled.length - leanWins;
   const kWins = kalshiSettled.filter((r) => r.result === "won").length;
   const kLosses = kalshiSettled.length - kWins;
+  // Participation: BET/STRONG model signals vs Kalshi bets placed on same date+call
+  const allModelBets = (rec || []).filter((r) => isModelPick(r) && (r.isBet === true || (r.prob != null && r.prob >= 63)));
+  const kalshiDateCall = new Set((rec || []).filter((r) => r.source === "kalshi-import" && !r.skipped).map((r) => r.date + ":" + r.call));
+  const participatedCount = allModelBets.filter((r) => r.date && kalshiDateCall.has(r.date + ":" + r.call)).length;
+  const betSignalCount = allModelBets.length;
 
   const liveCalib = nrfiCalibration(rec || []);
   const calib = liveCalib.active ? liveCalib : NRFI_CALIB_SEED; // live once ≥25 graded, else backtest prior
@@ -7066,31 +7075,81 @@ function FirstInning() {
         "our number" is market-anchored with the model as the tiebreaker; we bet only when the model clears the market
         by a real margin, and track closing-line value (CLV), the honest edge test. Graded against the real 1st-inning score.
       </p>
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", margin: "8px 0 4px" }}>
-        {(() => { const tot = wins + losses; const pct = tot > 0 ? Math.round(wins / tot * 100) : 0; return <span title="All model picks where a market was available (LEAN + BET + STRONG, excludes no-market and PASS entries)." style={{ cursor: "help", fontSize: 13 }}>Model record: <b><span style={{ color: "var(--moss)" }}>{wins}W</span> / <span style={{ color: "var(--rose)" }}>{losses}L</span>{tot > 0 ? " (" + pct + "%)" : ""}</b></span>; })()}
-        {betSettled.length > 0 && (() => { const tot = betWins + betLosses; const pct = tot > 0 ? Math.round(betWins / tot * 100) : 0; return <span title="BET and STRONG quality picks only (model prob ≥ 63%) — highest-conviction calls." style={{ cursor: "help", fontSize: 13 }}>BET picks: <b><span style={{ color: "var(--moss)" }}>{betWins}W</span> / <span style={{ color: "var(--rose)" }}>{betLosses}L</span>{tot > 0 ? " (" + pct + "%)" : ""}</b></span>; })()}
-        {kalshiSettled.length > 0 && (
-          <span style={{ fontSize: 13 }}>Kalshi bets: <b><span style={{ color: "var(--moss)" }}>{kWins}W</span> / <span style={{ color: "var(--rose)" }}>{kLosses}L</span></b></span>
-        )}
+      {/* ── Analytics grid ── */}
+      <div className="nrfi-stats" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, margin: "10px 0 6px" }}>
+        {/* All model picks */}
+        {(() => {
+          const tot = wins + losses; const pct = tot > 0 ? Math.round(wins / tot * 100) : null;
+          const color = pct == null ? "var(--dim)" : pct >= 55 ? "var(--moss)" : pct >= 45 ? "var(--bone)" : "var(--rose)";
+          return (
+            <div title="All model picks where a Kalshi market was available (LEAN + BET + STRONG). Excludes no-market games and PASS entries." style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 5 }}>ALL PICKS</div>
+              <div style={{ fontSize: 17, fontWeight: 800, color }}>{tot > 0 ? wins + "W / " + losses + "L" : "—"}</div>
+              {pct != null && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{pct}% · {tot} graded</div>}
+            </div>
+          );
+        })()}
+        {/* BET / STRONG signals */}
+        {(() => {
+          const tot = betWins + betLosses; const pct = tot > 0 ? Math.round(betWins / tot * 100) : null;
+          const color = pct == null ? "var(--dim)" : pct >= 55 ? "var(--moss)" : pct >= 45 ? "var(--bone)" : "var(--rose)";
+          const partTxt = betSignalCount > 0 ? participatedCount + " of " + betSignalCount + " taken" : null;
+          return (
+            <div title={"BET and STRONG quality picks only (model prob ≥ 63%) — highest-conviction calls." + (partTxt ? " Participation: " + partTxt + " (matched to your Kalshi imports by date + call direction)." : "")} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 5 }}>BET SIGNALS</div>
+              <div style={{ fontSize: 17, fontWeight: 800, color }}>{tot > 0 ? betWins + "W / " + betLosses + "L" : "—"}</div>
+              {pct != null && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{pct}%{partTxt ? " · " + partTxt : ""}</div>}
+              {tot === 0 && betSignalCount > 0 && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{betSignalCount} signal{betSignalCount !== 1 ? "s" : ""} · none settled</div>}
+            </div>
+          );
+        })()}
+        {/* LEAN picks */}
+        {(() => {
+          const tot = leanWins + leanLosses; const pct = tot > 0 ? Math.round(leanWins / tot * 100) : null;
+          const color = pct == null ? "var(--dim)" : pct >= 55 ? "var(--moss)" : pct >= 45 ? "var(--bone)" : "var(--rose)";
+          return (
+            <div title="LEAN picks only (model prob 57–62%). Lower conviction — track separately to see if they add value over BET-only." style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 5 }}>LEAN PICKS</div>
+              <div style={{ fontSize: 17, fontWeight: 800, color }}>{tot > 0 ? leanWins + "W / " + leanLosses + "L" : "—"}</div>
+              {pct != null && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{pct}% · {tot} graded</div>}
+              {tot === 0 && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>none graded yet</div>}
+            </div>
+          );
+        })()}
+        {/* Kalshi bets */}
+        {(() => {
+          const tot = kWins + kLosses; const pct = tot > 0 ? Math.round(kWins / tot * 100) : null;
+          const color = pct == null ? "var(--dim)" : pct >= 55 ? "var(--moss)" : pct >= 45 ? "var(--bone)" : "var(--rose)";
+          return (
+            <div title={"Your actual Kalshi bets imported from your account. This is your real financial record — " + (avgCLV != null ? "avg CLV " + (avgCLV > 0 ? "+" : "") + avgCLV.toFixed(1) + "% across " + clvSet.length + " settled bets." : "CLV tracked as bets settle.")} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 5 }}>YOUR KALSHI</div>
+              <div style={{ fontSize: 17, fontWeight: 800, color }}>{tot > 0 ? kWins + "W / " + kLosses + "L" : "—"}</div>
+              {pct != null && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{pct}%{avgCLV != null ? " · CLV " + (avgCLV > 0 ? "+" : "") + avgCLV.toFixed(1) + "%" : ""}</div>}
+              {tot === 0 && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>import to track</div>}
+            </div>
+          );
+        })()}
+      </div>
+      {/* ── Controls / meta row ── */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 4 }}>
         {sellers.map((s) => (
-          <span key={s.id} style={{ fontSize: 13, color: s.active ? "var(--dim)" : "var(--amber)" }}>
-            {s.active ? (s.record ? s.name + " tail: " + s.record.wins + "-" + s.record.losses : s.name + ": active") : s.name + ": subscription not active"}
+          <span key={s.id} style={{ fontSize: 12, color: s.active ? "var(--dim)" : "var(--amber)" }}>
+            {s.active ? (s.record ? s.name + " tail: " + s.record.wins + "-" + s.record.losses : s.name + ": active") : s.name + ": paused"}
           </span>
         ))}
-        <span style={{ fontSize: 13, color: "var(--dim)" }}>{liveCalib.active ? "Calibrated: " + liveCalib.n + " live graded games" : "Calibrated: backtest (" + NRFI_CALIB_SEED.n + " games) · +" + liveCalib.n + " live"}</span>
-        {avgCLV != null && <span style={{ fontSize: 13, color: avgCLV >= 0 ? "var(--moss)" : "var(--rose)" }}>Avg CLV: {avgCLV > 0 ? "+" : ""}{avgCLV.toFixed(1)}% ({clvSet.length})</span>}
+        <span style={{ fontSize: 12, color: "var(--dim)" }}>{liveCalib.active ? "Calibrated: " + liveCalib.n + " live games" : "Calibrated: backtest (" + NRFI_CALIB_SEED.n + " games) · +" + liveCalib.n + " live"}</span>
         <button className="btn btn-ghost btn-sm" onClick={() => { loadTails(); run(); }} disabled={phase === "scanning"}>{phase === "scanning" ? "Researching…" : "↻ Refresh"}</button>
         {lastRefreshed && phase === "done" && (() => {
           const secsAgo = Math.floor((now - lastRefreshed.getTime()) / 1000);
           const nextIn = Math.max(0, AUTO_REFRESH_MS / 1000 - secsAgo);
           const fmt = (s) => Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
           return (
-            <span style={{ fontSize: 11, color: "var(--dim)", fontVariantNumeric: "tabular-nums" }} title="Model auto-refreshes every 10 minutes — keeps lineups, weather, market prices, and pitcher stats current">
+            <span style={{ fontSize: 11, color: "var(--dim)", fontVariantNumeric: "tabular-nums" }} title="Model auto-refreshes every 2 minutes">
               Updated {secsAgo < 60 ? secsAgo + "s ago" : Math.floor(secsAgo / 60) + "m ago"} · next in {fmt(nextIn)}
             </span>
           );
         })()}
-        <button className="btn btn-ghost btn-sm" onClick={importKalshiBets} disabled={importing} title="Pull your closed NRFI/YRFI bets from Kalshi and add them to the history">{importing ? "Importing…" : "Import Kalshi bets"}</button>
+        <button className="btn btn-ghost btn-sm" onClick={importKalshiBets} disabled={importing} title="Pull your closed NRFI/YRFI bets from Kalshi">{importing ? "Importing…" : "Import Kalshi bets"}</button>
         {importMsg && <span style={{ fontSize: 12, color: importMsg.ok ? "var(--moss)" : "var(--rose)" }}>{importMsg.text}</span>}
       </div>
       {/* Bankroll builder */}
