@@ -38,6 +38,90 @@ const check = (ok, what, detail) => {
       "counted " + counted + " vs line score " + truth + "; " + spoken + "/" + live.plays.length +
       " plays had a callout; past1=" + live.past1);
   }
+  /* ---- pitch level ----
+   * The play callout speaks once per at-bat, which on a slow inning is forty
+   * seconds of silence. The pitch stream fills it, and it reads a DIFFERENT
+   * slice of the feed — every 1st-inning play including the one still in
+   * progress — so it needs its own truth check. */
+  console.log("\npitch level");
+  const g0 = games[0];
+  const live0 = await c.fetchFirstInning(g0.gamePk);
+  const raw = await (await realFetch("https://statsapi.mlb.com/api/v1.1/game/" + g0.gamePk +
+    "/feed/live")).json();
+  // Truth: every pitch thrown in the 1st, straight off the unprojected feed.
+  const truthPitches = ((raw.liveData && raw.liveData.plays && raw.liveData.plays.allPlays) || [])
+    .filter((p) => p.about && p.about.inning === 1)
+    .flatMap((p) => (p.playEvents || []).filter((e) => e.isPitch));
+  const inPlay = truthPitches.filter((e) => /^[XDE]$/.test(
+    (e.details && e.details.call && e.details.call.code) || "")).length;
+  check(live0 && live0.pitches.length === truthPitches.length - inPlay,
+    "every 1st-inning pitch is picked up except the in-play ones (" +
+      (live0 ? live0.pitches.length : "?") + " called, " + truthPitches.length +
+      " thrown, " + inPlay + " put in play)",
+    "pitch count " + (live0 ? live0.pitches.length : "null") + " != " +
+      (truthPitches.length - inPlay) + " — the projection is dropping playEvents.");
+  // Dedup is by playId; a repeated id means the same pitch would be spoken twice
+  // on the next poll, or a real pitch would be swallowed.
+  const ids = (live0 ? live0.pitches : []).map((p) => p.id);
+  check(ids.length > 0 && new Set(ids).size === ids.length,
+    "every pitch has a unique id, so the poll loop cannot repeat or swallow one",
+    "duplicate ids in the pitch stream: " + (ids.length - new Set(ids).size) + " collisions.");
+  check((live0 ? live0.pitches : []).every((p) => p.text && !/undefined|NaN/.test(p.text)),
+    "no pitch line contains an unfilled field",
+    "a pitch line came out with undefined/NaN in it: " +
+      JSON.stringify((live0 ? live0.pitches : []).find((p) => !p.text || /undefined|NaN/.test(p.text))));
+  // A ball in play is announced by the play's own description a beat later;
+  // calling it twice is worse than not calling it.
+  check(c.pitchCallout({ isPitch: true, details: { call: { code: "X", description: "In play, out(s)" } },
+    count: { balls: 0, strikes: 2 } }) === null,
+    "a ball put in play is left to the play callout, not double-announced",
+    "pitchCallout spoke an in-play pitch.");
+  check(c.pitchCallout({ isPitch: false, type: "action",
+    details: { description: "Batter Timeout." } }) === null,
+    "a non-pitch event (timeout, substitution) is not read as a pitch",
+    "pitchCallout spoke a non-pitch event.");
+  // The count in the feed is the count AFTER the pitch, so ball four and strike
+  // three would read as "four and oh" / "oh and three".
+  check(!/four and|and three/.test(c.pitchCallout({ isPitch: true,
+    details: { call: { code: "B", description: "Ball" } }, count: { balls: 4, strikes: 1 } }) || ""),
+    "ball four is not read out as a count",
+    "the post-pitch count is being spoken on a completed at-bat.");
+  check(!/and three/.test(c.pitchCallout({ isPitch: true,
+    details: { call: { code: "S", description: "Swinging Strike" } }, count: { balls: 1, strikes: 3 } }) || ""),
+    "strike three is not read out as a count",
+    "the post-pitch count is being spoken on a strikeout.");
+  check(c.pitchCallout({ isPitch: true, details: { call: { code: "H", description: "Hit By Pitch" } },
+    count: { balls: 1, strikes: 0 } }) === "hit by pitch.",
+    "a hit batsman is called without a count — the feed charges it as a ball on a finished at-bat",
+    "HBP came out as: " + c.pitchCallout({ isPitch: true,
+      details: { call: { code: "H", description: "Hit By Pitch" } }, count: { balls: 1, strikes: 0 } }));
+  check(c.pitchCallout({ isPitch: true, details: { call: { code: "S", description: "Swinging Strike (Blocked)" } },
+    count: { balls: 0, strikes: 1 } }) === "swinging strike. oh and one.",
+    "a scorer's parenthetical qualifier is not read aloud",
+    "the qualifier survived: " + c.pitchCallout({ isPitch: true,
+      details: { call: { code: "S", description: "Swinging Strike (Blocked)" } }, count: { balls: 0, strikes: 1 } }));
+  // Velocity is what makes it sound like a broadcast, but the feed carries 0 for
+  // untracked pitches and a pickoff is not a pitch speed.
+  check(/^94, /.test(c.pitchCallout({ isPitch: true, details: { call: { code: "C", description: "Called Strike" } },
+    count: { balls: 0, strikes: 1 }, pitchData: { startSpeed: 93.7 } }) || ""),
+    "velocity leads the call and is rounded to whole miles per hour",
+    "velocity is missing or unrounded in the pitch line.");
+  check(!/0,|^\d+, /.test(c.pitchCallout({ isPitch: true, details: { call: { code: "B", description: "Ball" } },
+    count: { balls: 1, strikes: 0 }, pitchData: { startSpeed: 0 } }) || ""),
+    "an untracked pitch (startSpeed 0) is called without a bogus velocity",
+    "a zero/none velocity leaked into the spoken line.");
+  // The batter is named once per at-bat. Every pitch would be nagging; none at
+  // all leaves an unattributable stream of counts.
+  const named = c.firstInningPitches({ liveData: { plays: { allPlays: [{
+    about: { inning: 1 }, atBatIndex: 0, matchup: { batter: { fullName: "Aaron Judge" } },
+    playEvents: [
+      { isPitch: true, playId: "a", details: { call: { code: "B", description: "Ball" } }, count: { balls: 1, strikes: 0 } },
+      { isPitch: true, playId: "b", details: { call: { code: "C", description: "Called Strike" } }, count: { balls: 1, strikes: 1 } },
+    ],
+  }] } } });
+  check(named.length === 2 && /^Aaron Judge\. /.test(named[0].text) && !/Judge/.test(named[1].text),
+    "the batter is named on his first pitch and not on the rest of the at-bat",
+    "batter naming is wrong: " + JSON.stringify(named.map((p) => p.text)));
   // A play with no description must not be spoken as an empty utterance.
   check(c.playCallout({ result: {} }) === null, "a play with no description is skipped, not spoken as silence",
     "playCallout returned a non-null for an empty result.");
@@ -61,16 +145,36 @@ const check = (ok, what, detail) => {
     "the whole board is polled in parallel — " + parMs + "ms for " + pks.length +
       " games, vs ~" + Math.round(seqMs) + "ms one at a time",
     "parallel " + parMs + "ms is not meaningfully faster than sequential " + Math.round(seqMs) + "ms.");
-  // The field projection is what makes a 2.5s interval affordable rather than
-  // ~48MB/min of feed across a full board.
+  /* The field projection is what makes a 2.5s interval affordable rather than
+   * ~48MB/min of feed across a full board. Two numbers matter and they are not
+   * the same number:
+   *   - what the projection saves on an arbitrary feed, and
+   *   - what a poll ACTUALLY moves, which is a game in the 1st inning.
+   * The pitch stream made the first number much worse (playEvents is ~92KB of a
+   * finished game and `fields` cannot be scoped to one inning) while barely
+   * touching the second, because the callout attaches at first pitch and
+   * detaches at past1 — it never fetches a 9-inning feed at speed. Pinning only
+   * the 9-inning figure would have failed a change that costs nothing in use;
+   * pinning only the 1st-inning figure would let the projection rot. Both. */
   const bare = await (await realFetch("https://statsapi.mlb.com/api/v1.1/game/" + pks[0] + "/feed/live")).text();
   const trimmed = await (await realFetch("https://statsapi.mlb.com/api/v1.1/game/" + pks[0] +
     "/feed/live?fields=" + c.read("CALLOUT_FIELDS"))).text();
-  check(trimmed.length * 10 < bare.length,
-    "the field projection cuts the feed by 10x or more (" + (bare.length / 1024).toFixed(0) +
+  check(trimmed.length * 6 < bare.length,
+    "the field projection cuts a whole-game feed by 6x or more (" + (bare.length / 1024).toFixed(0) +
       "KB -> " + (trimmed.length / 1024).toFixed(0) + "KB)",
     "projection saved little: " + bare.length + " -> " + trimmed.length +
-      "; polling this fast across a full board is not affordable at that size.");
+      "; the leaf list has grown past what the callout reads.");
+  // The real cost: the same projected feed with only the 1st inning in it, which
+  // is all that exists while a game is being called.
+  const proj = JSON.parse(trimmed);
+  proj.liveData.plays.allPlays = (proj.liveData.plays.allPlays || [])
+    .filter((p) => p.about && p.about.inning === 1);
+  const inn1 = JSON.stringify(proj).length;
+  const mbMin = inn1 * 15 * (60000 / 2500) / 1048576;
+  check(mbMin < 8,
+    "a 1st-inning poll moves " + (inn1 / 1024).toFixed(1) + "KB — " + mbMin.toFixed(1) +
+      "MB/min for a 15-game board at 2.5s",
+    "the live poll would move " + mbMin.toFixed(1) + "MB/min; that is not affordable at 2.5s.");
   // The stale-play skip is what stops a mid-inning attach from narrating history
   // and then trailing the game for the rest of the inning.
   check(c.playAgeMs({ about: { endTime: new Date(Date.now() - 90000).toISOString() } }) > 45000 &&

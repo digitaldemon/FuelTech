@@ -964,16 +964,55 @@ function firstInningPlays(feed){const all=feed&&feed.liveData&&feed.liveData.pla
 function playCallout(p){const d=String(p.result&&p.result.description||"").replace(/\s+/g," ").trim().replace(/\.$/,"");if(!d)return null;if(d.length<=150)return d;// A hard slice lands mid-word and the synthesiser reads the fragment aloud
 // ("Dillon Dingler to 1s"). Trailing runner advancements are the part that
 // overruns, and dropping a whole clause is what a broadcaster would do anyway.
-const cut=d.slice(0,150);const stop=Math.max(cut.lastIndexOf(". "),cut.lastIndexOf(", "));return stop>60?cut.slice(0,stop):cut.slice(0,cut.lastIndexOf(" "));}// Runs are the only thing that settles the bet, so they get named as such rather
+const cut=d.slice(0,150);const stop=Math.max(cut.lastIndexOf(". "),cut.lastIndexOf(", "));return stop>60?cut.slice(0,stop):cut.slice(0,cut.lastIndexOf(" "));}/* ---- pitch level ----------------------------------------------------------
+ * firstInningPlays deliberately keeps only COMPLETE plays, because a play's
+ * result.description is not final until it is. That is right for the play
+ * callout and useless for pitches: between a leadoff single and the next out
+ * there can be forty seconds of dead air and six pitches, and the at-bat they
+ * belong to is by definition still in progress. So the pitches are read off a
+ * SECOND pass that walks every 1st-inning play including the live one, and are
+ * de-duplicated by playId rather than by count, since the same at-bat is
+ * re-delivered on every poll with one more event on the end.
+ */const COUNT_WORD=["oh","one","two","three","four"];// "In play, out(s)" as a pitch call is worse than saying nothing — the play's
+// own description follows a beat later and says what actually happened. The
+// pitches worth calling are the ones that only move the count.
+const PITCH_SKIP={X:1,D:1,E:1};function pitchCallout(ev){if(!ev||!ev.isPitch)return null;const call=ev.details&&ev.details.call||{};if(PITCH_SKIP[call.code])return null;// "Swinging Strike (Blocked)" — the qualifier is a scorer's distinction, not
+// something a broadcaster says, and it is the kind of aside that makes a
+// synthesised line sound like a form being read out.
+const what=String(call.description||ev.details.description||"").replace(/\s*\([^)]*\)/g,"").trim();if(!what)return null;// Velocity is the one number that makes a pitch call sound like a broadcast
+// rather than a scoreboard. Gate it: the feed carries 0 for pitches it never
+// tracked, and a pickoff throw is not a pitch speed.
+const mph=ev.pitchData&&ev.pitchData.startSpeed;const velo=typeof mph==="number"&&mph>=60&&mph<=110?Math.round(mph)+", ":"";const c=ev.count||{};// The count here is the count AFTER the pitch, so ball four and strike three
+// read as "four and oh" / "oh and three" — nonsense to say out loud, and the
+// play callout is about to announce the walk or the punchout anyway. A hit
+// batsman is the same case and does not announce itself in the count: the feed
+// charges it as a ball, so it comes out as a live count on a finished at-bat.
+const done=c.balls>=4||c.strikes>=3||call.code==="H";const count=done||typeof c.balls!=="number"||typeof c.strikes!=="number"?"":" "+COUNT_WORD[c.balls]+" and "+COUNT_WORD[c.strikes]+".";return velo+what.toLowerCase().replace(/\.$/,"")+"."+count;}function firstInningPitches(feed){const all=feed&&feed.liveData&&feed.liveData.plays&&feed.liveData.plays.allPlays||[];const out=[];for(const p of all){if(!p.about||p.about.inning!==1)continue;const batter=p.matchup&&p.matchup.batter&&p.matchup.batter.fullName||"";let first=true;const evs=p.playEvents||[];for(let i=0;i<evs.length;i++){const ev=evs[i];const text=pitchCallout(ev);if(!text)continue;const t=Date.parse(ev.endTime||"");out.push({// playId is a GUID the feed keeps stable across polls; the index pair is
+// only a fallback for the occasional event delivered without one.
+id:ev.playId||p.atBatIndex+":"+i,// Naming the batter once per at-bat is what keeps a string of counts
+// from turning into an unattributable stream of numbers.
+text:first&&batter?batter+". "+text:text,ts:isFinite(t)?t:NaN});first=false;}}return out;}// Runs are the only thing that settles the bet, so they get named as such rather
 // than left for the listener to infer from a description.
-function playRuns(p,prev){const s=p.result||{},q=prev&&prev.result||{};const now=(s.awayScore||0)+(s.homeScore||0);const was=prev?(q.awayScore||0)+(q.homeScore||0):0;return Math.max(0,now-was);}// The full feed is 537KB per game; statsapi's `fields` projection cuts it to 8KB
-// for exactly the leaves the callout reads. Across a 15-game board polled every
-// 2.5s that is the difference between ~48MB/min and ~700KB/min — which is what
+function playRuns(p,prev){const s=p.result||{},q=prev&&prev.result||{};const now=(s.awayScore||0)+(s.homeScore||0);const was=prev?(q.awayScore||0)+(q.homeScore||0):0;return Math.max(0,now-was);}// The full feed is ~750KB per game; statsapi's `fields` projection keeps only
+// the leaves the callout reads. Across a 15-game board polled every 2.5s that is
+// the difference between ~48MB/min and something affordable — which is what
 // makes polling this fast defensible at all.
-const CALLOUT_FIELDS="gameData,status,abstractGameState,liveData,linescore,currentInning,"+"inningState,plays,allPlays,about,inning,isComplete,endTime,result,description,awayScore,homeScore";async function fetchFirstInning(gamePk){const url="https://statsapi.mlb.com/api/v1.1/game/"+gamePk+"/feed/live?fields="+CALLOUT_FIELDS+"&_="+Date.now();let f=null;try{// no-store, not just a cache-buster: statsapi sends cache headers and the
+//
+// Pitch-level events are the expensive half of this list: playEvents alone is
+// ~92KB of a finished game, because `fields` filters by leaf name and cannot be
+// asked for one inning. What saves it is that the callout only ever polls games
+// in the 1st — it attaches at first pitch and detaches at past1 — and the
+// 1st-inning slice is ~11KB, about 4MB/min for a full board. The harness pins
+// that number rather than the 9-inning one, since the 9-inning one is never
+// fetched. Nothing here is decorative: dropping playId costs the pitch
+// de-duplication, dropping count costs the count, dropping pitchData costs the
+// velocity that makes it sound like a broadcast rather than a scoreboard.
+const CALLOUT_FIELDS="gameData,status,abstractGameState,liveData,linescore,currentInning,"+"inningState,plays,allPlays,about,inning,isComplete,endTime,result,description,awayScore,homeScore,"+// pitch level: the events inside each at-bat, the call on each one, the count
+// it produced, its velocity, and who is hitting.
+"playEvents,isPitch,playId,atBatIndex,details,call,code,count,balls,strikes,"+"pitchData,startSpeed,matchup,batter,fullName";async function fetchFirstInning(gamePk){const url="https://statsapi.mlb.com/api/v1.1/game/"+gamePk+"/feed/live?fields="+CALLOUT_FIELDS+"&_="+Date.now();let f=null;try{// no-store, not just a cache-buster: statsapi sends cache headers and the
 // browser will happily serve a stale body to a URL it has seen. An earlier
 // cut bucketed the buster to 10s, which silently capped freshness at 10s.
-const r=await fetch(url,{cache:"no-store"});if(r.ok)f=await r.json();}catch{/* fall through to the proxy */}if(!f){try{f=await getJson(px(url));}catch{return null;}}const ls=f.liveData&&f.liveData.linescore||{};return{plays:firstInningPlays(f),inning:ls.currentInning||0,half:String(ls.inningState||""),// The inning is over once play has moved past it — not when outs hit 3,
+const r=await fetch(url,{cache:"no-store"});if(r.ok)f=await r.json();}catch{/* fall through to the proxy */}if(!f){try{f=await getJson(px(url));}catch{return null;}}const ls=f.liveData&&f.liveData.linescore||{};return{plays:firstInningPlays(f),pitches:firstInningPitches(f),inning:ls.currentInning||0,half:String(ls.inningState||""),// The inning is over once play has moved past it — not when outs hit 3,
 // which is briefly true mid-changeover in the feed.
 past1:(ls.currentInning||0)>1||String(f.gameData&&f.gameData.status&&f.gameData.status.abstractGameState||"").toLowerCase()==="final"};}// A play's endTime is when it actually finished, so the callout can tell a play
 // that just happened from one it is only now seeing — the difference between
@@ -1626,7 +1665,18 @@ const held=(openPositions&&!openPositions.error?openPositions.positions||[]:[]).
 // saying nothing.
 const mine=heldSide(r);const side=mine||r.call;const stake=mine?"You are on "+mine:"Desk is on "+r.call;// Joining a game mid-inning: catch up silently to what is already over and
 // start calling from the live edge, rather than reciting the half-inning.
-if(!st.opened){const fresh=live.plays.findIndex(p=>playAgeMs(p)<CALLOUT_STALE_MS);st.n=fresh===-1?live.plays.length:fresh;if(live.plays.length||live.inning===1){speak(r.away+" at "+r.home+". First inning. "+stake+".");st.opened=true;}}// Runs are read against the play before, so a two-run double is called as
+if(!st.opened){const fresh=live.plays.findIndex(p=>playAgeMs(p)<CALLOUT_STALE_MS);st.n=fresh===-1?live.plays.length:fresh;if(live.plays.length||live.inning===1){speak(r.away+" at "+r.home+". First inning. "+stake+".");st.opened=true;}}// Pitches go out BEFORE the play lines, and that ordering is not cosmetic:
+// the last pitch this code speaks in an at-bat is always the one before the
+// ball is put in play (in-play calls are skipped outright), so pitches-then-
+// play is the true chronological order within a single poll.
+//
+// De-duplication is by playId, not by index, because every poll re-delivers
+// the whole live at-bat with one more event appended.
+if(!st.pitch){st.pitch=new Set();// Same mid-inning catch-up rule the plays use: whatever was already
+// thrown is history, and reciting it would put the voice a minute behind
+// the park for the rest of the inning. A pitch with no usable timestamp
+// is treated as old for the same reason.
+for(const p of live.pitches)if(!(Date.now()-p.ts<CALLOUT_STALE_MS))st.pitch.add(p.id);}for(const p of live.pitches){if(st.pitch.has(p.id))continue;st.pitch.add(p.id);speak(p.text);}// Runs are read against the play before, so a two-run double is called as
 // two — the feed only ever reports a cumulative score.
 for(let i=st.n;i<live.plays.length;i++){const line=playCallout(live.plays[i]);const runs=playRuns(live.plays[i],live.plays[i-1]);if(line)speak(line+(runs>0?". "+(runs===1?"A run scores":runs+" runs score")+". That is Y-R-F-I — "+(side==="YRFI"?mine?"you are a winner":"the desk had it":mine?"that ticket is dead":"the desk was wrong")+".":""),runs>0);if(runs>0)st.settled=true;}st.n=live.plays.length;if(!st.settled&&live.past1){speak("First inning is clean in "+r.home+". N-R-F-I — "+(side==="NRFI"?mine?"you are a winner":"that is a winner":mine?"that ticket is dead":"the desk was wrong")+".",true);st.settled=true;}spoken.current.set(r.gamePk,st);}async function tick(){// A slow round trip must not stack ticks on top of each other; skipping is
 // correct because the next poll is 2.5s away and reads the same state.
