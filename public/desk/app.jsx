@@ -6318,26 +6318,32 @@ function NrfiCalendar({ rec, bankroll, riskLevel }) {
   // Risk config for estimating bet size when contracts not logged
   const _RC = { ghost:{mult:0.10,max:0.02}, conservative:{mult:0.25,max:0.06}, moderate:{mult:0.50,max:0.12}, standard:{mult:0.75,max:0.18}, aggressive:{mult:1.00,max:0.25}, turbo:{mult:1.50,max:0.35} };
   const _rc = _RC[riskLevel] || _RC.moderate;
-  // Estimate dollar P&L for an entry — uses exact contracts if logged, else Kelly estimate from bankroll
+  // Estimate dollar P&L — exact when contracts logged, Kelly estimate when bankroll set, flat 5% fallback
   const estPL = (e) => {
     if (!e.result || e.mktAtPick == null) return null;
     const price = Math.min(0.99, Math.max(0.01, e.mktAtPick / 100));
     if (e.contracts > 0) {
       return e.result === "won" ? e.contracts * (1 - price) : -e.contracts * price;
     }
-    if (!bankroll || bankroll <= 0 || !e.prob) return null;
-    const p = e.prob / 100;
-    const b = (1 - price) / price;
-    const kelly = b > 0 ? Math.max(0, (p * b - (1 - p)) / b) : 0;
-    const sized = Math.min(kelly * _rc.mult, _rc.max);
-    const betDollars = bankroll * sized;
+    const br = (bankroll && bankroll > 0) ? bankroll : null;
+    let betDollars;
+    if (br && e.prob) {
+      const p = e.prob / 100;
+      const b = (1 - price) / price;
+      const kelly = b > 0 ? Math.max(0, (p * b - (1 - p)) / b) : 0;
+      betDollars = br * Math.min(kelly * _rc.mult, _rc.max);
+    } else if (br) {
+      betDollars = br * 0.05;
+    } else {
+      return null;
+    }
     const qty = Math.max(1, Math.round(betDollars / price));
     return e.result === "won" ? qty * (1 - price) : -qty * price;
   };
-  // Only show entries the user actually bet on
+  // Include all non-skipped entries that have a date
   const byDate = {};
   for (const e of rec || []) {
-    if (!e.date || e.skipped || !e.isBet) continue;
+    if (!e.date || e.skipped) continue;
     const d = String(e.date).replace(/-/g, "").slice(0, 8);
     if (!byDate[d]) byDate[d] = [];
     byDate[d].push(e);
@@ -6435,7 +6441,7 @@ function NrfiCalendar({ rec, bankroll, riskLevel }) {
                           {pl >= 0 ? "+" : "−"}${Math.abs(pl).toFixed(2)}
                         </div>
                       )}
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.65)", marginTop: "auto" }}>{wins}-{losses}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: hasPL ? "rgba(255,255,255,0.65)" : wins > losses ? "#4ade80" : losses > wins ? "#f87171" : "rgba(255,255,255,0.65)", marginTop: "auto" }}>{wins}-{losses}</div>
                     </>
                   )}
                   {!hasData && pending > 0 && <div style={{ fontSize: 10, color: "var(--amber)", fontWeight: 700, marginTop: 4 }}>{pending} live</div>}
