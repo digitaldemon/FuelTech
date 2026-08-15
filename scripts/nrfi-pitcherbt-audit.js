@@ -1,11 +1,20 @@
-// Is PITCHER_BT still true? The table is hand-maintained (see the "v5: revised"
-// comments) and holds each starter's clean-1st-inning rate as a literal. Those
-// literals age every start, and nothing in the build checks them, so a pitcher
-// who has since fallen apart keeps voting "elite" until someone notices by hand.
+// Is PITCHER_BT still true?
 //
 //   node scripts/nrfi-pitcherbt-audit.js
 //
-// Read-only: it changes nothing, it just tells you what to fix.
+// Read-only: it changes nothing, it just tells you what to fix. To fix it:
+//   node scripts/nrfi-pitcherbt-rebuild.js && node scripts/nrfi-pitcherbt-emit.js
+//
+// The table is generated now, so this is no longer hunting hand-editing errors
+// — it is asking whether the generated table has aged, and independently
+// checking the generator. That independence is the point and is worth the
+// duplicated work: the rebuild derives every arm from one feed/live call per
+// game, while this walks each pitcher's game log and pulls the linescore per
+// start. Two different endpoints, two different join keys. When the rebuild had
+// a half-inning attribution bug, this is the shape of check that would catch it.
+//
+// It reads ONE season against a table built from two, so a modest gap is normal
+// and expected; a large or one-sided one is not.
 //
 // The first version of this script only compared the table's `n` against the
 // starts on file — i.e. it could tell you a row was stale but never whether it
@@ -36,13 +45,31 @@ if (!table || typeof table !== "object" || Object.keys(table).length < 20) {
 }
 
 const se = new Date().getUTCFullYear();
-// The table's own section headers: ELITE >=70, SHARP 65-69, LEAKY 30-35,
-// DANGER <30. Note the deliberate gap at 36-64 — the table only carries arms at
-// the extremes, because a middling starter has nothing to say. So a pitcher who
-// drifts into that band has not changed tier, he has stopped qualifying, and the
-// fix is to delete the row rather than edit the number.
-const tierFor = (clean) => clean >= 70 ? "elite" : clean >= 65 ? "sharp"
-  : clean >= 36 ? "(middling — drop)" : clean >= 30 ? "leaky" : "danger";
+
+// The table stores a REGRESSED posterior now, not a raw rate, and its bands are
+// quantiles of that posterior rather than absolute percentages. Both facts have
+// to be read out of app.jsx rather than hardcoded here — an earlier version of
+// this file carried the old absolute bands as literals, and once the table was
+// regenerated it would have compared a posterior against a raw rate under the
+// wrong cutoffs and reported the whole table as broken. Read the constants the
+// app actually uses, and fail loudly if they are not there to read.
+const num = (name) => {
+  const m = src.match(new RegExp("const " + name + " = (-?[\\d.]+)")) ||
+    src.match(new RegExp("\\b" + name + " = (-?[\\d.]+)"));
+  if (!m) throw new Error(`could not read ${name} from app.jsx — regenerate with nrfi-pitcherbt-emit.js`);
+  return Number(m[1]);
+};
+const PBT_LG = num("PBT_LG"), PBT_K = num("PBT_K");
+const B = { elite: num("PBT_ELITE"), sharp: num("PBT_SHARP"), leaky: num("PBT_LEAKY"), danger: num("PBT_DANGER") };
+// Same shrinkage the app applies, so a freshly measured arm and a stored row are
+// on one scale and the difference between them means something.
+const posterior = (pct, n) => (pct * n + PBT_LG * PBT_K) / (n + PBT_K);
+// The table carries only the tails; the middle half is deliberately omitted,
+// because a middling starter has nothing to say about a first inning. So an arm
+// who drifts into the middle has not changed tier, he has stopped qualifying,
+// and the fix is to drop the row rather than edit the number.
+const tierFor = (post) => post >= B.elite ? "elite" : post >= B.sharp ? "sharp"
+  : post <= B.danger ? "danger" : post <= B.leaky ? "leaky" : "(middling — drop)";
 
 // Both starters in a game are usually in the table, so cache on gamePk.
 const lsCache = new Map();
@@ -95,7 +122,11 @@ async function realRate(name) {
   if (!n) return { why: "no scoreable first innings" };
   const bad = consistency(scored, i01runs);
   if (bad) return { why: "FAILED self-check (" + bad + ")" };
-  return { id: p.id, n, clean: (clean * 100) / n, unknown, i01runs, dirty: scored };
+  const raw = (clean * 100) / n;
+  // `clean` is the number the table can be compared against, so it is the
+  // posterior. `raw` is kept alongside it because the gap between them is the
+  // regression doing its job, and printing only the shrunk value would hide it.
+  return { id: p.id, n, raw, clean: posterior(raw, n), unknown, i01runs, dirty: scored };
 }
 
 (async () => {
@@ -115,29 +146,40 @@ async function realRate(name) {
   const missing = rows.filter((r) => !r.live || !r.live.n);
 
   // Rate drift is the finding. Sample drift only matters because it causes it.
-  console.log("=== RATE DRIFT (table clean% vs actual, worst first) ===");
-  console.log("  pitcher                  table      actual     delta   tier");
+  //
+  // Both columns are posteriors, so the threshold for "worth printing" is much
+  // tighter than it would be on raw rates: regression compresses the whole
+  // league into roughly 12 points, and a 2pp move is a real tier change rather
+  // than a rounding wobble. The table is also built from two seasons while this
+  // check reads one, so a small gap is expected and only a persistent, one-sided
+  // one is evidence of anything.
+  const DRIFT_MIN = 2;
+  console.log(`=== RATE DRIFT (table posterior vs ${se}-only posterior, worst first) ===`);
+  console.log("  pitcher                  table       live      delta   tier");
   let wrongTier = 0, big = 0;
   for (const r of found.sort((a, b) => Math.abs(b.live.clean - b.t.clean) - Math.abs(a.live.clean - a.t.clean))) {
     const d = r.live.clean - r.t.clean;
-    if (Math.abs(d) < 5) continue;
+    if (Math.abs(d) < DRIFT_MIN) continue;
     big++;
     const nt = tierFor(r.live.clean);
     const moved = nt !== r.t.tier;
     if (moved) wrongTier++;
-    console.log(`  ${r.key.padEnd(24)} ${String(r.t.clean).padStart(3)}%(${String(r.t.n).padStart(2)})  ` +
-      `${r.live.clean.toFixed(0).padStart(3)}%(${String(r.live.n).padStart(2)})  ${(d >= 0 ? "+" : "") + d.toFixed(0).padStart(3)}pp   ` +
+    console.log(`  ${r.key.padEnd(24)} ${r.t.clean.toFixed(1).padStart(4)}%(${String(r.t.n).padStart(2)})  ` +
+      `${r.live.clean.toFixed(1).padStart(4)}%(${String(r.live.n).padStart(2)})  ${(d >= 0 ? "+" : "") + d.toFixed(1).padStart(4)}pp   ` +
       `${moved ? r.t.tier + " -> " + nt + "  <-- TIER CHANGES" : r.t.tier}`);
   }
-  if (!big) console.log("  none off by more than 5 points");
+  if (!big) console.log(`  none off by more than ${DRIFT_MIN} points`);
 
-  console.log("\n=== SAMPLE DRIFT (starts the table never saw) ===");
+  // The table spans two seasons and this check reads one, so its n is EXPECTED
+  // to be the larger of the two. Only a live count exceeding the stored one
+  // means the table missed starts it should already have had.
+  console.log(`\n=== SAMPLE DRIFT (${se} starts the table never saw) ===`);
   let stale = 0;
   for (const r of found.sort((a, b) => (b.live.n - b.t.n) - (a.live.n - a.t.n))) {
     const d = r.live.n - r.t.n;
-    if (d >= 3) { stale++; console.log(`  ${r.key.padEnd(24)} table n=${String(r.t.n).padStart(2)}  actual ${String(r.live.n).padStart(2)}  (+${d})`); }
+    if (d >= 3) { stale++; console.log(`  ${r.key.padEnd(24)} table n=${String(r.t.n).padStart(2)}  live ${String(r.live.n).padStart(2)}  (+${d})`); }
   }
-  if (!stale) console.log("  none more than 2 starts behind");
+  if (!stale) console.log("  none — every row already covers at least this season's starts");
 
   console.log(`\n=== NOT RESOLVED (${missing.length}) ===`);
   for (const r of missing) console.log(`  ${r.key.padEnd(24)} table says ${r.t.clean}% (${r.t.n}gs, ${r.t.tier}) — ${r.live?.why || "unknown"}`);
@@ -169,7 +211,12 @@ async function realRate(name) {
   console.log(`\nsummary: ${found.length} resolved, ${missing.length} unresolved.`);
   console.log(`  mean absolute error ${mae.toFixed(1)}pp, mean signed ${(bias >= 0 ? "+" : "") + bias.toFixed(1)}pp ` +
     `(${bias < 0 ? "table flatters these arms" : "table understates these arms"}).`);
-  console.log(`  ${big} rows off by >5pp, of which ${wrongTier} change tier.`);
+  console.log(`  ${big} rows off by >${DRIFT_MIN}pp, of which ${wrongTier} change tier.`);
+  // Scale for reading the number above: on the regressed scale the entire league
+  // spans roughly 12 points, so a mean absolute error over ~3pp is not drift, it
+  // is a disagreement between the two methods and one of them is wrong.
+  console.log(`  For scale, the tier bands are ${B.danger}/${B.leaky}/${B.sharp}/${B.elite} — the whole league fits in ~12 points,`);
+  console.log("  so an MAE above ~3pp means the generator and this check disagree, not that the table aged.");
   console.log("\nPITCHER_BT only feeds the `checks` array (app.jsx:7089), never pNRFI, so");
   console.log("staleness cannot bias the probability — it biases the displayed reasoning");
   console.log("and the family-consensus vote that gates the verdict.");

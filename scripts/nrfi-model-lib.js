@@ -40,7 +40,9 @@ const model = [
   slice("function homeOffAdvantage(", "\n}"),
   slice("const NRFI_LEAK_MIN = 1.5;", ";"),
   slice("function nrfiLeaks(", "\n}"),
-  slice("const PITCHER_BT = (() => {", "\n})();"),
+  // Through the sentinel, not the IIFE's "})();": the PBT_* cutoffs and
+  // pbtPosterior sit after the table, and nrfiEvaluate reads them.
+  slice("const PITCHER_BT = (() => {", "// backtest bundle gets the constants and not just the table."),
   slice("function pitcherVenueFactor(", "\n}"),
   slice("const OPENER_REG_IP = 12;", ";"),
   slice("const I01_LG = {", "};"),
@@ -211,6 +213,15 @@ function makeVerdict(overrides) {
   return eval('"use strict";\n' + bundle + "\n;({ nrfiVerdict, nrfiTier, applyCalibration, nrfiThinArm })");
 }
 
+// Fingerprint of the actual model math, for pinning cached model output.
+// NRFI_SIM_W alone was not enough: rebuilding PITCHER_BT and its vote cutoffs
+// changed every cached `aligned` value while leaving NRFI_SIM_W untouched, so a
+// cache built before that change would still have passed the guard and reported
+// consensus numbers from a model that no longer exists. This covers every line
+// that is actually sliced, so any of them moving invalidates the cache.
+const modelSig = require("crypto").createHash("sha1")
+  .update(model + VERDICT_SLICES.map(([a, b]) => slice(a, b)).join("\n")).digest("hex").slice(0, 12);
+
 module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP, makeVerdict,
   J, parseIp, memo, pitI01, teamOff, pitMeta, topOrder, travelRest, savant, mapLimit,
-  buildCtx, scoreBothPaths, C };
+  buildCtx, scoreBothPaths, C, modelSig };

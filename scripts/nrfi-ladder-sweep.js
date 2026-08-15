@@ -47,12 +47,22 @@ if (!games.length || games[0].aligned === undefined) {
 // rebuild, which means it will outlive the model that produced it. A stale
 // cache is worse than no cache: every number below would still print, sourced
 // from a model that no longer exists, with nothing but a timestamp to hint at
-// it. So pin it to the model weight and fail loudly on drift.
-const appSrc = fs.readFileSync(path.join(__dirname, "..", "public", "desk", "app.jsx"), "utf8");
-const liveSimW = Number((appSrc.match(/const NRFI_SIM_W = ([\d.]+)/) || [])[1]);
-if (!Number.isFinite(liveSimW)) throw new Error("could not read NRFI_SIM_W from app.jsx");
-if (Math.abs(liveSimW - Number(cache.simW)) > 1e-9) {
-  console.error(`STALE CACHE: it was built with NRFI_SIM_W=${cache.simW} on ${cache.at}, but app.jsx now uses ${liveSimW}.`);
+// it. So pin it to the model and fail loudly on drift.
+//
+// Pinning NRFI_SIM_W was not enough. Rebuilding PITCHER_BT and the cutoffs of
+// the "Backtest profile" check changed every cached `aligned` value — which is
+// what the gates read — without touching NRFI_SIM_W, so the guard would have
+// waved through consensus numbers from a model that no longer existed. modelSig
+// hashes every slice the backtest actually evaluates, so nothing can move
+// underneath this cache unnoticed.
+const { modelSig } = require("./nrfi-model-lib");
+if (!cache.modelSig) {
+  console.error(`STALE CACHE: built ${cache.at}, before the model fingerprint existed, so it cannot be`);
+  console.error("verified against the current model at all. Rebuild: node scripts/nrfi-tout-vs-model.js 318949");
+  process.exit(1);
+}
+if (cache.modelSig !== modelSig) {
+  console.error(`STALE CACHE: built ${cache.at} from model ${cache.modelSig}, but the model is now ${modelSig}.`);
   console.error("These scores are from a different model. Rebuild: node scripts/nrfi-tout-vs-model.js 318949");
   process.exit(1);
 }
@@ -111,7 +121,7 @@ const hit = (arr) => {
 const fmt = (h) => `${String(h.w).padStart(3)}-${String(h.l).padStart(3)} ${h.rate == null ? "   —  " : pc(h.rate).padStart(6)}`;
 
 console.log(`ladder sweep over ${rows.length} finished games (${cache.dates.length} slates, season ${cache.season})`);
-console.log(`cache written ${cache.at}, model NRFI_SIM_W=${cache.simW}, calibration c=${seedC}`);
+console.log(`cache written ${cache.at}, model ${cache.modelSig} (NRFI_SIM_W=${cache.simW}), calibration c=${seedC}`);
 console.log(`overall NRFI base rate ${pc(rows.filter((r) => r.actual === 1).length / rows.length)}`);
 console.log("\nVolumes are CEILINGS: the value gate against market price is not reconstructable here.");
 

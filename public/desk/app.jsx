@@ -7156,12 +7156,23 @@ function nrfiEvaluate(ctx) {
       const hBT = pitcherBT(ctx.homePP);
       if (!aBT && !hBT) return null;
       const notes = [];
-      if (aBT) notes.push(ctx.awayPP + ": " + aBT.clean + "% clean (" + aBT.n + "gs, " + aBT.tier + ")");
-      if (hBT) notes.push(ctx.homePP + ": " + hBT.clean + "% clean (" + hBT.n + "gs, " + hBT.tier + ")");
-      const vals = [aBT, hBT].filter(Boolean);
-      const avgClean = vals.reduce((s, b) => s + b.clean, 0) / vals.length;
+      // "proj", not "clean": PITCHER_BT carries a regressed posterior now, so
+      // printing it as a plain clean rate would misreport what it is.
+      if (aBT) notes.push(ctx.awayPP + ": " + aBT.clean.toFixed(0) + "% proj (" + aBT.n + "gs, " + aBT.tier + ")");
+      if (hBT) notes.push(ctx.homePP + ": " + hBT.clean.toFixed(0) + "% proj (" + hBT.n + "gs, " + hBT.tier + ")");
+      // A starter with no row is an ordinary starter, not a missing one — the
+      // table deliberately omits the middle half of the league. Averaging only
+      // the arm that IS listed would let one elite starter carry the pair and
+      // vote NRFI on a matchup whose other half is unremarkable.
+      const avgClean = ((aBT ? aBT.clean : PBT_LG) + (hBT ? hBT.clean : PBT_LG)) / 2;
+      // These cutoffs are the table's own quartiles (see PITCHER_BT's header),
+      // not round numbers. The previous 68/33 pair was written for the old raw
+      // rates and did not survive contact with the real distribution: 66% of
+      // starters clear 68%, while under 2% are ever under 33%, so this check
+      // voted NRFI on two thirds of the board and could essentially never vote
+      // YRFI at all. A check that only votes one way is not a check.
       return { label: "Backtest profile", detail: notes.join(" · "),
-        lean: avgClean >= 68 ? "nrfi" : avgClean <= 33 ? "yrfi" : "neutral" };
+        lean: avgClean >= PBT_NRFI ? "nrfi" : avgClean <= PBT_YRFI ? "yrfi" : "neutral" };
     })(),
   ].filter(Boolean);
   const call = pNRFI >= 0.5 ? "nrfi" : "yrfi";
@@ -7425,82 +7436,199 @@ function nrfiTier(pMax) {
 // into a new season.
 const NRFI_CALIB_SEED = { c: -0.073, n: 558, active: true, source: "backtest-v6-blend" };
 
-// Pitcher backtest rankings — 4,015 MLB games (2025 full + 2026 Apr 1 – Aug 13).
-// clean = % of 1st innings kept scoreless. n = starts evaluated.
-// tier: "elite" ≥70%, "sharp" 65-69%, "leaky" 30-35%, "danger" <30%.
+// Pitcher backtest rankings — GENERATED, do not hand-edit.
+//   node scripts/nrfi-pitcherbt-rebuild.js && node scripts/nrfi-pitcherbt-emit.js
+// Source: 4274 games across 2025 + 2026, arms with >=10 starts.
+// Built 2026-08-15. League clean-1st rate 70.5%.
+//
+// clean = POSTERIOR clean-1st %, i.e. the arm's record regressed to league mean
+// by n/(n+k) with k=88 starts. It is NOT his raw rate. Raw rates here span
+// 33%-100%, but a beta-binomial fit puts the true spread in
+// first-inning skill at only 4.8pp, so nearly all of that raw range is the
+// binomial noise of a ~10-30 start sample. Ranking on it would be ranking on luck.
+//
+// tier is therefore RELATIVE, not absolute: elite = top decile of the posterior
+// (>=74.1%), sharp = top quartile (>=72.7%), leaky = bottom quartile (<=69.4%),
+// danger = bottom decile (<=67.7%). The middle half is omitted: an average arm
+// says nothing about a first inning, and a row that said so would still vote.
+// n = starts evaluated. Tiers: elite 26, sharp 36, leaky 38, danger 25.
 const PITCHER_BT = (() => {
   const t = {};
-  const add = (name, clean, n, tier) => { t[name.toLowerCase()] = { clean, n, tier }; };
-  // ── ELITE (≥70% clean 1st innings) ──
-  add("Keider Montero",      83, 12, "elite");
-  add("Logan Henderson",     73, 15, "elite"); // v5: revised down from 82%(11)
-  add("Chris Sale",          76, 41, "elite");
-  add("Paul Skenes",         77, 30, "elite");
-  add("Gerrit Cole",         75, 16, "elite"); // v5: revised from 79%(14)
-  add("Casey Mize",          75, 16, "elite");
-  add("Shohei Ohtani",       70, 30, "elite"); // v5: revised down from 75%(12)
-  add("Nathan Eovaldi",      75, 20, "elite");
-  add("Ranger Suárez",       75, 24, "elite");
-  add("Ranger Suarez",       75, 24, "elite");
-  add("Gavin Williams",      73, 22, "elite");
-  add("Kyle Leahy",          75, 24, "elite"); // v5: revised up from 73%(22)
-  add("Jake Bennett",        71, 14, "elite"); // v5: NEW
-  add("Tarik Skubal",        72, 32, "elite"); // v5: revised from 70%(30)
-  add("Noah Cameron",        71, 21, "elite");
-  add("Shane Drohan",        71, 14, "elite");
-  add("Logan Webb",          71, 17, "elite");
-  add("Griffin Jax",         71, 17, "elite");
-  add("Landen Roupp",        70, 20, "elite");
-  add("Hunter Brown",        70, 10, "elite");
-  add("Carmen Mlodzinski",   70, 10, "elite");
-  // ── SHARP (65-69%) ──
-  add("Trevor Rogers",       69, 39, "sharp"); // v5: revised down from 72%(18) — demoted from ELITE
-  add("Jared Jones",         69, 13, "sharp"); // v5: NEW
-  add("Gage Jump",           69, 16, "sharp"); // v5: NEW
-  add("Christian Scott",     69, 16, "sharp"); // v5: NEW
-  add("Bowden Francis",      69, 13, "sharp");
-  add("Edward Cabrera",      69, 13, "sharp");
-  add("Michael Wacha",       68, 28, "sharp");
-  add("Tyler Glasnow",       67, 15, "sharp");
-  add("Ryan Bergert",        67, 15, "sharp");
-  add("Janson Junk",         69, 32, "sharp"); // v5: revised from 67%(15)
-  add("Quinn Priester",      65, 23, "sharp");
-  add("Tanner Bibee",        65, 31, "sharp");
-  add("Tyler Mahle",         64, 14, "sharp");
-  add("Jesús Luzardo",       63, 19, "sharp");
-  add("Jesus Luzardo",       63, 19, "sharp");
-  // ── LEAKY (30-35%) ──
-  add("Zac Gallen",          31, 48, "leaky"); // worst in BOTH seasons
-  add("J.T. Ginn",           31, 16, "leaky");
-  add("Joey Cantillo",       31, 13, "leaky");
-  add("Mitchell Parker",     33, 27, "leaky");
-  add("Tyler Anderson",      32, 25, "leaky");
-  add("Clayton Kershaw",     30, 20, "leaky");
-  add("Justin Wrobleski",    25, 20, "leaky"); // v5: revised from 26%(19)
-  add("Adrian Houser",       27, 15, "leaky");
-  add("Tomoyuki Sugano",     29, 48, "leaky"); // v5: major revision up from 20%(20) — promoted from DANGER
-  // ── DANGER (<30%) ──
-  add("Carson Whisenhunt",    9, 11, "danger"); // v5: NEW
-  add("Stephen Kolek",       10, 10, "danger");
-  add("Hunter Dobbins",      18, 11, "danger");
-  add("Bradley Blalock",     18, 11, "danger");
-  add("Reynaldo López",      20, 10, "danger");
-  add("Reynaldo Lopez",      20, 10, "danger");
-  add("Kumar Rocker",        20, 20, "danger");
-  add("Joe Boyle",           23, 13, "danger"); // v5: NEW
-  add("Carson Palmquist",    25, 12, "danger"); // v5: NEW
-  add("Luinder Avila",       27, 11, "danger"); // v5: NEW
-  add("Luis Gil",            28, 18, "danger"); // v5: NEW
-  add("Cam Schlittler",      21, 14, "danger");
-  add("David Peterson",      21, 14, "danger");
-  add("Eric Lauer",          21, 14, "danger");
-  add("Zebby Matthews",      23, 13, "danger");
-  add("Jonathan Cannon",     27, 15, "danger");
+  // name|posterior clean %|starts|tier
+  const ROWS = [
+    "Michael Wacha|76.6|55|elite",
+    "Casey Mize|76.5|46|elite",
+    "Paul Skenes|76.2|57|elite",
+    "Trevor Rogers|76.2|40|elite",
+    "Jesús Luzardo|76.0|56|elite",
+    "Cristopher Sánchez|75.5|57|elite",
+    "Keider Montero|75.4|32|elite",
+    "Chase Burns|75.2|31|elite",
+    "Ranger Suarez|75.2|47|elite",
+    "Jack Flaherty|75.0|50|elite",
+    "Jake Bennett|75.0|14|elite",
+    "Zack Wheeler|74.6|44|elite",
+    "Michael King|74.6|40|elite",
+    "Shohei Ohtani|74.6|28|elite",
+    "Walbert Ureña|74.5|20|elite",
+    "Logan Henderson|74.5|16|elite",
+    "Hunter Brown|74.4|43|elite",
+    "Grant Holmes|74.4|43|elite",
+    "Carmen Mlodzinski|74.3|23|elite",
+    "Drew Rasmussen|74.3|54|elite",
+    "Jason Alexander|74.3|15|elite",
+    "Andrew Alvarez|74.3|15|elite",
+    "Chris Sale|74.2|42|elite",
+    "Ryne Nelson|74.2|38|elite",
+    "Tarik Skubal|74.1|49|elite",
+    "Nick Martinez|74.1|49|elite",
+    "JP Sears|74.0|33|sharp",
+    "Jacob Lopez|74.0|33|sharp",
+    "Kyle Bradish|73.9|29|sharp",
+    "Javier Assad|73.8|17|sharp",
+    "Robbie Ray|73.8|55|sharp",
+    "Simeon Woods Richardson|73.7|32|sharp",
+    "Braxton Ashcraft|73.7|32|sharp",
+    "Kyle Leahy|73.7|24|sharp",
+    "Shane McClanahan|73.6|20|sharp",
+    "Parker Messick|73.5|31|sharp",
+    "Landen Roupp|73.5|46|sharp",
+    "Mick Abel|73.5|12|sharp",
+    "Carlos Rodón|73.5|42|sharp",
+    "Freddy Peralta|73.4|57|sharp",
+    "Patrick Corbin|73.3|45|sharp",
+    "Logan Webb|73.3|56|sharp",
+    "Will Warren|73.3|56|sharp",
+    "Corbin Burnes|73.2|11|sharp",
+    "Michael Soroka|73.1|33|sharp",
+    "Janson Junk|73.1|33|sharp",
+    "Nathan Eovaldi|73.1|44|sharp",
+    "Slade Cecconi|73.1|44|sharp",
+    "José Soriano|73.1|55|sharp",
+    "Kris Bubic|73.1|29|sharp",
+    "Chad Patrick|73.1|29|sharp",
+    "Stephen Kolek|73.1|29|sharp",
+    "Jameson Taillon|73.0|40|sharp",
+    "Bowden Francis|73.0|14|sharp",
+    "Shane Drohan|73.0|14|sharp",
+    "Luis Castillo|73.0|51|sharp",
+    "Tyler Glasnow|73.0|25|sharp",
+    "Bryce Miller|72.9|32|sharp",
+    "Shane Smith|72.9|32|sharp",
+    "Ronel Blanco|72.8|13|sharp",
+    "Foster Griffin|72.8|24|sharp",
+    "Noah Cameron|72.8|46|sharp",
+    "Zach Eflin|69.4|15|leaky",
+    "Colton Gordon|69.4|15|leaky",
+    "Jack Perkins|69.4|15|leaky",
+    "Luis Severino|69.4|41|leaky",
+    "Eury Pérez|69.4|41|leaky",
+    "Rhett Lowder|69.3|18|leaky",
+    "Eric Lauer|69.3|31|leaky",
+    "Kevin Gausman|69.3|57|leaky",
+    "Justin Wrobleski|69.2|21|leaky",
+    "Chase Dollander|69.2|24|leaky",
+    "Carson Whisenhunt|69.2|11|leaky",
+    "Luis Morales|69.2|11|leaky",
+    "Yusei Kikuchi|69.1|40|leaky",
+    "Pablo López|69.1|14|leaky",
+    "Noah Schultz|69.1|14|leaky",
+    "Aaron Civale|69.0|33|leaky",
+    "Shota Imanaga|69.0|49|leaky",
+    "Brayan Bello|68.9|36|leaky",
+    "Andrew Heaney|68.9|23|leaky",
+    "Framber Valdez|68.9|55|leaky",
+    "Steven Matz|68.8|13|leaky",
+    "Connor Prielipp|68.7|16|leaky",
+    "Jackson Jobe|68.5|12|leaky",
+    "Austin Gomber|68.5|12|leaky",
+    "Yu Darvish|68.4|15|leaky",
+    "Lance McCullers Jr.|68.3|21|leaky",
+    "Connelly Early|68.3|21|leaky",
+    "Mitchell Parker|68.2|30|leaky",
+    "MacKenzie Gore|68.2|55|leaky",
+    "Jack Kochanowicz|68.1|36|leaky",
+    "Jonathan Cannon|68.1|17|leaky",
+    "Kai-Wei Teng|68.1|17|leaky",
+    "Bailey Falter|68.0|26|leaky",
+    "Merrill Kelly|67.9|54|leaky",
+    "Dean Kremer|67.8|38|leaky",
+    "Jordan Hicks|67.8|10|leaky",
+    "Carson Palmquist|67.8|13|leaky",
+    "Eduardo Rodriguez|67.7|53|leaky",
+    "Clayton Kershaw|67.7|22|danger",
+    "Logan Gilbert|67.5|49|danger",
+    "Bradley Blalock|67.5|12|danger",
+    "Brady Singer|67.5|55|danger",
+    "Germán Márquez|67.3|36|danger",
+    "Sean Burke|67.3|42|danger",
+    "Miles Mikolas|67.3|42|danger",
+    "Tanner Gordon|67.1|20|danger",
+    "Jake Irvin|67.0|47|danger",
+    "Jacob deGrom|67.0|53|danger",
+    "Chris Paddack|66.8|37|danger",
+    "Adrian Houser|66.5|36|danger",
+    "Reynaldo López|66.5|12|danger",
+    "Tyler Anderson|66.2|26|danger",
+    "Antonio Senzatela|66.2|23|danger",
+    "Zac Gallen|66.0|52|danger",
+    "Jeffrey Springs|66.0|52|danger",
+    "Taijuan Walker|65.9|25|danger",
+    "Kyle Freeland|65.8|54|danger",
+    "Taj Bradley|65.8|51|danger",
+    "Max Scherzer|65.6|27|danger",
+    "Kumar Rocker|65.4|35|danger",
+    "Zebby Matthews|65.4|32|danger",
+    "Erick Fedde|64.9|36|danger",
+    "Tomoyuki Sugano|64.4|51|danger",
+  ];
+  for (const row of ROWS) {
+    const f = row.split("|");
+    const rec = { clean: +f[1], n: +f[2], tier: f[3] };
+    t[f[0].toLowerCase()] = rec;
+    // Box scores and the schedule feed disagree about accents on the same
+    // pitcher, so register a stripped alias rather than duplicating rows by hand
+    // (the old table carried "Ranger Suárez" and "Ranger Suarez" as two entries,
+    // which is a maintenance trap: they could drift apart).
+    const plain = f[0].normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    if (plain !== f[0].toLowerCase()) t[plain] = rec;
+  }
   return t;
 })();
+// League mean clean-1st. A starter with no row is not an unknown — he is an
+// ordinary starter, and the "Backtest profile" check averages him in as one
+// rather than letting his partner's tier speak for the pair alone.
+const PBT_LG = 70.5;
+// Concentration of the fitted prior, in starts: an arm's estimate is his record
+// weighted n/(n+k) against PBT_LG. k=88 is large because first-inning skill is
+// a weak, slow-moving signal — a 20-start sample is under a fifth reliable.
+const PBT_K = 87.6;
+// Tier cutoffs on the regressed scale, for arms with no row in the table.
+const PBT_ELITE = 74.1, PBT_SHARP = 72.7, PBT_LEAKY = 69.4, PBT_DANGER = 67.7;
+// Upper and lower quartiles of the two-starter average, enumerated over every
+// pair of the 247 qualified arms. Not round numbers, and not the single-arm
+// quartiles: averaging two draws narrows the distribution, so single-arm cuts
+// would fire on far fewer than a quarter of matchups.
+const PBT_NRFI = 71.9, PBT_YRFI = 69.7;
+const PBT_GAMES = 4274, PBT_SEASONS = "2025 + 2026";
+// Regress any observed clean-1st rate onto the same scale the table uses, so a
+// live estimate and a table row can be compared or tiered by the same cutoffs.
+function pbtPosterior(pct, n) {
+  if (pct == null || !(n > 0)) return null;
+  return (pct * n + PBT_LG * PBT_K) / (n + PBT_K);
+}
+// end PITCHER_BT block — nrfi-model-lib.js slices up to this line, so the
+// backtest bundle gets the constants and not just the table.
 function pitcherBT(name) {
   if (!name) return null;
-  return PITCHER_BT[name.toLowerCase()] || null;
+  const k = name.toLowerCase();
+  if (PITCHER_BT[k]) return PITCHER_BT[k];
+  // Strip accents on the QUERY too, not just when building the table. The
+  // mismatch runs both ways: box scores spell him "Ranger Suarez" and the
+  // probables feed "Ranger Suárez". The table can only alias in one direction
+  // (it cannot invent accents), so an accented lookup against a plain key would
+  // miss and the arm would drop out of the check without a trace.
+  return PITCHER_BT[k.normalize("NFD").replace(/[̀-ͯ]/g, "")] || null;
 }
 
 // Empirical calibration: once enough calls are graded, shift the model's
@@ -8707,18 +8835,24 @@ function FirstInning() {
               const pClr = (v) => v >= 65 ? "var(--moss)" : v >= 50 ? "var(--fg)" : v >= 38 ? "var(--amber)" : "var(--rose)";
               const windows = rl ? [{ label: "SZN", ...rl.szn }, { label: "L30", ...rl.l30 }, { label: "L10", ...rl.l10 }, { label: "L5", ...(rl.l5 || {}) }] : [];
               const bt = pitcherBT(name);
-              // Derive tier: prefer backtest table; fall back to live model clean %
-              const btClean = bt ? bt.clean : headline;
+              // Derive tier: prefer the table; fall back to the live rate.
+              // The fallback has to be regressed first. `headline` is an observed
+              // rate over as few as 6 starts, while the table's cutoffs are on the
+              // regressed scale — comparing one to the other would hand a tier to
+              // every small sample, which is exactly the error the table itself
+              // was just rebuilt to remove. Same prior, same cutoffs, so an arm
+              // without a row is judged on the same terms as one with it. Few
+              // short samples will clear a band, and that is the honest outcome.
+              const btPost  = bt ? bt.clean : pbtPosterior(headline, headlineN || 0);
+              const btClean = btPost;
               const btN     = bt ? bt.n     : headlineN;
               const btSrc   = bt ? "backtest" : "model";
-              // Without a backtest row the tier falls back to the live rate — only
-              // award one when there are enough starts to mean anything.
               const btTier  = bt ? bt.tier :
-                headline == null || (headlineN || 0) < 6 ? null :
-                headline >= 70 ? "elite" :
-                headline >= 65 ? "sharp" :
-                headline <= 30 ? "danger" :
-                headline <= 35 ? "leaky" : "avg";
+                btPost == null || (headlineN || 0) < 6 ? null :
+                btPost >= PBT_ELITE  ? "elite" :
+                btPost >= PBT_SHARP  ? "sharp" :
+                btPost <= PBT_DANGER ? "danger" :
+                btPost <= PBT_LEAKY  ? "leaky" : "avg";
               const TIER_STYLES = {
                 elite:  { icon: "🔥", label: "ELITE 1ST INN", color: "var(--moss)",  bg: "rgba(80,200,120,0.1)",  border: "rgba(80,200,120,0.4)"  },
                 sharp:  { icon: "✅", label: "SHARP",          color: "#8ecf8e",      bg: "rgba(80,180,80,0.08)",  border: "rgba(80,180,80,0.3)"   },
@@ -8752,8 +8886,20 @@ function FirstInning() {
                         )}
                       </div>
                       {btBadge && btClean != null && (
-                        <div title={(btSrc === "backtest" ? "Backtest result — 4,015 MLB games (2025 full + 2026 to-date): " : "Live model estimate: ") + name + " kept the 1st inning scoreless " + btClean + "% of the time across " + btN + " starts."} style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, marginTop: 5, padding: "2px 7px", background: btBadge.bg, border: "1px solid " + btBadge.border, borderRadius: 5, fontSize: 10, fontWeight: 700, color: btBadge.color }}>
-                          {btBadge.icon} {btBadge.label} · {btClean}%
+                        /* The tooltip used to read "kept the 1st inning scoreless
+                           X% of the time", which is no longer what X is. These are
+                           projections regressed to league mean, and the tier is a
+                           rank against other starters rather than an absolute rate,
+                           so the badge has to say which it is — a reader who thinks
+                           67% is a raw rate would read DANGER as a much stronger
+                           claim than the data supports. */
+                        <div title={(btSrc === "backtest"
+                          ? "Projected from " + PBT_GAMES + " MLB games (" + PBT_SEASONS + "): "
+                          : "Live model estimate: ") + name + " projects to keep the 1st inning scoreless " +
+                          btClean.toFixed(0) + "% of the time, from " + btN + " starts regressed to the league mean of " +
+                          PBT_LG + "%. The tier is his rank among MLB starters, not an absolute rate."}
+                          style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, marginTop: 5, padding: "2px 7px", background: btBadge.bg, border: "1px solid " + btBadge.border, borderRadius: 5, fontSize: 10, fontWeight: 700, color: btBadge.color }}>
+                          {btBadge.icon} {btBadge.label} · {btClean.toFixed(0)}% proj
                         </div>
                       )}
                       {/* The leak behind the badge. A red flag with no reason attached

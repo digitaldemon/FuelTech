@@ -24,7 +24,7 @@
 // backtest uses, so this measures the shipped model rather than a copy of it.
 const fs = require("fs");
 const path = require("path");
-const { J, savant, mapLimit, buildCtx, scoreBothPaths, makeVerdict } = require("./nrfi-model-lib");
+const { J, savant, mapLimit, buildCtx, scoreBothPaths, makeVerdict, modelSig } = require("./nrfi-model-lib");
 const { gradeSeller } = require("./nrfi-tout-grade");
 const { nrfiThinArm: thinArm } = makeVerdict();
 
@@ -122,7 +122,7 @@ async function collect(id, maxDates, se) {
   }
   const simW = (require("fs").readFileSync(require("path").join(__dirname, "..", "public", "desk", "app.jsx"), "utf8")
     .match(/const NRFI_SIM_W = ([\d.]+);/) || [])[1] || null;
-  fs.writeFileSync(CACHE, JSON.stringify({ at: new Date().toISOString(), season: se, simW,
+  fs.writeFileSync(CACHE, JSON.stringify({ at: new Date().toISOString(), season: se, simW, modelSig,
     dates, slates: [...slates], byDate: [...byDate] }));
   process.stderr.write(`  cached to ${CACHE}\n`);
   return { dates, slates, byDate };
