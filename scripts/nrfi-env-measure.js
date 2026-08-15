@@ -1,5 +1,18 @@
 // What are the home-field and weather effects on FIRST-INNING scoring, actually?
 //
+// SUPERSEDED for temperature and wind by scripts/nrfi-temp-measure.js. Two flaws
+// make the weather sections here unsafe to act on, and both flatter the result:
+//   - the pull omits gameType=R, so spring training is in the sample. Those
+//     games are played in Arizona and Florida in March, which puts warm-weather
+//     games with pitchers on strict counts straight into the hot bucket the
+//     temperature bands are fit from.
+//   - nothing is controlled. A >=82F game is disproportionately July, and
+//     disproportionately Texas/Atlanta/Miami/Phoenix, so a temperature band
+//     absorbs both the summer schedule and the hot parks.
+// The replacement holds venue and month fixed with the game itself held out and
+// runs three seasons. Temperature survived that; the wind bands did not, and
+// were refit onto the corner axis. The home-field section below is unaffected.
+//
 // homePitAdvantage/homeOffAdvantage ship as hardcoded constants (0.97/1.03,
 // 1.02/0.98) and weatherPark multiplies a park factor by a temperature factor by
 // a wind factor with no weight and no clamp. None of those numbers was ever

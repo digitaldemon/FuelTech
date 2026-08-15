@@ -67,7 +67,19 @@ const FACTORS = {
               ["(homeVenue.f-1)*0.5", "(homeVenue.f-1)*0"],
               ["(awayVenue.f-1)*0.5", "(awayVenue.f-1)*0"]],
   umpire:    [["(umpFactor-1)", "(1-1)"]],
+  // ---- environment ----
+  // `weather` is the whole env term, which is park AND temperature AND wind. It
+  // reported 2.197pp and got read as "weather is the biggest factor in the
+  // model" — but most of that is the park factor, which is the best-established
+  // input here and carries weight 1.00 by design. Reporting the three together
+  // misattributes a well-founded term to a speculative one, so they are also
+  // split out below. These three patch the weights inside weatherPark, so they
+  // blank the "Weather & park" check's vote along with the math; `weather`
+  // patches only the env expression and leaves the vote standing.
   weather:   [["(ctx.wx.factor-1)", "(1-1)"]],
+  envPark:   [["(parkFactor-1)*ENV_W_PARK", "(parkFactor-1)*0"]],
+  envTemp:   [["(tFactor-1)*ENV_W_TEMP", "(tFactor-1)*0"]],
+  envWind:   [["(wFactor-1)*ENV_W_WIND", "(wFactor-1)*0"]],
 };
 
 function patch(name) {

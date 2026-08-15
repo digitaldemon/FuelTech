@@ -1325,21 +1325,85 @@ async function teamOffenseRolling(teamId,todayStr,season){if(teamId==null)return
  *   temp >= 82     x1.24 measured (n=392) vs x1.05-1.09 shipped — heat matters
  *                  more than the model allowed, not less.
  *   temp <= 55     x0.91 / x0.89 measured — the shipped cold bands were close.
- *   wind           nothing clears noise in 1,477 outdoor games. Worse, the bands
- *                  contradict each other: out-to-CF at 12+ mph read x0.96, BELOW
- *                  out-to-CF at 5-11 mph (x1.10). Wind moves fly-ball carry, and
- *                  a first inning is 6-9 plate appearances where runs come from
- *                  reaching base, not from carry. Magnitudes cut to a third and
- *                  weighted down; kept because the physics is real and the note
- *                  is worth showing, not because this data supports it.
+ *   wind           see below — refit 2026-08-15 against a much larger sample.
+ *
+ * REFIT, scripts/nrfi-temp-measure.js: 6,706 regular-season games across
+ * 2024-2026 (5,530 outdoor), each game compared against other games AT THE SAME
+ * PARK IN THE SAME MONTH with itself held out. The earlier fit above controlled
+ * for neither, and pulled without gameType=R, so spring training — played in
+ * Arizona and Florida, warm, with pitchers on strict counts — sat inside the hot
+ * bucket it was being used to justify.
+ *
+ * TEMPERATURE survives all of it, which the start-hour lead did not:
+ *   82-91F         x1.158, z=+3.51, venue+month held out (n=1,111)
+ *   continuous     +0.122pp of YRFI per degree F, t=1.96 over 5,338 games,
+ *                  which is x1.113 across the 56->86F span the bands describe.
+ *   The model applies x1.120 across that span. The shipped magnitude was
+ *   already right, so it is unchanged. Only the dead >=92 branch is gone: it
+ *   held the same 1.20 as the band below it and could never return a different
+ *   answer, and >=92 measures x1.144 (n=152) against 82-91's x1.158 — if
+ *   anything slightly lower, certainly not separable.
+ *   Cold bands read x0.929 (n=273) and x0.886 (n=83), neither clearing noise on
+ *   its own, but the continuous trend that does clear noise passes through them
+ *   at about the shipped magnitude. Kept, unchanged.
+ *
+ * WIND had the right idea on the wrong axis. The model's LARGEST wind
+ * coefficients were on centre field and its smallest on the corners; the data
+ * says centre field does nothing and the corners carry the entire effect:
+ *   out to CF 5+      x0.973  z=-0.50  n=642   <- model applied 1.02-1.05
+ *   in from CF 5+     x1.000  z=-0.00  n=263   <- model applied 0.95-0.98
+ *   out to LF/RF 5+   x1.108  z=+2.39  n=1084  <- model applied 1.01-1.03
+ *   in from LF/RF 5+  x0.824  z=-3.56  n=719   <- model applied 0.97-0.99
+ *   crosswind 20+                      n=20    <- unreadable
+ *   calm              x0.949  z=-1.11  n=894
+ * in-from-corner replicates in every season (x0.828 / x0.771 / x0.788) and is
+ * not temperature in disguise: those games average 72.2F against 73.7F for all
+ * outdoor games, worth 0.18pp of a 6.5pp gap at the measured slope.
+ *
+ * But the SPEED tiers do not survive, and that is why the magnitudes below are
+ * shrunk rather than fitted. The whole corner effect sits in 5-11 mph
+ * (in-from x0.804 z=-3.69) and disappears above it (12-19 x1.018 z=+0.13).
+ * A wind effect that switches off as the wind gets stronger is not a wind
+ * effect, so speed tiering is dropped entirely — it was assumed, never fit, and
+ * tiering an effect whose shape is backwards is three chances to overfit one
+ * set of games. Direction is fit because it is robust; speed is not, because it
+ * is not. The surviving values are roughly HALF the measured deviation, a
+ * deliberate shrink given that out-to-corner does not survive a correction for
+ * the ~30 comparisons this measurement ran and the tier anomaly is unexplained.
  */const ENV_W_PARK=1.00;// park factors are the best-established of the three
-const ENV_W_TEMP=0.60;// real, but the band that carries it is confounded with venue and month
-const ENV_W_WIND=0.25;// no measurable first-inning signal; held near neutral
-function weatherPark(game,homeAbbr){const parkFactor=NRFI_PARK[homeAbbr]||1;let tFactor=1,wFactor=1,note="neutral park";const w=game.weather||{};const temp=w.temp!=null&&w.temp!==""?Number(w.temp):null;const cond=String(w.condition||"");const wind=String(w.wind||"");if(/Dome|Roof Closed/i.test(cond)){// Under a roof there is no wind and the temperature is set, so both drop out;
+const ENV_W_TEMP=0.60;// measured x1.113 across the band span vs x1.120 applied
+// Wind is now measured rather than assumed, so it carries its own number
+// directly instead of being shrunk twice. The shrink lives in the band values,
+// where it is visible, rather than in a weight that hides it.
+const ENV_W_WIND=1.00;function weatherPark(game,homeAbbr){const parkFactor=NRFI_PARK[homeAbbr]||1;let tFactor=1,wFactor=1,note="neutral park";const w=game.weather||{};const temp=w.temp!=null&&w.temp!==""?Number(w.temp):null;const cond=String(w.condition||"");const wind=String(w.wind||"");if(/Dome|Roof Closed/i.test(cond)){// Under a roof there is no wind and the temperature is set, so both drop out;
 // the park factor already describes the building.
-note="indoors (roof)";}else{if(temp!=null&&isFinite(temp)){if(temp>=92)tFactor=1.20;else if(temp>=82)tFactor=1.20;else if(temp>=56)tFactor=1;// neutral band — the reference
+note="indoors (roof)";}else{if(temp!=null&&isFinite(temp)){// 92+ is not separable from 82-91 (x1.144 vs x1.158), so one hot band.
+if(temp>=82)tFactor=1.20;else if(temp>=56)tFactor=1;// neutral band — the reference
 else if(temp>=46)tFactor=0.92;else tFactor=0.90;}// MLB wind string is field-relative ("Out To CF", "In From CF", "L To R").
-const mph=Number((wind.match(/(\d+)/)||[])[1]||0);if(mph>=5){if(/out to c/i.test(wind))wFactor=mph>=20?1.05:mph>=12?1.03:1.02;else if(/in from c/i.test(wind))wFactor=mph>=20?0.95:mph>=12?0.97:0.98;else if(/out to/i.test(wind))wFactor=mph>=20?1.03:mph>=12?1.02:1.01;else if(/in from/i.test(wind))wFactor=mph>=20?0.97:mph>=12?0.98:0.99;else if(mph>=20&&/l to r|r to l/i.test(wind))wFactor=0.99;}note=(temp!=null&&isFinite(temp)?temp+"°":"")+(wind?" · "+wind:"");}const factor=nClamp(1+(parkFactor-1)*ENV_W_PARK+(tFactor-1)*ENV_W_TEMP+(wFactor-1)*ENV_W_WIND,0.88,1.16);return{factor,park:parkFactor,temp:tFactor,wind:wFactor,note:note||"neutral"};}function nrfiRegress(rate,sample,reg){if(rate==null)return NRFI_LG_LAMBDA;const d=(sample||0)+(reg||0);if(!(d>0))return NRFI_LG_LAMBDA;// 0/0 would return NaN, which survives nClamp
+// Direction only: the speed tiers this used to carry ran backwards, so they
+// are gone rather than re-fitted. Centre field is neutral because it
+// measured neutral twice, in both directions, on 905 games.
+const mph=Number((wind.match(/(\d+)/)||[])[1]||0);if(mph>=5&&!/out to c|in from c/i.test(wind)){if(/out to/i.test(wind))wFactor=1.05;// measured x1.108
+else if(/in from/i.test(wind))wFactor=0.91;// measured x0.824
+}// Say whether the wind was USED, not just what it was. A 15 mph reading out
+// to centre now moves nothing, and printing it next to an unchanged number
+// reads as a bug rather than as a finding. The card should be able to
+// explain its own arithmetic.
+let wNote="";if(wind&&mph>=5){if(/out to c|in from c/i.test(wind))wNote=" (centre — no 1st-inn effect)";else if(wFactor>1)wNote=" (out to a corner — helps offense)";else if(wFactor<1)wNote=" (in from a corner — suppresses)";}else if(wind&&mph>0)wNote=" (under 5 mph — not applied)";note=(temp!=null&&isFinite(temp)?temp+"°":"")+(wind?" · "+wind+wNote:"");}// The 0.88/1.16 bounds this used to carry were set when wind could move the
+// total by at most 0.0125, so they only ever caught a compounding blowup. With
+// wind now measured at -0.09 they had started binding on ordinary games: SF at
+// 70F with the wind in from a corner computes 0.840 and was being truncated to
+// 0.88 — and a pitcher's park with the wind blowing in is not an outlier, it is
+// the single most recognisable NRFI setup in baseball. A clamp that fires there
+// is discarding the effect this term was just refit to capture.
+//
+// Widened to admit the legitimate combinations and guard only the real tail.
+// All three components are independently measured, already shrunk, and blended
+// by deviation rather than multiplied, so the old blowup this defended against
+// cannot occur. Worst case with every component simultaneously at its measured
+// extreme is 0.768 (SF, sub-46F, wind in) and 1.262 (COL, 95F, wind out); both
+// still clamp. env multiplies lambda in BOTH halves, so these stay tight.
+const factor=nClamp(1+(parkFactor-1)*ENV_W_PARK+(tFactor-1)*ENV_W_TEMP+(wFactor-1)*ENV_W_WIND,0.82,1.20);return{factor,park:parkFactor,temp:tFactor,wind:wFactor,note:note||"neutral"};}function nrfiRegress(rate,sample,reg){if(rate==null)return NRFI_LG_LAMBDA;const d=(sample||0)+(reg||0);if(!(d>0))return NRFI_LG_LAMBDA;// 0/0 would return NaN, which survives nClamp
 return(rate*sample+NRFI_LG_LAMBDA*reg)/d;}// Turn a first-inning run RATE into P(the team scores at all), for display.
 //
 // The card used to print 1 - exp(-lambda), which is the Poisson answer and is
