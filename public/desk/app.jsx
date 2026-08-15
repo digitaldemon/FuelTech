@@ -7387,12 +7387,15 @@ function FirstInning() {
       {/* Bankroll builder */}
       {(() => {
         const RISK_CFG = {
-          ghost:        { mult: 0.10, maxPct: 0.02, label: "Ghost",        drawdownEst: "2–4%",   desc: "1/10 Kelly — minimal variance, use while learning." },
-          conservative: { mult: 0.25, maxPct: 0.06, label: "Conservative", drawdownEst: "5–12%",  desc: "1/4 Kelly — proven, sustainable long-term." },
-          moderate:     { mult: 0.50, maxPct: 0.12, label: "Moderate",     drawdownEst: "10–22%", desc: "1/2 Kelly — industry standard, recommended." },
-          standard:     { mult: 0.75, maxPct: 0.18, label: "Standard",     drawdownEst: "15–30%", desc: "3/4 Kelly — for experienced bettors." },
-          aggressive:   { mult: 1.00, maxPct: 0.25, label: "Aggressive",   drawdownEst: "20–40%", desc: "Full Kelly — maximum theoretical growth rate." },
-          turbo:        { mult: 1.50, maxPct: 0.35, label: "Turbo",        drawdownEst: "35–60%", desc: "1.5× Kelly — over-Kelly, elite slates only." },
+          ghost:        { mult: 0.10, maxPct: 0.02, label: "Ghost",        drawdownEst: "2–4%",    desc: "1/10 Kelly — minimal variance, use while learning." },
+          conservative: { mult: 0.25, maxPct: 0.06, label: "Conservative", drawdownEst: "5–12%",   desc: "1/4 Kelly — proven, sustainable long-term." },
+          moderate:     { mult: 0.50, maxPct: 0.12, label: "Moderate",     drawdownEst: "10–22%",  desc: "1/2 Kelly — industry standard, recommended." },
+          standard:     { mult: 0.75, maxPct: 0.18, label: "Standard",     drawdownEst: "15–30%",  desc: "3/4 Kelly — for experienced bettors." },
+          aggressive:   { mult: 1.00, maxPct: 0.25, label: "Aggressive",   drawdownEst: "20–40%",  desc: "Full Kelly — maximum theoretical growth rate." },
+          turbo:        { mult: 1.50, maxPct: 0.35, label: "Turbo",        drawdownEst: "35–60%",  desc: "1.5× Kelly — over-Kelly, elite slates only." },
+          xtreme:       { mult: 2.00, maxPct: 0.50, label: "Xtreme",       drawdownEst: "50–80%",  desc: "2× Kelly — high variance, strong edge required." },
+          degen:        { mult: 3.00, maxPct: 0.65, label: "Degen",        drawdownEst: "70–95%",  desc: "3× Kelly — ruin risk is significant." },
+          yolo:         { mult: 5.00, maxPct: 0.80, label: "YOLO",         drawdownEst: "90–99%",  desc: "5× Kelly — max over-bet, expect large swings." },
         };
         const SPEED_CFG = {
           patient:  { minProb: 63, evMult: 0.45, betsRec: "1–2",  label: "Patient",   desc: "STRONG picks only (≥63%)" },
@@ -7556,6 +7559,9 @@ function FirstInning() {
                   <option value="standard">Standard — 3/4 Kelly</option>
                   <option value="aggressive">Aggressive — Full Kelly</option>
                   <option value="turbo">Turbo — 1.5× Kelly</option>
+                  <option value="xtreme">Xtreme — 2× Kelly</option>
+                  <option value="degen">Degen — 3× Kelly</option>
+                  <option value="yolo">YOLO — 5× Kelly</option>
                 </select>
               </label>
               <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
