@@ -45,6 +45,40 @@ const check = (ok, what, detail) => {
   check(c.playRuns({ result: { awayScore: 1, homeScore: 0 } }, undefined) === 1,
     "the leadoff play scores against zero, not against undefined",
     "playRuns mishandled the first play of the inning.");
+  /* ---- latency ----
+   * A callout that lags is just a recap. Three things decided the delay and all
+   * three are pinned here, because each was individually enough to put the voice
+   * half a minute behind the park. */
+  console.log("\nlatency");
+  const pks = games.map((g) => g.gamePk);
+  let t = Date.now();
+  const par = await Promise.all(pks.map((pk) => c.fetchFirstInning(pk)));
+  const parMs = Date.now() - t;
+  t = Date.now();
+  for (const pk of pks.slice(0, 3)) await c.fetchFirstInning(pk);
+  const seqMs = (Date.now() - t) / 3 * pks.length;
+  check(par.every(Boolean) && parMs < seqMs / 2,
+    "the whole board is polled in parallel — " + parMs + "ms for " + pks.length +
+      " games, vs ~" + Math.round(seqMs) + "ms one at a time",
+    "parallel " + parMs + "ms is not meaningfully faster than sequential " + Math.round(seqMs) + "ms.");
+  // The field projection is what makes a 2.5s interval affordable rather than
+  // ~48MB/min of feed across a full board.
+  const bare = await (await realFetch("https://statsapi.mlb.com/api/v1.1/game/" + pks[0] + "/feed/live")).text();
+  const trimmed = await (await realFetch("https://statsapi.mlb.com/api/v1.1/game/" + pks[0] +
+    "/feed/live?fields=" + c.read("CALLOUT_FIELDS"))).text();
+  check(trimmed.length * 10 < bare.length,
+    "the field projection cuts the feed by 10x or more (" + (bare.length / 1024).toFixed(0) +
+      "KB -> " + (trimmed.length / 1024).toFixed(0) + "KB)",
+    "projection saved little: " + bare.length + " -> " + trimmed.length +
+      "; polling this fast across a full board is not affordable at that size.");
+  // The stale-play skip is what stops a mid-inning attach from narrating history
+  // and then trailing the game for the rest of the inning.
+  check(c.playAgeMs({ about: { endTime: new Date(Date.now() - 90000).toISOString() } }) > 45000 &&
+        c.playAgeMs({ about: { endTime: new Date().toISOString() } }) < 5000 &&
+        c.playAgeMs({}) === Infinity,
+    "play age is read from endTime, and a play with no endTime is treated as old",
+    "playAgeMs mis-reports how long ago a play finished.");
+
   console.log("\n" + "=".repeat(78));
   if (fails) { console.log(fails + " check(s) FAILED"); process.exit(1); }
   console.log("callout reads the live feed correctly");

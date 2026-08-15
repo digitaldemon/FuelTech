@@ -5299,12 +5299,24 @@ function playRuns(p, prev) {
   const was = prev ? (q.awayScore || 0) + (q.homeScore || 0) : 0;
   return Math.max(0, now - was);
 }
+// The full feed is 537KB per game; statsapi's `fields` projection cuts it to 8KB
+// for exactly the leaves the callout reads. Across a 15-game board polled every
+// 2.5s that is the difference between ~48MB/min and ~700KB/min — which is what
+// makes polling this fast defensible at all.
+const CALLOUT_FIELDS = "gameData,status,abstractGameState,liveData,linescore,currentInning," +
+  "inningState,plays,allPlays,about,inning,isComplete,endTime,result,description,awayScore,homeScore";
 async function fetchFirstInning(gamePk) {
-  // Cache-busting is deliberate: this is the one feed read that must not be
-  // served stale, and getJson's shared cache is sized for pregame research.
-  const f = await getJson("https://statsapi.mlb.com/api/v1.1/game/" + gamePk +
-    "/feed/live?_=" + Math.floor(Date.now() / 10000)).catch(() => null);
-  if (!f) return null;
+  const url = "https://statsapi.mlb.com/api/v1.1/game/" + gamePk + "/feed/live?fields=" +
+    CALLOUT_FIELDS + "&_=" + Date.now();
+  let f = null;
+  try {
+    // no-store, not just a cache-buster: statsapi sends cache headers and the
+    // browser will happily serve a stale body to a URL it has seen. An earlier
+    // cut bucketed the buster to 10s, which silently capped freshness at 10s.
+    const r = await fetch(url, { cache: "no-store" });
+    if (r.ok) f = await r.json();
+  } catch { /* fall through to the proxy */ }
+  if (!f) { try { f = await getJson(px(url)); } catch { return null; } }
   const ls = (f.liveData && f.liveData.linescore) || {};
   return {
     plays: firstInningPlays(f),
@@ -5316,11 +5328,23 @@ async function fetchFirstInning(gamePk) {
       f.gameData.status.abstractGameState || "").toLowerCase() === "final",
   };
 }
-function speak(text) {
+// A play's endTime is when it actually finished, so the callout can tell a play
+// that just happened from one it is only now seeing — the difference between
+// live and a recap.
+function playAgeMs(p) {
+  const t = p && p.about && p.about.endTime ? Date.parse(p.about.endTime) : NaN;
+  return isFinite(t) ? Date.now() - t : Infinity;
+}
+// Utterances queue, and a queue is latency. If the synthesiser is still working
+// through earlier lines when new ones land, the callout is narrating the past —
+// so a backlog gets dropped rather than drained. urgent lines (runs, the result)
+// jump the queue outright.
+function speak(text, urgent) {
   const s = typeof window !== "undefined" && window.speechSynthesis;
   if (!s || !text) return;
+  if (urgent || s.pending) s.cancel();
   const u = new window.SpeechSynthesisUtterance(text);
-  u.rate = 1.05; u.pitch = 1; u.volume = 1;
+  u.rate = 1.1; u.pitch = 1; u.volume = 1;
   s.speak(u);
 }
 
@@ -7620,8 +7644,20 @@ function FirstInning() {
    * decide the ticket, and stops on its own. Each game is announced once by name
    * when its inning opens, then play by play, then settled out loud.
    *
-   * Positions are kept in a ref, not state: a re-render every 15s across a
-   * 15-game board would be a real cost for a feature that renders nothing. */
+   * Positions are kept in a ref, not state: a re-render every 2.5s across a
+   * 15-game board would be a real cost for a feature that renders nothing.
+   *
+   * Latency is the whole point of a live callout, so every avoidable source of
+   * it is removed: games are polled in PARALLEL (sequentially, 15 games at one
+   * round trip each put the last game seconds behind the first), on a 2.5s
+   * interval, against the 8KB field-projected feed rather than the 537KB one.
+   * statsapi itself publishes a play within a second or two of it ending, so
+   * this tracks the park about as closely as a data feed can. */
+  const CALLOUT_POLL_MS = 2500;
+  // Anything older than this was over before the callout saw it. Reading it out
+  // now would put the voice behind the game and keep it there for the rest of
+  // the inning — the backlog never drains, it just delays everything after it.
+  const CALLOUT_STALE_MS = 45000;
   const [callout, setCallout] = useState(false);
   const spoken = useRef(new Map()); // gamePk -> { n: plays announced, opened, settled }
   useEffect(() => {
@@ -7631,38 +7667,51 @@ function FirstInning() {
       (r.currentInning === 1 || (r.currentInning === 0 && r.startUtc &&
         new Date(r.startUtc).getTime() - Date.now() < 5 * 60 * 1000)));
     let stopped = false;
-    async function tick() {
-      for (const r of tracked()) {
-        const st = spoken.current.get(r.gamePk) || { n: 0, opened: false, settled: false };
-        if (st.settled) continue;
-        const live = await fetchFirstInning(r.gamePk);
-        if (stopped || !live) continue;
-        if (!st.opened && (live.plays.length || live.inning === 1)) {
+    let inFlight = false;
+    async function pollGame(r) {
+      const st = spoken.current.get(r.gamePk) || { n: 0, opened: false, settled: false };
+      if (st.settled) return;
+      const live = await fetchFirstInning(r.gamePk);
+      if (stopped || !live) return;
+      // Joining a game mid-inning: catch up silently to what is already over and
+      // start calling from the live edge, rather than reciting the half-inning.
+      if (!st.opened) {
+        const fresh = live.plays.findIndex((p) => playAgeMs(p) < CALLOUT_STALE_MS);
+        st.n = fresh === -1 ? live.plays.length : fresh;
+        if (live.plays.length || live.inning === 1) {
           speak(r.away + " at " + r.home + ". First inning. Desk is on " + r.call + ".");
           st.opened = true;
         }
-        // Runs are read against the play before, so a two-run double is called as
-        // two — the feed only ever reports a cumulative score.
-        for (let i = st.n; i < live.plays.length; i++) {
-          const line = playCallout(live.plays[i]);
-          const runs = playRuns(live.plays[i], live.plays[i - 1]);
-          if (line) speak(line + (runs > 0
-            ? ". " + (runs === 1 ? "A run scores" : runs + " runs score") +
-              ". That is Y-R-F-I — " + (r.call === "YRFI" ? "the desk had it" : "the desk was wrong") + "."
-            : ""));
-          if (runs > 0) st.settled = true;
-        }
-        st.n = live.plays.length;
-        if (!st.settled && live.past1) {
-          speak("First inning is clean in " + r.home + ". N-R-F-I — " +
-            (r.call === "NRFI" ? "that is a winner" : "the desk was wrong") + ".");
-          st.settled = true;
-        }
-        spoken.current.set(r.gamePk, st);
       }
+      // Runs are read against the play before, so a two-run double is called as
+      // two — the feed only ever reports a cumulative score.
+      for (let i = st.n; i < live.plays.length; i++) {
+        const line = playCallout(live.plays[i]);
+        const runs = playRuns(live.plays[i], live.plays[i - 1]);
+        if (line) speak(line + (runs > 0
+          ? ". " + (runs === 1 ? "A run scores" : runs + " runs score") +
+            ". That is Y-R-F-I — " + (r.call === "YRFI" ? "the desk had it" : "the desk was wrong") + "."
+          : ""), runs > 0);
+        if (runs > 0) st.settled = true;
+      }
+      st.n = live.plays.length;
+      if (!st.settled && live.past1) {
+        speak("First inning is clean in " + r.home + ". N-R-F-I — " +
+          (r.call === "NRFI" ? "that is a winner" : "the desk was wrong") + ".", true);
+        st.settled = true;
+      }
+      spoken.current.set(r.gamePk, st);
+    }
+    async function tick() {
+      // A slow round trip must not stack ticks on top of each other; skipping is
+      // correct because the next poll is 2.5s away and reads the same state.
+      if (inFlight) return;
+      inFlight = true;
+      try { await Promise.all(tracked().map(pollGame)); }
+      finally { inFlight = false; }
     }
     tick();
-    const id = setInterval(tick, 15000);
+    const id = setInterval(tick, CALLOUT_POLL_MS);
     return () => { stopped = true; clearInterval(id); };
   }, [callout, enriched.map((r) => r.gamePk + ":" + r.currentInning).join(",")]);
 
