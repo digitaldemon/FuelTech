@@ -5250,6 +5250,7 @@ const _travelCache = new Map();
 const _linescore = new Map(); // gamePk -> Promise<linescore>
 const _rolling = new Map();   // pid:season -> rolling NRFI windows
 const _rosterCache = new Map(); // teamId:season:sit:ppId -> batter PA rate array
+const _teamOffRolling = new Map(); // teamId:date -> rolling first-inning scored-in-1st windows
 // Shared linescore fetch — stores the Promise so concurrent callers dedup.
 function getLinescore(gamePk) {
   if (!_linescore.has(gamePk))
@@ -5442,6 +5443,21 @@ function pitcherTrendFactor(rolling) {
   if (delta >= 10) return { f: 0.94, note: "L10 +" + delta + "pp vs SZN (warm)" };
   if (delta <= -20) return { f: 1.12, note: "L10 " + delta + "pp vs SZN (cold streak)" };
   if (delta <= -10) return { f: 1.06, note: "L10 " + delta + "pp vs SZN (cooling)" };
+  return { f: 1, note: "" };
+}
+// Team first-inning offense rolling trend: L10 scored-in-1st rate vs season rate.
+// Positive delta = team scoring more often in 1st than usual = more offense = YRFI lean.
+// Weight 0.5 in offMult — direct measurement of the same stat the model is predicting.
+function teamOffenseTrendFactor(rolling) {
+  if (!rolling) return { f: 1, note: "" };
+  const l10 = rolling.l10 && (rolling.l10.n || 0) >= 5 ? rolling.l10.rate : null;
+  const szn = rolling.szn && rolling.szn.rate != null ? rolling.szn.rate : null;
+  if (l10 == null || szn == null || szn <= 0) return { f: 1, note: "" };
+  const delta = l10 - szn;
+  if      (delta >=  0.20) return { f: 1.08, note: "off L10 hot (+" + Math.round(delta * 100) + "pp vs SZN)" };
+  else if (delta >=  0.12) return { f: 1.04, note: "off L10 warm (+" + Math.round(delta * 100) + "pp)" };
+  else if (delta <= -0.20) return { f: 0.93, note: "off L10 cold (" + Math.round(delta * 100) + "pp vs SZN)" };
+  else if (delta <= -0.12) return { f: 0.97, note: "off L10 cooling (" + Math.round(delta * 100) + "pp)" };
   return { f: 1, note: "" };
 }
 // Pitcher THESIS — stable season peripherals (the real predictors), not the
@@ -5642,6 +5658,57 @@ async function travelRest(teamId, todayStr, venueId) {
   return val;
 }
 
+// Team first-inning offense rolling: L5/L10/L20 scored-in-1st rate.
+// Shares the linescore cache with pitcherRollingNRFI — fetches from the last
+// 35 days so L20 is always populated mid-season. Rate = P(team scored ≥1 run in 1st).
+async function teamOffenseRolling(teamId, todayStr, season) {
+  if (teamId == null) return null;
+  const k = teamId + ":" + todayStr;
+  if (_teamOffRolling.has(k)) return _teamOffRolling.get(k);
+  let val = null;
+  try {
+    const d0 = new Date(todayStr + "T12:00:00Z");
+    const startDate = new Date(d0.getTime() - 35 * 86400000).toISOString().slice(0, 10);
+    const sch = await getJson(
+      "https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=" + teamId +
+      "&startDate=" + startDate + "&endDate=" + todayStr
+    );
+    const items = [];
+    (sch.dates || []).forEach((d) => {
+      if (d.date >= todayStr) return;
+      (d.games || []).forEach((g) => {
+        const isHome = g.teams && g.teams.home && g.teams.home.team && g.teams.home.team.id === teamId;
+        if (g.gamePk) items.push({ gamePk: g.gamePk, isHome });
+      });
+    });
+    if (items.length) {
+      const results = await Promise.all(items.slice(-25).map(async (item) => {
+        try {
+          const ls = await getLinescore(item.gamePk);
+          const inn1 = ls && ls.innings && ls.innings[0];
+          if (!inn1) return null;
+          const r = item.isHome
+            ? Number((inn1.home && inn1.home.runs) || 0)
+            : Number((inn1.away && inn1.away.runs) || 0);
+          return r > 0;
+        } catch { return null; }
+      }));
+      const valid = results.filter((x) => x !== null);
+      if (valid.length >= 5) {
+        const rate = (arr) => arr.length >= 3 ? arr.filter(Boolean).length / arr.length : null;
+        val = {
+          szn:  { rate: rate(valid),           n: valid.length },
+          l20:  { rate: rate(valid.slice(-20)), n: Math.min(valid.length, 20) },
+          l10:  { rate: rate(valid.slice(-10)), n: Math.min(valid.length, 10) },
+          l5:   { rate: rate(valid.slice(-5)),  n: Math.min(valid.length, 5)  },
+        };
+      }
+    }
+  } catch { /* leave null */ }
+  _teamOffRolling.set(k, val);
+  return val;
+}
+
 function weatherPark(game, homeAbbr) {
   const parkFactor = NRFI_PARK[homeAbbr] || 1;
   let wFactor = 1, note = "neutral park";
@@ -5798,6 +5865,8 @@ function nrfiEvaluate(ctx) {
   const dayGameShift = isDayGame ? 0.15 : 0;
   const awayTrend = pitcherTrendFactor(ctx.awayRolling);
   const homeTrend = pitcherTrendFactor(ctx.homeRolling);
+  const awayOffTrend = teamOffenseTrendFactor(ctx.awayOffRolling);
+  const homeOffTrend = teamOffenseTrendFactor(ctx.homeOffRolling);
   const awaySkill = pitchSkillFactor(ctx.awayPeri, ctx.lg);
   const homeSkill = pitchSkillFactor(ctx.homePeri, ctx.lg);
   const awayOpen = openerFactor(ctx.awayPit && ctx.awayPit.era, ctx.awayMeta && ctx.awayMeta.seasonEra);
@@ -5812,8 +5881,8 @@ function nrfiEvaluate(ctx) {
   // is lower now that lineups are measured directly vs the starter's hand.
   // Platoon reduced to 0.20: lineup OBP is already computed vs the starter's hand,
   // so the platoon factor partially double-counts the hand matchup.
-  const offMult = (lineup, plat, travel) =>
-    nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.2 + (travel.factor - 1) * 0.6, 0.80, 1.30);
+  const offMult = (lineup, plat, travel, offTrend) =>
+    nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.2 + (travel.factor - 1) * 0.6 + (offTrend.f - 1) * 0.5, 0.80, 1.30);
   // Weights tuned from 4,015-game backtest (logistic regression on normalized features):
   // - skill (K%, BB%, barrel, GB): dominant after pitBase — keep at 1.0
   // - form (FIP/ERA L3): LR coeff -0.018 = counterproductive once pitBase controlled → 0.10
@@ -5824,8 +5893,8 @@ function nrfiEvaluate(ctx) {
   // - trend (L10 vs SZN clean %): hot/cold streak captured here, weight 0.30
   const pitMult = (skill, form, opener, openG, load, _rest, trend) =>
     nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30, 0.78, 1.25);
-  const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel);
-  const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel);
+  const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel, awayOffTrend);
+  const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel, homeOffTrend);
   const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest, awayTrend);
   const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeRest, homeTrend);
   const umpFactor = ctx.umpFactor || 1;
@@ -5923,6 +5992,34 @@ function nrfiEvaluate(ctx) {
     { label: "1st-inning offense",
       detail: ctx.awayName + " " + rate2(ctx.awayOff) + " R · " + ctx.homeName + " " + rate2(ctx.homeOff) + " R",
       lean: lean((awayOffBase + homeOffBase) / 2, 0.6, 0.44) },
+    (() => {
+      const aR = ctx.awayOffRolling, hR = ctx.homeOffRolling;
+      const aL10 = aR && aR.l10 && aR.l10.n >= 5 ? aR.l10.rate : null;
+      const hL10 = hR && hR.l10 && hR.l10.n >= 5 ? hR.l10.rate : null;
+      if (aL10 == null && hL10 == null) return null;
+      const fmt = (r) => r != null ? Math.round(r * 100) + "%" : "—";
+      const notes = [];
+      const diffs = [];
+      if (aL10 != null) {
+        const szn = aR.szn && aR.szn.rate != null ? aR.szn.rate : null;
+        const d = szn != null ? aL10 - szn : null;
+        const arrow = d == null ? "" : d >= 0.12 ? " ↑hot" : d <= -0.12 ? " ↓cold" : "";
+        notes.push(ctx.awayName + " L10 " + fmt(aL10) + arrow + (szn != null ? " (SZN " + fmt(szn) + ")" : ""));
+        if (d != null) diffs.push(d);
+      }
+      if (hL10 != null) {
+        const szn = hR.szn && hR.szn.rate != null ? hR.szn.rate : null;
+        const d = szn != null ? hL10 - szn : null;
+        const arrow = d == null ? "" : d >= 0.12 ? " ↑hot" : d <= -0.12 ? " ↓cold" : "";
+        notes.push(ctx.homeName + " L10 " + fmt(hL10) + arrow + (szn != null ? " (SZN " + fmt(szn) + ")" : ""));
+        if (d != null) diffs.push(d);
+      }
+      const bothCold = diffs.length > 0 && diffs.every((d) => d <= -0.12);
+      const bothHot  = diffs.length > 0 && diffs.every((d) => d >= 0.12);
+      return { label: "Offense trend (1st inn L10)",
+        detail: notes.join(" · "),
+        lean: bothCold ? "nrfi" : bothHot ? "yrfi" : "neutral" };
+    })(),
     { label: "Platoon / handedness",
       detail: ctx.awayName + ": " + awayPlat.note + " · " + ctx.homeName + ": " + homePlat.note,
       lean: facLean((awayPlat.f + homePlat.f) / 2) },
@@ -6309,7 +6406,7 @@ async function scanNrfi(onProgress) {
     const away = g.teams && g.teams.away, home = g.teams && g.teams.home;
     const awayPP = away && away.probablePitcher, homePP = home && home.probablePitcher;
     const lu = g.lineups || {};
-    const [awayPit, homePit, awayMeta, homeMeta, awayRolling, homeRolling, awayOff, homeOff, awayTravel, homeTravel] =
+    const [awayPit, homePit, awayMeta, homeMeta, awayRolling, homeRolling, awayOff, homeOff, awayTravel, homeTravel, awayOffRolling, homeOffRolling] =
       await Promise.all([
         pitcherFirstInning(awayPP && awayPP.id, season),
         pitcherFirstInning(homePP && homePP.id, season),
@@ -6321,6 +6418,8 @@ async function scanNrfi(onProgress) {
         teamOffenseSplits(home && home.team && home.team.id, season),
         travelRest(away && away.team && away.team.id, date, g.venue && g.venue.id),
         travelRest(home && home.team && home.team.id, date, g.venue && g.venue.id),
+        teamOffenseRolling(away && away.team && away.team.id, date, season),
+        teamOffenseRolling(home && home.team && home.team.id, date, season),
       ]);
     // Lineups vs the opposing starter's hand (needs the hands resolved first).
     const awayPosted = (lu.awayPlayers || []).length >= 3;
@@ -6341,7 +6440,7 @@ async function scanNrfi(onProgress) {
       awayPPId: awayPP && awayPP.id, homePPId: homePP && homePP.id,
       awayOff, homeOff, awayPit, homePit, awayMeta, homeMeta,
       awayLineup, homeLineup, awayBestLineup, homeBestLineup, awayTravel, homeTravel, wx,
-      awayRolling, homeRolling,
+      awayRolling, homeRolling, awayOffRolling, homeOffRolling,
       awayPeri: awayPP ? periById[awayPP.id] : null,
       homePeri: homePP ? periById[homePP.id] : null,
       lg,
