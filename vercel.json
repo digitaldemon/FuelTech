@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/desk/nrfi/notify",
+      "schedule": "*/10 * * * *"
+    }
+  ]
+}

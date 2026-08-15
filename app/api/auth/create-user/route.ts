@@ -115,11 +115,17 @@ export async function PATCH(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { username, active } = (await req.json().catch(() => ({}))) as { username?: string; active?: boolean };
+  const { username, active, password } = (await req.json().catch(() => ({}))) as { username?: string; active?: boolean; password?: string };
   if (!username) return Response.json({ error: "username is required" }, { status: 400 });
-  if (typeof active !== 'boolean') return Response.json({ error: "active must be a boolean" }, { status: 400 });
 
   try {
+    if (typeof password === 'string') {
+      if (password.length < 8) return Response.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+      const hash = await bcrypt.hash(password, 12);
+      await sql`UPDATE users SET password_hash = ${hash} WHERE username = ${username}`;
+      return Response.json({ ok: true, updated: "password" });
+    }
+    if (typeof active !== 'boolean') return Response.json({ error: "active or password is required" }, { status: 400 });
     await sql`UPDATE users SET active = ${active} WHERE username = ${username}`;
     return Response.json({ ok: true });
   } catch {
