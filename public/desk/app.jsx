@@ -6958,8 +6958,8 @@ function FirstInning() {
           method: r.method || "model",
           awayPP: r.awayPP, homePP: r.homePP,
           pitProfiles: pp ? {
-            away: { name: pp.away.name, hand: pp.away.hand, sample: pp.away.sample, cleanPct: pp.away.cleanPct, score: pp.away.score, rolling: pp.away.rolling },
-            home: { name: pp.home.name, hand: pp.home.hand, sample: pp.home.sample, cleanPct: pp.home.cleanPct, score: pp.home.score, rolling: pp.home.rolling },
+            away: { name: pp.away.name, hand: pp.away.hand, sample: pp.away.sample, cleanPct: pp.away.cleanPct, score: pp.away.score, grade: pp.away.grade, rolling: pp.away.rolling },
+            home: { name: pp.home.name, hand: pp.home.hand, sample: pp.home.sample, cleanPct: pp.home.cleanPct, score: pp.home.score, grade: pp.home.grade, rolling: pp.home.rolling },
           } : null };
         recl.unshift(e); changed.push(e);
       } else if (e && e.result == null && !e.skipped) {

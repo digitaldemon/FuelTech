@@ -8,6 +8,7 @@ type PitcherProfile = {
   sample?: number;
   cleanPct?: number;
   score?: number;
+  grade?: string;
   rolling?: { l10?: { pct?: number; n?: number }; szn?: { pct?: number } };
 };
 
@@ -91,6 +92,7 @@ async function sendEmail(subject: string, html: string): Promise<void> {
 function pitLine(p: PitcherProfile | undefined, name: string | undefined): string {
   if (!p) return name ?? "TBD";
   const hand = p.hand ? ` (${p.hand})` : "";
+  const gradeTag = p.grade && p.grade !== "—" ? ` [${p.grade}]` : "";
   const szn = p.rolling?.szn?.pct != null ? `${Math.round(p.rolling.szn.pct)}%` : (p.cleanPct != null ? `${Math.round(p.cleanPct)}%` : null);
   const l10n = p.rolling?.l10?.n ?? 0;
   const l10pct = l10n >= 3 && p.rolling?.l10?.pct != null ? Math.round(p.rolling.l10.pct) : null;
@@ -101,12 +103,14 @@ function pitLine(p: PitcherProfile | undefined, name: string | undefined): strin
   const clean = szn ? `${szn} clean` : "";
   const recent = l10pct != null ? `L10 ${l10pct}%${arrow}` : "";
   const stats = [clean, recent].filter(Boolean).join(" · ");
-  return `${name ?? p.name ?? "TBD"}${hand}${stats ? " — " + stats : ""}`;
+  return `${name ?? p.name ?? "TBD"}${hand}${gradeTag}${stats ? " — " + stats : ""}`;
 }
 
 function pitLineHtml(p: PitcherProfile | undefined, name: string | undefined): string {
   if (!p) return `<b>${name ?? "TBD"}</b>`;
   const hand = p.hand ? ` <span style="color:#64748b">(${p.hand})</span>` : "";
+  const gradeColor = p.score != null ? (p.score >= 74 ? "#22c55e" : p.score >= 52 ? "#f59e0b" : "#ef4444") : "#64748b";
+  const gradeTag = p.grade && p.grade !== "—" ? ` <span style="color:${gradeColor};font-weight:800">${p.grade}</span>` : "";
   const szn = p.rolling?.szn?.pct != null ? Math.round(p.rolling.szn.pct) : (p.cleanPct != null ? Math.round(p.cleanPct) : null);
   const l10n = p.rolling?.l10?.n ?? 0;
   const l10pct = l10n >= 3 && p.rolling?.l10?.pct != null ? Math.round(p.rolling.l10.pct) : null;
@@ -116,7 +120,7 @@ function pitLineHtml(p: PitcherProfile | undefined, name: string | undefined): s
   const sznTag = szn != null ? `<span style="color:#94a3b8">${szn}%</span>` : "";
   const l10Tag = l10pct != null ? `L10 <b>${l10pct}%</b>${arrow}` : "";
   const stats = [sznTag ? `SZN ${sznTag}` : "", l10Tag].filter(Boolean).join(" · ");
-  return `<b>${name ?? p.name ?? "TBD"}</b>${hand}${stats ? `  <span style="color:#64748b;font-size:12px">${stats}</span>` : ""}`;
+  return `<b>${name ?? p.name ?? "TBD"}</b>${hand}${gradeTag}${stats ? `  <span style="color:#64748b;font-size:12px">${stats}</span>` : ""}`;
 }
 
 function buildCard(e: NotifyEntry) {
