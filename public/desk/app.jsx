@@ -6086,9 +6086,15 @@ function nrfiVerdict(r) {
   const homeThin = !pp || !pp.home || (pp.home.sample || 0) < 5;
   if (conf < 0.35) { strength = "PASS"; notes.push("thin data"); }
   else if (conf < 0.55 && (strength === "STRONG" || strength === "BET")) { strength = "LEAN"; notes.push("limited data"); }
-  // Both starters under 5 starts: not enough real signal for even a lean.
+  // One thin starter: drop one level — the model is half-blind on pitching.
+  // Both thin: drop to PASS and hide from the board entirely (thinPass flag).
   let thinPass = false;
-  if (awayThin && homeThin && strength === "LEAN") { strength = "PASS"; notes.push("both pitchers thin data"); thinPass = true; }
+  if (awayThin && homeThin) {
+    if (strength !== "PASS") { strength = down(strength, 1); notes.push("both pitchers thin data"); }
+    if (strength === "PASS") thinPass = true;
+  } else if (awayThin || homeThin) {
+    if (strength !== "PASS") { strength = down(strength, 1); notes.push((awayThin ? r.awayPP : r.homePP) + " thin data"); }
+  }
   // STRONG demands both high confidence AND strong agreement.
   if (strength === "STRONG" && !(conf >= 0.7 && frac >= 0.6)) { strength = "BET"; notes.push("not full confidence"); }
 
