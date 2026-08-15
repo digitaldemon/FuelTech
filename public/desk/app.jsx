@@ -6171,14 +6171,13 @@ function nrfiCalibration(record) {
   // Exclude kalshi-import entries: their pNRFI is the market entry price, not model output.
   // Training on market prices would teach the calibration to correct for market bias, not model bias.
   const g = (record || []).filter((e) => e.pNRFI != null && e.firstInningRuns != null && e.source !== "kalshi-import" && e.strength !== "PASS" && !e.thinPass);
-  if (g.length < 25) return { c: 0, n: g.length, active: false };
-  const lg = (p) => Math.log(p / (1 - p));  // 0-1 logit (distinct from the global 0-100 logit)
+  const lg = (p) => Math.log(p / (1 - p));
   const cp = (x) => nClamp(x, 0.05, 0.95);
-  const meanPred = g.reduce((s, e) => s + e.pNRFI, 0) / g.length;
-  const actual = g.filter((e) => e.firstInningRuns === 0).length / g.length;
-  const shrink = Math.min(1, g.length / 100);
-  const c = nClamp((lg(cp(actual)) - lg(cp(meanPred))) * shrink, -0.6, 0.6);
-  return { c, n: g.length, active: true };
+  const meanPred = g.reduce((s, e) => s + e.pNRFI, 0) / (g.length || 1);
+  const actual = g.length ? g.filter((e) => e.firstInningRuns === 0).length / g.length : 0.5;
+  const liveC = g.length ? (lg(cp(actual)) - lg(cp(meanPred))) : 0;
+  // Blend live correction with seed using sample-count weighting — smooth transition instead of hard cutover.
+  return { liveC, n: g.length, active: true };
 }
 function applyCalibration(pNRFI, calib) {
   if (!calib || !calib.active) return pNRFI;
@@ -6700,7 +6699,9 @@ function FirstInning() {
   async function reconcile(rs, rfiList) {
     if (!recRef.current) return;
     const recl = recRef.current.slice(); const changed = [];
-    const lc = nrfiCalibration(recl); const calibNow = lc.active ? { ...lc, slope: NRFI_CALIB_SEED.slope } : NRFI_CALIB_SEED;
+    const lc = nrfiCalibration(recl);
+    const lcW = lc.n / (lc.n + NRFI_CALIB_SEED.n);
+    const calibNow = { c: lcW * lc.liveC + (1 - lcW) * NRFI_CALIB_SEED.c, slope: NRFI_CALIB_SEED.slope, active: true };
     const r1 = (x) => Math.round(x * 10) / 10;
     for (const r of rs) {
       const pcal = applyCalibration(r.pNRFI, calibNow);
@@ -6845,7 +6846,8 @@ function FirstInning() {
   const betSignalCount = allModelBets.length;
 
   const liveCalib = nrfiCalibration(rec || []);
-  const calib = liveCalib.active ? { ...liveCalib, slope: NRFI_CALIB_SEED.slope } : NRFI_CALIB_SEED;
+  const lcW = liveCalib.n / (liveCalib.n + NRFI_CALIB_SEED.n);
+  const calib = { c: lcW * liveCalib.liveC + (1 - lcW) * NRFI_CALIB_SEED.c, slope: NRFI_CALIB_SEED.slope, active: true };
   const enriched = rows.filter((r) => !dismissed.has(String(r.gamePk))).map((r) => {
     const pcal = applyCalibration(r.pNRFI, calib);        // model's own NRFI prob
     const mk = matchRFI(r, rfi);
@@ -7367,7 +7369,7 @@ function FirstInning() {
             {s.active ? (s.record ? s.name + " tail: " + s.record.wins + "-" + s.record.losses : s.name + ": active") : s.name + ": paused"}
           </span>
         ))}
-        <span style={{ fontSize: 12, color: "var(--dim)" }}>{liveCalib.active ? "Calibrated: " + liveCalib.n + " live games" : "Calibrated: backtest (" + NRFI_CALIB_SEED.n + " games) · +" + liveCalib.n + " live"}</span>
+        <span style={{ fontSize: 12, color: "var(--dim)" }}>{"Calibrated: backtest (" + NRFI_CALIB_SEED.n + "g) · +" + liveCalib.n + " live"}</span>
         <button className="btn btn-ghost btn-sm" onClick={() => { loadTails(); run(); }} disabled={phase === "scanning"}>{phase === "scanning" ? "Researching…" : "↻ Refresh"}</button>
         {lastRefreshed && phase === "done" && (() => {
           const secsAgo = Math.floor((now - lastRefreshed.getTime()) / 1000);

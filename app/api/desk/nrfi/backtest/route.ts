@@ -201,10 +201,22 @@ export async function GET(req: Request) {
   const actualRate = rows.filter(r => (r.pNRFI >= 0.5 ? r.actual === 1 : r.actual === 0)).length / total;
   const bias = meanModelP - actualRate;
 
-  // Brier score
+  // Brier score (raw)
   const brier = rows.reduce((s, r) => s + Math.pow(r.pNRFI - r.actual, 2), 0) / total;
   const brierNaive = rows.reduce((s, r) => s + Math.pow(nrfiActual / total - r.actual, 2), 0) / total;
   const brierSkill = 1 - brier / brierNaive;
+
+  // Brier score after Platt calibration: logit(cal) = 1.243*logit(dir) - 0.7396
+  const plattSlope = 1.243, plattC = -0.7396;
+  function plattCal(p: number): number {
+    const isNRFI = p >= 0.5;
+    const dir = isNRFI ? p : 1 - p;
+    const clamped = Math.min(Math.max(dir, 0.5001), 0.98);
+    const cal = Math.min(Math.max(1 / (1 + Math.exp(-(plattSlope * Math.log(clamped / (1 - clamped)) + plattC))), 0.5), 0.98);
+    return isNRFI ? cal : 1 - cal;
+  }
+  const brierCal = rows.reduce((s, r) => s + Math.pow(plattCal(r.pNRFI) - r.actual, 2), 0) / total;
+  const brierSkillCal = 1 - brierCal / brierNaive;
 
   // BET-tier win rate — raw thresholds equivalent to calibrated ≥57% (BET) and ≥63% (STRONG)
   // after Platt scaling: logit(cal) = 1.243*logit(raw) - 0.7396
@@ -224,7 +236,8 @@ export async function GET(req: Request) {
       overallNrfiRate: pct(nrfiActual, total),
       meanModelProb: (meanModelP * 100).toFixed(1) + "%",
       bias: (bias > 0 ? "+" : "") + (bias * 100).toFixed(1) + "pp (model over-estimates by this much)",
-      brierSkillScore: (brierSkill * 100).toFixed(1) + "%",
+      brierSkillScore_raw: (brierSkill * 100).toFixed(1) + "% (raw model)",
+      brierSkillScore_platt: (brierSkillCal * 100).toFixed(1) + "% (after Platt calibration)",
     },
     tiers: {
       "BET (raw≥70%, cal≥57%)":    pct(betWins,    betRows.length),
