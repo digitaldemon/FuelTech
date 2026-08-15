@@ -36,6 +36,7 @@ const CSS = `
   --slate-600:#3A445A; --line:#3D4760;
   --bone:#EFEAE0; --dim:#96A0B5;
   --amber:#F5B840; --rose:#E4707E; --cyan:#6FB3D2; --moss:#7FB98B; --violet:#9B8CD8;
+  --bg:rgba(0,0,0,.26); --fg:#EFEAE0;
   background:
     radial-gradient(900px 420px at 85% -10%, rgba(242,179,61,.07), transparent 60%),
     radial-gradient(700px 380px at -10% 0%, rgba(111,179,210,.05), transparent 55%),
@@ -51,6 +52,8 @@ const CSS = `
 }
 .cd * { box-sizing: border-box; }
 .cd-wrap { max-width: 880px; margin: 0 auto; }
+.cd { overflow-x: hidden; }
+.cd select { max-width: 100%; box-sizing: border-box; }
 
 /* plain-language helpers */
 .help { font-size:12.5px; line-height:1.55; color:var(--dim); margin:6px 0 0; }
@@ -358,11 +361,39 @@ table.tbl tbody tr:hover td { background:rgba(255,255,255,.025); }
 
 @media (prefers-reduced-motion: reduce) { .cd *, .cd *::after { animation:none !important; transition:none !important; } }
 @media (max-width:560px) {
-  .cd { padding: max(18px, env(safe-area-inset-top)) 14px calc(48px + env(safe-area-inset-bottom)) 14px; }
+  .cd { padding: max(18px, env(safe-area-inset-top)) 12px calc(56px + env(safe-area-inset-bottom)) 12px; }
+  .cd-wrap { width: 100%; }
+  .cd-title { font-size:21px; }
+  .cd-head { gap:8px; padding-bottom:10px; }
+  .tabs { gap:3px; padding:4px; }
+  .tabs button { font-size:12px; padding:6px 9px; }
+  .panel { padding:15px; }
   .verdict h2 { font-size:32px; }
+  .vstat { gap:14px; }
   .pillar { grid-template-columns:26px 1fr; }
   .pillar .sig { grid-column:2; justify-self:start; margin-top:8px; }
+  .cmp-row { grid-template-columns:90px 1fr 90px; gap:8px; }
+  .cmp-row .cl { font-size:9px; }
+  .cmp-row .cv { font-size:11px; }
+  .figures { grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:8px; }
+  .fig .big { font-size:18px; }
+  .bar { gap:8px; }
+  .q { font-size:16px; }
+  .cd select { width:100%; }
   table.tbl th:nth-child(n+4), table.tbl td:nth-child(n+4) { display:none; }
+  table.tbl td, table.tbl th { padding:8px 8px 8px 0; font-size:11.5px; }
+  .pick { padding:13px 14px; }
+  .tierbox { min-width:64px; padding:6px 8px; }
+  .tierbox .pct { font-size:17px; }
+  .pit-grid { grid-template-columns:1fr !important; }
+  .pit-windows { grid-template-columns:repeat(2,1fr) !important; }
+}
+@media (max-width:380px) {
+  .cd-title { font-size:18px; }
+  .tabs button { font-size:11px; padding:5px 7px; }
+  .cmp-row { grid-template-columns:1fr; gap:4px; }
+  .cmp-row .cl { text-align:left; }
+  .cmp-row .cv { text-align:left; }
 }
 `;
 
@@ -6052,7 +6083,7 @@ function pitcherBT(name) {
 function nrfiCalibration(record) {
   // Exclude kalshi-import entries: their pNRFI is the market entry price, not model output.
   // Training on market prices would teach the calibration to correct for market bias, not model bias.
-  const g = (record || []).filter((e) => e.pNRFI != null && e.firstInningRuns != null && e.source !== "kalshi-import");
+  const g = (record || []).filter((e) => e.pNRFI != null && e.firstInningRuns != null && e.source !== "kalshi-import" && e.strength !== "PASS" && !e.thinPass);
   if (g.length < 25) return { c: 0, n: g.length, active: false };
   const lg = (p) => Math.log(p / (1 - p));  // 0-1 logit (distinct from the global 0-100 logit)
   const cp = (x) => nClamp(x, 0.05, 0.95);
@@ -6241,7 +6272,7 @@ async function scanNrfi(onProgress) {
       dataOk: !!(awayOff && homeOff && awayPit && homePit),
       lineupPosted: (ctx.awayLineup.obp != null && ctx.homeLineup.obp != null),
       state, currentInning: ls.currentInning || 0,
-      inning1runs: inn1 ? (Number((inn1.away && inn1.away.runs) || 0) + Number((inn1.home && inn1.home.runs) || 0)) : null,
+      inning1runs: (inn1 && inn1.away && inn1.home && inn1.away.runs != null && inn1.home.runs != null) ? (inn1.away.runs + inn1.home.runs) : null,
       final: state === "Final",
     };
   });
@@ -6463,11 +6494,19 @@ function FirstInning() {
       const awThin = !(r.pitProfiles && r.pitProfiles.away && (r.pitProfiles.away.sample || 0) >= 5);
       const hmThin = !(r.pitProfiles && r.pitProfiles.home && (r.pitProfiles.home.sample || 0) >= 5);
       if (!e && r.state === "Preview" && r.hasPitchers && r.dataOk && pMax >= 57 && !(awThin && hmThin)) {
+        const v = nrfiVerdict({ ...r, pMax, call });
+        const pp = r.pitProfiles;
         e = { id, at: Date.now(), date: r.date.replace(/-/g, ""), gamePk: r.gamePk,
           game: r.away + " @ " + r.home, call, prob: r1(pMax),
           pNRFI: Math.round(r.pNRFI * 1000) / 1000,
           mktAtPick: mktSide != null ? r1(mktSide) : null,
-          mktLatest: mktSide != null ? r1(mktSide) : null, mktAtClose: null, result: null };
+          mktLatest: mktSide != null ? r1(mktSide) : null, mktAtClose: null, result: null,
+          strength: v.strength, isBet: v.isBet, thinPass: v.thinPass,
+          awayPP: r.awayPP, homePP: r.homePP,
+          pitProfiles: pp ? {
+            away: { name: pp.away.name, hand: pp.away.hand, sample: pp.away.sample, cleanPct: pp.away.cleanPct, score: pp.away.score, rolling: pp.away.rolling },
+            home: { name: pp.home.name, hand: pp.home.hand, sample: pp.home.sample, cleanPct: pp.home.cleanPct, score: pp.home.score, rolling: pp.home.rolling },
+          } : null };
         recl.unshift(e); changed.push(e);
       } else if (e && e.result == null && !e.skipped) {
         // Track the market for CLV: update the live price pregame, freeze it at first pitch.
@@ -6555,10 +6594,16 @@ function FirstInning() {
   }, [phase, rows]);
 
   const settled = (rec || []).filter((r) => r.result === "won" || r.result === "lost");
-  const modelSettled = settled.filter((r) => r.source !== "kalshi-import" && !r.skipped);
-  const kalshiSettled = settled.filter((r) => r.source === "kalshi-import");
+  // A pick counts in the model record only if it had an active market at pick time.
+  // Entries with mktAtPick == null had no market and were unbettable (effectively PASS).
+  const isModelPick = (r) => r.source !== "kalshi-import" && !r.skipped && r.strength !== "PASS" && !r.thinPass && (r.mktAtPick != null || r.isBet === true);
+  const modelSettled = settled.filter(isModelPick);
+  const betSettled = modelSettled.filter((r) => r.isBet === true || (r.prob != null && r.prob >= 63));
+  const kalshiSettled = settled.filter((r) => r.source === "kalshi-import" && !r.skipped);
   const wins = modelSettled.filter((r) => r.result === "won").length;
   const losses = modelSettled.length - wins;
+  const betWins = betSettled.filter((r) => r.result === "won").length;
+  const betLosses = betSettled.length - betWins;
   const kWins = kalshiSettled.filter((r) => r.result === "won").length;
   const kLosses = kalshiSettled.length - kWins;
 
@@ -6650,6 +6695,7 @@ function FirstInning() {
     const vg = (() => {
       if (graded) {
         if (gradedWon === null) return { e: "📋", tag: "NOT CALLED · no pick was logged on this game", c: "var(--dim)", bg: "rgba(120,130,150,0.05)" };
+        if (recE && (recE.strength === "PASS" || recE.thinPass || (!recE.isBet && recE.mktAtPick == null))) return { e: "📋", tag: "PASSED · no bet placed · outcome: " + (r.inning1runs === 0 ? "NRFI" : r.inning1runs + " run" + (r.inning1runs === 1 ? "" : "s")), c: "var(--dim)", bg: "rgba(120,130,150,0.05)" };
         const won = gradedWon;
         if (won && gradedCall === "NRFI") return { e: "⚰️", tag: "OFFENSE: DECEASED · zero survivors, no witnesses", c: "var(--moss)", bg: "rgba(80,160,80,0.08)" };
         if (won && gradedCall === "YRFI") return { e: "💥", tag: "CARNAGE ACHIEVED · " + r.inning1runs + " run" + (r.inning1runs === 1 ? "" : "s") + " of beautiful chaos", c: "var(--moss)", bg: "rgba(80,160,80,0.08)" };
@@ -6756,7 +6802,7 @@ function FirstInning() {
 
         {/* ── Pitcher panels ── */}
         {r.pitProfiles && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+          <div className="pit-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
             {[
               { side: "AWAY", name: r.awayPP, p: r.pitProfiles.away },
               { side: "HOME", name: r.homePP, p: r.pitProfiles.home },
@@ -6829,7 +6875,7 @@ function FirstInning() {
                     </div>
                   )}
                   {windows.length > 0 && (
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 3, marginBottom: 9 }}>
+                    <div className="pit-windows" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 3, marginBottom: 9 }}>
                       {windows.map((w) => (
                         <div key={w.label} title={{ SZN: "Full season clean 1st inning rate", L50: "Last 50 starts clean %", L30: "Last 30 starts clean %", L10: "Last 10 starts clean % — most recent form" }[w.label] + " — " + (w.pct != null ? w.pct + "% in " + w.n + " games" : "no data")} style={{ cursor: "help", textAlign: "center", background: "rgba(255,255,255,0.04)", borderRadius: 6, padding: "4px 0" }}>
                           <div style={{ fontSize: 9, color: "var(--dim)", marginBottom: 1 }}>{w.label}</div>
@@ -6928,7 +6974,7 @@ function FirstInning() {
               {t.name}: {t.pick.side} {t.pick.side === r.call ? "✓" : "⚠"}
             </span>
           ))}
-          {graded && gradedWon !== null && (() => {
+          {graded && gradedWon !== null && recE && recE.strength !== "PASS" && !recE.thinPass && (recE.mktAtPick != null || recE.isBet === true) && (() => {
             const won = gradedWon;
             const clv = recE && recE.mktAtPick != null && recE.mktAtClose != null ? recE.mktAtClose - recE.mktAtPick : null;
             return (
@@ -7021,7 +7067,8 @@ function FirstInning() {
         by a real margin, and track closing-line value (CLV), the honest edge test. Graded against the real 1st-inning score.
       </p>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", margin: "8px 0 4px" }}>
-        {(() => { const tot = wins + losses; const pct = tot > 0 ? Math.round(wins / tot * 100) : 0; return <span style={{ fontSize: 13 }}>Model record: <b style={{ color: wins >= losses ? "var(--moss)" : "var(--rose)" }}><span style={{ color: "var(--moss)" }}>{wins}W</span> / <span style={{ color: "var(--rose)" }}>{losses}L</span>{tot > 0 ? " (" + pct + "%)" : ""}</b></span>; })()}
+        {(() => { const tot = wins + losses; const pct = tot > 0 ? Math.round(wins / tot * 100) : 0; return <span title="All model picks where a market was available (LEAN + BET + STRONG, excludes no-market and PASS entries)." style={{ cursor: "help", fontSize: 13 }}>Model record: <b><span style={{ color: "var(--moss)" }}>{wins}W</span> / <span style={{ color: "var(--rose)" }}>{losses}L</span>{tot > 0 ? " (" + pct + "%)" : ""}</b></span>; })()}
+        {betSettled.length > 0 && (() => { const tot = betWins + betLosses; const pct = tot > 0 ? Math.round(betWins / tot * 100) : 0; return <span title="BET and STRONG quality picks only (model prob ≥ 63%) — highest-conviction calls." style={{ cursor: "help", fontSize: 13 }}>BET picks: <b><span style={{ color: "var(--moss)" }}>{betWins}W</span> / <span style={{ color: "var(--rose)" }}>{betLosses}L</span>{tot > 0 ? " (" + pct + "%)" : ""}</b></span>; })()}
         {kalshiSettled.length > 0 && (
           <span style={{ fontSize: 13 }}>Kalshi bets: <b><span style={{ color: "var(--moss)" }}>{kWins}W</span> / <span style={{ color: "var(--rose)" }}>{kLosses}L</span></b></span>
         )}
@@ -7185,9 +7232,9 @@ function FirstInning() {
                 <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>RISK LEVEL</span>
                 <select value={riskLevel} onChange={(e) => { setRiskLevel(e.target.value); saveBankrollSettings({ startingBankroll: bankroll, riskLevel: e.target.value, growthSpeed }); }}
                   style={{ fontSize: 12, padding: "6px 10px", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 6, color: "var(--fg)", height: 34 }}>
-                  <option value="conservative">Conservative — smaller bets</option>
-                  <option value="moderate">Moderate — balanced (recommended)</option>
-                  <option value="aggressive">Aggressive — maximum sizing</option>
+                  <option value="conservative">Conservative</option>
+                  <option value="moderate">Moderate (recommended)</option>
+                  <option value="aggressive">Aggressive</option>
                 </select>
               </label>
               <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -7202,9 +7249,9 @@ function FirstInning() {
                 <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>GROWTH SPEED</span>
                 <select value={growthSpeed} onChange={(e) => { setGrowthSpeed(e.target.value); saveBankrollSettings({ startingBankroll: bankroll, riskLevel, growthSpeed: e.target.value }); }}
                   style={{ fontSize: 12, padding: "6px 10px", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 6, color: "var(--fg)", height: 34 }}>
-                  <option value="slow">Slow &amp; safe — fewer bets, lower exposure</option>
-                  <option value="steady">Steady — balanced approach</option>
-                  <option value="fast">Fast — more bets, higher variance</option>
+                  <option value="slow">Slow &amp; safe</option>
+                  <option value="steady">Steady</option>
+                  <option value="fast">Fast &amp; aggressive</option>
                 </select>
               </label>
               <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
