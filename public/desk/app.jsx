@@ -5470,10 +5470,16 @@ function teamOffenseTrendFactor(rolling) {
   const szn = rolling.szn && rolling.szn.rate != null ? rolling.szn.rate : null;
   if (l10 == null || szn == null || szn <= 0) return { f: 1, note: "" };
   const delta = l10 - szn;
-  if      (delta >=  0.20) return { f: 1.08, note: "off L10 hot (+" + Math.round(delta * 100) + "pp vs SZN)" };
-  else if (delta >=  0.12) return { f: 1.04, note: "off L10 warm (+" + Math.round(delta * 100) + "pp)" };
-  else if (delta <= -0.20) return { f: 0.93, note: "off L10 cold (" + Math.round(delta * 100) + "pp vs SZN)" };
-  else if (delta <= -0.12) return { f: 0.97, note: "off L10 cooling (" + Math.round(delta * 100) + "pp)" };
+  // Secondary: avg runs/game quantitative delta (positive = more runs in L10 = hot offense)
+  const l10rg = rolling.l10 && rolling.l10.avgRuns != null ? rolling.l10.avgRuns : null;
+  const sznRg = rolling.szn && rolling.szn.avgRuns != null ? rolling.szn.avgRuns : null;
+  const rgBoost = (l10rg != null && sznRg != null && sznRg > 0) ? (l10rg - sznRg) / sznRg * 0.12 : 0;
+  const combined = delta + rgBoost;
+  const pp = Math.round(delta * 100);
+  if      (combined >=  0.20) return { f: 1.08, note: "off L10 hot (+" + pp + "pp vs SZN)" };
+  else if (combined >=  0.12) return { f: 1.04, note: "off L10 warm (+" + pp + "pp)" };
+  else if (combined <= -0.20) return { f: 0.93, note: "off L10 cold (" + pp + "pp vs SZN)" };
+  else if (combined <= -0.12) return { f: 0.97, note: "off L10 cooling (" + pp + "pp)" };
   return { f: 1, note: "" };
 }
 // Pitching home advantage: starters allow ~3% fewer first-inning runs at their home park.
@@ -5731,17 +5737,18 @@ async function teamOffenseRolling(teamId, todayStr, season) {
           const r = item.isHome
             ? Number((inn1.home && inn1.home.runs) || 0)
             : Number((inn1.away && inn1.away.runs) || 0);
-          return r > 0;
+          return { scored: r > 0, runs: r };
         } catch { return null; }
       }));
       const valid = results.filter((x) => x !== null);
       if (valid.length >= 5) {
-        const rate = (arr) => arr.length >= 3 ? arr.filter(Boolean).length / arr.length : null;
+        const rate = (arr) => arr.length >= 3 ? arr.filter(v => v.scored).length / arr.length : null;
+        const avg = (arr) => arr.length >= 3 ? Math.round(arr.reduce((s, v) => s + v.runs, 0) / arr.length * 100) / 100 : null;
         val = {
-          szn:  { rate: rate(valid),           n: valid.length },
-          l20:  { rate: rate(valid.slice(-20)), n: Math.min(valid.length, 20) },
-          l10:  { rate: rate(valid.slice(-10)), n: Math.min(valid.length, 10) },
-          l5:   { rate: rate(valid.slice(-5)),  n: Math.min(valid.length, 5)  },
+          szn:  { rate: rate(valid),           n: valid.length,                avgRuns: avg(valid) },
+          l20:  { rate: rate(valid.slice(-20)), n: Math.min(valid.length, 20), avgRuns: avg(valid.slice(-20)) },
+          l10:  { rate: rate(valid.slice(-10)), n: Math.min(valid.length, 10), avgRuns: avg(valid.slice(-10)) },
+          l5:   { rate: rate(valid.slice(-5)),  n: Math.min(valid.length, 5),  avgRuns: avg(valid.slice(-5)) },
         };
       }
     }
@@ -6057,14 +6064,16 @@ function nrfiEvaluate(ctx) {
         const szn = aR.szn && aR.szn.rate != null ? aR.szn.rate : null;
         const d = szn != null ? aL10 - szn : null;
         const arrow = d == null ? "" : d >= 0.12 ? " ↑hot" : d <= -0.12 ? " ↓cold" : "";
-        notes.push(ctx.awayName + " L10 " + fmt(aL10) + arrow + (szn != null ? " (SZN " + fmt(szn) + ")" : ""));
+        const rgTag = aR.l10 && aR.l10.avgRuns != null ? "  " + aR.l10.avgRuns.toFixed(2) + "R/g" : "";
+        notes.push(ctx.awayName + " L10 " + fmt(aL10) + arrow + (szn != null ? " (SZN " + fmt(szn) + ")" : "") + rgTag);
         if (d != null) diffs.push(d);
       }
       if (hL10 != null) {
         const szn = hR.szn && hR.szn.rate != null ? hR.szn.rate : null;
         const d = szn != null ? hL10 - szn : null;
         const arrow = d == null ? "" : d >= 0.12 ? " ↑hot" : d <= -0.12 ? " ↓cold" : "";
-        notes.push(ctx.homeName + " L10 " + fmt(hL10) + arrow + (szn != null ? " (SZN " + fmt(szn) + ")" : ""));
+        const rgTag = hR.l10 && hR.l10.avgRuns != null ? "  " + hR.l10.avgRuns.toFixed(2) + "R/g" : "";
+        notes.push(ctx.homeName + " L10 " + fmt(hL10) + arrow + (szn != null ? " (SZN " + fmt(szn) + ")" : "") + rgTag);
         if (d != null) diffs.push(d);
       }
       const bothCold = diffs.length > 0 && diffs.every((d) => d <= -0.12);
