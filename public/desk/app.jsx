@@ -5542,7 +5542,12 @@ function offenseVenueFactor(rolling, isHome) {
 // Uses season I01 PA-based K rate vs league average (~0.21). Weight 0.35 in offMult.
 function offKrateFactor(off) {
   if (!off || off.kRate == null || (off.kSample || 0) < 80) return { f: 1, note: "" };
-  const LG_K = 0.21;
+  // Measured across all 30 clubs on 2026-08-15: mean first-inning K% is 24.6,
+  // median 24.6, range 19.9-29.8. At the old 0.21 baseline 22 of 30 teams graded
+  // "above average K" and NOT ONE could ever reach the low-K buckets, so the
+  // check could only ever vote NRFI — and offMult carried that bias into the
+  // probability at weight 0.35. This is the league average, not a tuning knob.
+  const LG_K = 0.246;
   const r = off.kRate / LG_K;
   const pct = Math.round(off.kRate * 100);
   if      (r >= 1.22) return { f: 0.93, note: "K%" + pct + "% (high K team)" };
@@ -6239,7 +6244,13 @@ function nrfiEvaluate(ctx) {
       lean: facLean((ctx.awayLineup.factor + ctx.homeLineup.factor) / 2) },
     { label: "Travel & rest",
       detail: ctx.awayName + ": " + ctx.awayTravel.note + " · " + ctx.homeName + ": " + ctx.homeTravel.note,
-      lean: (ctx.awayTravel.factor * ctx.homeTravel.factor) < 0.97 ? "nrfi" : "neutral" },
+      // Was `< 0.97 ? "nrfi" : "neutral"` — structurally unable to vote YRFI, and
+      // two teams that both played yesterday multiply to 0.98*0.98 = 0.960, which
+      // is under the line. That is the ordinary mid-season state, so this fired
+      // NRFI on 14 of 15 live games: a constant, not a signal. Symmetric band,
+      // and the tired-team side has to be more than routine to count.
+      lean: (ctx.awayTravel.factor * ctx.homeTravel.factor) <= 0.955 ? "nrfi"
+        : (ctx.awayTravel.factor * ctx.homeTravel.factor) >= 1.045 ? "yrfi" : "neutral" },
     { label: "Pitcher season load",
       detail: ctx.homePP + ": " + (homeLoad.note || "normal") + " · " + ctx.awayPP + ": " + (awayLoad.note || "normal"),
       lean: (awayLoad.f >= 1.03 || homeLoad.f >= 1.03) ? "yrfi" : "neutral" },
@@ -6655,8 +6666,16 @@ function nrfiVerdict(r) {
   // 2) Consensus gate: a decisive number with split signals is fragile.
   const total = r.aligned ? r.aligned.total : 0;
   const agree = r.aligned ? r.aligned.agree : 0;
-  const frac = total ? agree / total : 1;
-  if (total >= 3 && frac < 0.5 && strength !== "PASS") { strength = down(strength, 1); notes.push("signals split"); }
+  // No family voted at all: that is absence of evidence, not agreement. This read
+  // `total ? agree/total : 1`, so a game with zero signal scored frac 1.00 and
+  // sailed through the STRONG gate's `frac >= 0.6` as if every check had lined
+  // up behind the call. Seen live on a real slate. Score it as no confirmation.
+  const frac = total ? agree / total : 0;
+  if (total === 0 && strength !== "PASS") { strength = down(strength, 1); notes.push("no check confirms this"); }
+  // Only three families exist, so `total >= 3` demanded a unanimous turnout before
+  // a split could ever register — it was reachable on 3 of 15 live games. Judge
+  // the split on whatever did vote, once at least two families have.
+  else if (total >= 2 && frac < 0.5 && strength !== "PASS") { strength = down(strength, 1); notes.push("signals split"); }
 
   // 3) Confidence gate: don't fire a strong wager on missing data.
   const conf = r.confidence != null ? r.confidence : 1;

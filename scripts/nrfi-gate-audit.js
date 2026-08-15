@@ -154,6 +154,37 @@ check(/nrfiThinArm\(r\.pitProfiles/.test(require("fs").readFileSync(
   "record reconcile shares the verdict's thin definition",
   "the reconcile site has re-inlined its own sample threshold.");
 
+// ── 8. Consensus and one-directional checks ───────────────────────────────
+console.log("\nconsensus semantics");
+const withAgree = (agree, total, pMax) => nrfiVerdict({ pMax: pMax || 72, call: "NRFI",
+  aligned: { agree, total, rows: 18 }, confidence: 0.9,
+  pitProfiles: { away: { sample: 20 }, home: { sample: 20 } }, awayPP: "A", homePP: "B" }).strength;
+// `total ? agree/total : 1` scored a game with no signal as unanimous, which
+// cleared the STRONG gate's frac >= 0.6. Absence of evidence is not agreement.
+check(ORDER.indexOf(withAgree(0, 0)) < ORDER.indexOf(withAgree(3, 3)),
+  "zero family votes ranks below unanimous agreement",
+  "no-signal grades " + withAgree(0, 0) + ", unanimous grades " + withAgree(3, 3) + " — they are being treated alike.");
+// Only three families exist, so a `total >= 3` split gate needed full turnout
+// before it could ever register a disagreement.
+check(ORDER.indexOf(withAgree(0, 2)) < ORDER.indexOf(withAgree(2, 2)),
+  "a split across two families still costs a rung",
+  "0/2 grades " + withAgree(0, 2) + " and 2/2 grades " + withAgree(2, 2) + "; the split gate is unreachable below full turnout.");
+
+// A check that can only ever vote one way is a constant, not a signal. Both of
+// these were caught voting NRFI on 14 of 15 live games.
+console.log("\ncheck directionality");
+const src = require("fs").readFileSync(
+  require("path").join(__dirname, "..", "public", "desk", "app.jsx"), "utf8");
+const travelLean = /Travel & rest"[\s\S]{0,600}?lean: ([\s\S]*?)\},/.exec(src);
+check(!!travelLean && /"nrfi"/.test(travelLean[1]) && /"yrfi"/.test(travelLean[1]),
+  "Travel & rest can vote either direction",
+  "the lean expression cannot reach one of the two sides.");
+const lgk = /const LG_K = ([\d.]+);/.exec(src);
+check(!!lgk && Number(lgk[1]) >= 0.235 && Number(lgk[1]) <= 0.255,
+  "LG_K matches a plausible league first-inning K rate (measured 24.6% on 2026-08-15)",
+  "LG_K=" + (lgk ? lgk[1] : "?") + ". At 0.21, 22 of 30 clubs graded above-average-K and the\n" +
+  "check could never vote YRFI; offMult carried that bias into the probability at weight 0.35.");
+
 console.log("\n" + "=".repeat(72));
 if (fails) { console.log(fails + " invariant(s) VIOLATED"); process.exit(1); }
 console.log("all invariants hold");
