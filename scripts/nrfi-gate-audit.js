@@ -179,6 +179,13 @@ const travelLean = /Travel & rest"[\s\S]{0,600}?lean: ([\s\S]*?)\},/.exec(src);
 check(!!travelLean && /"nrfi"/.test(travelLean[1]) && /"yrfi"/.test(travelLean[1]),
   "Travel & rest can vote either direction",
   "the lean expression cannot reach one of the two sides.");
+// Offense trend required BOTH offences to be 12pp off their own season rate in
+// the same direction — ~3.8% of games, and it voted on none of a live slate.
+// A conjunction across the two teams is the shape to watch for here.
+const offTrend = /Offense trend \(1st inn L10\)"[\s\S]{0,400}?lean: ([\s\S]*?)\};/.exec(src);
+check(!!offTrend && /"nrfi"/.test(offTrend[1]) && /"yrfi"/.test(offTrend[1]) && !/every\(/.test(offTrend[1]),
+  "Offense trend votes on the combined read, not a both-teams conjunction",
+  "the lean expression is back to requiring every team to clear the same gate.");
 const lgk = /const LG_K = ([\d.]+);/.exec(src);
 check(!!lgk && Number(lgk[1]) >= 0.235 && Number(lgk[1]) <= 0.255,
   "LG_K matches a plausible league first-inning K rate (measured 24.6% on 2026-08-15)",

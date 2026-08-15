@@ -6190,7 +6190,6 @@ function nrfiEvaluate(ctx) {
       if (aL10 == null && hL10 == null) return null;
       const fmt = (r) => r != null ? Math.round(r * 100) + "%" : "—";
       const notes = [];
-      const diffs = [];
       if (aL10 != null) {
         const szn = aR.szn && aR.szn.rate != null ? aR.szn.rate : null;
         const d = szn != null ? aL10 - szn : null;
@@ -6199,7 +6198,6 @@ function nrfiEvaluate(ctx) {
         const aL5 = aR.l5 && aR.l5.n >= 3 ? aR.l5.rate : null;
         const l5tag = aL5 != null ? "  L5 " + Math.round(aL5 * 100) + "%" : "";
         notes.push(ctx.awayName + " L10 " + fmt(aL10) + arrow + (szn != null ? " (SZN " + fmt(szn) + ")" : "") + rgTag + l5tag);
-        if (d != null) diffs.push(d);
       }
       if (hL10 != null) {
         const szn = hR.szn && hR.szn.rate != null ? hR.szn.rate : null;
@@ -6209,13 +6207,28 @@ function nrfiEvaluate(ctx) {
         const hL5 = hR.l5 && hR.l5.n >= 3 ? hR.l5.rate : null;
         const l5tag = hL5 != null ? "  L5 " + Math.round(hL5 * 100) + "%" : "";
         notes.push(ctx.homeName + " L10 " + fmt(hL10) + arrow + (szn != null ? " (SZN " + fmt(szn) + ")" : "") + rgTag + l5tag);
-        if (d != null) diffs.push(d);
       }
-      const bothCold = diffs.length > 0 && diffs.every((d) => d <= -0.12);
-      const bothHot  = diffs.length > 0 && diffs.every((d) => d >= 0.12);
+      // This demanded that BOTH offences sit 12pp or more off their own season
+      // rate in the same direction. Measured 2026-08-15: 3 of 30 clubs were that
+      // cold and 5 that hot, so the conjunction covers ~3.8% of games — 0.6 of a
+      // 15-game slate, and it voted on none of them.
+      //
+      // The bar was also weaker than it looked. L10 first-inning scoring is ten
+      // Bernoulli trials, so its standard error is about 14pp and a 12pp gate is
+      // under one SE. Requiring two independent sub-SE excursions to coincide is
+      // rare without being meaningful, and it discarded the ordinary case where
+      // one offence is clearly cold and the other is unremarkable.
+      //
+      // Average the two trend factors instead, as the venue-split and K% checks
+      // do. teamOffenseTrendFactor already damps the noise (L5/L10 direction
+      // confirmation plus a runs-per-game term) and is the same number offMult
+      // weighs at 0.5, so the vote now agrees with the probability instead of
+      // deriving its own raw diff. Symmetric 0.03 band — opposed offences still
+      // cancel to neutral, because a hot bat against a cold one is not a signal.
+      const fAvg = ((awayOffTrend.f - 1) + (homeOffTrend.f - 1)) / 2 + 1;
       return { label: "Offense trend (1st inn L10)",
         detail: notes.join(" · "),
-        lean: bothCold ? "nrfi" : bothHot ? "yrfi" : "neutral" };
+        lean: fAvg <= 0.97 ? "nrfi" : fAvg >= 1.03 ? "yrfi" : "neutral" };
     })(),
     (() => {
       if (!awayOffVenue.note && !homeOffVenue.note) return null;
