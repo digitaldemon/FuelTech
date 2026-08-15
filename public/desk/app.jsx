@@ -5335,6 +5335,11 @@ async function pitcherMeta(pid, season) {
     const lastSt = starts[starts.length - 1];
     lastStartDate = (lastSt && (lastSt.date || (lastSt.game && lastSt.game.date))) || null;
     const recentStarts = starts.slice(-3);
+    let recentK9 = null, seasonK9 = null;
+    if (sst) {
+      const sIp = sst.inningsPitched != null ? parseIp(sst.inningsPitched) : 0;
+      if (sIp > 0) seasonK9 = Number(sst.strikeOuts || 0) * 9 / sIp;
+    }
     if (recentStarts.length) {
       let er = 0, lip = 0, hr = 0, bb = 0, k = 0;
       recentStarts.forEach((s) => {
@@ -5348,10 +5353,11 @@ async function pitcherMeta(pid, season) {
         form = (er * 9) / lip;
         // FIP (Fielding Independent Pitching) removes defense noise — better forward predictor than ERA
         fipForm = Math.max(0.5, 3.13 + (13 * hr + 3 * bb - 2 * k) / lip);
+        recentK9 = k * 9 / lip;
       }
     }
   } catch { /* leave nulls */ }
-  const val = { hand, form, fipForm, lastStartDate, seasonEra, gs, g, ip, allow, id: pid };
+  const val = { hand, form, fipForm, lastStartDate, seasonEra, gs, g, ip, allow, id: pid, recentK9, seasonK9 };
   _pitMeta.set(k, val);
   return val;
 }
@@ -6106,6 +6112,22 @@ function nrfiEvaluate(ctx) {
     { label: "Starter recent form",
       detail: ctx.homePP + ": " + homeForm.note + " · " + ctx.awayPP + ": " + awayForm.note,
       lean: facLean((awayForm.f + homeForm.f) / 2) },
+    (() => {
+      const mk = (m, name) => {
+        if (!m || m.recentK9 == null || m.seasonK9 == null || m.seasonK9 < 3) return null;
+        const delta = m.recentK9 - m.seasonK9;
+        const pct = Math.round(Math.abs(delta) / m.seasonK9 * 100);
+        if (Math.abs(delta) < 1.0) return null;
+        return { name, delta, pct, note: name + " K/9 L3 " + m.recentK9.toFixed(1) + (delta > 0 ? " ↑" : " ↓") + pct + "% vs SZN " + m.seasonK9.toFixed(1) };
+      };
+      const aw = mk(ctx.awayMeta, ctx.awayPP), hm = mk(ctx.homeMeta, ctx.homePP);
+      if (!aw && !hm) return null;
+      const notes = [aw?.note, hm?.note].filter(Boolean);
+      const deltas = [aw?.delta, hm?.delta].filter((d) => d != null);
+      const avgDelta = deltas.reduce((s, d) => s + d, 0) / deltas.length;
+      return { label: "Pitcher K9 trend (L3 vs SZN)", detail: notes.join(" · "),
+        lean: avgDelta >= 1.5 ? "nrfi" : avgDelta <= -1.5 ? "yrfi" : "neutral" };
+    })(),
     { label: "Clean opener vs slow starter",
       detail: ctx.homePP + ": " + homeOpen.note + " · " + ctx.awayPP + ": " + awayOpen.note,
       lean: facLean((awayOpen.f + homeOpen.f) / 2) },
