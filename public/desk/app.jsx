@@ -5339,12 +5339,57 @@ function playAgeMs(p) {
 // through earlier lines when new ones land, the callout is narrating the past —
 // so a backlog gets dropped rather than drained. urgent lines (runs, the result)
 // jump the queue outright.
+// Left to itself the browser picks its DEFAULT voice, which on Windows Chrome
+// is "Microsoft David" — the old SAPI5 formant synth. It is instant and it
+// sounds like a 1998 answering machine. The neural voices (Edge's *Natural*
+// family, Google's network voices) are a different class of thing to listen to
+// for twenty minutes, so they are preferred where they exist.
+//
+// Ordered best-first; each entry is matched as a substring of the voice name.
+// Anything not on the list still beats nothing — the last resort is the
+// browser default, i.e. exactly the old behaviour.
+const VOICE_RANK = [
+  "Natural",                  // Edge: Ava, Andrew, Emma... genuinely conversational
+  "Google US English",        // Chrome network voice, clearly better than SAPI5
+  "Google UK English Male",
+  "Microsoft Mark",           // best of the local SAPI5 set
+  "Microsoft Zira",
+];
+let _voice = null, _voiceTried = false;
+function pickVoice(s) {
+  // getVoices() is empty until the engine enumerates, and fires voiceschanged
+  // when it is ready — so a null result must NOT be cached as "no voice".
+  const all = s.getVoices ? s.getVoices() : [];
+  if (!all.length) return null;
+  const en = all.filter((v) => /^en/i.test(v.lang || ""));
+  const pool = en.length ? en : all;
+  for (const want of VOICE_RANK) {
+    const hit = pool.find((v) => String(v.name || "").includes(want));
+    if (hit) return hit;
+  }
+  return pool.find((v) => v.default) || pool[0] || null;
+}
 function speak(text, urgent) {
   const s = typeof window !== "undefined" && window.speechSynthesis;
   if (!s || !text) return;
+  if (!_voice) {
+    _voice = pickVoice(s);
+    // Ask once for a re-resolve when the engine finishes enumerating.
+    if (!_voice && !_voiceTried && s.addEventListener) {
+      _voiceTried = true;
+      s.addEventListener("voiceschanged", () => { _voice = pickVoice(s); }, { once: true });
+    }
+  }
   if (urgent || s.pending) s.cancel();
+  // Chrome can leave synthesis parked in a paused state after a cancel; a queued
+  // utterance then never starts and the callout goes quiet for the rest of the
+  // inning. Nudging it is free when it is already running.
+  if (s.paused) s.resume();
   const u = new window.SpeechSynthesisUtterance(text);
-  u.rate = 1.1; u.pitch = 1; u.volume = 1;
+  if (_voice) { u.voice = _voice; u.lang = _voice.lang || "en-US"; }
+  // 1.1 clipped the ends of words on the neural voices, which read more slowly
+  // and more naturally than the formant ones. Just above conversational.
+  u.rate = 1.02; u.pitch = 1; u.volume = 1;
   s.speak(u);
 }
 
@@ -7761,12 +7806,19 @@ function FirstInning() {
   const spoken = useRef(new Map()); // gamePk -> { n: plays announced, opened, settled }
   useEffect(() => {
     if (!callout) return;
-    // Ticker -> the side actually held, so a game can be followed for the money
-    // on it and called against that side rather than against the model's read.
-    const heldByTicker = new Map(
-      (openPositions && !openPositions.error ? openPositions.positions || [] : [])
-        .filter((p) => p.ticker && p.contracts > 0).map((p) => [p.ticker, p.call]));
-    const heldSide = (r) => (r.market && r.market.ticker ? heldByTicker.get(r.market.ticker) : null) || null;
+    // The side actually held, so a game can be followed for the money on it and
+    // called against that side rather than against the model's read.
+    //
+    // Keying this off r.market.ticker looked obvious and was wrong: a Kalshi
+    // market leaves status=open the moment its game starts, so fetchKalshiRFI
+    // stops returning it and r.market goes null — precisely when the callout
+    // matters. The position's OWN ticker never goes away, and it carries the ET
+    // date and both team codes, so it can be matched to the row by the same
+    // matchRFI the board already uses for live markets.
+    const held = (openPositions && !openPositions.error ? openPositions.positions || [] : [])
+      .filter((p) => p.ticker && p.contracts > 0)
+      .map((p) => ({ call: p.call, date: tickerDate(p.ticker), codes: teamCodes(p.ticker) }));
+    const heldSide = (r) => { const h = matchRFI(r, held); return h ? h.call : null; };
     const tracked = () => enriched.filter((r) =>
       r.gamePk && !r.final && ((r.v && r.v.strength !== "PASS") || heldSide(r)) &&
       (r.currentInning === 1 || (r.currentInning === 0 && r.startUtc &&
@@ -7781,9 +7833,9 @@ function FirstInning() {
       // What is at stake here: the position if one is held, otherwise the call.
       // Announcing the model's side on a game the user faded would be worse than
       // saying nothing.
-      const held = heldSide(r);
-      const side = held || r.call;
-      const stake = held ? "You are on " + held : "Desk is on " + r.call;
+      const mine = heldSide(r);
+      const side = mine || r.call;
+      const stake = mine ? "You are on " + mine : "Desk is on " + r.call;
       // Joining a game mid-inning: catch up silently to what is already over and
       // start calling from the live edge, rather than reciting the half-inning.
       if (!st.opened) {
@@ -7802,8 +7854,8 @@ function FirstInning() {
         if (line) speak(line + (runs > 0
           ? ". " + (runs === 1 ? "A run scores" : runs + " runs score") +
             ". That is Y-R-F-I — " + (side === "YRFI"
-              ? (held ? "you are a winner" : "the desk had it")
-              : (held ? "that ticket is dead" : "the desk was wrong")) + "."
+              ? (mine ? "you are a winner" : "the desk had it")
+              : (mine ? "that ticket is dead" : "the desk was wrong")) + "."
           : ""), runs > 0);
         if (runs > 0) st.settled = true;
       }
@@ -7811,8 +7863,8 @@ function FirstInning() {
       if (!st.settled && live.past1) {
         speak("First inning is clean in " + r.home + ". N-R-F-I — " +
           (side === "NRFI"
-            ? (held ? "you are a winner" : "that is a winner")
-            : (held ? "that ticket is dead" : "the desk was wrong")) + ".", true);
+            ? (mine ? "you are a winner" : "that is a winner")
+            : (mine ? "that ticket is dead" : "the desk was wrong")) + ".", true);
         st.settled = true;
       }
       spoken.current.set(r.gamePk, st);

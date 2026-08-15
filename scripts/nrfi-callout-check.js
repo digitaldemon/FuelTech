@@ -79,6 +79,41 @@ const check = (ok, what, detail) => {
     "play age is read from endTime, and a play with no endTime is treated as old",
     "playAgeMs mis-reports how long ago a play finished.");
 
+  /* ---- following the money ----
+   * The callout used to follow only LEAN-or-better games. The desk PASSes
+   * whenever the market has a game priced right, which says nothing about
+   * whether there is a position on it — on a live board two of three open
+   * positions were PASS. Worse, the obvious fix (match the position to the row
+   * by r.market.ticker) fails exactly when it matters: a Kalshi market leaves
+   * status=open at first pitch, so r.market is null for any game under way.
+   * The match therefore has to run off the position's own ticker. */
+  console.log("\nopen positions");
+  const pos = [
+    { ticker: "KXMLBRFI-26AUG151507NYYTOR", call: "NRFI", contracts: 1259 },
+    { ticker: "KXMLBRFI-26AUG151810BALTB", call: "NRFI", contracts: 1531 },
+    { ticker: "KXMLBRFI-26AUG161940SDCLE", call: "YRFI", contracts: 10 },
+    { ticker: "KXMLBRFI-26AUG151915BOSPIT", call: "NRFI", contracts: 0 },
+  ];
+  const held = pos.filter((p) => p.ticker && p.contracts > 0)
+    .map((p) => ({ call: p.call, date: c.tickerDate(p.ticker), codes: c.teamCodes(p.ticker) }));
+  const side = (row) => { const h = c.matchRFI(row, held); return h ? h.call : null; };
+  const row = (d, a, h) => ({ date: d, awayAbbr: a, homeAbbr: h });
+  check(side(row("2026-08-15", "NYY", "TOR")) === "NRFI",
+    "a held position is matched to its game with no live market at all",
+    "the ticker-only match failed — a game under way would go uncalled.");
+  check(side(row("2026-08-15", "BAL", "TB")) === "NRFI",
+    "a two-letter home code (TB) still matches",
+    "TB/TBR aliasing broke the match.");
+  check(side(row("2026-08-15", "SD", "CLE")) === null,
+    "a position on TOMORROW's game is not attached to today's slate",
+    "the ET date guard is not holding — the wrong game would be narrated.");
+  check(side(row("2026-08-15", "BOS", "PIT")) === null,
+    "a settled/zero-contract position is not treated as money on the game",
+    "a closed position still pulls the callout in.");
+  check(side(row("2026-08-15", "MIA", "CIN")) === null,
+    "a game with no position and no call is left alone",
+    "an unheld game matched a position.");
+
   console.log("\n" + "=".repeat(78));
   if (fails) { console.log(fails + " check(s) FAILED"); process.exit(1); }
   console.log("callout reads the live feed correctly");
