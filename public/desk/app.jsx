@@ -6404,7 +6404,7 @@ function NrfiCalendar({ rec }) {
               <span style={{ color: "var(--moss)", fontWeight: 800 }}>{mWins}W</span>
               <span style={{ color: "var(--dim)", margin: "0 3px" }}>–</span>
               <span style={{ color: "var(--rose)", fontWeight: 800 }}>{mLosses}L</span>
-              {mHasPL && <span style={{ marginLeft: 8, color: mPL >= 0 ? "var(--moss)" : "var(--rose)", fontWeight: 700 }}>{mPL >= 0 ? "+" : ""}${Math.abs(mPL) >= 100 ? Math.round(mPL) : mPL.toFixed(0)}</span>}
+              {mHasPL && <span style={{ marginLeft: 8, color: mPL >= 0 ? "var(--moss)" : "var(--rose)", fontWeight: 700 }}>{mPL >= 0 ? "+" : "−"}${Math.abs(mPL).toFixed(2)}</span>}
             </span>
           )}
         </div>
@@ -6445,8 +6445,8 @@ function NrfiCalendar({ rec }) {
                   {settled.length > 0 && (
                     <>
                       {hasPL && (
-                        <div style={{ fontSize: 13, fontWeight: 800, color: pl >= 0 ? "var(--moss)" : "var(--rose)", lineHeight: 1.1, marginBottom: 2 }}>
-                          {pl >= 0 ? "+" : "−"}${Math.abs(pl) >= 100 ? Math.round(Math.abs(pl)) : Math.abs(pl).toFixed(0)}
+                        <div style={{ fontSize: 12, fontWeight: 800, color: pl >= 0 ? "var(--moss)" : "var(--rose)", lineHeight: 1.1, marginBottom: 2 }}>
+                          {pl >= 0 ? "+" : "−"}${Math.abs(pl).toFixed(2)}
                         </div>
                       )}
                       <div style={{ fontSize: 10, fontWeight: 700, marginTop: "auto", color: "var(--dim)" }}>
