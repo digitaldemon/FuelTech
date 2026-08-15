@@ -5318,7 +5318,7 @@ async function pitcherMeta(pid, season) {
   if (pid == null) return { hand: null, form: null };
   const k = pid + ":" + season;
   if (_pitMeta.has(k)) return _pitMeta.get(k);
-  let hand = null, form = null, fipForm = null, lastStartDate = null, seasonEra = null, gs = null, g = null, ip = null, allow = null;
+  let hand = null, form = null, fipForm = null, lastStartDate = null, seasonEra = null, gs = null, g = null, ip = null, allow = null, recentK9 = null, seasonK9 = null;
   try {
     const [p, gl] = await Promise.all([
       getJson("https://statsapi.mlb.com/api/v1/people/" + pid + "?hydrate=stats(group=[pitching],type=[season],season=" + season + ")"),
@@ -5335,7 +5335,6 @@ async function pitcherMeta(pid, season) {
     const lastSt = starts[starts.length - 1];
     lastStartDate = (lastSt && (lastSt.date || (lastSt.game && lastSt.game.date))) || null;
     const recentStarts = starts.slice(-3);
-    let recentK9 = null, seasonK9 = null;
     if (sst) {
       const sIp = sst.inningsPitched != null ? parseIp(sst.inningsPitched) : 0;
       if (sIp > 0) seasonK9 = Number(sst.strikeOuts || 0) * 9 / sIp;

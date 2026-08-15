@@ -10,6 +10,13 @@ const root = path.join(__dirname, "..");
 const deskDir = path.join(root, "public", "desk");
 const vendorDir = path.join(deskDir, "vendor");
 
+// Babel is a transpiler, not a linter — it happily compiles a reference to a
+// variable that is out of scope, which then throws only in the browser and
+// takes the whole board down. Gate the build on the scope check.
+require("child_process").execFileSync(
+  process.execPath, [path.join(__dirname, "check-scope.js")], { stdio: "inherit" }
+);
+
 const src = fs.readFileSync(path.join(deskDir, "app.jsx"), "utf8");
 const out = Babel.transform(src, { presets: ["react"] }).code;
 fs.writeFileSync(path.join(deskDir, "app.js"),
