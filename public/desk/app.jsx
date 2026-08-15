@@ -5249,6 +5249,7 @@ const _obpCache = new Map();
 const _travelCache = new Map();
 const _linescore = new Map(); // gamePk -> Promise<linescore>
 const _rolling = new Map();   // pid:season -> rolling NRFI windows
+const _rosterCache = new Map(); // teamId:season:sit:ppId -> batter PA rate array
 // Shared linescore fetch — stores the Promise so concurrent callers dedup.
 function getLinescore(gamePk) {
   if (!_linescore.has(gamePk))
@@ -5553,6 +5554,66 @@ async function topOrderStrength(players, season, oppHand, oppPitcherId) {
   return val;
 }
 
+// Fetch the team's top-OBP batters from the active roster — used for the sim
+// projection toggle when the real lineup hasn't been posted yet.
+// Sorted by OBP desc, top 9 kept, H2H vs the opposing pitcher blended in.
+async function teamBestLineup(teamId, season, oppHand, oppPitcherId) {
+  if (teamId == null) return null;
+  const sit = oppHand === "L" ? "vl" : oppHand === "R" ? "vr" : null;
+  const k = teamId + ":" + season + ":" + (sit || "all") + ":" + (oppPitcherId || "");
+  if (_rosterCache.has(k)) return _rosterCache.get(k);
+  let val = null;
+  try {
+    const roster = await getJson("https://statsapi.mlb.com/api/v1/teams/" + teamId +
+      "/roster?rosterType=active&season=" + season);
+    const posPlayers = (roster.roster || []).filter((p) => p.position && p.position.type !== "Pitcher");
+    const ids = posPlayers.map((p) => p.person && p.person.id).filter(Boolean);
+    if (!ids.length) { _rosterCache.set(k, null); return null; }
+    const type = sit ? "type=[statSplits],sitCodes=[" + sit + "]" : "type=[season]";
+    const d = await getJson("https://statsapi.mlb.com/api/v1/people?personIds=" + ids.join(",") +
+      "&hydrate=stats(group=[hitting]," + type + ",season=" + season + ")");
+    const players = [];
+    (d.people || []).forEach((p) => {
+      const s = p.stats && p.stats[0] && p.stats[0].splits && p.stats[0].splits[0] && p.stats[0].splits[0].stat;
+      if (!s) return;
+      const pa = Number(s.plateAppearances || 0);
+      if (pa < 50) return;
+      const obp = s.obp != null ? Number(s.obp) : null;
+      const rates = paRates(s, pa);
+      if (obp != null && rates) players.push({ id: p.id, obp, rates });
+    });
+    if (!players.length) { _rosterCache.set(k, null); return null; }
+    players.sort((a, b) => b.obp - a.obp);
+    const top9 = players.slice(0, 9);
+    let batters = top9.map((p) => p.rates);
+    if (oppPitcherId && batters.some(Boolean)) {
+      try {
+        const topIds = top9.map((p) => p.id);
+        const h2hD = await getJson("https://statsapi.mlb.com/api/v1/people?personIds=" + topIds.join(",") +
+          "&hydrate=stats(group=[hitting],type=[vsPlayer],opposingPlayerId=" + oppPitcherId + ",season=" + season + ")");
+        const h2hById = {};
+        (h2hD.people || []).forEach((p) => {
+          const s = p.stats && p.stats[0] && p.stats[0].splits && p.stats[0].splits[0] && p.stats[0].splits[0].stat;
+          const pa = s ? Number(s.plateAppearances || s.atBats || 0) : 0;
+          if (s && pa >= 5) h2hById[p.id] = { pa, rates: paRates(s, pa, NRFI_PA_REG_H2H) };
+        });
+        batters = batters.map((b, i) => {
+          const h = h2hById[top9[i].id];
+          if (!b || !h || !h.rates) return b;
+          const wH = Math.min(0.65, h.pa / 20);
+          const keys = ["out", "bb", "s1", "s2", "s3", "hr"];
+          const blended = {};
+          for (const key of keys) blended[key] = b[key] * (1 - wH) + h.rates[key] * wH;
+          return blended;
+        });
+      } catch { /* keep season rates */ }
+    }
+    val = batters;
+  } catch { /* leave null */ }
+  _rosterCache.set(k, val);
+  return val;
+}
+
 // Travel & rest: fatigue nudges early offense down slightly (favours NRFI).
 async function travelRest(teamId, todayStr, venueId) {
   if (teamId == null) return { factor: 1, note: "" };
@@ -5798,9 +5859,9 @@ function nrfiEvaluate(ctx) {
     ? nClamp(unlogit(logit(nClamp(rawNRFI, 0.02, 0.98)) - dayGameShift), 0.02, 0.98)
     : rawNRFI;
 
-  // Projected sim: when lineups aren't posted, run the Markov sim with synthetic batters
-  // scaled from each team's season 1st-inning run rate. Gives a pitcher-grounded forward
-  // estimate so the card can show "sim projection" before real lineups arrive.
+  // Projected sim: when lineups aren't posted, run the Markov sim with the team's
+  // top-OBP active roster batters vs this pitcher's season allow rates.
+  // Falls back to synthetic team-rate batters if the roster fetch failed.
   let pNRFI_simProj = null;
   if (method !== "sim" && homeAllow && awayAllow) {
     const synthLine = (teamOff) => {
@@ -5811,8 +5872,10 @@ function nrfiEvaluate(ctx) {
       const ns = (1 - outNew) / (1 - NRFI_LG_PA.out);
       return new Array(5).fill({ out: outNew, bb: NRFI_LG_PA.bb * ns, s1: NRFI_LG_PA.s1 * ns, s2: NRFI_LG_PA.s2 * ns, s3: NRFI_LG_PA.s3 * ns, hr: NRFI_LG_PA.hr * ns });
     };
-    const sTop = simHalfNoRun(synthLine(ctx.awayOff), homeAllow, NRFI_LG_PA);
-    const sBot = simHalfNoRun(synthLine(ctx.homeOff), awayAllow, NRFI_LG_PA);
+    const awaySimBatters = ctx.awayBestLineup || synthLine(ctx.awayOff);
+    const homeSimBatters = ctx.homeBestLineup || synthLine(ctx.homeOff);
+    const sTop = simHalfNoRun(awaySimBatters, homeAllow, NRFI_LG_PA);
+    const sBot = simHalfNoRun(homeSimBatters, awayAllow, NRFI_LG_PA);
     const hPC = nClamp(1 + (homeForm.f-1)*0.10 + (homeOpen.f-1)*0.5 + (homeOpenG.f-1)*1.0 + (homeLoad.f-1)*0.7 + (homeTrend.f-1)*0.30, 0.82, 1.2);
     const aPC = nClamp(1 + (awayForm.f-1)*0.10 + (awayOpen.f-1)*0.5 + (awayOpenG.f-1)*1.0 + (awayLoad.f-1)*0.7 + (awayTrend.f-1)*0.30, 0.82, 1.2);
     const pRT = nClamp((1-sTop) * hPC * ctx.awayTravel.factor * env, 0.02, 0.97);
@@ -6258,9 +6321,13 @@ async function scanNrfi(onProgress) {
         travelRest(home && home.team && home.team.id, date, g.venue && g.venue.id),
       ]);
     // Lineups vs the opposing starter's hand (needs the hands resolved first).
-    const [awayLineup, homeLineup] = await Promise.all([
+    const awayPosted = (lu.awayPlayers || []).length >= 3;
+    const homePosted = (lu.homePlayers || []).length >= 3;
+    const [awayLineup, homeLineup, awayBestLineup, homeBestLineup] = await Promise.all([
       topOrderStrength(lu.awayPlayers, season, homeMeta && homeMeta.hand, homeMeta && homeMeta.id),
       topOrderStrength(lu.homePlayers, season, awayMeta && awayMeta.hand, awayMeta && awayMeta.id),
+      awayPosted ? Promise.resolve(null) : teamBestLineup(away && away.team && away.team.id, season, homeMeta && homeMeta.hand, homeMeta && homeMeta.id),
+      homePosted ? Promise.resolve(null) : teamBestLineup(home && home.team && home.team.id, season, awayMeta && awayMeta.hand, awayMeta && awayMeta.id),
     ]);
     const wx = weatherPark(g, home && home.team && home.team.abbreviation);
     const hpUmp = (g.officials || []).find((o) => o.officialType === "Home Plate");
@@ -6271,7 +6338,7 @@ async function scanNrfi(onProgress) {
       awayPP: (awayPP && awayPP.fullName) || "TBD", homePP: (homePP && homePP.fullName) || "TBD",
       awayPPId: awayPP && awayPP.id, homePPId: homePP && homePP.id,
       awayOff, homeOff, awayPit, homePit, awayMeta, homeMeta,
-      awayLineup, homeLineup, awayTravel, homeTravel, wx,
+      awayLineup, homeLineup, awayBestLineup, homeBestLineup, awayTravel, homeTravel, wx,
       awayRolling, homeRolling,
       awayPeri: awayPP ? periById[awayPP.id] : null,
       homePeri: homePP ? periById[homePP.id] : null,
