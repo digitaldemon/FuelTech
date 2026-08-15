@@ -9147,8 +9147,12 @@ function FirstInning() {
       {/* ── Controls / meta row ── */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 4 }}>
         {sellers.map((s) => (
-          <span key={s.id} style={{ fontSize: 12, color: s.active ? "var(--dim)" : "var(--amber)" }}>
-            {s.active ? (s.record ? s.name + ": " + s.record.wins + "-" + s.record.losses : s.name + ": active") : s.name + ": paused"}
+          <span key={s.id} style={{ fontSize: 12, color: s.active ? "var(--dim)" : "var(--amber)" }}
+            title={s.record ? "Last " + (s.record.sample || 0) + " settled straight first-inning legs (Under/Over 0.5 only, parlays excluded)"
+              + ", from " + (s.record.pages || 1) + " pages of the settled feed. Not a lifetime record." : undefined}>
+            {s.active ? (s.record ? s.name + ": " + s.record.wins + "-" + s.record.losses
+              + (s.record.sample ? " (" + Math.round(s.record.wins / Math.max(1, s.record.wins + s.record.losses) * 100) + "%)" : "")
+              : s.name + ": active") : s.name + ": paused"}
           </span>
         ))}
         <span style={{ fontSize: 12, color: "var(--dim)" }}>{"Calibrated: backtest (" + NRFI_CALIB_SEED.n + "g) · +" + liveCalib.n + " live"}</span>

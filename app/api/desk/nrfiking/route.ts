@@ -13,11 +13,16 @@ const DEFAULT_SELLERS = [
 ];
 const TTL_MS = 8 * 60 * 1000;
 const JR = "https://www.juicereel.com/api";
+// Settled pages to walk for the record. Ten tickets a page, so five pages is a
+// couple of months of a busy seller — enough that the header means something,
+// short enough to stay inside the cache refresh. Reading ONE page is what made
+// this header report "4-6" for a seller graded 205-120 over his full book.
+const SETTLED_PAGES = 5;
 
 type KingPick = {
-  id: string; side: "NRFI" | "YRFI"; line: number; odds: number | null;
+  id: string; side: "NRFI" | "YRFI"; line: number | null; odds: number | null;
   teams: string[]; startUtc: string | null; kalshiTicker: string | null;
-  placedAt: string | null; result: string;
+  placedAt: string | null; result: string; legs: number; gradable: boolean;
 };
 
 async function jget(url: string) {
@@ -41,6 +46,24 @@ function teamsFromDesc(desc: string): string[] {
   return parts.length === 2 ? parts : [];
 }
 
+// A first-inning leg is not automatically an NRFI leg. The feed mixes several
+// markets under the same 1I duration, and `pos.includes("under") ? NRFI : YRFI`
+// silently mislabels most of them:
+//   Under/Over 0.5 Runs - 1st Inning   <- the real market, both teams
+//   Under/Over 1.5, Over 5.5           <- read as NRFI/YRFI, different question
+//   "No - LA Dodgers Run Scored"       <- ONE team; can win while a run scores
+//   "Single - Live Hunter Goodman"     <- a player prop that happens to be 1I
+// The two things that define the market are a directional Under/Over position
+// and a literal 0.5 line; nothing else survives that pair. Verified against MLB
+// line scores in scripts/nrfi-tout-grade.js, where admitting the rest produced
+// 31 legs whose graded result contradicted the seller's own.
+function gradableSide(s: any): "NRFI" | "YRFI" | null {
+  const pos = String(s.position || "").trim().toLowerCase();
+  if (pos !== "under" && pos !== "over") return null;
+  if (s.value == null || Number(s.value) !== 0.5) return null;
+  return pos === "under" ? "NRFI" : "YRFI";
+}
+
 function extractFirstInning(rows: any[]): KingPick[] {
   const out: KingPick[] = [];
   for (const r of rows || []) {
@@ -49,15 +72,17 @@ function extractFirstInning(rows: any[]): KingPick[] {
       const desc = String(s.description || s.scrapeDescription || "");
       const isFirstInning = /1I/i.test(dur) || /first[_\s]?inning|- 1st\b|Runs - 1st/i.test(desc);
       if (!isFirstInning) continue;
+      const g = gradableSide(s);
       const pos = String(s.position || "").toLowerCase();
-      const side: "NRFI" | "YRFI" = pos.includes("under") ? "NRFI" : "YRFI";
       const ticket = String(r.ticketNum || "");
       out.push({
-        id: String(s.id || r.id), side, line: Number(s.value ?? 0.5),
+        id: String(s.id || r.id), side: g || (pos.includes("under") ? "NRFI" : "YRFI"),
+        line: s.value == null ? null : Number(s.value),
         odds: r.vig != null ? Number(r.vig) : null,
         teams: teamsFromDesc(desc), startUtc: s.startDate || null,
         kalshiTicker: (ticket.match(/KXMLBRFI-[A-Z0-9]+/i) || [])[0] || null,
         placedAt: r.datePlaced || null, result: String(r.result || "Pending"),
+        legs: Number(r.numTeam || 1), gradable: g != null,
       });
     }
   }
@@ -66,20 +91,29 @@ function extractFirstInning(rows: any[]): KingPick[] {
 
 async function buildSeller(s: { name: string; id: string }) {
   try {
-    const [p0, p1, settledRaw] = await Promise.all([
+    const settledPages = Array.from({ length: SETTLED_PAGES }, (_, i) =>
+      jget(`${JR}/bets/${s.id}/settled?page=${i}`).catch(() => null));
+    const [p0, p1, ...settledRaw] = await Promise.all([
       jget(`${JR}/bets/${s.id}?page=0`),
       jget(`${JR}/bets/${s.id}?page=1`).catch(() => null),
-      jget(`${JR}/bets/${s.id}/settled?page=0`).catch(() => null),
+      ...settledPages,
     ]);
     const openRows = p0?.data?.bets?.data?.rows;
     if (!Array.isArray(openRows)) return { name: s.name, id: s.id, active: false, open: [], record: null };
     const p1Rows = p1?.data?.bets?.data?.rows || [];
     const allOpenRows = [...openRows, ...p1Rows];
-    const open = extractFirstInning(allOpenRows).filter((p) => p.result === "Pending");
-    const settled = extractFirstInning(settledRaw?.data?.bets?.data?.rows || []).filter((p) => p.side === "NRFI");
+    // Only tail the market the First Inning tab is actually about. Without this
+    // the board offers a player prop as an "NRFI call".
+    const open = extractFirstInning(allOpenRows).filter((p) => p.result === "Pending" && p.gradable);
+    const settledRows = settledRaw.flatMap((j: any) => j?.data?.bets?.data?.rows || []);
+    // `result` is the TICKET's result, so charging it to one leg of a parlay
+    // reports a number that belongs to four other legs as well. Straights only.
+    const settled = extractFirstInning(settledRows).filter((p) => p.gradable && p.legs === 1);
     let wins = 0, losses = 0, pushes = 0;
     for (const x of settled) { if (/won/i.test(x.result)) wins++; else if (/lost/i.test(x.result)) losses++; else if (/push/i.test(x.result)) pushes++; }
-    return { name: s.name, id: s.id, active: true, open, record: { wins, losses, pushes, sample: settled.length } };
+    const nrfi = settled.filter((x) => x.side === "NRFI").length;
+    return { name: s.name, id: s.id, active: true, open,
+      record: { wins, losses, pushes, sample: settled.length, nrfi, pages: SETTLED_PAGES } };
   } catch {
     // Feed unreachable / gated -> treat as no active subscription.
     return { name: s.name, id: s.id, active: false, open: [], record: null };

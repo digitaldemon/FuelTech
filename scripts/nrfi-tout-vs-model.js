@@ -22,17 +22,50 @@
 //
 // Scoring is done through scripts/nrfi-model-lib.js, the same loader the
 // backtest uses, so this measures the shipped model rather than a copy of it.
+const fs = require("fs");
+const path = require("path");
 const { J, savant, mapLimit, buildCtx, scoreBothPaths } = require("./nrfi-model-lib");
 const { gradeSeller } = require("./nrfi-tout-grade");
 
 const pc = (x) => (x * 100).toFixed(1) + "%";
 const mean = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
+const CACHE = path.join(__dirname, "nrfi-tout-vs-model.json");
 
 (async () => {
   const id = process.argv[2] || "318949";
+  const args = process.argv.slice(2).filter((a) => a.startsWith("--"));
   const maxDates = Number(process.argv[3] || 0) || Infinity;
   const se = new Date().getUTCFullYear();
+  // A full-season pass is ~1300 games and ~20 minutes of MLB API calls. The
+  // scoring is deterministic given the same stats, so cache it and let the
+  // analysis below be re-cut cheaply. Re-run without --cached whenever the
+  // model changes; the cached scores are from whatever app.jsx said that day.
+  const useCache = args.includes("--cached") && fs.existsSync(CACHE);
 
+  let dates, slates, byDate;
+  if (useCache) {
+    const c = JSON.parse(fs.readFileSync(CACHE, "utf8"));
+    process.stderr.write(`loaded cached scores from ${c.at} (model ${c.simW == null ? "?" : "NRFI_SIM_W=" + c.simW})\n`);
+    dates = c.dates; slates = new Map(c.slates); byDate = new Map(c.byDate);
+  } else {
+    ({ dates, slates, byDate } = await collect(id, maxDates, se));
+  }
+
+  // Join his picks to our score for the same gamePk.
+  const joined = [];
+  for (const date of dates) {
+    const slate = slates.get(date) || [];
+    const idx = new Map(slate.map((s) => [s.gamePk, s]));
+    for (const x of byDate.get(date) || []) {
+      const mine = x.gamePk != null ? idx.get(x.gamePk) : null;
+      if (!mine) continue;
+      joined.push({ date, side: x.side, actual: mine.actual, p: mine.p, label: mine.label, slate });
+    }
+  }
+  report(dates, slates, joined);
+})().catch((e) => { console.error(e.stack || e); process.exitCode = 1; });
+
+async function collect(id, maxDates, se) {
   process.stderr.write("grading the seller's book...\n");
   const { graded } = await gradeSeller(id, true);
   const ok = graded.filter((x) => x.a.ok && x.a.day);
@@ -44,7 +77,7 @@ const mean = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
   for (const x of ok) {
     const d = x.a.day;
     if (!byDate.has(d)) byDate.set(d, []);
-    byDate.get(d).push(x);
+    byDate.get(d).push({ side: x.p.side, gamePk: x.a.gamePk });
   }
   const dates = [...byDate.keys()].sort().reverse().slice(0, maxDates);
   process.stderr.write(`scoring full slates for ${dates.length} dates...\n`);
@@ -76,21 +109,17 @@ const mean = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
     const rate = mapLimit.errs / (mapLimit.errs + scored);
     console.error(`\n!! ${mapLimit.errs} games threw while scoring (${pc(rate)})`);
     console.error("!! last: " + ((mapLimit.lastErr && mapLimit.lastErr.message) || mapLimit.lastErr));
-    if (rate > 0.2) { console.error("!! >20% — refusing to report off a partial model.\n"); process.exitCode = 1; return; }
+    if (rate > 0.2) { console.error("!! >20% — refusing to report off a partial model.\n"); process.exitCode = 1; throw new Error("partial model"); }
   }
+  const simW = (require("fs").readFileSync(require("path").join(__dirname, "..", "public", "desk", "app.jsx"), "utf8")
+    .match(/const NRFI_SIM_W = ([\d.]+);/) || [])[1] || null;
+  fs.writeFileSync(CACHE, JSON.stringify({ at: new Date().toISOString(), season: se, simW,
+    dates, slates: [...slates], byDate: [...byDate] }));
+  process.stderr.write(`  cached to ${CACHE}\n`);
+  return { dates, slates, byDate };
+}
 
-  // Join his picks to our score for the same gamePk.
-  const joined = [];
-  for (const date of dates) {
-    const slate = slates.get(date) || [];
-    const idx = new Map(slate.map((s) => [s.gamePk, s]));
-    for (const x of byDate.get(date) || []) {
-      const pk = x.a.gamePk;
-      const mine = pk != null ? idx.get(pk) : null;
-      if (!mine) continue;
-      joined.push({ date, side: x.p.side, actual: mine.actual, p: mine.p, label: mine.label, slate });
-    }
-  }
+function report(dates, slates, joined) {
   console.log(`\njoined ${joined.length} of his legs to a model score on the same game`);
   if (!joined.length) { console.log("nothing to compare"); return; }
 
@@ -152,16 +181,66 @@ const mean = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
   console.log(`  his NRFI legs, same days   ${hisW}-${nrfiPicks.length - hisW}  (${pc(hisW / nrfiPicks.length)} on ${nrfiPicks.length})`);
   console.log(`  every game, same days      ${pc(mean(allGames.map((g) => g.actual)))} on ${allGames.length}`);
 
+  // ---- 3b. Is our top-N number real, or is it hindsight? ----
+  // Our scores use CURRENT-SEASON splits, so scoring an April game uses stats
+  // that did not exist in April. His picks had no such luxury — they were made
+  // live. That makes any head-to-head above unfair in our favour, and the size
+  // of the unfairness is not knowable directly.
+  //
+  // But it IS testable by month. Full-season stats applied to an April game are
+  // almost entirely hindsight; applied to an August game they are mostly
+  // information that genuinely existed by then. So if our top-1 edge is large
+  // in April and collapses by August, the edge is leakage. If it holds roughly
+  // flat, leakage is not what is producing it.
+  console.log("\n=========== LEAKAGE CHECK: our top-1 by month ===========");
+  console.log("Scores use current-season splits, so early games are scored with the most");
+  console.log("hindsight. An edge that decays toward the end of the season is an artifact.");
+  const months = [...new Set(dates.map((d) => d.slice(0, 7)))].sort();
+  const monthRows = [];
+  for (const m of months) {
+    const ds = dates.filter((d) => d.startsWith(m));
+    let w = 0, l = 0, base = [], hw = 0, hn = 0;
+    for (const date of ds) {
+      const slate = (slates.get(date) || []).slice().sort((a, b) => b.p - a.p);
+      if (slate.length) { if (slate[0].actual) w++; else l++; }
+      base.push(...slate.map((g) => g.actual));
+      for (const j of joined.filter((x) => x.date === date && x.side === "NRFI")) { hn++; if (j.actual) hw++; }
+    }
+    const n = w + l;
+    if (!n) continue;
+    const row = { m, n, top1: w / n, base: mean(base), his: hn ? hw / hn : null, hn };
+    monthRows.push(row);
+    console.log(`  ${m}   top-1 ${String(w).padStart(2)}-${String(l).padStart(2)} = ${pc(row.top1).padStart(6)}` +
+      `   slate ${pc(row.base).padStart(6)}   edge ${((row.top1 - row.base) * 100).toFixed(1).padStart(5)} pts` +
+      `   | his ${row.his == null ? "  —  " : pc(row.his).padStart(6)} on ${String(row.hn).padStart(3)}`);
+  }
+  if (monthRows.length >= 4) {
+    const half = Math.floor(monthRows.length / 2);
+    const early = monthRows.slice(0, half), late = monthRows.slice(-half);
+    const eE = mean(early.map((r) => r.top1 - r.base)), lE = mean(late.map((r) => r.top1 - r.base));
+    console.log(`\n  early-season edge ${(eE * 100).toFixed(1)} pts   late-season edge ${(lE * 100).toFixed(1)} pts`);
+    if (eE - lE > 0.10) console.log("  -> decays sharply. Treat the top-N hit rate as inflated by hindsight.");
+    else if (eE - lE > 0.04) console.log("  -> some decay. The top-N hit rate is optimistic but not entirely artifact.");
+    else console.log("  -> roughly flat. Leakage is not what is producing the top-N edge.");
+    console.log("  Either way this is NOT a walk-forward test, and his record IS. Live CLV");
+    console.log("  on our own picks is the only clean comparison; this only sizes the gap.");
+  }
+
   // ---- 4. Verdict ----
   console.log("\n=========== READING ===========");
   const mp = mean(pctls), edge = mean(nrfiPicks.map((j) => j.actual)) - mean(allGames.map((g) => g.actual));
   console.log(`  his games beat the slate base rate by ${(edge * 100).toFixed(1)} pts`);
   console.log(`  our ranking puts them at the ${(mp * 100).toFixed(0)}th percentile on average`);
+  // Two independent facts, reported independently. An if/else chain here hid
+  // one behind the other — a small edge printed "it's all price" and never
+  // mentioned that we were ranking his games in the top quartile, which is the
+  // finding that decides what to change.
   if (edge <= 0.02) {
-    console.log("\n  -> His edge on THESE joined legs is small. Most of his return is price,");
-    console.log("     not game selection. Chasing his picks with the model is the wrong lever;");
-    console.log("     line shopping is the right one.");
-  } else if (mp >= 0.62) {
+    console.log("\n  -> SELECTION EDGE IS SMALL on these joined legs: his games barely beat");
+    console.log("     the slate base rate, so most of his return is price rather than which");
+    console.log("     games he picks. Line shopping is the lever, not the model.");
+  }
+  if (mp >= 0.62) {
     console.log("\n  -> FILTER problem. We already rank his games near the top of the slate;");
     console.log("     we simply do not convert that ranking into a played verdict often");
     console.log("     enough. The lever is the ladder thresholds and daily pick count,");
@@ -176,4 +255,4 @@ const mean = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
     console.log("     Expect a real but partial signal gap; do not expect a threshold");
     console.log("     change alone to close it.");
   }
-})().catch((e) => { console.error(e.stack || e); process.exitCode = 1; });
+}
