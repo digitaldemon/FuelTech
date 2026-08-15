@@ -1,7 +1,14 @@
 // Minimal service worker — satisfies PWA installability criteria.
-// Caches the shell on install so the app loads offline too.
-const CACHE = 'fueltechai-v2';
-const SHELL = ['/', '/chat', '/tls', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
+// Caches static assets so the app still loads offline.
+//
+// Cache name is versioned: bumping it purges every old entry on activate.
+// v3 evicts caches poisoned by v2, which served stale bundles cache-first and
+// stored login-redirect HTML under auth-gated asset URLs (broke /desk/app.js).
+const CACHE = 'fueltechai-v3';
+
+// Only genuinely public, static files belong here. Auth-gated routes must never
+// be precached — addAll follows their login redirect and stores that HTML.
+const SHELL = ['/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
@@ -17,22 +24,33 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// A response is only safe to cache if it came back from the URL we asked for.
+// A redirect means auth (or a rewrite) sent us elsewhere, so the body belongs to
+// that other URL — storing it under this key corrupts the entry.
+function cacheable(res) {
+  return res.ok && !res.redirected && res.type === 'basic';
+}
+
 self.addEventListener('fetch', (e) => {
   // Only handle same-origin GET requests; let API calls and cross-origin pass through.
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/')) return;
 
+  // Network-first: a fresh deploy must reach the user on the next load. The
+  // cache is an offline fallback, not the primary source.
   e.respondWith(
-    caches.match(e.request).then((cached) => {
-      const network = fetch(e.request).then((res) => {
-        if (res.ok && !url.pathname.startsWith('/api/')) {
+    fetch(e.request)
+      .then((res) => {
+        if (cacheable(res)) {
           const clone = res.clone();
           caches.open(CACHE).then((c) => c.put(e.request, clone));
         }
         return res;
-      });
-      return cached ?? network;
-    })
+      })
+      .catch(() => caches.match(e.request).then((cached) => {
+        if (cached) return cached;
+        throw new Error('offline and not cached');
+      }))
   );
 });
