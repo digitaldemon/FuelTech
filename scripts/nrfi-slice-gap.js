@@ -1,6 +1,13 @@
-// Which identifiers does the backtest's model bundle reference but never define?
+// Which identifiers does the model bundle reference but never define?
+//
+// The slice list moved from desk-nrfi-backtest.js to nrfi-model-lib.js when the
+// loader was shared. This file kept reading the old path and cheerfully reported
+// "slices in backtest: 0 / referenced but NOT defined: (nothing)" — a clean bill
+// of health from a checker that was no longer looking at anything. Hence the
+// guard below: an empty slice list is a broken checker, not a healthy bundle.
 const fs = require("fs"), path = require("path");
-const bt = fs.readFileSync(path.join(__dirname, "desk-nrfi-backtest.js"), "utf8");
+const LIB = "nrfi-model-lib.js";
+const bt = fs.readFileSync(path.join(__dirname, LIB), "utf8");
 const src = fs.readFileSync(path.join(__dirname, "..", "public", "desk", "app.jsx"), "utf8");
 function slice(a, b) {
   const i = src.indexOf(a); if (i < 0) throw new Error("start: " + a);
@@ -9,6 +16,8 @@ function slice(a, b) {
 }
 // re-run the exact slice list the backtest uses
 const list = [...bt.matchAll(/slice\((".*?"),\s*(".*?")\)/g)].map((m) => [JSON.parse(m[1]), JSON.parse(m[2])]);
+if (list.length < 10) throw new Error(`only ${list.length} slices found in ${LIB} — the list moved again, ` +
+  "and this checker was about to pass by looking at nothing");
 const model = list.map(([a, b]) => slice(a, b)).join("\n");
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 const clean = strip(model);

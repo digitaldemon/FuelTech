@@ -172,15 +172,18 @@ async function actualFirstInning(pick) {
   const inn1 = g.linescore?.innings?.[0];
   if (!inn1) return { ok: false, why: "no linescore" };
   const runs = (+(inn1.away?.runs || 0)) + (+(inn1.home?.runs || 0));
-  return { ok: true, runs, nrfi: runs === 0, day: g.officialDate,
+  // gamePk is the join key for scripts/nrfi-tout-vs-model.js — matching on
+  // date+teams there would re-introduce the doubleheader ambiguity this file
+  // just finished removing.
+  return { ok: true, runs, nrfi: runs === 0, day: g.officialDate, gamePk: g.gamePk,
     game: `${g.teams?.away?.team?.name} @ ${g.teams?.home?.team?.name}` };
 }
 
-(async () => {
-  const id = process.argv[2] || "318949";
-  const name = process.argv[3] || "NRFIKINGKY";
-  console.log(`Grading ${name} (JuiceReel ${id})\n`);
-
+// Walk every settled page and grade each first-inning leg. Exported so the
+// model-comparison script grades the same legs the same way rather than
+// re-deriving them; `graded` carries the resolved MLB game, which is the
+// expensive part and the part easiest to get subtly wrong.
+async function gradeSeller(id, quiet) {
   const rows = [];
   for (let page = 0; page < 40; page++) {
     let j;
@@ -188,14 +191,22 @@ async function actualFirstInning(pick) {
     const r = j?.data?.bets?.data?.rows;
     if (!Array.isArray(r) || !r.length) break;
     rows.push(...r);
-    process.stderr.write(`  page ${page}: ${r.length} tickets (total ${rows.length})\n`);
+    if (!quiet) process.stderr.write(`  page ${page}: ${r.length} tickets (total ${rows.length})\n`);
   }
   const picks = firstInningSubbets(rows);
+  const graded = [];
+  for (const p of picks) graded.push({ p, a: await actualFirstInning(p) });
+  return { rows, picks, graded };
+}
+
+async function main() {
+  const id = process.argv[2] || "318949";
+  const name = process.argv[3] || "NRFIKINGKY";
+  console.log(`Grading ${name} (JuiceReel ${id})\n`);
+
+  const { rows, picks, graded } = await gradeSeller(id);
   console.log(`settled tickets pulled: ${rows.length}   first-inning legs: ${picks.length}`);
   if (!picks.length) { console.log("Nothing to grade."); return; }
-
-  const graded = [];
-  for (const p of picks) { graded.push({ p, a: await actualFirstInning(p) }); }
 
   const ok = graded.filter((x) => x.a.ok);
   const bad = graded.filter((x) => !x.a.ok);
@@ -263,4 +274,8 @@ async function actualFirstInning(pick) {
     console.log("\n  CLV is the number that predicts future results. Hit rate over a few");
     console.log("  dozen picks is mostly variance; beating the close is not.");
   }
-})().catch((e) => { console.error(e.stack || e); process.exitCode = 1; });
+}
+
+module.exports = { gradeSeller, firstInningSubbets, actualFirstInning, findGame, classify };
+
+if (require.main === module) main().catch((e) => { console.error(e.stack || e); process.exitCode = 1; });
