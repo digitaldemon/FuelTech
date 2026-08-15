@@ -5318,7 +5318,7 @@ async function pitcherMeta(pid, season) {
   if (pid == null) return { hand: null, form: null };
   const k = pid + ":" + season;
   if (_pitMeta.has(k)) return _pitMeta.get(k);
-  let hand = null, form = null, fipForm = null, lastStartDate = null, seasonEra = null, gs = null, g = null, ip = null, allow = null, recentK9 = null, seasonK9 = null;
+  let hand = null, form = null, fipForm = null, lastStartDate = null, seasonEra = null, gs = null, g = null, ip = null, allow = null, recentK9 = null, seasonK9 = null, recentIp = null;
   try {
     const [p, gl] = await Promise.all([
       getJson("https://statsapi.mlb.com/api/v1/people/" + pid + "?hydrate=stats(group=[pitching],type=[season],season=" + season + ")"),
@@ -5353,10 +5353,11 @@ async function pitcherMeta(pid, season) {
         // FIP (Fielding Independent Pitching) removes defense noise — better forward predictor than ERA
         fipForm = Math.max(0.5, 3.13 + (13 * hr + 3 * bb - 2 * k) / lip);
         recentK9 = k * 9 / lip;
+        recentIp = lip;   // the K9 trend check needs the sample size to judge the swing
       }
     }
   } catch { /* leave nulls */ }
-  const val = { hand, form, fipForm, lastStartDate, seasonEra, gs, g, ip, allow, id: pid, recentK9, seasonK9 };
+  const val = { hand, form, fipForm, lastStartDate, seasonEra, gs, g, ip, allow, id: pid, recentK9, seasonK9, recentIp };
   _pitMeta.set(k, val);
   return val;
 }
@@ -6112,12 +6113,20 @@ function nrfiEvaluate(ctx) {
       detail: ctx.homePP + ": " + homeForm.note + " · " + ctx.awayPP + ": " + awayForm.note,
       lean: facLean((awayForm.f + homeForm.f) / 2) },
     (() => {
+      // A K/9 read off three starts is noisy: the standard error is
+      // sqrt(9*K9/IP), so at a typical 17 IP window one SE is ~2.2 K/9. The
+      // thresholds below sit near 1 SE (report) and ~1.4 SE (vote) — anything
+      // tighter is reading sampling noise as a change in stuff. Short windows
+      // are rejected outright rather than scaled, since a 6 IP window carries
+      // a ~3.7 K/9 SE and can't distinguish anything worth voting on.
+      const MIN_RECENT_IP = 12, K9_REPORT = 2.0, K9_VOTE = 3.0;
       const mk = (m, name) => {
         if (!m || m.recentK9 == null || m.seasonK9 == null || m.seasonK9 < 3) return null;
+        if ((m.recentIp || 0) < MIN_RECENT_IP) return null;
         const delta = m.recentK9 - m.seasonK9;
         const pct = Math.round(Math.abs(delta) / m.seasonK9 * 100);
-        if (Math.abs(delta) < 1.0) return null;
-        return { name, delta, pct, note: name + " K/9 L3 " + m.recentK9.toFixed(1) + (delta > 0 ? " ↑" : " ↓") + pct + "% vs SZN " + m.seasonK9.toFixed(1) };
+        if (Math.abs(delta) < K9_REPORT) return null;
+        return { name, delta, pct, note: name + " K/9 L3 " + m.recentK9.toFixed(1) + (delta > 0 ? " ↑" : " ↓") + pct + "% vs SZN " + m.seasonK9.toFixed(1) + " (" + m.recentIp.toFixed(1) + " IP)" };
       };
       const aw = mk(ctx.awayMeta, ctx.awayPP), hm = mk(ctx.homeMeta, ctx.homePP);
       if (!aw && !hm) return null;
@@ -6125,7 +6134,7 @@ function nrfiEvaluate(ctx) {
       const deltas = [aw?.delta, hm?.delta].filter((d) => d != null);
       const avgDelta = deltas.reduce((s, d) => s + d, 0) / deltas.length;
       return { label: "Pitcher K9 trend (L3 vs SZN)", detail: notes.join(" · "),
-        lean: avgDelta >= 1.5 ? "nrfi" : avgDelta <= -1.5 ? "yrfi" : "neutral" };
+        lean: avgDelta >= K9_VOTE ? "nrfi" : avgDelta <= -K9_VOTE ? "yrfi" : "neutral" };
     })(),
     { label: "Clean opener vs slow starter",
       detail: ctx.homePP + ": " + homeOpen.note + " · " + ctx.awayPP + ": " + awayOpen.note,
@@ -6274,15 +6283,47 @@ function nrfiEvaluate(ctx) {
   ].filter(Boolean);
   const call = pNRFI >= 0.5 ? "nrfi" : "yrfi";
   const nonNeutral = checks.filter((c) => c.lean !== "neutral");
-  const agree = nonNeutral.filter((c) => c.lean === call).length;
+  // Consensus is counted per family, not per row. Twelve of these checks read
+  // the same starter from different angles (season form, L3 K9, L10 trend, last
+  // start, venue split, rest...), so one underlying fact — "this guy has been
+  // scuffling" — used to cast five separate ballots and drag frac under 0.5,
+  // tripping the "signals split" downgrade on games where nothing was actually
+  // in conflict. Each family now casts one vote: its own internal majority, or
+  // no vote at all when it is evenly split.
+  const famVotes = new Map();
+  for (const c of nonNeutral) {
+    const f = checkFamily(c.label);
+    if (!famVotes.has(f)) famVotes.set(f, { nrfi: 0, yrfi: 0 });
+    famVotes.get(f)[c.lean]++;
+  }
+  let agree = 0, famTotal = 0;
+  for (const v of famVotes.values()) {
+    if (v.nrfi === v.yrfi) continue;          // family internally split — abstains
+    famTotal++;
+    if ((v.nrfi > v.yrfi ? "nrfi" : "yrfi") === call) agree++;
+  }
   const pitProfiles = {
     away: { name: ctx.awayPP, pid: ctx.awayPPId, hand: ctx.awayMeta && ctx.awayMeta.hand, ...pitcherI01Profile(ctx.awayPit, ctx.awayMeta && ctx.awayMeta.seasonEra, ctx.awayRolling, ctx.awayPeri) },
     home: { name: ctx.homePP, pid: ctx.homePPId, hand: ctx.homeMeta && ctx.homeMeta.hand, ...pitcherI01Profile(ctx.homePit, ctx.homeMeta && ctx.homeMeta.seasonEra, ctx.homeRolling, ctx.homePeri) },
   };
-  return { pNRFI, pNRFI_simProj, checks, aligned: { agree, total: nonNeutral.length }, confidence: conf, method, pitProfiles };
+  return { pNRFI, pNRFI_simProj, checks, aligned: { agree, total: famTotal, rows: nonNeutral.length }, confidence: conf, method, pitProfiles };
 }
 const rate2 = (o) => (o && o.rate != null ? o.rate.toFixed(2) : "—");
 const awayPit0 = (o) => (o && o.rate != null ? o.rate.toFixed(2) + " R/1st" : "TBD");
+
+// Which underlying fact a check is reading. Checks in the same family are
+// different views of one thing, so they share a single consensus vote — see the
+// famVotes block in the evaluator. Anything unmatched votes on its own.
+const CHECK_FAMILIES = [
+  [/^(Starting pitching|Pitcher skill|Opener \/ bullpen|Starter recent form|Pitcher K9 trend|Clean opener|Pitcher season load|Pitcher rest days|Last start momentum|Pitcher trend|Pitcher venue split|Backtest profile)/, "pitching"],
+  [/^(1st-inning offense|Offense trend|Offense venue split|Team K%|Platoon|Lineups)/, "offense"],
+  [/^(Day game|Weather & park|Umpire)/, "environment"],
+];
+function checkFamily(label) {
+  const s = String(label || "");
+  for (const [re, fam] of CHECK_FAMILIES) if (re.test(s)) return fam;
+  return s; // ungrouped checks (e.g. Travel & rest) stand alone
+}
 
 // League-average first-inning rates (derived from model constants + MLB averages).
 const I01_LG = { rate: 0.52, whip: 1.28, k9: 8.4, bb9: 3.1, hr9: 1.10 };
@@ -6533,13 +6574,16 @@ function nrfiVerdict(r) {
   // 4) Value gate: a great matchup at an efficient/short price is NOT a wager.
   // The probability stays model-only; the market only decides if there's value.
   if (r.market) {
-    const edge = r.market.edge;           // model% - market% on our side
+    // Gate on raw divergence (see the edge/edgeRaw note where market is built);
+    // quote the anchored gap. Falls back to `edge` if a caller has no edgeRaw.
+    const edge = r.market.edgeRaw != null ? r.market.edgeRaw : r.market.edge;
+    const shown = r.market.edge;          // anchored gap, for display only
     const mktProb = r.market.marketSide;  // market's implied % on our side
     if (edge == null) { strength = "PASS"; notes.push("game under way — no pregame edge left"); }
     else if (edge < 1.5) { strength = "PASS"; notes.push("market efficient — no value"); }
     else if (mktProb >= 65 && edge < 5) { strength = "PASS"; notes.push("juice too short"); }
     else if ((strength === "STRONG" || strength === "BET") && edge < 2.5) { strength = down(strength, 1); notes.push("thin value"); }
-    else if (edge >= 2.5) notes.push("value +" + edge.toFixed(1) + "% vs market");
+    else if (edge >= 2.5) notes.push("value +" + (shown != null ? shown : edge).toFixed(1) + "% vs market (model " + edge.toFixed(1) + "pp off)");
   }
 
   const isBet = strength === "STRONG" || strength === "BET";
@@ -7158,15 +7202,25 @@ function FirstInning() {
     const started = !!(r.currentInning >= 1 || r.final || (r.state && r.state !== "Preview"));
     let market = null;
     if (mk) {
-      // Edge off pFinal, not pcal: pcal is the model's unanchored opinion, and
-      // quoting an edge against a number the market prior never touched inflates
-      // every gap. The desk bets the anchored number, so it must price it too.
+      // Two different edges, for two different jobs.
+      //
+      // `edge` is quoted off pFinal — the anchored number the desk actually bets
+      // and sizes on — so the displayed gap never overstates what we're backing.
+      //
+      // `edgeRaw` is the model's undiluted disagreement with the market, and it
+      // is what the value gates test. nrfiBlend pulls pFinal toward the market by
+      // (1 - blend), so edge == blend * edgeRaw — gating on `edge` charged the
+      // blend twice and demanded a 4-6pp raw divergence just to clear a 2.5pp
+      // bar. The gate thresholds were calibrated against raw divergence; test
+      // them against raw divergence.
       const modelSide = call === "NRFI" ? pFinal * 100 : (1 - pFinal) * 100;
+      const rawSide   = call === "NRFI" ? pcal * 100 : (1 - pcal) * 100;
       const marketSide = call === "NRFI" ? mk.marketNRFI : (100 - mk.marketNRFI);
       const snapPrice = priceSnap.current[mk.ticker];
       const mktMove = snapPrice != null ? mk.yesPrice - snapPrice : null;
       market = { ticker: mk.ticker, link: mk.link, yesPrice: mk.yesPrice, marketNRFI: mk.marketNRFI,
-        marketSide, edge: started ? null : modelSide - marketSide, mktMove, started };
+        marketSide, edge: started ? null : modelSide - marketSide,
+        edgeRaw: started ? null : rawSide - marketSide, mktMove, started };
     }
     // Size on the same anchored probability the edge is quoted from, and never
     // size a game that is already under way.
@@ -7266,8 +7320,8 @@ function FirstInning() {
             <div style={{ fontWeight: 800, fontSize: 26, color: r.v.color, lineHeight: 1, marginTop: 5 }}>{r.pMax.toFixed(0)}%</div>
             <div style={{ fontSize: 9, letterSpacing: "0.10em", color: r.v.color, marginTop: 3, opacity: 0.6 }}>{r.tier.t}</div>
             {r.aligned && r.aligned.total >= 3 && (
-              <div title={r.aligned.agree + " of " + r.aligned.total + " non-neutral check signals agree with the model's call. Higher agreement = more confident pick."} style={{ cursor: "help", fontSize: 9, color: r.v.color, marginTop: 4, opacity: 0.75, fontWeight: 700 }}>
-                {r.aligned.agree}/{r.aligned.total} signals
+              <div title={r.aligned.agree + " of " + r.aligned.total + " signal groups agree with the model's call" + (r.aligned.rows ? " (from " + r.aligned.rows + " individual checks)" : "") + ". Checks reading the same underlying fact — the twelve that all grade the starter, for instance — share one vote, so a single input can't outvote everything else."} style={{ cursor: "help", fontSize: 9, color: r.v.color, marginTop: 4, opacity: 0.75, fontWeight: 700 }}>
+                {r.aligned.agree}/{r.aligned.total} signal groups
               </div>
             )}
             {r.checks && r.aligned && r.aligned.agree >= 2 && (() => {
@@ -7612,6 +7666,18 @@ function FirstInning() {
               </span>
             );
           })}
+          {/* A seller pick on a game the desk isn't betting used to sit in its own
+              band at the top of the board, which read as a recommendation while the
+              model's actual verdict was never shown. Keep the pick visible, but say
+              plainly that the desk disagrees and why. */}
+          {(r.tails || []).length > 0 && !r.v.isBet && (
+            <div style={{ width: "100%", marginTop: 6, padding: "8px 11px", borderRadius: 8, background: "rgba(230,160,0,0.07)", border: "1px solid rgba(230,160,0,0.28)", fontSize: 11, color: "var(--dim)", lineHeight: 1.5 }}>
+              <b style={{ color: "var(--amber)" }}>{(r.tails || []).map((t) => t.name).join(" & ")} {(r.tails || []).length > 1 ? "have" : "has"} this — the desk does not.</b>
+              {" "}Model says <b style={{ color: "var(--fg)" }}>{r.v.strength === "LEAN" ? "LEAN " + r.call : "PASS"}</b> at {r.pMax.toFixed(0)}%
+              {r.market && r.market.edgeRaw != null ? ", " + (r.market.edgeRaw >= 0 ? "+" : "") + r.market.edgeRaw.toFixed(1) + "pp vs market" : ""}.
+              {" "}Their pick is not a desk bet — size it as a tail, not a signal.
+            </div>
+          )}
           {graded && gradedWon !== null && recE && recE.strength !== "PASS" && !recE.thinPass && (recE.mktAtPick != null || recE.isBet === true) && (() => {
             const won = gradedWon;
             const clv = recE && recE.mktAtPick != null && recE.mktAtClose != null ? recE.mktAtClose - recE.mktAtPick : null;
