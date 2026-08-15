@@ -5418,6 +5418,30 @@ function playAgeMs(p) {
   const t = p && p.about && p.about.endTime ? Date.parse(p.about.endTime) : NaN;
   return isFinite(t) ? Date.now() - t : Infinity;
 }
+/* Which games the callout follows, and on whose side. Lifted out of the polling
+ * effect because the game picker has to render exactly the set the effect is
+ * about to poll — two copies of this predicate would drift, and the drift would
+ * show up as a game listed in the picker that never speaks. */
+function calloutHeld(openPositions) {
+  // Keying this off r.market.ticker looked obvious and was wrong: a Kalshi market
+  // leaves status=open the moment its game starts, so fetchKalshiRFI stops
+  // returning it and r.market goes null — precisely when the callout matters. The
+  // position's OWN ticker never goes away, and it carries the ET date and both
+  // team codes, so it can be matched by the same matchRFI the board already uses.
+  return (openPositions && !openPositions.error ? openPositions.positions || [] : [])
+    .filter((p) => p.ticker && p.contracts > 0)
+    .map((p) => ({ call: p.call, date: tickerDate(p.ticker), codes: teamCodes(p.ticker) }));
+}
+// The side actually held, so a game can be followed for the money on it and
+// called against that side rather than against the model's read.
+function calloutHeldSide(r, held) { const h = matchRFI(r, held); return h ? h.call : null; }
+// The verdict alone was the wrong gate: the desk PASSes whenever the market has a
+// game priced right, which says nothing about whether there is money on it.
+function calloutEligible(r, held) {
+  return !!(r.gamePk && !r.final && ((r.v && r.v.strength !== "PASS") || calloutHeldSide(r, held)) &&
+    (r.currentInning === 1 || (r.currentInning === 0 && r.startUtc &&
+      new Date(r.startUtc).getTime() - Date.now() < 5 * 60 * 1000)));
+}
 // Utterances queue, and a queue is latency. If the synthesiser is still working
 // through earlier lines when new ones land, the callout is narrating the past —
 // so a backlog gets dropped rather than drained. urgent lines (runs, the result)
@@ -7886,26 +7910,29 @@ function FirstInning() {
   // the inning — the backlog never drains, it just delays everything after it.
   const CALLOUT_STALE_MS = 45000;
   const [callout, setCallout] = useState(false);
+  /* Which game is being listened to. null = all of them, the original behaviour.
+   *
+   * That behaviour is fine at 7:05 and unusable at 4:10, when five games open
+   * the 1st within a few minutes of each other: the utterances interleave, and
+   * because a backlog gets dropped rather than drained, the overlap does not
+   * just confuse the call, it silently DELETES pitches from it. Picking one game
+   * is the only way the voice stays a broadcast rather than a scanner.
+   *
+   * Focus mutes; it does not stop. Every tracked game keeps polling and keeps
+   * marking what it has seen, so switching to a game mid-inning starts at the
+   * live edge instead of reciting the half-inning that already happened — the
+   * same catch-up rule that governs a fresh attach. And a settle is spoken from
+   * any tracked game regardless of focus, named, because a run scoring is the
+   * ticket resolving and it is two seconds of audio. */
+  const [focus, setFocus] = useState(null);
+  const focusRef = useRef(null);
   const spoken = useRef(new Map()); // gamePk -> { n: plays announced, opened, settled }
   useEffect(() => {
     if (!callout) return;
-    // The side actually held, so a game can be followed for the money on it and
-    // called against that side rather than against the model's read.
-    //
-    // Keying this off r.market.ticker looked obvious and was wrong: a Kalshi
-    // market leaves status=open the moment its game starts, so fetchKalshiRFI
-    // stops returning it and r.market goes null — precisely when the callout
-    // matters. The position's OWN ticker never goes away, and it carries the ET
-    // date and both team codes, so it can be matched to the row by the same
-    // matchRFI the board already uses for live markets.
-    const held = (openPositions && !openPositions.error ? openPositions.positions || [] : [])
-      .filter((p) => p.ticker && p.contracts > 0)
-      .map((p) => ({ call: p.call, date: tickerDate(p.ticker), codes: teamCodes(p.ticker) }));
-    const heldSide = (r) => { const h = matchRFI(r, held); return h ? h.call : null; };
-    const tracked = () => enriched.filter((r) =>
-      r.gamePk && !r.final && ((r.v && r.v.strength !== "PASS") || heldSide(r)) &&
-      (r.currentInning === 1 || (r.currentInning === 0 && r.startUtc &&
-        new Date(r.startUtc).getTime() - Date.now() < 5 * 60 * 1000)));
+    const held = calloutHeld(openPositions);
+    // Re-evaluated per tick rather than closed over, so a game entering the 1st
+    // between renders is picked up on the next poll instead of the next render.
+    const tracked = () => enriched.filter((r) => calloutEligible(r, held));
     let stopped = false;
     let inFlight = false;
     async function pollGame(r) {
@@ -7916,16 +7943,23 @@ function FirstInning() {
       // What is at stake here: the position if one is held, otherwise the call.
       // Announcing the model's side on a game the user faded would be worse than
       // saying nothing.
-      const mine = heldSide(r);
+      const mine = calloutHeldSide(r, held);
       const side = mine || r.call;
       const stake = mine ? "You are on " + mine : "Desk is on " + r.call;
+      // Focus mutes this game's running commentary. It does NOT stop the poll:
+      // everything below still advances the seen-sets, so switching in later
+      // starts at the live edge rather than dumping the inning so far.
+      const loud = !focusRef.current || focusRef.current === r.gamePk;
+      const named = r.away + " at " + r.home;
       // Joining a game mid-inning: catch up silently to what is already over and
       // start calling from the live edge, rather than reciting the half-inning.
+      // Switching focus TO a game clears `opened`, so it re-introduces itself and
+      // re-anchors to the live edge — a switch is a fresh attach.
       if (!st.opened) {
         const fresh = live.plays.findIndex((p) => playAgeMs(p) < CALLOUT_STALE_MS);
         st.n = fresh === -1 ? live.plays.length : fresh;
         if (live.plays.length || live.inning === 1) {
-          speak(r.away + " at " + r.home + ". First inning. " + stake + ".");
+          if (loud) speak(named + ". First inning. " + stake + ".");
           st.opened = true;
         }
       }
@@ -7947,24 +7981,29 @@ function FirstInning() {
       for (const p of live.pitches) {
         if (st.pitch.has(p.id)) continue;
         st.pitch.add(p.id);
-        speak(p.text);
+        if (loud) speak(p.text);
       }
       // Runs are read against the play before, so a two-run double is called as
       // two — the feed only ever reports a cumulative score.
+      // A settle cuts through focus. Running commentary from an unfocused game is
+      // noise, but a run scoring there is the ticket resolving — two seconds of
+      // audio, and the one thing that is strictly worse to miss than to hear. It
+      // gets the matchup name in front of it so it cannot be mistaken for the
+      // game actually being listened to.
+      const tag = loud ? "" : named + ". ";
       for (let i = st.n; i < live.plays.length; i++) {
         const line = playCallout(live.plays[i]);
         const runs = playRuns(live.plays[i], live.plays[i - 1]);
-        if (line) speak(line + (runs > 0
-          ? ". " + (runs === 1 ? "A run scores" : runs + " runs score") +
-            ". That is Y-R-F-I — " + (side === "YRFI"
-              ? (mine ? "you are a winner" : "the desk had it")
-              : (mine ? "that ticket is dead" : "the desk was wrong")) + "."
-          : ""), runs > 0);
-        if (runs > 0) st.settled = true;
+        const verdict = ". " + (runs === 1 ? "A run scores" : runs + " runs score") +
+          ". That is Y-R-F-I — " + (side === "YRFI"
+            ? (mine ? "you are a winner" : "the desk had it")
+            : (mine ? "that ticket is dead" : "the desk was wrong")) + ".";
+        if (runs > 0) { speak(tag + (loud && line ? line + verdict : verdict.slice(2)), true); st.settled = true; }
+        else if (loud && line) speak(line);
       }
       st.n = live.plays.length;
       if (!st.settled && live.past1) {
-        speak("First inning is clean in " + r.home + ". N-R-F-I — " +
+        speak(tag + "First inning is clean in " + r.home + ". N-R-F-I — " +
           (side === "NRFI"
             ? (mine ? "you are a winner" : "that is a winner")
             : (mine ? "that ticket is dead" : "the desk was wrong")) + ".", true);
@@ -7986,9 +8025,40 @@ function FirstInning() {
     // Positions load asynchronously and usually land AFTER the board does, so
     // they have to be in the dep list — otherwise the effect closes over an
     // empty position set and never picks the held games up.
+    //
+    // `focus` is deliberately NOT a dep. It is read through a ref so switching
+    // games does not tear down and restart the poll: a restart would drop every
+    // seen-set and make the next tick re-announce the inning from the top.
   }, [callout, enriched.map((r) => r.gamePk + ":" + r.currentInning).join(","),
       (openPositions && !openPositions.error ? openPositions.positions || [] : [])
         .map((p) => p.ticker + ":" + p.call).join(",")]);
+
+  // The games the picker offers. Must be the same predicate the poll uses, or
+  // the picker lists a game that never speaks.
+  const calloutGames = useMemo(() => {
+    if (!callout) return [];
+    const held = calloutHeld(openPositions);
+    return enriched.filter((r) => calloutEligible(r, held));
+  }, [callout, enriched, openPositions]);
+
+  useEffect(() => {
+    focusRef.current = focus;
+    // Switching cuts the outgoing game off mid-queue on purpose — those lines
+    // describe a game no longer being listened to, and letting them drain would
+    // put the new game's first pitches behind them.
+    if (typeof window !== "undefined" && window.speechSynthesis) window.speechSynthesis.cancel();
+    // A switch is a fresh attach: clear `opened` so the new game re-introduces
+    // itself and re-anchors to the live edge on the next tick, instead of
+    // resuming mid-inning from wherever it had got to while muted.
+    const st = focus && spoken.current.get(focus);
+    if (st && !st.settled) st.opened = false;
+  }, [focus]);
+
+  // A game that has settled or left the 1st stops being offered, so focus must
+  // not strand the callout on it — that would mute the whole board silently.
+  useEffect(() => {
+    if (focus && callout && !calloutGames.some((r) => r.gamePk === focus)) setFocus(null);
+  }, [focus, callout, calloutGames]);
 
   // Correlated NRFI parlay pairs: two BET NRFI games with both pitchers graded B or higher.
   const nrfiBetRows = enriched.filter((r) => r.v && r.v.isBet && r.call === "NRFI");
@@ -8697,6 +8767,27 @@ function FirstInning() {
             style={callout ? { color: "var(--moss)", borderColor: "var(--moss)" } : undefined}>
             {callout ? "🔊 Callout on" : "🔈 Callout"}
           </button>
+        )}
+        {/* Game picker. Only worth showing once games actually overlap — with one
+            game in the 1st there is nothing to choose between, and the row would
+            just be chrome. */}
+        {callout && calloutGames.length > 1 && (
+          <span style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, color: "var(--dim)" }}>Listening to</span>
+            {[{ pk: null, label: "All" }].concat(calloutGames.map((r) => ({
+              pk: r.gamePk, label: (r.awayAbbr || r.away) + "@" + (r.homeAbbr || r.home),
+            }))).map((g) => (
+              <button key={String(g.pk)} className="btn btn-ghost btn-sm"
+                onClick={() => setFocus(g.pk)}
+                title={g.pk === null
+                  ? "Call every game at once. On an overlapping slate they talk over each other."
+                  : "Call only this game. Others stay muted, but a run or a clean inning is still announced by name."}
+                style={{ fontSize: 11, padding: "2px 7px", ...(focus === g.pk
+                  ? { color: "var(--moss)", borderColor: "var(--moss)" } : null) }}>
+                {g.label}
+              </button>
+            ))}
+          </span>
         )}
         {importMsg && <span style={{ fontSize: 12, color: importMsg.ok ? "var(--moss)" : "var(--rose)" }}>{importMsg.text}</span>}
       </div>

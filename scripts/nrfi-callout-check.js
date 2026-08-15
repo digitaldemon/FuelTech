@@ -218,6 +218,40 @@ const check = (ok, what, detail) => {
     "a game with no position and no call is left alone",
     "an unheld game matched a position.");
 
+  /* ---- which games are followed ----
+   * The picker and the poll have to agree on this exactly. Two copies of the
+   * predicate would drift, and the drift shows up as a game listed in the picker
+   * that never speaks — the most confusing possible failure, because the UI says
+   * it is being listened to. Both now call calloutEligible; this pins it. */
+  console.log("\ngame selection");
+  const soon = new Date(Date.now() + 2 * 60000).toISOString();
+  const late = new Date(Date.now() + 60 * 60000).toISOString();
+  const g = (o) => ({ gamePk: 1, date: "2026-08-15", awayAbbr: "MIA", homeAbbr: "CIN",
+    currentInning: 1, ...o });
+  check(c.calloutEligible(g({ v: { strength: "LEAN" } }), []) === true,
+    "a LEAN in the 1st is followed",
+    "a LEAN with no position was dropped.");
+  check(c.calloutEligible(g({ v: { strength: "PASS" } }), []) === false,
+    "a PASS with no money on it is not followed",
+    "a PASS is being narrated — the callout would talk through games nobody is in.");
+  check(c.calloutEligible(g({ v: { strength: "PASS" }, awayAbbr: "NYY", homeAbbr: "TOR" }), held) === true,
+    "a PASS is followed anyway when a position is open on it",
+    "money on the game did not override the PASS gate.");
+  check(c.calloutEligible(g({ v: { strength: "BET" }, currentInning: 0, startUtc: soon }), []) === true,
+    "a game about to start is picked up before first pitch",
+    "the pre-start window is not attaching, so the opening pitches would be missed.");
+  check(c.calloutEligible(g({ v: { strength: "BET" }, currentInning: 0, startUtc: late }), []) === false,
+    "a game an hour out is not attached yet",
+    "the callout is attaching to games far from first pitch.");
+  check(c.calloutEligible(g({ v: { strength: "BET" }, currentInning: 3 }), []) === false,
+    "a game past the 1st is dropped — the inning that settles it is over",
+    "the callout is still polling a game whose 1st inning has ended.");
+  check(c.calloutEligible(g({ v: { strength: "BET" }, final: true }), []) === false,
+    "a final is not followed", "a finished game is still being polled.");
+  check(c.calloutEligible(g({ v: { strength: "BET" }, gamePk: null }), []) === false,
+    "a row with no gamePk cannot be polled and is dropped",
+    "a row with no gamePk would be fetched as /game/null/feed/live.");
+
   console.log("\n" + "=".repeat(78));
   if (fails) { console.log(fails + " check(s) FAILED"); process.exit(1); }
   console.log("callout reads the live feed correctly");
