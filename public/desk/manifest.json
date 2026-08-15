@@ -1,6 +1,6 @@
 {
-  "name": "Contract Desk",
-  "short_name": "Desk",
+  "name": "DigitalDemon's Desk",
+  "short_name": "DDDesk",
   "description": "Prediction market analyzer for Kalshi and Polymarket",
   "start_url": "/desk",
   "scope": "/desk",
