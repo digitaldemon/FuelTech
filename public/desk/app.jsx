@@ -5634,6 +5634,21 @@ function trendBaseline(whole, recent, key) {
   out[k] = (whole[k] * n - recent[k] * m) / (n - m);
   return out;
 }
+// What the card needs to state a team's recent first-inning offense honestly:
+// the window, the baseline that EXCLUDES it, and the streak length. Shared with
+// the model so the two cannot drift apart.
+function offL10Payload(rolling) {
+  if (!rolling || !rolling.l10 || (rolling.l10.n || 0) < 5) return null;
+  const szn = rolling.szn || null;
+  const prior = szn ? trendBaseline(szn, rolling.l10) : null;
+  return {
+    rate: rolling.l10.rate, n: rolling.l10.n,
+    sznRate: szn ? szn.rate : null, sznN: szn ? szn.n : null,
+    priorRate: prior ? prior.rate : null, priorN: prior ? prior.n : null,
+    avgRuns: rolling.l10.avgRuns,
+    l5Rate: rolling.l5 && (rolling.l5.n || 0) >= 3 ? rolling.l5.rate : null,
+  };
+}
 function teamOffenseTrendFactor(rolling) {
   if (!rolling) return { f: 1, note: "" };
   const l10 = rolling.l10 && (rolling.l10.n || 0) >= 5 ? rolling.l10 : null;
@@ -6115,6 +6130,22 @@ function nrfiRegress(rate, sample, reg) {
   const d = (sample || 0) + (reg || 0);
   if (!(d > 0)) return NRFI_LG_LAMBDA;   // 0/0 would return NaN, which survives nClamp
   return (rate * sample + NRFI_LG_LAMBDA * reg) / d;
+}
+// Turn a first-inning run RATE into P(the team scores at all), for display.
+//
+// The card used to print 1 - exp(-lambda), which is the Poisson answer and is
+// wrong here by about ten points. Runs in an inning are heavily overdispersed —
+// a team that scores in the 1st very often scores two or three, because rallies
+// cluster — so the same lambda comes from FEWER scoring innings than Poisson
+// assumes, and 1 - exp(-lambda) overstates every team. Measured on the Yankees:
+// lambda 0.510 printed as 40%, actual season frequency 29.7% over 145 games.
+//
+// halfNoRun has always used the empirically anchored form instead, so the model
+// was right and only the display was wrong. This is that same transform: at the
+// league lambda it returns exactly the league scoring rate by construction.
+function yrfiPctFromLambda(lambda) {
+  if (lambda == null || !isFinite(lambda)) return null;
+  return Math.round((1 - Math.pow(NRFI_LG_P0, lambda / NRFI_LG_LAMBDA)) * 100);
 }
 // log5-style matchup of an offense rate vs a pitcher rate around league mean
 function halfNoRun(offLambda, pitLambda, env) {
@@ -7130,12 +7161,17 @@ async function scanNrfi(onProgress) {
       awayAbbr: away && away.team && away.team.abbreviation, homeAbbr: home && home.team && home.team.abbreviation,
       awayPP: ctx.awayPP, homePP: ctx.homePP,
       pNRFI: ev.pNRFI, pNRFI_simProj: ev.pNRFI_simProj, pYRFI: 1 - ev.pNRFI, checks: ev.checks, aligned: ev.aligned, confidence: ev.confidence, method: ev.method, pitProfiles: ev.pitProfiles, parkEnv: ctx.wx,
-      awayYrfiPct: awayOff && awayOff.rate != null ? Math.round((1 - Math.exp(-awayOff.rate)) * 100) : null,
-      homeYrfiPct: homeOff && homeOff.rate != null ? Math.round((1 - Math.exp(-homeOff.rate)) * 100) : null,
+      awayYrfiPct: yrfiPctFromLambda(awayOff && awayOff.rate),
+      homeYrfiPct: yrfiPctFromLambda(homeOff && homeOff.rate),
       awayOffSample: awayOff ? awayOff.sample : null,
       homeOffSample: homeOff ? homeOff.sample : null,
-      awayOffL10: awayOffRolling && awayOffRolling.l10 && awayOffRolling.l10.n >= 5 ? { rate: awayOffRolling.l10.rate, sznRate: awayOffRolling.szn ? awayOffRolling.szn.rate : null, avgRuns: awayOffRolling.l10.avgRuns } : null,
-      homeOffL10: homeOffRolling && homeOffRolling.l10 && homeOffRolling.l10.n >= 5 ? { rate: homeOffRolling.l10.rate, sznRate: homeOffRolling.szn ? homeOffRolling.szn.rate : null, avgRuns: homeOffRolling.l10.avgRuns } : null,
+      // priorRate is the baseline with the L10 taken back OUT (see trendBaseline).
+      // The card used to draw its arrow off l10.rate - szn.rate, but szn contains
+      // the L10, so the card was showing three fifths of the move while the model
+      // acted on the whole of it — the Yankees read -12pp on the card and -20pp
+      // in the verdict. One number, one baseline.
+      awayOffL10: offL10Payload(awayOffRolling),
+      homeOffL10: offL10Payload(homeOffRolling),
       hasPitchers: !!(awayPP && awayPP.id && homePP && homePP.id),
       // Presence of the four inputs is not enough — the model still has to have
       // produced a usable number from them.
@@ -8148,23 +8184,46 @@ function FirstInning() {
           {(r.awayYrfiPct != null || r.homeYrfiPct != null) && (
             <div title="How often each team scores a run in the 1st inning this season. Red = high-scoring offense (bad for NRFI), green = low-scoring (good for NRFI). Arrow = L10 trend vs season avg. Hover individual team for avgRuns detail." style={{ cursor: "help", display: "inline-flex", gap: 8, alignItems: "center", padding: "3px 10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, fontSize: 11 }}>
               <span style={{ color: "var(--dim)", fontSize: 10, fontWeight: 700 }}>1ST-INN</span>
-              {r.awayYrfiPct != null && (() => {
-                const l10 = r.awayOffL10;
-                const delta = l10 && l10.sznRate != null ? l10.rate - l10.sznRate : null;
-                const arrow = delta != null && Math.abs(delta) >= 0.12 ? (delta > 0 ? " ↑" : " ↓") : "";
-                const arrowClr = delta != null && Math.abs(delta) >= 0.12 ? (delta > 0 ? "var(--rose)" : "var(--moss)") : null;
-                const rgNote = l10 && l10.avgRuns != null ? " · L10 avg " + l10.avgRuns.toFixed(2) + "R/g" : "";
-                return <span title={(r.awayAbbr || r.away) + " 1st-inn SZN: " + r.awayYrfiPct + "% score" + (l10 ? "  L10: " + Math.round(l10.rate * 100) + "% score" + rgNote : "")} style={{ cursor: "help", color: r.awayYrfiPct >= 38 ? "var(--rose)" : r.awayYrfiPct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>{r.awayAbbr || r.away} {r.awayYrfiPct}%{arrow && <span style={{ color: arrowClr }}>{arrow}</span>}</span>;
-              })()}
-              {r.awayYrfiPct != null && r.homeYrfiPct != null && <span style={{ color: "var(--dim)" }}>·</span>}
-              {r.homeYrfiPct != null && (() => {
-                const l10 = r.homeOffL10;
-                const delta = l10 && l10.sznRate != null ? l10.rate - l10.sznRate : null;
-                const arrow = delta != null && Math.abs(delta) >= 0.12 ? (delta > 0 ? " ↑" : " ↓") : "";
-                const arrowClr = delta != null && Math.abs(delta) >= 0.12 ? (delta > 0 ? "var(--rose)" : "var(--moss)") : null;
-                const rgNote = l10 && l10.avgRuns != null ? " · L10 avg " + l10.avgRuns.toFixed(2) + "R/g" : "";
-                return <span title={(r.homeAbbr || r.home) + " 1st-inn SZN: " + r.homeYrfiPct + "% score" + (l10 ? "  L10: " + Math.round(l10.rate * 100) + "% score" + rgNote : "")} style={{ cursor: "help", color: r.homeYrfiPct >= 38 ? "var(--rose)" : r.homeYrfiPct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>{r.homeAbbr || r.home} {r.homeYrfiPct}%{arrow && <span style={{ color: arrowClr }}>{arrow}</span>}</span>;
-              })()}
+              {[["away", r.awayAbbr || r.away, r.awayYrfiPct, r.awayOffL10],
+                ["home", r.homeAbbr || r.home, r.homeYrfiPct, r.homeOffL10]].map(([side, abbr, pct, l10], i) => {
+                if (pct == null) return null;
+                // Measure the streak against the games it is NOT part of, the same
+                // baseline the model uses. Falls back to the whole window only when
+                // there is too little left over to be a baseline.
+                const base = l10 ? (l10.priorRate != null ? l10.priorRate : l10.sznRate) : null;
+                const delta = l10 && base != null ? l10.rate - base : null;
+                const hot = delta != null && Math.abs(delta) >= 0.20;
+                const arrow = hot ? (delta > 0 ? " ↑" : " ↓") : "";
+                const arrowClr = hot ? (delta > 0 ? "var(--rose)" : "var(--moss)") : null;
+                // A team on a genuine first-inning streak has a season number that
+                // actively misleads: the Yankees carried 41% SZN into this card
+                // while sitting on twelve straight scoreless firsts, and the only
+                // place that showed was a hover. If the recent window disagrees
+                // with the season, the recent window goes on the card.
+                const show = hot && l10 != null;
+                const tip = abbr + " 1st-inn SZN: " + pct + "% of games score" +
+                  (l10 ? "\nL10: " + Math.round(l10.rate * 100) + "% (" + l10.n + "g)" +
+                    (l10.avgRuns != null ? " · " + l10.avgRuns.toFixed(2) + " R/g" : "") +
+                    (l10.priorRate != null
+                      ? "\nvs the " + l10.priorN + " games before that: " + Math.round(l10.priorRate * 100) + "%"
+                      : "") +
+                    (delta != null ? "\ndelta " + (delta > 0 ? "+" : "") + Math.round(delta * 100) + "pp" : "")
+                    : "");
+                return (
+                  <React.Fragment key={side}>
+                    {i === 1 && r.awayYrfiPct != null && <span style={{ color: "var(--dim)" }}>·</span>}
+                    <span title={tip} style={{ cursor: "help", color: pct >= 38 ? "var(--rose)" : pct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>
+                      {abbr} {pct}%
+                      {arrow && <span style={{ color: arrowClr }}>{arrow}</span>}
+                      {show && (
+                        <span style={{ color: arrowClr, fontWeight: 700 }}>
+                          {" L10 " + Math.round(l10.rate * 100) + "%"}
+                        </span>
+                      )}
+                    </span>
+                  </React.Fragment>
+                );
+              })}
             </div>
           )}
           {!r.lineupPosted && (

@@ -317,6 +317,54 @@ console.log("\nopener is not a restatement of the base rate");
     "f=" + (allInFirst ? allInFirst.f : "?"));
 }
 
+// The card prints "this team scores in the 1st X% of the time" from a run rate.
+// It used 1 - exp(-lambda), the Poisson answer, which overstates every club by
+// about ten points: runs in an inning cluster (score in the 1st and it is often
+// two or three), so a given lambda comes from FEWER scoring innings than Poisson
+// assumes. Measured against actual season frequencies for all 30 clubs, mean
+// absolute error was 11.87 points; the anchored form gives 1.75.
+console.log("\nthe displayed scoring rate is anchored, not Poisson");
+{
+  const P0 = c.read("NRFI_LG_P0"), LG = c.read("NRFI_LG_LAMBDA");
+  check(c.yrfiPctFromLambda(LG) === Math.round((1 - P0) * 100),
+    "at the league lambda the displayed rate IS the league rate, by construction",
+    "lambda=" + LG + " printed " + c.yrfiPctFromLambda(LG) + "%, but NRFI_LG_P0=" + P0 +
+    " means the league scores " + Math.round((1 - P0) * 100) + "% of the time.");
+  // The Poisson form is what was shipped; it must not come back.
+  check(c.yrfiPctFromLambda(0.52) < Math.round((1 - Math.exp(-0.52)) * 100) - 8,
+    "the displayed rate is well below the Poisson value it replaced",
+    "the display is back within 8 points of 1-exp(-lambda) — the overstatement has returned.");
+  // Monotone and bounded: a higher run rate can never print a lower scoring rate.
+  let mono = true;
+  for (let lam = 0.05; lam < 1.5; lam += 0.05)
+    if (c.yrfiPctFromLambda(lam) > c.yrfiPctFromLambda(lam + 0.05)) mono = false;
+  check(mono, "a higher first-inning run rate never prints a lower scoring rate",
+    "the display transform is not monotone in lambda.");
+  check(c.yrfiPctFromLambda(null) === null && c.yrfiPctFromLambda(undefined) === null,
+    "a missing rate prints nothing rather than 0%",
+    "a null lambda produced a number, which reads as a team that never scores.");
+}
+
+// The card's L10 arrow used to be drawn off a baseline containing the L10, so it
+// showed three fifths of the move the verdict acted on — the Yankees read -12pp
+// on the card and -20pp in the model on 2026-08-15.
+console.log("\nthe card's recent-form baseline matches the model's");
+{
+  const roll = { szn: { rate: 0.20, n: 25, avgRuns: 0.4 }, l10: { rate: 0.0, n: 10, avgRuns: 0 }, l5: { rate: 0, n: 5, avgRuns: 0 } };
+  const p = c.offL10Payload(roll);
+  const prior = c.trendBaseline(roll.szn, roll.l10);
+  check(p && p.priorRate != null && Math.abs(p.priorRate - prior.rate) < 1e-9,
+    "the card is handed the de-overlapped prior, not just the whole window",
+    "offL10Payload did not carry priorRate.");
+  check(p && Math.abs((p.rate - p.priorRate)) > Math.abs((p.rate - p.sznRate)),
+    "the de-overlapped delta is the larger, true one",
+    "prior delta " + (p ? (p.rate - p.priorRate).toFixed(3) : "?") +
+    " vs overlapping " + (p ? (p.rate - p.sznRate).toFixed(3) : "?"));
+  check(c.offL10Payload({ szn: { rate: 0.2, n: 25 }, l10: { rate: 0.1, n: 3 } }) === null,
+    "a window under 5 games is not put on the card at all",
+    "a 3-game window was surfaced as an L10.");
+}
+
 console.log("\n" + "=".repeat(72));
 if (fails) { console.log(fails + " invariant(s) VIOLATED"); process.exit(1); }
 console.log("all invariants hold");
