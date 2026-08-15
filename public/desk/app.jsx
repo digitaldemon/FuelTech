@@ -8777,15 +8777,15 @@ function FirstInning() {
               // can land an hour later with no gesture anywhere near it.
               // Spelled out: "NRFI" as a word comes back from every synthesiser
               // as "nerfy". The settle lines already say it this way.
-              if (next) speak("Digital Demons N-R-F-I. On the air.");
+              if (next) speak("Digital Demons N-R-F-I Live. On the air.");
               else if (window.speechSynthesis.cancel) window.speechSynthesis.cancel();
               setCallout(next);
             }}
-            title={"Digital Demons NRFI — the desk's own first-inning broadcast. Calls every game on the board " +
+            title={"Digital Demons NRFI Live — the desk's own first-inning broadcast. Calls every game on the board " +
               "that has a call or a position, pitch by pitch, then the NRFI result. " +
               "Built off the MLB play feed, not a broadcast: league game audio is licensed per-subscriber and cannot be embedded here."}
             style={callout ? { color: "var(--moss)", borderColor: "var(--moss)" } : undefined}>
-            {callout ? "🔊 Digital Demons NRFI · on" : "🔈 Digital Demons NRFI"}
+            {callout ? "🔊 Digital Demons NRFI Live · on" : "🔈 Digital Demons NRFI Live"}
           </button>
         )}
         {/* Game picker. Only worth showing once games actually overlap — with one
