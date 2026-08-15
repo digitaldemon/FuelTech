@@ -7060,12 +7060,18 @@ function FirstInning() {
   const isModelPick = (r) => r.source !== "kalshi-import" && !r.skipped && r.strength !== "PASS" && !r.thinPass && (r.mktAtPick != null || r.isBet === true);
   const modelSettled = settled.filter(isModelPick);
   const betSettled = modelSettled.filter((r) => r.isBet === true || (r.prob != null && r.prob >= 57));
+  const strongSettled = betSettled.filter((r) => r.strength === "STRONG" || (r.prob != null && r.prob >= 63));
+  const pureBetSettled = betSettled.filter((r) => !(r.strength === "STRONG" || (r.prob != null && r.prob >= 63)));
   const leanSettled = modelSettled.filter((r) => !r.isBet && (r.prob == null || r.prob < 57));
   const kalshiSettled = settled.filter((r) => r.source === "kalshi-import" && !r.skipped);
   const wins = modelSettled.filter((r) => r.result === "won").length;
   const losses = modelSettled.length - wins;
   const betWins = betSettled.filter((r) => r.result === "won").length;
   const betLosses = betSettled.length - betWins;
+  const strongWins2 = strongSettled.filter((r) => r.result === "won").length;
+  const strongLosses2 = strongSettled.length - strongWins2;
+  const pureBetWins = pureBetSettled.filter((r) => r.result === "won").length;
+  const pureBetLosses = pureBetSettled.length - pureBetWins;
   const leanWins = leanSettled.filter((r) => r.result === "won").length;
   const leanLosses = leanSettled.length - leanWins;
   const kWins = kalshiSettled.filter((r) => r.result === "won").length;
@@ -7650,11 +7656,19 @@ function FirstInning() {
           const tot = betWins + betLosses; const pct = tot > 0 ? Math.round(betWins / tot * 100) : null;
           const color = pct == null ? "var(--dim)" : pct >= 55 ? "var(--moss)" : pct >= 45 ? "var(--bone)" : "var(--rose)";
           const partTxt = betSignalCount > 0 ? participatedCount + " of " + betSignalCount + " taken" : null;
+          const sTot = strongWins2 + strongLosses2; const sPct = sTot > 0 ? Math.round(strongWins2 / sTot * 100) : null;
+          const bTot = pureBetWins + pureBetLosses; const bPct = bTot > 0 ? Math.round(pureBetWins / bTot * 100) : null;
           return (
-            <div title={"BET and STRONG quality picks only (model prob ≥ 57%) — highest-conviction calls." + (partTxt ? " Participation: " + partTxt + " (matched to your Kalshi imports by date + call direction)." : "")} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div title={"BET and STRONG quality picks (model prob ≥ 57%). STRONG = cal ≥ 63%, BET = cal 57–62%." + (partTxt ? " Participation: " + partTxt + " (matched to your Kalshi imports by date + call direction)." : "")} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 5 }}>BET SIGNALS</div>
               <div style={{ fontSize: 17, fontWeight: 800, color }}>{tot > 0 ? betWins + "W / " + betLosses + "L" : "—"}</div>
               {pct != null && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{pct}%{partTxt ? " · " + partTxt : ""}</div>}
+              {(sTot > 0 || bTot > 0) && (
+                <div style={{ display: "flex", gap: 8, marginTop: 5 }}>
+                  {sTot > 0 && <span style={{ fontSize: 10, color: sPct >= 58 ? "var(--moss)" : sPct >= 45 ? "var(--dim)" : "var(--rose)" }} title={"STRONG (cal ≥63%): " + strongWins2 + "W/" + strongLosses2 + "L"}>STRONG {sPct}%</span>}
+                  {bTot > 0 && <span style={{ fontSize: 10, color: bPct >= 55 ? "var(--moss)" : bPct >= 45 ? "var(--dim)" : "var(--rose)" }} title={"BET (cal 57–62%): " + pureBetWins + "W/" + pureBetLosses + "L"}>BET {bPct}%</span>}
+                </div>
+              )}
               {tot === 0 && betSignalCount > 0 && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{betSignalCount} signal{betSignalCount !== 1 ? "s" : ""} · none settled</div>}
             </div>
           );
