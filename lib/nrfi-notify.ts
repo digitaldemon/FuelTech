@@ -26,6 +26,8 @@ type NotifyEntry = {
   awayPP?: string;
   homePP?: string;
   pitProfiles?: { away?: PitcherProfile; home?: PitcherProfile };
+  method?: string;
+  lineupUpdatedAt?: number;
 };
 
 // ── Telegram ──────────────────────────────────────────────────────────────────
@@ -186,6 +188,118 @@ function buildCard(e: NotifyEntry) {
 </div>`.trim();
 
   return { telegram, sms, emailHtml, subject: `NRFI ${tierPlain}: ${game}` };
+}
+
+// ── Lineup card ───────────────────────────────────────────────────────────────
+function buildLineupCard(e: NotifyEntry) {
+  const tierPlain = e.strength === "STRONG" ? "STRONG" : "BET";
+  const accent = e.strength === "STRONG" ? "#f59e0b" : "#22c55e";
+  const pct = e.prob != null ? `${e.prob}%` : "—";
+  const mkt = e.mktAtPick != null ? `${e.mktAtPick}¢ NO` : "—";
+  const game = e.game ?? e.id;
+  const pp = e.pitProfiles;
+  const awayLine = pitLine(pp?.away, e.awayPP);
+  const homeLine = pitLine(pp?.home, e.homePP);
+
+  const telegram = [
+    `📋 LINEUPS IN — ${tierPlain} <b>NRFI</b>`,
+    `━━━━━━━━━━━━━━━`,
+    `🏟 <b>${game}</b>`,
+    ``,
+    `📊 Model: <b>${pct}</b>   💰 Market: <b>${mkt}</b>`,
+    ``,
+    `⚾ ${awayLine}`,
+    `⚾ ${homeLine}`,
+    ``,
+    `<a href="https://fueltechaipro.com/desk">View Desk →</a>`,
+  ].join("\n");
+
+  const sms = `LINEUPS IN — NRFI ${tierPlain} | ${game} | ${pct} model / ${mkt} | fueltechaipro.com/desk`;
+
+  const emailHtml = `
+<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:480px;background:#0f172a;color:#f1f5f9;border-radius:12px;overflow:hidden;margin:0 auto">
+  <div style="background:${accent};padding:10px 20px">
+    <span style="font-size:12px;font-weight:800;letter-spacing:2px;color:#000">LINEUPS IN — NRFI ${tierPlain}</span>
+  </div>
+  <div style="padding:20px 20px 8px">
+    <div style="font-size:22px;font-weight:700;margin-bottom:4px">${game}</div>
+    <div style="font-size:12px;color:#64748b">Simulation updated with posted lineups</div>
+  </div>
+  <div style="padding:0 20px 16px">
+    <table style="width:100%;border-collapse:collapse;font-size:14px">
+      <tr>
+        <td style="padding:7px 0;color:#94a3b8;border-bottom:1px solid #1e293b">Model Prob</td>
+        <td style="padding:7px 0;font-weight:700;text-align:right;border-bottom:1px solid #1e293b">${pct}</td>
+      </tr>
+      <tr>
+        <td style="padding:7px 0;color:#94a3b8;border-bottom:1px solid #1e293b">Market at Pick</td>
+        <td style="padding:7px 0;font-weight:700;text-align:right;border-bottom:1px solid #1e293b">${mkt}</td>
+      </tr>
+    </table>
+  </div>
+  <div style="padding:0 20px 16px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:1px;color:#475569;margin-bottom:8px">PITCHERS</div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <tr>
+        <td style="padding:6px 0;border-bottom:1px solid #1e293b;width:24px;color:#94a3b8;vertical-align:top">✈</td>
+        <td style="padding:6px 8px 6px 0;border-bottom:1px solid #1e293b">${pitLineHtml(pp?.away, e.awayPP)}</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 0;color:#94a3b8;vertical-align:top">🏠</td>
+        <td style="padding:6px 8px 6px 0">${pitLineHtml(pp?.home, e.homePP)}</td>
+      </tr>
+    </table>
+  </div>
+  <div style="padding:0 20px 20px">
+    <a href="https://fueltechaipro.com/desk"
+       style="display:inline-block;background:${accent};color:#000;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">
+      View Desk →
+    </a>
+  </div>
+</div>`.trim();
+
+  return { telegram, sms, emailHtml, subject: `LINEUPS IN — NRFI ${tierPlain}: ${game}` };
+}
+
+// ── Lineup notify ──────────────────────────────────────────────────────────────
+export async function runLineupNotify(): Promise<{ sent: number; errors: string[] }> {
+  const record = await readStore<NotifyEntry[]>("nrfi_record", []);
+  const lineupNotified = await readStore<string[]>("nrfi_lineup_notified", []);
+  const notifiedSet = new Set(lineupNotified);
+
+  // Fire for BET/STRONG picks that upgraded to sim (lineup posted) and haven't been notified yet.
+  const toNotify = record.filter(
+    (e) =>
+      !notifiedSet.has(e.id) &&
+      !e.result &&
+      !e.thinPass &&
+      e.source !== "kalshi-import" &&
+      e.method === "sim" &&
+      e.lineupUpdatedAt != null &&
+      (e.isBet === true || (e.prob ?? 0) >= 65)
+  );
+
+  const errors: string[] = [];
+  const sent: string[] = [];
+
+  for (const e of toNotify) {
+    const card = buildLineupCard(e);
+    try {
+      await Promise.all([
+        sendTelegram(card.telegram),
+        sendEmail(card.subject, card.emailHtml),
+      ]);
+      sent.push(e.id);
+    } catch (err) {
+      errors.push(`${e.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  if (sent.length) {
+    await writeStore("nrfi_lineup_notified", [...lineupNotified, ...sent]);
+  }
+
+  return { sent: sent.length, errors };
 }
 
 // ── Main export ────────────────────────────────────────────────────────────────

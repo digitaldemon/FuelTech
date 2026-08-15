@@ -6126,7 +6126,7 @@ function nrfiVerdict(r) {
   const down = (s, n) => ORDER[Math.max(0, ORDER.indexOf(s) - n)];
 
   // 1) Raw strength from the probability alone.
-  let strength = p >= 70 ? "STRONG" : p >= 63 ? "BET" : p >= 57 ? "LEAN" : "PASS";
+  let strength = p >= 70 ? "STRONG" : p >= 65 ? "BET" : p >= 57 ? "LEAN" : "PASS";
   const notes = [];
 
   // 2) Consensus gate: a decisive number with split signals is fragile.
@@ -6315,6 +6315,7 @@ function matchRFI(row, list) {
 function NrfiCalendar({ rec, bankroll, riskLevel }) {
   const [viewMonth, setViewMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [calView, setCalView] = useState("calendar");
+  const [expandedDay, setExpandedDay] = useState(null);
   // Risk config for estimating bet size when contracts not logged
   const _RC = { ghost:{mult:0.10,max:0.02}, conservative:{mult:0.25,max:0.06}, moderate:{mult:0.50,max:0.12}, standard:{mult:0.75,max:0.18}, aggressive:{mult:1.00,max:0.25}, turbo:{mult:1.50,max:0.35} };
   const _rc = _RC[riskLevel] || _RC.moderate;
@@ -6430,9 +6431,10 @@ function NrfiCalendar({ rec, bankroll, riskLevel }) {
                 ? (pending > 0 ? "rgba(230,160,0,0.07)" : "rgba(255,255,255,0.03)")
                 : (wins > losses ? "rgba(22,78,47,0.75)" : losses > wins ? "rgba(76,20,30,0.7)" : "rgba(40,44,64,0.7)");
               const border = isToday ? "1.5px solid rgba(80,220,110,0.7)" : hasData ? "1px solid rgba(255,255,255,0.08)" : "1px solid rgba(255,255,255,0.05)";
-              const tip = hasData ? settled.map((e) => (e.game||"?")+" → "+(e.result||"?").toUpperCase()).join("\n") : pending > 0 ? pending+" live" : "";
+              const isExpanded = expandedDay === key;
+              const clickable = all.length > 0;
               return (
-                <div key={key} title={tip} style={{ minHeight: 90, background: bg, borderRadius: 10, border, padding: "10px 12px", display: "flex", flexDirection: "column", cursor: hasData ? "default" : "default" }}>
+                <div key={key} onClick={clickable ? () => setExpandedDay(isExpanded ? null : key) : undefined} style={{ minHeight: 90, background: isExpanded ? (bg === "rgba(255,255,255,0.03)" ? "rgba(255,255,255,0.07)" : bg) : bg, borderRadius: 10, border: isExpanded ? "1.5px solid rgba(249,115,22,0.7)" : border, padding: "10px 12px", display: "flex", flexDirection: "column", cursor: clickable ? "pointer" : "default" }}>
                   <div style={{ fontSize: 16, fontWeight: 700, color: isToday ? "#4ade80" : hasData ? "#fff" : "rgba(255,255,255,0.55)", marginBottom: 4 }}>{d}</div>
                   {hasData && (
                     <>
@@ -6445,10 +6447,54 @@ function NrfiCalendar({ rec, bankroll, riskLevel }) {
                     </>
                   )}
                   {!hasData && pending > 0 && <div style={{ fontSize: 10, color: "var(--amber)", fontWeight: 700, marginTop: 4 }}>{pending} live</div>}
+                  {clickable && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginTop: "auto", textAlign: "right" }}>{isExpanded ? "▲" : "▼"}</div>}
                 </div>
               );
             })}
           </div>
+          {expandedDay && (() => {
+            const dayEntries = byDate[expandedDay] || [];
+            if (!dayEntries.length) return null;
+            const pending = dayEntries.filter((e) => !e.result && !e.skipped);
+            const settled = dayEntries.filter((e) => e.result === "won" || e.result === "lost");
+            return (
+              <div style={{ marginTop: 8, borderRadius: 10, border: "1px solid rgba(249,115,22,0.3)", background: "rgba(20,24,36,0.97)", overflow: "hidden" }}>
+                <div style={{ padding: "8px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#f97316", letterSpacing: "0.1em" }}>
+                    {expandedDay.slice(4,6)}/{expandedDay.slice(6,8)}/{expandedDay.slice(2,4)} — {dayEntries.length} BET{dayEntries.length !== 1 ? "S" : ""}
+                  </span>
+                  <button onClick={() => setExpandedDay(null)} style={{ border: "none", background: "none", color: "var(--dim)", cursor: "pointer", fontSize: 16, padding: 0, lineHeight: 1 }}>✕</button>
+                </div>
+                {[...pending, ...settled].map((e, i) => {
+                  const betPL = estPL(e);
+                  const live = !e.result;
+                  const won = e.result === "won";
+                  const resultColor = live ? "var(--amber)" : won ? "#4ade80" : "#f87171";
+                  const resultLabel = live ? (e.method === "sim" ? "LIVE (SIM)" : "LIVE") : (won ? "WON" : "LOST");
+                  return (
+                    <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 52px 56px 80px", padding: "10px 14px", borderTop: i === 0 ? "none" : "1px solid rgba(255,255,255,0.04)", fontSize: 12, alignItems: "center", background: i%2===0 ? "rgba(255,255,255,0.02)" : "transparent" }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 13, color: "#e2e8f0", marginBottom: 2 }}>{e.game || "—"}</div>
+                        <div style={{ fontSize: 10, color: "var(--dim)" }}>{e.awayPP || "?"} vs {e.homePP || "?"}{e.method === "sim" ? " · SIM" : ""}</div>
+                      </div>
+                      <div style={{ fontWeight: 700, color: e.call === "NRFI" ? "#60a5fa" : "#f59e0b", fontSize: 13 }}>
+                        {e.call || "—"}
+                        <div style={{ fontSize: 10, color: "var(--dim)", fontWeight: 400 }}>{e.prob != null ? e.prob + "%" : "—"}</div>
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--dim)" }}>
+                        {e.mktAtPick != null ? e.mktAtPick + "¢" : "—"}
+                        {e.strength === "STRONG" && <div style={{ fontSize: 9, color: "#f59e0b", fontWeight: 700 }}>STRONG</div>}
+                      </div>
+                      <div style={{ fontWeight: 700, color: resultColor, textAlign: "right", fontSize: 13 }}>
+                        {resultLabel}
+                        {betPL != null && <div style={{ fontSize: 11, color: betPL >= 0 ? "#4ade80" : "#f87171", fontWeight: 600 }}>{betPL >= 0 ? "+" : "−"}${Math.abs(betPL).toFixed(2)}</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </>
       ) : (
         <div style={{ borderRadius: 10, overflow: "hidden", border: "1px solid rgba(255,255,255,0.07)" }}>
@@ -6582,6 +6628,7 @@ function FirstInning() {
           mktAtPick: mktSide != null ? r1(mktSide) : null,
           mktLatest: mktSide != null ? r1(mktSide) : null, mktAtClose: null, result: null,
           strength: v.strength, isBet: v.isBet, thinPass: v.thinPass,
+          method: r.method || "model",
           awayPP: r.awayPP, homePP: r.homePP,
           pitProfiles: pp ? {
             away: { name: pp.away.name, hand: pp.away.hand, sample: pp.away.sample, cleanPct: pp.away.cleanPct, score: pp.away.score, rolling: pp.away.rolling },
@@ -6592,6 +6639,13 @@ function FirstInning() {
         // Track the market for CLV: update the live price pregame, freeze it at first pitch.
         if (mktSide != null && !started && e.mktLatest !== r1(mktSide)) { e.mktLatest = r1(mktSide); changed.push(e); }
         if (e.mktAtClose == null && started) { e.mktAtClose = e.mktLatest != null ? e.mktLatest : (mktSide != null ? r1(mktSide) : null); if (e.mktAtClose != null) changed.push(e); }
+        // Lineups posted: upgrade from λ-model to sim, re-evaluate with real batter rates.
+        if (!started && r.method === "sim" && e.method !== "sim") {
+          const v2 = nrfiVerdict({ ...r, pMax, call });
+          e.prob = r1(pMax); e.call = call; e.strength = v2.strength; e.isBet = v2.isBet; e.thinPass = v2.thinPass;
+          e.method = "sim"; e.lineupUpdatedAt = Date.now();
+          if (!changed.includes(e)) changed.push(e);
+        }
       }
       if (e && e.result == null && !e.skipped && r.inning1runs != null && (r.currentInning > 1 || r.final)) {
         const nrfiHit = r.inning1runs === 0;

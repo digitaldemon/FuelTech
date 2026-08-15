@@ -1,14 +1,14 @@
 // GET — called by Vercel cron every 10 min as a safety net.
 // POST with x-admin-secret — send a test notification with a provided entry.
-import { runNrfiNotify } from "../../../../../lib/nrfi-notify";
+import { runNrfiNotify, runLineupNotify } from "../../../../../lib/nrfi-notify";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const result = await runNrfiNotify();
-    return Response.json(result);
+    const [picks, lineups] = await Promise.all([runNrfiNotify(), runLineupNotify()]);
+    return Response.json({ picks, lineups });
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
