@@ -6828,8 +6828,8 @@ function FirstInning() {
   // Entries with mktAtPick == null had no market and were unbettable (effectively PASS).
   const isModelPick = (r) => r.source !== "kalshi-import" && !r.skipped && r.strength !== "PASS" && !r.thinPass && (r.mktAtPick != null || r.isBet === true);
   const modelSettled = settled.filter(isModelPick);
-  const betSettled = modelSettled.filter((r) => r.isBet === true || (r.prob != null && r.prob >= 63));
-  const leanSettled = modelSettled.filter((r) => !r.isBet && (r.prob == null || r.prob < 63));
+  const betSettled = modelSettled.filter((r) => r.isBet === true || (r.prob != null && r.prob >= 57));
+  const leanSettled = modelSettled.filter((r) => !r.isBet && (r.prob == null || r.prob < 57));
   const kalshiSettled = settled.filter((r) => r.source === "kalshi-import" && !r.skipped);
   const wins = modelSettled.filter((r) => r.result === "won").length;
   const losses = modelSettled.length - wins;
@@ -6840,7 +6840,7 @@ function FirstInning() {
   const kWins = kalshiSettled.filter((r) => r.result === "won").length;
   const kLosses = kalshiSettled.length - kWins;
   // Participation: BET/STRONG model signals vs Kalshi bets placed on same date+call
-  const allModelBets = (rec || []).filter((r) => isModelPick(r) && (r.isBet === true || (r.prob != null && r.prob >= 63)));
+  const allModelBets = (rec || []).filter((r) => isModelPick(r) && (r.isBet === true || (r.prob != null && r.prob >= 57)));
   const kalshiDateCall = new Set((rec || []).filter((r) => r.source === "kalshi-import" && !r.skipped).map((r) => r.date + ":" + r.call));
   const participatedCount = allModelBets.filter((r) => r.date && kalshiDateCall.has(r.date + ":" + r.call)).length;
   const betSignalCount = allModelBets.length;

@@ -276,7 +276,7 @@ export async function runLineupNotify(): Promise<{ sent: number; errors: string[
       e.source !== "kalshi-import" &&
       e.method === "sim" &&
       e.lineupUpdatedAt != null &&
-      (e.isBet === true || (e.prob ?? 0) >= 65)
+      (e.isBet === true || (e.prob ?? 0) >= 57)
   );
 
   const errors: string[] = [];
@@ -319,7 +319,7 @@ export async function runNrfiNotify(
           !e.result &&
           !e.thinPass &&
           e.source !== "kalshi-import" &&
-          (e.isBet === true || (e.prob ?? 0) >= 63)
+          (e.isBet === true || (e.prob ?? 0) >= 57)
       );
 
   const errors: string[] = [];
