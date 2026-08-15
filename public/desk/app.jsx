@@ -5381,20 +5381,21 @@ async function pitcherRollingNRFI(pid, season) {
           const r = item.isHome
             ? Number((inn1.away && inn1.away.runs) || 0)
             : Number((inn1.home && inn1.home.runs) || 0);
-          return r === 0; // true = clean first inning
+          return { clean: r === 0, runs: r };
         } catch { return null; }
       }));
       const valid = results.filter((x) => x !== null);
       if (valid.length) {
+        const cleans = valid.map((v) => v.clean);
         const pct = (arr) => arr.length ? Math.round(arr.filter(Boolean).length / arr.length * 100) : null;
+        const rps = (arr) => arr.length ? Math.round(arr.reduce((s, v) => s + v.runs, 0) / arr.length * 100) / 100 : null;
         val = {
-          szn: { pct: pct(valid),             n: valid.length },
-          l50: { pct: pct(valid.slice(-50)),   n: Math.min(valid.length, 50) },
-          l30: { pct: pct(valid.slice(-30)),   n: Math.min(valid.length, 30) },
-          l10: { pct: pct(valid.slice(-10)),   n: Math.min(valid.length, 10) },
-          l5:  { pct: pct(valid.slice(-5)),    n: Math.min(valid.length, 5)  },
-          streak: valid.slice(-5),              // last 5 results oldest→newest for visual display
-          lastClean: valid.length > 0 ? valid[valid.length - 1] : null,
+          szn: { pct: pct(cleans),             n: valid.length,                runsPerStart: rps(valid) },
+          l30: { pct: pct(cleans.slice(-30)),   n: Math.min(valid.length, 30), runsPerStart: rps(valid.slice(-30)) },
+          l10: { pct: pct(cleans.slice(-10)),   n: Math.min(valid.length, 10), runsPerStart: rps(valid.slice(-10)) },
+          l5:  { pct: pct(cleans.slice(-5)),    n: Math.min(valid.length, 5),  runsPerStart: rps(valid.slice(-5)) },
+          streak: cleans.slice(-5),              // last 5 results oldest→newest for visual display
+          lastClean: cleans.length > 0 ? cleans[cleans.length - 1] : null,
         };
       }
     }
@@ -5471,6 +5472,11 @@ function teamOffenseTrendFactor(rolling) {
   else if (delta <= -0.20) return { f: 0.93, note: "off L10 cold (" + Math.round(delta * 100) + "pp vs SZN)" };
   else if (delta <= -0.12) return { f: 0.97, note: "off L10 cooling (" + Math.round(delta * 100) + "pp)" };
   return { f: 1, note: "" };
+}
+// Pitching home advantage: starters allow ~3% fewer first-inning runs at their home park.
+// Season cumulative rates mix home+away starts; pitching at home today slightly outperforms.
+function homePitAdvantage(isHome) {
+  return isHome ? { f: 0.97 } : { f: 1.03 };
 }
 // Pitcher THESIS — stable season peripherals (the real predictors), not the
 // noisy first-inning run rate: strikeouts + whiff + first-pitch strikes suppress
@@ -5895,6 +5901,9 @@ function nrfiEvaluate(ctx) {
   // so the platoon factor partially double-counts the hand matchup.
   const offMult = (lineup, plat, travel, offTrend) =>
     nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.2 + (travel.factor - 1) * 0.6 + (offTrend.f - 1) * 0.5, 0.80, 1.30);
+  // Home field edge: home pitcher knows the mound; away pitcher pitches at opponent's park.
+  const awayPitAdv = homePitAdvantage(false);
+  const homePitAdv = homePitAdvantage(true);
   // Weights tuned from 4,015-game backtest (logistic regression on normalized features):
   // - skill (K%, BB%, barrel, GB): dominant after pitBase — keep at 1.0
   // - form (FIP/ERA L3): LR coeff -0.018 = counterproductive once pitBase controlled → 0.10
@@ -5903,12 +5912,13 @@ function nrfiEvaluate(ctx) {
   // - load (season IP): small but logical → 0.7
   // - rest: LR coeff -0.066, extra-rest games showed LOWER NRFI rate → 0.0 (removed)
   // - trend (L10 vs SZN clean %): hot/cold streak captured here, weight 0.30
-  const pitMult = (skill, form, opener, openG, load, _rest, trend) =>
-    nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30, 0.78, 1.25);
+  // - homeAdv: ~3% home park advantage for home pitcher, weight 1.0 (structural, not talent)
+  const pitMult = (skill, form, opener, openG, load, _rest, trend, homeAdv) =>
+    nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30 + (homeAdv.f - 1) * 1.0, 0.78, 1.25);
   const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel, awayOffTrend);
   const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel, homeOffTrend);
-  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest, awayTrend);
-  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeRest, homeTrend);
+  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest, awayTrend, awayPitAdv);
+  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeRest, homeTrend, homePitAdv);
   const umpFactor = ctx.umpFactor || 1;
   const env = nClamp(1 + (ctx.wx.factor - 1) + (umpFactor - 1), 0.85, 1.20);
   // λ-model (fallback when we don't have posted batters + pitcher allow-rates).
@@ -5924,8 +5934,8 @@ function nrfiEvaluate(ctx) {
     // from the raw rates. Apply only what the season rates DON'T contain:
     // recent form, opener/bullpen, travel, and park/weather/umpire.
     // Form weight 0.10 (down from 0.6) matches lambda path — backtest LR showed form counterproductive.
-    const homeCtx = nClamp(1 + (homeForm.f - 1) * 0.10 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0 + (homeLoad.f - 1) * 0.7 + (homeTrend.f - 1) * 0.30, 0.82, 1.2);
-    const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.10 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7 + (awayTrend.f - 1) * 0.30, 0.82, 1.2);
+    const homeCtx = nClamp(1 + (homeForm.f - 1) * 0.10 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0 + (homeLoad.f - 1) * 0.7 + (homeTrend.f - 1) * 0.30 + (homePitAdv.f - 1) * 1.0, 0.82, 1.2);
+    const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.10 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7 + (awayTrend.f - 1) * 0.30 + (awayPitAdv.f - 1) * 1.0, 0.82, 1.2);
     const s0top = simHalfNoRun(awayB, homeAllow, NRFI_LG_PA);
     const s0bot = simHalfNoRun(homeB, awayAllow, NRFI_LG_PA);
     const pRunTop = nClamp((1 - s0top) * homeCtx * ctx.awayTravel.factor * env, 0.02, 0.97);
@@ -5957,8 +5967,8 @@ function nrfiEvaluate(ctx) {
     const homeSimBatters = ctx.homeBestLineup || synthLine(ctx.homeOff);
     const sTop = simHalfNoRun(awaySimBatters, homeAllow, NRFI_LG_PA);
     const sBot = simHalfNoRun(homeSimBatters, awayAllow, NRFI_LG_PA);
-    const hPC = nClamp(1 + (homeForm.f-1)*0.10 + (homeOpen.f-1)*0.5 + (homeOpenG.f-1)*1.0 + (homeLoad.f-1)*0.7 + (homeTrend.f-1)*0.30, 0.82, 1.2);
-    const aPC = nClamp(1 + (awayForm.f-1)*0.10 + (awayOpen.f-1)*0.5 + (awayOpenG.f-1)*1.0 + (awayLoad.f-1)*0.7 + (awayTrend.f-1)*0.30, 0.82, 1.2);
+    const hPC = nClamp(1 + (homeForm.f-1)*0.10 + (homeOpen.f-1)*0.5 + (homeOpenG.f-1)*1.0 + (homeLoad.f-1)*0.7 + (homeTrend.f-1)*0.30 + (homePitAdv.f-1)*1.0, 0.82, 1.2);
+    const aPC = nClamp(1 + (awayForm.f-1)*0.10 + (awayOpen.f-1)*0.5 + (awayOpenG.f-1)*1.0 + (awayLoad.f-1)*0.7 + (awayTrend.f-1)*0.30 + (awayPitAdv.f-1)*1.0, 0.82, 1.2);
     const pRT = nClamp((1-sTop) * hPC * ctx.awayTravel.factor * env, 0.02, 0.97);
     const pRB = nClamp((1-sBot) * aPC * ctx.homeTravel.factor * env, 0.02, 0.97);
     const rawP = (1-pRT) * (1-pRB);
@@ -7238,10 +7248,10 @@ function FirstInning() {
                   {windows.length > 0 && (
                     <div className="pit-windows" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 3, marginBottom: 9 }}>
                       {windows.map((w) => (
-                        <div key={w.label} title={{ SZN: "Full season clean 1st inning rate", L30: "Last 30 starts clean %", L10: "Last 10 starts clean % — recent form", L5: "Last 5 starts clean % — sharpest recent signal (noisy at small n)" }[w.label] + " — " + (w.pct != null ? w.pct + "% in " + w.n + " games" : "no data")} style={{ cursor: "help", textAlign: "center", background: w.label === "L5" ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.04)", borderRadius: 6, padding: "4px 0", border: w.label === "L5" ? "1px solid rgba(255,255,255,0.1)" : "none" }}>
+                        <div key={w.label} title={{ SZN: "Full season clean 1st inning rate", L30: "Last 30 starts clean %", L10: "Last 10 starts clean % — recent form", L5: "Last 5 starts clean % — sharpest recent signal (noisy at small n)" }[w.label] + " — " + (w.pct != null ? w.pct + "% clean in " + w.n + " starts" + (w.runsPerStart != null ? ", avg " + w.runsPerStart.toFixed(2) + " runs allowed in 1st" : "") : "no data")} style={{ cursor: "help", textAlign: "center", background: w.label === "L5" ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.04)", borderRadius: 6, padding: "4px 0", border: w.label === "L5" ? "1px solid rgba(255,255,255,0.1)" : "none" }}>
                           <div style={{ fontSize: 9, color: "var(--dim)", marginBottom: 1 }}>{w.label}</div>
                           <div style={{ fontWeight: 700, fontSize: 12, color: w.pct != null ? pClr(w.pct) : "var(--dim)" }}>{w.pct != null ? w.pct + "%" : "—"}</div>
-                          <div style={{ fontSize: 9, color: "var(--dim)", opacity: 0.7 }}>{w.n != null ? w.n + "g" : ""}</div>
+                          <div style={{ fontSize: 9, color: "var(--dim)", opacity: 0.7 }}>{w.n != null ? w.n + "g" : ""}{w.runsPerStart != null ? " · " + w.runsPerStart.toFixed(2) + "R" : ""}</div>
                         </div>
                       ))}
                     </div>
