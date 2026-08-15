@@ -7087,6 +7087,11 @@ function FirstInning() {
             <div style={{ fontWeight: 900, fontSize: 12, color: r.v.color, lineHeight: 1, letterSpacing: "0.05em", textTransform: "uppercase" }}>{r.v.label}</div>
             <div style={{ fontWeight: 800, fontSize: 26, color: r.v.color, lineHeight: 1, marginTop: 5 }}>{r.pMax.toFixed(0)}%</div>
             <div style={{ fontSize: 9, letterSpacing: "0.10em", color: r.v.color, marginTop: 3, opacity: 0.6 }}>{r.tier.t}</div>
+            {r.aligned && r.aligned.total >= 3 && (
+              <div title={r.aligned.agree + " of " + r.aligned.total + " non-neutral check signals agree with the model's call. Higher agreement = more confident pick."} style={{ cursor: "help", fontSize: 9, color: r.v.color, marginTop: 4, opacity: 0.75, fontWeight: 700 }}>
+                {r.aligned.agree}/{r.aligned.total} signals
+              </div>
+            )}
           </div>
         </div>
         {/* ── Header ── */}
