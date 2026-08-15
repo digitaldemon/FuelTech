@@ -5467,15 +5467,21 @@ function pitcherTrendFactor(rolling) {
 function teamOffenseTrendFactor(rolling) {
   if (!rolling) return { f: 1, note: "" };
   const l10 = rolling.l10 && (rolling.l10.n || 0) >= 5 ? rolling.l10.rate : null;
+  const l5  = rolling.l5  && (rolling.l5.n  || 0) >= 3 ? rolling.l5.rate  : null;
   const szn = rolling.szn && rolling.szn.rate != null ? rolling.szn.rate : null;
-  if (l10 == null || szn == null || szn <= 0) return { f: 1, note: "" };
-  const delta = l10 - szn;
+  if ((l10 == null && l5 == null) || szn == null || szn <= 0) return { f: 1, note: "" };
+  const d10 = l10 != null ? l10 - szn : null;
+  const d5  = l5  != null ? l5  - szn : null;
+  // Same direction → average (confirmed); opposite → use less extreme (noise dampener).
+  const delta = (d10 != null && d5 != null)
+    ? (Math.sign(d5) === Math.sign(d10) ? (d10 + d5) / 2 : (Math.abs(d10) <= Math.abs(d5) ? d10 : d5))
+    : (d10 ?? d5);
   // Secondary: avg runs/game quantitative delta (positive = more runs in L10 = hot offense)
   const l10rg = rolling.l10 && rolling.l10.avgRuns != null ? rolling.l10.avgRuns : null;
   const sznRg = rolling.szn && rolling.szn.avgRuns != null ? rolling.szn.avgRuns : null;
   const rgBoost = (l10rg != null && sznRg != null && sznRg > 0) ? (l10rg - sznRg) / sznRg * 0.12 : 0;
   const combined = delta + rgBoost;
-  const pp = Math.round(delta * 100);
+  const pp = Math.round((d10 ?? d5 ?? 0) * 100);
   if      (combined >=  0.20) return { f: 1.08, note: "off L10 hot (+" + pp + "pp vs SZN)" };
   else if (combined >=  0.12) return { f: 1.04, note: "off L10 warm (+" + pp + "pp)" };
   else if (combined <= -0.20) return { f: 0.93, note: "off L10 cold (" + pp + "pp vs SZN)" };
@@ -6542,8 +6548,8 @@ async function scanNrfi(onProgress) {
       homeYrfiPct: homeOff && homeOff.rate != null ? Math.round((1 - Math.exp(-homeOff.rate)) * 100) : null,
       awayOffSample: awayOff ? awayOff.sample : null,
       homeOffSample: homeOff ? homeOff.sample : null,
-      awayOffL10: awayOffRolling && awayOffRolling.l10 && awayOffRolling.l10.n >= 5 ? { rate: awayOffRolling.l10.rate, sznRate: awayOffRolling.szn ? awayOffRolling.szn.rate : null } : null,
-      homeOffL10: homeOffRolling && homeOffRolling.l10 && homeOffRolling.l10.n >= 5 ? { rate: homeOffRolling.l10.rate, sznRate: homeOffRolling.szn ? homeOffRolling.szn.rate : null } : null,
+      awayOffL10: awayOffRolling && awayOffRolling.l10 && awayOffRolling.l10.n >= 5 ? { rate: awayOffRolling.l10.rate, sznRate: awayOffRolling.szn ? awayOffRolling.szn.rate : null, avgRuns: awayOffRolling.l10.avgRuns } : null,
+      homeOffL10: homeOffRolling && homeOffRolling.l10 && homeOffRolling.l10.n >= 5 ? { rate: homeOffRolling.l10.rate, sznRate: homeOffRolling.szn ? homeOffRolling.szn.rate : null, avgRuns: homeOffRolling.l10.avgRuns } : null,
       hasPitchers: !!(awayPP && awayPP.id && homePP && homePP.id),
       dataOk: !!(awayOff && homeOff && awayPit && homePit),
       lineupPosted: (ctx.awayLineup.obp != null && ctx.homeLineup.obp != null),
@@ -7427,14 +7433,15 @@ function FirstInning() {
         {/* ── 1st-inn offense + badges row ── */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 10 }}>
           {(r.awayYrfiPct != null || r.homeYrfiPct != null) && (
-            <div title="How often each team scores a run in the 1st inning this season. Red = high-scoring offense (bad for NRFI), green = low-scoring (good for NRFI). Arrow = L10 trend vs season avg." style={{ cursor: "help", display: "inline-flex", gap: 8, alignItems: "center", padding: "3px 10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, fontSize: 11 }}>
+            <div title="How often each team scores a run in the 1st inning this season. Red = high-scoring offense (bad for NRFI), green = low-scoring (good for NRFI). Arrow = L10 trend vs season avg. Hover individual team for avgRuns detail." style={{ cursor: "help", display: "inline-flex", gap: 8, alignItems: "center", padding: "3px 10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, fontSize: 11 }}>
               <span style={{ color: "var(--dim)", fontSize: 10, fontWeight: 700 }}>1ST-INN</span>
               {r.awayYrfiPct != null && (() => {
                 const l10 = r.awayOffL10;
                 const delta = l10 && l10.sznRate != null ? l10.rate - l10.sznRate : null;
                 const arrow = delta != null && Math.abs(delta) >= 0.12 ? (delta > 0 ? " ↑" : " ↓") : "";
                 const arrowClr = delta != null && Math.abs(delta) >= 0.12 ? (delta > 0 ? "var(--rose)" : "var(--moss)") : null;
-                return <span style={{ color: r.awayYrfiPct >= 38 ? "var(--rose)" : r.awayYrfiPct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>{r.awayAbbr || r.away} {r.awayYrfiPct}%{arrow && <span style={{ color: arrowClr }}>{arrow}</span>}</span>;
+                const rgNote = l10 && l10.avgRuns != null ? " · L10 avg " + l10.avgRuns.toFixed(2) + "R/g" : "";
+                return <span title={(r.awayAbbr || r.away) + " 1st-inn SZN: " + r.awayYrfiPct + "% score" + (l10 ? "  L10: " + Math.round(l10.rate * 100) + "% score" + rgNote : "")} style={{ cursor: "help", color: r.awayYrfiPct >= 38 ? "var(--rose)" : r.awayYrfiPct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>{r.awayAbbr || r.away} {r.awayYrfiPct}%{arrow && <span style={{ color: arrowClr }}>{arrow}</span>}</span>;
               })()}
               {r.awayYrfiPct != null && r.homeYrfiPct != null && <span style={{ color: "var(--dim)" }}>·</span>}
               {r.homeYrfiPct != null && (() => {
@@ -7442,7 +7449,8 @@ function FirstInning() {
                 const delta = l10 && l10.sznRate != null ? l10.rate - l10.sznRate : null;
                 const arrow = delta != null && Math.abs(delta) >= 0.12 ? (delta > 0 ? " ↑" : " ↓") : "";
                 const arrowClr = delta != null && Math.abs(delta) >= 0.12 ? (delta > 0 ? "var(--rose)" : "var(--moss)") : null;
-                return <span style={{ color: r.homeYrfiPct >= 38 ? "var(--rose)" : r.homeYrfiPct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>{r.homeAbbr || r.home} {r.homeYrfiPct}%{arrow && <span style={{ color: arrowClr }}>{arrow}</span>}</span>;
+                const rgNote = l10 && l10.avgRuns != null ? " · L10 avg " + l10.avgRuns.toFixed(2) + "R/g" : "";
+                return <span title={(r.homeAbbr || r.home) + " 1st-inn SZN: " + r.homeYrfiPct + "% score" + (l10 ? "  L10: " + Math.round(l10.rate * 100) + "% score" + rgNote : "")} style={{ cursor: "help", color: r.homeYrfiPct >= 38 ? "var(--rose)" : r.homeYrfiPct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>{r.homeAbbr || r.home} {r.homeYrfiPct}%{arrow && <span style={{ color: arrowClr }}>{arrow}</span>}</span>;
               })()}
             </div>
           )}
