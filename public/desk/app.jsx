@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-14.nrfi-edge13-trend";
+const BUILD = "2026-08-15.nrfi-platt-cal";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5793,8 +5793,8 @@ function nrfiEvaluate(ctx) {
   // Day game: games before ~4pm local (approximated as UTC < 20:00) run slightly higher scoring.
   const utcHour = ctx.startUtc ? new Date(ctx.startUtc).getUTCHours() : null;
   const isDayGame = utcHour != null && utcHour < 20;
-  // Day game: backtest confirmed -4.3pp NRFI rate vs night (2,041 day / 1,974 night across 4,015 games).
-  // A logit shift of -0.15 ≈ -3.5pp at p=0.50 — conservative vs the raw 4.3pp to avoid over-fitting.
+  // Day game: 2026 backtest (886 day / 877 night) = 4.5pp less NRFI. Platt slope 1.243 amplifies
+  // the 0.15 logit shift to ~4.6pp calibrated — matches empirical penalty without over-fitting.
   const dayGameShift = isDayGame ? 0.15 : 0;
   const awayTrend = pitcherTrendFactor(ctx.awayRolling);
   const homeTrend = pitcherTrendFactor(ctx.homeRolling);

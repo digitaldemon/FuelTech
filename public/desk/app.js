@@ -2,7 +2,7 @@
 /* global React, ReactDOM */const{useState,useRef,useEffect,useMemo,useCallback}=React;// Ticking clock — re-renders every `ms` ms so countdowns stay live.
 function useNow(ms=1000){const[now,setNow]=useState(Date.now());useEffect(()=>{const id=setInterval(()=>setNow(Date.now()),ms);return()=>clearInterval(id);},[ms]);return now;}function fmtCountdown(startUtc,now){const diff=new Date(startUtc).getTime()-now;if(diff<=0)return null;const totalSec=Math.floor(diff/1000);const h=Math.floor(totalSec/3600);const m=Math.floor(totalSec%3600/60);const s=totalSec%60;if(h>=24)return null;// too far out — don't show
 if(h>0)return h+"h "+m+"m";if(m>0)return m+"m "+String(s).padStart(2,"0")+"s";return s+"s";}// Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD="2026-08-14.nrfi-edge13-trend";// Everything outbound goes through the local server: it holds the API key
+const BUILD="2026-08-15.nrfi-platt-cal";// Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
 const px=u=>"/api/desk/proxy?url="+encodeURIComponent(u);const CSS=`
 @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap');
@@ -1029,8 +1029,8 @@ function nrfiEvaluate(ctx){const awayOffBase=nrfiRegress(ctx.awayOff&&ctx.awayOf
 const awayPlat=platoonFactor(ctx.awayOff,ctx.homeMeta&&ctx.homeMeta.hand);const homePlat=platoonFactor(ctx.homeOff,ctx.awayMeta&&ctx.awayMeta.hand);// Form: prefer FIP (removes defense noise) over ERA for last-3-start form.
 const awayForm=formFactor(ctx.awayMeta&&ctx.awayMeta.form,ctx.awayMeta&&ctx.awayMeta.fipForm);const homeForm=formFactor(ctx.homeMeta&&ctx.homeMeta.form,ctx.homeMeta&&ctx.homeMeta.fipForm);// Rest days: compute from game date vs pitcher's last start date.
 const gameDate=ctx.startUtc?ctx.startUtc.slice(0,10):null;const awayRestDays=gameDate&&ctx.awayMeta&&ctx.awayMeta.lastStartDate?Math.round((new Date(gameDate)-new Date(ctx.awayMeta.lastStartDate))/86400000):null;const homeRestDays=gameDate&&ctx.homeMeta&&ctx.homeMeta.lastStartDate?Math.round((new Date(gameDate)-new Date(ctx.homeMeta.lastStartDate))/86400000):null;const awayRest=restFactor(awayRestDays);const homeRest=restFactor(homeRestDays);// Day game: games before ~4pm local (approximated as UTC < 20:00) run slightly higher scoring.
-const utcHour=ctx.startUtc?new Date(ctx.startUtc).getUTCHours():null;const isDayGame=utcHour!=null&&utcHour<20;// Day game: backtest confirmed -4.3pp NRFI rate vs night (2,041 day / 1,974 night across 4,015 games).
-// A logit shift of -0.15 ≈ -3.5pp at p=0.50 — conservative vs the raw 4.3pp to avoid over-fitting.
+const utcHour=ctx.startUtc?new Date(ctx.startUtc).getUTCHours():null;const isDayGame=utcHour!=null&&utcHour<20;// Day game: 2026 backtest (886 day / 877 night) = 4.5pp less NRFI. Platt slope 1.243 amplifies
+// the 0.15 logit shift to ~4.6pp calibrated — matches empirical penalty without over-fitting.
 const dayGameShift=isDayGame?0.15:0;const awayTrend=pitcherTrendFactor(ctx.awayRolling);const homeTrend=pitcherTrendFactor(ctx.homeRolling);const awaySkill=pitchSkillFactor(ctx.awayPeri,ctx.lg);const homeSkill=pitchSkillFactor(ctx.homePeri,ctx.lg);const awayOpen=openerFactor(ctx.awayPit&&ctx.awayPit.era,ctx.awayMeta&&ctx.awayMeta.seasonEra);const homeOpen=openerFactor(ctx.homePit&&ctx.homePit.era,ctx.homeMeta&&ctx.homeMeta.seasonEra);const awayOpenG=openerGameFactor(ctx.awayMeta);const homeOpenG=openerGameFactor(ctx.homeMeta);const awayLoad=seasonLoadFactor(ctx.awayMeta&&ctx.awayMeta.ip);const homeLoad=seasonLoadFactor(ctx.homeMeta&&ctx.homeMeta.ip);// Blend each side's adjustments by DEVIATION-from-neutral (not raw product)
 // so correlated signals don't compound, then cap the net swing. Platoon weight
 // is lower now that lineups are measured directly vs the starter's hand.
