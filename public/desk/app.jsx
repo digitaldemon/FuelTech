@@ -5488,6 +5488,25 @@ function teamOffenseTrendFactor(rolling) {
   else if (combined <= -0.12) return { f: 0.97, note: "off L10 cooling (" + pp + "pp)" };
   return { f: 1, note: "" };
 }
+// Team offense venue split: captures team-specific home/road first-inning scoring gaps
+// beyond the flat homeOffAdvantage average. Requires ≥6 home AND ≥6 road games in rolling window.
+// Weight 0.3 in offMult (partial overlap with homeOffAdvantage; only activates on clear outliers).
+function offenseVenueFactor(rolling, isHome) {
+  if (!rolling || !rolling.home || !rolling.road) return { f: 1, note: "" };
+  const h = rolling.home, r = rolling.road;
+  if ((h.n || 0) < 6 || (r.n || 0) < 6 || h.rate == null || r.rate == null) return { f: 1, note: "" };
+  // delta: positive = team scores more at home than on road
+  const delta = h.rate - r.rate;
+  // effectiveDelta: positive = team is in a favorable venue today (YRFI lean)
+  const effectiveDelta = isHome ? delta : -delta;
+  const pp = Math.round(Math.abs(delta) * 100);
+  const tag = isHome ? "home" : "road";
+  if      (effectiveDelta >=  0.25) return { f: 1.06, note: tag + " offense +" + pp + "pp venue" };
+  else if (effectiveDelta >=  0.15) return { f: 1.03, note: tag + " offense +" + pp + "pp venue" };
+  else if (effectiveDelta <= -0.25) return { f: 0.95, note: tag + " offense -" + pp + "pp venue" };
+  else if (effectiveDelta <= -0.15) return { f: 0.98, note: tag + " offense -" + pp + "pp venue" };
+  return { f: 1, note: "" };
+}
 // Pitching home advantage: starters allow ~3% fewer first-inning runs at their home park.
 // Season cumulative rates mix home+away starts; pitching at home today slightly outperforms.
 function homePitAdvantage(isHome) {
@@ -5743,18 +5762,21 @@ async function teamOffenseRolling(teamId, todayStr, season) {
           const r = item.isHome
             ? Number((inn1.home && inn1.home.runs) || 0)
             : Number((inn1.away && inn1.away.runs) || 0);
-          return { scored: r > 0, runs: r };
+          return { scored: r > 0, runs: r, isHome: item.isHome };
         } catch { return null; }
       }));
       const valid = results.filter((x) => x !== null);
       if (valid.length >= 5) {
         const rate = (arr) => arr.length >= 3 ? arr.filter(v => v.scored).length / arr.length : null;
         const avg = (arr) => arr.length >= 3 ? Math.round(arr.reduce((s, v) => s + v.runs, 0) / arr.length * 100) / 100 : null;
+        const venSplit = (arr) => arr.length >= 6 ? { rate: rate(arr), n: arr.length, avgRuns: avg(arr) } : null;
         val = {
           szn:  { rate: rate(valid),           n: valid.length,                avgRuns: avg(valid) },
           l20:  { rate: rate(valid.slice(-20)), n: Math.min(valid.length, 20), avgRuns: avg(valid.slice(-20)) },
           l10:  { rate: rate(valid.slice(-10)), n: Math.min(valid.length, 10), avgRuns: avg(valid.slice(-10)) },
           l5:   { rate: rate(valid.slice(-5)),  n: Math.min(valid.length, 5),  avgRuns: avg(valid.slice(-5)) },
+          home: venSplit(valid.filter(v => v.isHome)),
+          road: venSplit(valid.filter(v => !v.isHome)),
         };
       }
     }
@@ -5936,14 +5958,18 @@ function nrfiEvaluate(ctx) {
   // Platoon reduced to 0.20: lineup OBP is already computed vs the starter's hand,
   // so the platoon factor partially double-counts the hand matchup.
   // homeAdv: home offense scores ~2% more at home park, weight 1.0 (structural).
-  const offMult = (lineup, plat, travel, offTrend, homeAdv) =>
-    nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.2 + (travel.factor - 1) * 0.6 + (offTrend.f - 1) * 0.5 + (homeAdv.f - 1) * 1.0, 0.80, 1.30);
+  // offVenue: team-specific home/road 1st-inn scoring gap, weight 0.3 (partial overlap with homeAdv).
+  const offMult = (lineup, plat, travel, offTrend, homeAdv, venue) =>
+    nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.2 + (travel.factor - 1) * 0.6 + (offTrend.f - 1) * 0.5 + (homeAdv.f - 1) * 1.0 + (venue.f - 1) * 0.3, 0.80, 1.30);
   // Home field edge: home pitcher knows the mound; away pitcher pitches at opponent's park.
   const awayPitAdv = homePitAdvantage(false);
   const homePitAdv = homePitAdvantage(true);
   // Offense home field: home batters score slightly more at their home park (familiar crowd, no travel).
   const awayOffAdv = homeOffAdvantage(false);
   const homeOffAdv = homeOffAdvantage(true);
+  // Team-specific offense venue split: captures team's home/road 1st-inn scoring gap in rolling window.
+  const awayOffVenue = offenseVenueFactor(ctx.awayOffRolling, false); // away team playing on road
+  const homeOffVenue = offenseVenueFactor(ctx.homeOffRolling, true);  // home team playing at home
   // Pitcher-specific venue split: captures individual home/road performance gaps beyond the average.
   const awayVenue = pitcherVenueFactor(ctx.awayRolling, false); // away pitcher pitching on road
   const homeVenue = pitcherVenueFactor(ctx.homeRolling, true);  // home pitcher pitching at home
@@ -5959,8 +5985,8 @@ function nrfiEvaluate(ctx) {
   // - venue: pitcher-specific home/road split beyond average, weight 0.5 (smaller sample)
   const pitMult = (skill, form, opener, openG, load, _rest, trend, homeAdv, venue) =>
     nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30 + (homeAdv.f - 1) * 1.0 + (venue.f - 1) * 0.5, 0.78, 1.25);
-  const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel, awayOffTrend, awayOffAdv);
-  const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel, homeOffTrend, homeOffAdv);
+  const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel, awayOffTrend, awayOffAdv, awayOffVenue);
+  const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel, homeOffTrend, homeOffAdv, homeOffVenue);
   const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest, awayTrend, awayPitAdv, awayVenue);
   const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeRest, homeTrend, homePitAdv, homeVenue);
   const umpFactor = ctx.umpFactor || 1;
@@ -6013,8 +6039,8 @@ function nrfiEvaluate(ctx) {
     const sBot = simHalfNoRun(homeSimBatters, awayAllow, NRFI_LG_PA);
     const hPC = nClamp(1 + (homeForm.f-1)*0.10 + (homeOpen.f-1)*0.5 + (homeOpenG.f-1)*1.0 + (homeLoad.f-1)*0.7 + (homeTrend.f-1)*0.30 + (homePitAdv.f-1)*1.0 + (homeVenue.f-1)*0.5, 0.82, 1.2);
     const aPC = nClamp(1 + (awayForm.f-1)*0.10 + (awayOpen.f-1)*0.5 + (awayOpenG.f-1)*1.0 + (awayLoad.f-1)*0.7 + (awayTrend.f-1)*0.30 + (awayPitAdv.f-1)*1.0 + (awayVenue.f-1)*0.5, 0.82, 1.2);
-    const pRT = nClamp((1-sTop) * hPC * ctx.awayTravel.factor * awayOffAdv.f * env, 0.02, 0.97);
-    const pRB = nClamp((1-sBot) * aPC * ctx.homeTravel.factor * homeOffAdv.f * env, 0.02, 0.97);
+    const pRT = nClamp((1-sTop) * hPC * ctx.awayTravel.factor * awayOffAdv.f * awayOffVenue.f * env, 0.02, 0.97);
+    const pRB = nClamp((1-sBot) * aPC * ctx.homeTravel.factor * homeOffAdv.f * homeOffVenue.f * env, 0.02, 0.97);
     const rawP = (1-pRT) * (1-pRB);
     pNRFI_simProj = dayGameShift > 0
       ? nClamp(unlogit(logit(nClamp(rawP, 0.02, 0.98)) - dayGameShift), 0.02, 0.98)
@@ -6071,7 +6097,9 @@ function nrfiEvaluate(ctx) {
         const d = szn != null ? aL10 - szn : null;
         const arrow = d == null ? "" : d >= 0.12 ? " ↑hot" : d <= -0.12 ? " ↓cold" : "";
         const rgTag = aR.l10 && aR.l10.avgRuns != null ? "  " + aR.l10.avgRuns.toFixed(2) + "R/g" : "";
-        notes.push(ctx.awayName + " L10 " + fmt(aL10) + arrow + (szn != null ? " (SZN " + fmt(szn) + ")" : "") + rgTag);
+        const aL5 = aR.l5 && aR.l5.n >= 3 ? aR.l5.rate : null;
+        const l5tag = aL5 != null ? "  L5 " + Math.round(aL5 * 100) + "%" : "";
+        notes.push(ctx.awayName + " L10 " + fmt(aL10) + arrow + (szn != null ? " (SZN " + fmt(szn) + ")" : "") + rgTag + l5tag);
         if (d != null) diffs.push(d);
       }
       if (hL10 != null) {
@@ -6079,7 +6107,9 @@ function nrfiEvaluate(ctx) {
         const d = szn != null ? hL10 - szn : null;
         const arrow = d == null ? "" : d >= 0.12 ? " ↑hot" : d <= -0.12 ? " ↓cold" : "";
         const rgTag = hR.l10 && hR.l10.avgRuns != null ? "  " + hR.l10.avgRuns.toFixed(2) + "R/g" : "";
-        notes.push(ctx.homeName + " L10 " + fmt(hL10) + arrow + (szn != null ? " (SZN " + fmt(szn) + ")" : "") + rgTag);
+        const hL5 = hR.l5 && hR.l5.n >= 3 ? hR.l5.rate : null;
+        const l5tag = hL5 != null ? "  L5 " + Math.round(hL5 * 100) + "%" : "";
+        notes.push(ctx.homeName + " L10 " + fmt(hL10) + arrow + (szn != null ? " (SZN " + fmt(szn) + ")" : "") + rgTag + l5tag);
         if (d != null) diffs.push(d);
       }
       const bothCold = diffs.length > 0 && diffs.every((d) => d <= -0.12);
@@ -6087,6 +6117,15 @@ function nrfiEvaluate(ctx) {
       return { label: "Offense trend (1st inn L10)",
         detail: notes.join(" · "),
         lean: bothCold ? "nrfi" : bothHot ? "yrfi" : "neutral" };
+    })(),
+    (() => {
+      if (!awayOffVenue.note && !homeOffVenue.note) return null;
+      const notes = [];
+      if (awayOffVenue.note) notes.push(ctx.awayName + ": " + awayOffVenue.note);
+      if (homeOffVenue.note) notes.push(ctx.homeName + ": " + homeOffVenue.note);
+      const fAvg = ((awayOffVenue.f - 1) + (homeOffVenue.f - 1)) / 2 + 1;
+      return { label: "Offense venue split", detail: notes.join(" · "),
+        lean: fAvg >= 1.04 ? "yrfi" : fAvg <= 0.97 ? "nrfi" : "neutral" };
     })(),
     { label: "Platoon / handedness",
       detail: ctx.awayName + ": " + awayPlat.note + " · " + ctx.homeName + ": " + homePlat.note,
@@ -7428,6 +7467,11 @@ function FirstInning() {
             </>
           )}
           {r.method === "sim" && <span title="Probabilities calculated via base-out Markov simulation — models each batter's actual PA rates vs this pitcher's allow rates across all possible 1st-inning scenarios." style={{ cursor: "help", padding: "8px 8px", display: "flex", alignItems: "center" }}><span style={{ fontSize: 9, color: "var(--dim)", border: "1px solid rgba(120,130,150,.3)", borderRadius: 3, padding: "1px 4px" }}>SIM</span></span>}
+          {r.confidence != null && r.confidence < 0.75 && (() => {
+            const pct = Math.round(r.confidence * 100);
+            const col = r.confidence < 0.50 ? "var(--rose)" : "var(--amber)";
+            return <span title={"Data confidence: " + pct + "% — model inputs are partially missing (thin pitcher sample, no lineups posted, or limited rolling data). Kelly is scaled down by " + (1 - Math.max(0.30, r.confidence)).toFixed(0)*100 + "% to compensate."} style={{ cursor: "help", padding: "8px 8px", display: "flex", alignItems: "center" }}><span style={{ fontSize: 9, color: col, border: "1px solid " + col, borderRadius: 3, padding: "1px 4px", opacity: 0.8 }}>{"CONF " + pct + "%"}</span></span>;
+          })()}
         </div>
 
         {/* ── 1st-inn offense + badges row ── */}
