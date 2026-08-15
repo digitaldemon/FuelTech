@@ -6488,10 +6488,29 @@ function nrfiEvaluate(ctx) {
    * throughout — [47.6, 54.7] against [46.0, 51.7]. There is no effect here to
    * price, and the old sign was pointing the wrong way.
    *
-   * What does survive the relabelling is start hour, which is not the same
-   * thing: 7pm+ local runs 45.6% NRFI against ~51% for everything earlier.
-   * That is ~1.9 SE and confounded with venue, so it is a candidate for a
-   * fitted term, not a constant to swap in here.
+   * Confirmed since on 6,706 games across 2024-2026 rather than one season
+   * (scripts/nrfi-starthour-measure.js §5): day 51.4% / night 50.7%, gap
+   * +0.67pp, and +0.09pp z=0.09 once each park's own rate is subtracted out.
+   * Season by season the gap runs +1.01pp, -1.09pp, +2.46pp — it does not even
+   * hold its sign. The +2.27pp above was itself a single-season figure; it is
+   * kept because it is what the withdrawal was decided on, but the three-season
+   * number is the one to trust and it is nearer zero still.
+   *
+   * Start hour was left open here as "a candidate for a fitted term" — 7pm+
+   * local ran 45.6% NRFI against ~51% for everything earlier. That is now
+   * closed, and it is NOT a term (scripts/nrfi-starthour-measure.js, 6,706
+   * games across 2024-2026, 41 venues, park held fixed by subtracting each
+   * park's own rate from its games):
+   *
+   *   before 1pm  +4.13pp z=1.54     1pm-4pm  -0.51pp z=-0.44
+   *   4pm-7pm     +0.11pp z=0.12     7pm+     -0.45pp z=-0.38
+   *
+   * Nothing clears noise. And the venue confound, which was the stated reason
+   * for holding it back, was not what killed it: the raw three-season gap for
+   * 7pm+ is only -0.88pp, so the -5pp never existed outside 2026 to be
+   * confounded. Season by season the 7pm+ residual runs +0.83pp, +1.44pp,
+   * -5.08pp — the whole signal was one season, and the two before it point the
+   * other way. Same lesson the -0.15 penalty taught: one season is not a fit.
    */
   const dayGameShift = 0;
   const awayTrend = pitcherTrendFactor(ctx.awayRolling);
@@ -6810,7 +6829,8 @@ function nrfiEvaluate(ctx) {
     // on MLB's own labels day games are 51.1% NRFI against night's 48.9%, which
     // is the opposite direction and inside the noise either way.
     isDayGame ? { label: "Day game",
-      detail: "Daytime first pitch — measured 51.1% NRFI vs 48.9% at night over 1,936 games, inside the noise. No adjustment applied.",
+      detail: "Daytime first pitch — 51.4% NRFI vs 50.7% at night over 6,706 games (2024-26), " +
+        "and +0.1pp once each park's own rate is held out. Inside the noise. No adjustment applied.",
       lean: "neutral" } : null,
     { label: "Weather & park", detail: ctx.wx.note, lean: facLean(ctx.wx.factor) },
     { label: "Umpire",
