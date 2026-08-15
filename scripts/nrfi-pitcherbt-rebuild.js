@@ -24,6 +24,10 @@ const { mapLimit } = require("./nrfi-model-lib");
 
 const FIELDS = "gameData,players,id,fullName,liveData,linescore,innings,num,away,home,runs,boxscore,teams,pitchers";
 const OUT = path.join(__dirname, "nrfi-pitcherbt-dist.json");
+// Per-start outcomes, written separately to keep OUT readable. This scan costs
+// 4,274 API calls, so it persists the raw starts rather than only the summary —
+// the next question about first innings should not require re-fetching them.
+const STARTS = path.join(__dirname, "nrfi-pitcherbt-starts.json");
 const MIN_STARTS = 10;
 // Two seasons, not one. Reliability is the binding constraint on this table:
 // a beta-binomial fit to 2026 alone puts a 14-start sample at 0.19, meaning four
@@ -73,7 +77,12 @@ async function seasonPks(season) {
       // distinguish a real skill spread from binomial noise; a split-half
       // correlation on these outcomes can, and that is the question that decides
       // whether this table is worth rebuilding at all.
-      rec.log.push({ pk, clean: +oppRuns === 0 ? 1 : 0 });
+      //
+      // `runs` is kept alongside `clean` because NRFI_PIT_REG regresses the run
+      // RATE rather than the clean share, and testing that constant out of
+      // sample needs the runs — collapsing to a bit here would mean re-fetching
+      // 4,274 games to ask the next question.
+      rec.log.push({ pk, clean: +oppRuns === 0 ? 1 : 0, runs: +oppRuns });
       arms.set(id, rec);
     }
     if (++done % 200 === 0) process.stderr.write(`  ${done}/${pks.length}\n`);
@@ -226,4 +235,7 @@ async function seasonPks(season) {
     splitHalfR: r, spearmanBrown: sb, splitN: splitPool.length,
     arms: qualified.map((a) => ({ name: a.name, starts: a.starts, clean: a.clean, rate: a.rate, post: post(a) })) }, null, 2));
   console.log(`\nwrote ${OUT} (${qualified.length} qualified arms)`);
+  fs.writeFileSync(STARTS, JSON.stringify({ at: new Date().toISOString(), seasons: SEASONS,
+    arms: [...arms.values()].map((a) => ({ name: a.name, log: a.log })) }));
+  console.log(`wrote ${STARTS} (per-start runs for every starter seen, not just the qualified)`);
 })().catch((e) => { console.error(e.stack || e); process.exitCode = 1; });
