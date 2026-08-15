@@ -5431,19 +5431,29 @@ function restFactor(days) {
   if (days >= 8)              return { f: 1.02, note: days + "d rest (long layoff)" };
   return { f: 1, note: "" };
 }
-// Pitcher rolling trend: L10 clean % vs season clean % shows if a pitcher is
-// running hot or cold over his last 10 starts. Minimum n=5 for signal.
-// Weight 0.30 — meaningful but capped; L10 is still only 10 games.
+// Pitcher rolling trend: L10 and L5 clean % vs season clean %.
+// L5 confirms or extends the L10 signal; when both point the same way use the
+// average (higher confidence), when they diverge dampen toward the less extreme.
+// Weight 0.30 in pitMult — meaningful but capped; short windows are still noisy.
 function pitcherTrendFactor(rolling) {
   if (!rolling) return { f: 1, note: "" };
   const l10pct = rolling.l10 && (rolling.l10.n || 0) >= 5 ? rolling.l10.pct : null;
+  const l5pct  = rolling.l5  && (rolling.l5.n  || 0) >= 3 ? rolling.l5.pct  : null;
   const sznPct = rolling.szn ? rolling.szn.pct : null;
-  if (l10pct == null || sznPct == null) return { f: 1, note: "" };
-  const delta = l10pct - sznPct;
-  if (delta >= 20) return { f: 0.88, note: "L10 +" + delta + "pp vs SZN (hot)" };
-  if (delta >= 10) return { f: 0.94, note: "L10 +" + delta + "pp vs SZN (warm)" };
-  if (delta <= -20) return { f: 1.12, note: "L10 " + delta + "pp vs SZN (cold streak)" };
-  if (delta <= -10) return { f: 1.06, note: "L10 " + delta + "pp vs SZN (cooling)" };
+  if (sznPct == null || (l10pct == null && l5pct == null)) return { f: 1, note: "" };
+  const d10 = l10pct != null ? l10pct - sznPct : null;
+  const d5  = l5pct  != null ? l5pct  - sznPct : null;
+  // Same direction → use average (confirmed); opposite direction → use less extreme reading.
+  const delta = (d10 != null && d5 != null)
+    ? (Math.sign(d5) === Math.sign(d10) ? (d10 + d5) / 2 : (Math.abs(d10) <= Math.abs(d5) ? d10 : d5))
+    : (d10 ?? d5);
+  const l5tag = l5pct != null ? " · L5 " + l5pct + "%" : "";
+  if      (delta >=  25) return { f: 0.84, note: "L10+" + Math.round(delta) + "pp vs SZN (blazing hot)" + l5tag };
+  else if (delta >=  15) return { f: 0.90, note: "L10+" + Math.round(delta) + "pp vs SZN (hot)" + l5tag };
+  else if (delta >=   8) return { f: 0.95, note: "L10+" + Math.round(delta) + "pp vs SZN (warm)" };
+  else if (delta <= -25) return { f: 1.16, note: "L10" + Math.round(delta) + "pp vs SZN (icy cold)" + l5tag };
+  else if (delta <= -15) return { f: 1.09, note: "L10" + Math.round(delta) + "pp vs SZN (cold)" + l5tag };
+  else if (delta <=  -8) return { f: 1.04, note: "L10" + Math.round(delta) + "pp vs SZN (cooling)" };
   return { f: 1, note: "" };
 }
 // Team first-inning offense rolling trend: L10 scored-in-1st rate vs season rate.
@@ -6057,6 +6067,8 @@ function nrfiEvaluate(ctx) {
     (() => {
       const aL10 = ctx.awayRolling && ctx.awayRolling.l10 && ctx.awayRolling.l10.n >= 5 ? ctx.awayRolling.l10.pct : null;
       const hL10 = ctx.homeRolling && ctx.homeRolling.l10 && ctx.homeRolling.l10.n >= 5 ? ctx.homeRolling.l10.pct : null;
+      const aL5  = ctx.awayRolling && ctx.awayRolling.l5  && ctx.awayRolling.l5.n  >= 3 ? ctx.awayRolling.l5.pct  : null;
+      const hL5  = ctx.homeRolling && ctx.homeRolling.l5  && ctx.homeRolling.l5.n  >= 3 ? ctx.homeRolling.l5.pct  : null;
       const aSzn = ctx.awayRolling && ctx.awayRolling.szn ? ctx.awayRolling.szn.pct : null;
       const hSzn = ctx.homeRolling && ctx.homeRolling.szn ? ctx.homeRolling.szn.pct : null;
       if (aL10 == null && hL10 == null) return null;
@@ -6065,13 +6077,15 @@ function nrfiEvaluate(ctx) {
       if (aL10 != null) {
         const diff = aSzn != null ? aL10 - aSzn : null;
         const arrow = diff == null ? "" : diff >= 10 ? " ↑hot" : diff <= -10 ? " ↓cold" : "";
-        notes.push(ctx.awayPP + ": L10 " + aL10 + "%" + arrow + (aSzn != null ? " (SZN " + aSzn + "%)" : ""));
+        const l5tag = aL5 != null ? "  L5 " + aL5 + "%" : "";
+        notes.push(ctx.awayPP + ": L10 " + aL10 + "%" + arrow + (aSzn != null ? " (SZN " + aSzn + "%)" : "") + l5tag);
         if (diff != null) diffs.push(diff);
       }
       if (hL10 != null) {
         const diff = hSzn != null ? hL10 - hSzn : null;
         const arrow = diff == null ? "" : diff >= 10 ? " ↑hot" : diff <= -10 ? " ↓cold" : "";
-        notes.push(ctx.homePP + ": L10 " + hL10 + "%" + arrow + (hSzn != null ? " (SZN " + hSzn + "%)" : ""));
+        const l5tag = hL5 != null ? "  L5 " + hL5 + "%" : "";
+        notes.push(ctx.homePP + ": L10 " + hL10 + "%" + arrow + (hSzn != null ? " (SZN " + hSzn + "%)" : "") + l5tag);
         if (diff != null) diffs.push(diff);
       }
       const anyDown = diffs.some(d => d <= -15);
