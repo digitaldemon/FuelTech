@@ -5966,8 +5966,11 @@ function nrfiEvaluate(ctx) {
   // Day game: games before ~4pm local (approximated as UTC < 20:00) run slightly higher scoring.
   const utcHour = ctx.startUtc ? new Date(ctx.startUtc).getUTCHours() : null;
   const isDayGame = utcHour != null && utcHour < 20;
-  // Day game: 2026 backtest (886 day / 877 night) = 4.5pp less NRFI. Platt slope 1.243 amplifies
-  // the 0.15 logit shift to ~4.6pp calibrated — matches empirical penalty without over-fitting.
+  // Day game: 2026 backtest (886 day / 877 night) = 4.5pp less NRFI. A 0.15 logit
+  // shift lands ~3.6pp at a typical p≈0.6 — a little under the empirical penalty,
+  // which is the safe side to miss on. (The withdrawn Platt seed's 1.243 slope
+  // would have scaled this to ~4.6pp; that slope is gone, this value is not
+  // tuned to it — 0.15 predates it and is unchanged.)
   const dayGameShift = isDayGame ? 0.15 : 0;
   const awayTrend = pitcherTrendFactor(ctx.awayRolling);
   const homeTrend = pitcherTrendFactor(ctx.homeRolling);
@@ -6317,12 +6320,15 @@ const awayPit0 = (o) => (o && o.rate != null ? o.rate.toFixed(2) + " R/1st" : "T
 const CHECK_FAMILIES = [
   [/^(Starting pitching|Pitcher skill|Opener \/ bullpen|Starter recent form|Pitcher K9 trend|Clean opener|Pitcher season load|Pitcher rest days|Last start momentum|Pitcher trend|Pitcher venue split|Backtest profile)/, "pitching"],
   [/^(1st-inning offense|Offense trend|Offense venue split|Team K%|Platoon|Lineups)/, "offense"],
-  [/^(Day game|Weather & park|Umpire)/, "environment"],
+  [/^(Day game|Weather & park|Umpire|Travel & rest)/, "environment"],
 ];
 function checkFamily(label) {
   const s = String(label || "");
   for (const [re, fam] of CHECK_FAMILIES) if (re.test(s)) return fam;
-  return s; // ungrouped checks (e.g. Travel & rest) stand alone
+  // An unmatched label would stand alone as its own family and cast a full vote
+  // — the same weight as all 12 pitching checks. Park it in environment so a new
+  // check can never quietly buy a quarter of the consensus by being unlisted.
+  return "environment";
 }
 
 // League-average first-inning rates (derived from model constants + MLB averages).
@@ -6397,19 +6403,34 @@ function kellyNRFI(pModel, yesPrice, call) {
   return f > 0 ? Math.min(f, 0.25) : null;
 }
 
+// Verdict ladder cut-points, on the blended pMax. One definition — the tier
+// badge, the verdict and the record accounting all read these, because they
+// drifted apart last time they were written out as literals in four places.
+const NRFI_STRONG_MIN = 70, NRFI_BET_MIN = 65, NRFI_LEAN_MIN = 57;
+
 function nrfiTier(pMax) {
-  return pMax >= 63 ? { t: "STRONGEST", cls: "t-strongest", c: "var(--moss)" }
-    : pMax >= 57 ? { t: "STRONG", cls: "t-strong", c: "var(--moss)" }
-    : pMax >= 52 ? { t: "LEAN", cls: "t-lean", c: "var(--amber)" }
+  return pMax >= NRFI_STRONG_MIN ? { t: "STRONGEST", cls: "t-strongest", c: "var(--moss)" }
+    : pMax >= 63 ? { t: "STRONG", cls: "t-strong", c: "var(--moss)" }
+    : pMax >= NRFI_LEAN_MIN ? { t: "LEAN", cls: "t-lean", c: "var(--amber)" }
     : { t: "TOSS-UP", cls: "", c: "var(--dim)" };
 }
 
-// Backtest 2026 (Apr 1 – Aug 14, 1,763 games): model over-estimates directional confidence by 13.6pp.
-// Platt scaling (WLS on calibration buckets): logit(cal) = 1.243 * logit(raw_dir) − 0.7396
-// Directional win rates raw: BET≥65% raw = 60.2% (972g); STRONG≥70% raw = 67.3% (551g).
-// Post-calibration thresholds: STRONG≥63%, BET≥57%, LEAN≥52% (on calibrated+blended pMax).
-// Live calibration overrides c (not slope) once ≥25 picks are graded.
-const NRFI_CALIB_SEED = { c: -0.7396, slope: 1.243, n: 1763, active: true, source: "backtest-2026" };
+// Backtest v5: 4,015 games (2025 full season + 2026 Apr 1 – Aug 13).
+// AUC-ROC: 0.6188. Brier skill score: +4.6% over naive baseline.
+// 2025 bias: +0.0pp (perfect). 2026 bias: +2.1pp (model slightly conservative).
+// Combined: model under-predicts by ~1pp → keep c=0.050 logit shift.
+// Win rates: pMax≥63 = 67.4% (479 bets); pMax≥70 = 75.9% (79 bets).
+// Live calibration takes over after 25 graded picks.
+//
+// WITHDRAWN 2026-08-15: a Platt seed (slope 1.243, c −0.7396, n 1763) briefly
+// replaced this. It was fit on the SIMPLIFIED λ-model in the backtest route —
+// which documents its own data leakage — and then applied to the much richer
+// live evaluator, so it shrank a model it had never measured. Combined with the
+// 0.5 directional floor it silenced every game under 64.5% raw: pcal pinned to
+// exactly 50.0, edgeRaw went negative, and the value gate's `edge < 1.5 → PASS`
+// blanked the board — LEANs included, since that gate outranks the ladder.
+// A refit must run the real nrfiEvaluate over history before it ships again.
+const NRFI_CALIB_SEED = { c: 0.050, n: 4015, active: true, source: "backtest-v5" };
 
 // Pitcher backtest rankings — 4,015 MLB games (2025 full + 2026 Apr 1 – Aug 13).
 // clean = % of 1st innings kept scoreless. n = starts evaluated.
@@ -6510,12 +6531,11 @@ function applyCalibration(pNRFI, calib) {
   if (!calib || !calib.active) return pNRFI;
   const lg = (p) => Math.log(p / (1 - p));
   const ul = (x) => 1 / (1 + Math.exp(-x));
-  const slope = calib.slope != null ? calib.slope : 1;
-  // Operate on directional confidence (always ≥0.5) so YRFI picks are pulled toward 0.5, not amplified.
-  const isNRFI = pNRFI >= 0.5;
-  const pDir = isNRFI ? pNRFI : 1 - pNRFI;
-  const calDir = nClamp(ul(slope * lg(nClamp(pDir, 0.5001, 0.98)) + calib.c), 0.5, 0.98);
-  return isNRFI ? calDir : 1 - calDir;
+  // c is a bias shift on P(NRFI) itself, not on directional confidence: both the
+  // seed and nrfiCalibration's liveC are derived as lg(actual) − lg(meanPred)
+  // over pNRFI. Applying that number directionally (as the withdrawn Platt seed
+  // did) measures one thing and corrects another.
+  return nClamp(ul(lg(nClamp(pNRFI, 0.02, 0.98)) + calib.c), 0.02, 0.98);
 }
 
 // Market-as-prior: the de-vig market (efficient) is the anchor; the model only
@@ -6529,7 +6549,13 @@ const NRFI_BLEND = 0.35;
 function nrfiBlend(pModel, marketNRFI) {
   if (marketNRFI == null) return pModel;      // no market -> pure model
   const pMkt = marketNRFI / 100;
-  const blend = pModel >= 0.68 ? 0.65 : pModel >= 0.62 ? 0.58 : pModel >= 0.57 ? 0.45 : NRFI_BLEND;
+  // Tier on directional conviction, not on P(NRFI). Tested against pModel the
+  // ladder only ever fired for NRFI: a 70%-confident YRFI read arrives as
+  // pModel=0.30, clears no tier, and gets the 0.35 floor — half the market pull
+  // of an identical NRFI read. Nothing about a YRFI opinion deserves more
+  // shrinkage. For pModel ≥ 0.5 this is unchanged.
+  const conv = Math.max(pModel, 1 - pModel);
+  const blend = conv >= 0.68 ? 0.65 : conv >= 0.62 ? 0.58 : conv >= 0.57 ? 0.45 : NRFI_BLEND;
   return nClamp(pMkt + blend * (pModel - pMkt), 0.02, 0.98);
 }
 
@@ -6543,7 +6569,7 @@ function nrfiVerdict(r) {
   const down = (s, n) => ORDER[Math.max(0, ORDER.indexOf(s) - n)];
 
   // 1) Raw strength from the probability alone.
-  let strength = p >= 63 ? "STRONG" : p >= 55 ? "BET" : p >= 52 ? "LEAN" : "PASS";
+  let strength = p >= NRFI_STRONG_MIN ? "STRONG" : p >= NRFI_BET_MIN ? "BET" : p >= NRFI_LEAN_MIN ? "LEAN" : "PASS";
   const notes = [];
 
   // 2) Consensus gate: a decisive number with split signals is fragile.
@@ -6581,7 +6607,14 @@ function nrfiVerdict(r) {
     const mktProb = r.market.marketSide;  // market's implied % on our side
     if (edge == null) { strength = "PASS"; notes.push("game under way — no pregame edge left"); }
     else if (edge < 1.5) { strength = "PASS"; notes.push("market efficient — no value"); }
-    else if (mktProb >= 65 && edge < 5) { strength = "PASS"; notes.push("juice too short"); }
+    // Short juice is a sizing problem, not a disqualification. A 4.9pp edge at a
+    // 65% price was a hard PASS while the same edge at 64% stayed STRONG — a 1pp
+    // market tick erasing a bet. Keep the PASS where the edge is genuinely thin,
+    // otherwise step down like every other gate on this ladder.
+    else if (mktProb >= 65 && edge < 5) {
+      if (edge < 2.5) { strength = "PASS"; notes.push("juice too short"); }
+      else { strength = down(strength, mktProb >= 75 ? 2 : 1); notes.push("short juice — sized down"); }
+    }
     else if ((strength === "STRONG" || strength === "BET") && edge < 2.5) { strength = down(strength, 1); notes.push("thin value"); }
     else if (edge >= 2.5) notes.push("value +" + (shown != null ? shown : edge).toFixed(1) + "% vs market (model " + edge.toFixed(1) + "pp off)");
   }
@@ -7035,7 +7068,7 @@ function FirstInning() {
     const recl = recRef.current.slice(); const changed = [];
     const lc = nrfiCalibration(recl);
     const lcW = lc.n / (lc.n + NRFI_CALIB_SEED.n);
-    const calibNow = { c: lcW * lc.liveC + (1 - lcW) * NRFI_CALIB_SEED.c, slope: NRFI_CALIB_SEED.slope, active: true };
+    const calibNow = { c: lcW * lc.liveC + (1 - lcW) * NRFI_CALIB_SEED.c, active: true };
     const r1 = (x) => Math.round(x * 10) / 10;
     for (const r of rs) {
       const pcal = applyCalibration(r.pNRFI, calibNow);
@@ -7049,8 +7082,18 @@ function FirstInning() {
       let e = recl.find((x) => x.id === id);
       const awThin = !(r.pitProfiles && r.pitProfiles.away && (r.pitProfiles.away.sample || 0) >= 5);
       const hmThin = !(r.pitProfiles && r.pitProfiles.home && (r.pitProfiles.home.sample || 0) >= 5);
-      if (!e && r.state === "Preview" && r.hasPitchers && r.dataOk && pMax >= 52 && !(awThin && hmThin)) {
-        const v = nrfiVerdict({ ...r, pMax, call });
+      // The board runs the value gate; the record has to run it too, or it stores
+      // a verdict that was never on screen. That stored strength drives both the
+      // record shown to the user and nrfiCalibration's `strength !== "PASS"`
+      // filter — so without this the calibration trained on picks we never made.
+      const recMarket = mk ? {
+        marketSide: mktSide,
+        edge: started ? null : (call === "NRFI" ? pFinal : 1 - pFinal) * 100 - mktSide,
+        edgeRaw: started ? null : (call === "NRFI" ? pcal : 1 - pcal) * 100 - mktSide,
+        started,
+      } : null;
+      if (!e && r.state === "Preview" && r.hasPitchers && r.dataOk && pMax >= NRFI_LEAN_MIN && !(awThin && hmThin)) {
+        const v = nrfiVerdict({ ...r, pMax, call, market: recMarket });
         const pp = r.pitProfiles;
         e = { id, at: Date.now(), date: r.date.replace(/-/g, ""), gamePk: r.gamePk,
           game: r.away + " @ " + r.home, call, prob: r1(pMax),
@@ -7071,7 +7114,7 @@ function FirstInning() {
         if (e.mktAtClose == null && started) { e.mktAtClose = e.mktLatest != null ? e.mktLatest : (mktSide != null ? r1(mktSide) : null); if (e.mktAtClose != null) changed.push(e); }
         // Lineups posted: upgrade from λ-model to sim, re-evaluate with real batter rates.
         if (!started && r.method === "sim" && e.method !== "sim") {
-          const v2 = nrfiVerdict({ ...r, pMax, call });
+          const v2 = nrfiVerdict({ ...r, pMax, call, market: recMarket });
           e.prob = r1(pMax); e.call = call; e.strength = v2.strength; e.isBet = e.isBet && v2.isBet; e.thinPass = v2.thinPass;
           e.method = "sim"; e.lineupUpdatedAt = Date.now();
           if (!changed.includes(e)) changed.push(e);
@@ -7162,10 +7205,10 @@ function FirstInning() {
   // Entries with mktAtPick == null had no market and were unbettable (effectively PASS).
   const isModelPick = (r) => r.source !== "kalshi-import" && !r.skipped && r.strength !== "PASS" && !r.thinPass && (r.mktAtPick != null || r.isBet === true);
   const modelSettled = settled.filter(isModelPick);
-  const betSettled = modelSettled.filter((r) => r.isBet === true || (r.prob != null && r.prob >= 57));
-  const strongSettled = betSettled.filter((r) => r.strength === "STRONG" || (r.prob != null && r.prob >= 63));
-  const pureBetSettled = betSettled.filter((r) => !(r.strength === "STRONG" || (r.prob != null && r.prob >= 63)));
-  const leanSettled = modelSettled.filter((r) => !r.isBet && (r.prob == null || r.prob < 57));
+  const betSettled = modelSettled.filter((r) => r.isBet === true || (r.prob != null && r.prob >= NRFI_BET_MIN));
+  const strongSettled = betSettled.filter((r) => r.strength === "STRONG" || (r.prob != null && r.prob >= NRFI_STRONG_MIN));
+  const pureBetSettled = betSettled.filter((r) => !(r.strength === "STRONG" || (r.prob != null && r.prob >= NRFI_STRONG_MIN)));
+  const leanSettled = modelSettled.filter((r) => !r.isBet && (r.prob == null || r.prob < NRFI_BET_MIN));
   const kalshiSettled = settled.filter((r) => r.source === "kalshi-import" && !r.skipped);
   const wins = modelSettled.filter((r) => r.result === "won").length;
   const losses = modelSettled.length - wins;
@@ -7180,14 +7223,14 @@ function FirstInning() {
   const kWins = kalshiSettled.filter((r) => r.result === "won").length;
   const kLosses = kalshiSettled.length - kWins;
   // Participation: BET/STRONG model signals vs Kalshi bets placed on same date+call
-  const allModelBets = (rec || []).filter((r) => isModelPick(r) && (r.isBet === true || (r.prob != null && r.prob >= 57)));
+  const allModelBets = (rec || []).filter((r) => isModelPick(r) && (r.isBet === true || (r.prob != null && r.prob >= NRFI_BET_MIN)));
   const kalshiDateCall = new Set((rec || []).filter((r) => r.source === "kalshi-import" && !r.skipped).map((r) => r.date + ":" + r.call));
   const participatedCount = allModelBets.filter((r) => r.date && kalshiDateCall.has(r.date + ":" + r.call)).length;
   const betSignalCount = allModelBets.length;
 
   const liveCalib = nrfiCalibration(rec || []);
   const lcW = liveCalib.n / (liveCalib.n + NRFI_CALIB_SEED.n);
-  const calib = { c: lcW * liveCalib.liveC + (1 - lcW) * NRFI_CALIB_SEED.c, slope: NRFI_CALIB_SEED.slope, active: true };
+  const calib = { c: lcW * liveCalib.liveC + (1 - lcW) * NRFI_CALIB_SEED.c, active: true };
   const enriched = rows.filter((r) => !dismissed.has(String(r.gamePk))).map((r) => {
     const pcal = applyCalibration(r.pNRFI, calib);        // model's own NRFI prob
     const mk = matchRFI(r, rfi);
@@ -7792,14 +7835,14 @@ function FirstInning() {
           const sTot = strongWins2 + strongLosses2; const sPct = sTot > 0 ? Math.round(strongWins2 / sTot * 100) : null;
           const bTot = pureBetWins + pureBetLosses; const bPct = bTot > 0 ? Math.round(pureBetWins / bTot * 100) : null;
           return (
-            <div title={"BET and STRONG quality picks (model prob ≥ 57%). STRONG = cal ≥ 63%, BET = cal 57–62%." + (partTxt ? " Participation: " + partTxt + " (matched to your Kalshi imports by date + call direction)." : "")} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div title={"BET and STRONG quality picks (model prob ≥ " + NRFI_BET_MIN + "%). STRONG = cal ≥ " + NRFI_STRONG_MIN + "%, BET = cal " + NRFI_BET_MIN + "–" + (NRFI_STRONG_MIN - 1) + "%." + (partTxt ? " Participation: " + partTxt + " (matched to your Kalshi imports by date + call direction)." : "")} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 5 }}>BET SIGNALS</div>
               <div style={{ fontSize: 17, fontWeight: 800, color }}>{tot > 0 ? betWins + "W / " + betLosses + "L" : "—"}</div>
               {pct != null && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{pct}%{partTxt ? " · " + partTxt : ""}</div>}
               {(sTot > 0 || bTot > 0) && (
                 <div style={{ display: "flex", gap: 8, marginTop: 5 }}>
                   {sTot > 0 && <span style={{ fontSize: 10, color: sPct >= 58 ? "var(--moss)" : sPct >= 45 ? "var(--dim)" : "var(--rose)" }} title={"STRONG (cal ≥63%): " + strongWins2 + "W/" + strongLosses2 + "L"}>STRONG {sPct}%</span>}
-                  {bTot > 0 && <span style={{ fontSize: 10, color: bPct >= 55 ? "var(--moss)" : bPct >= 45 ? "var(--dim)" : "var(--rose)" }} title={"BET (cal 57–62%): " + pureBetWins + "W/" + pureBetLosses + "L"}>BET {bPct}%</span>}
+                  {bTot > 0 && <span style={{ fontSize: 10, color: bPct >= 55 ? "var(--moss)" : bPct >= 45 ? "var(--dim)" : "var(--rose)" }} title={"BET (cal " + NRFI_BET_MIN + "–" + (NRFI_STRONG_MIN - 1) + "%): " + pureBetWins + "W/" + pureBetLosses + "L"}>BET {bPct}%</span>}
                 </div>
               )}
               {tot === 0 && betSignalCount > 0 && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{betSignalCount} signal{betSignalCount !== 1 ? "s" : ""} · none settled</div>}
