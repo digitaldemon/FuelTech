@@ -6503,7 +6503,7 @@ function nrfiVerdict(r) {
   const down = (s, n) => ORDER[Math.max(0, ORDER.indexOf(s) - n)];
 
   // 1) Raw strength from the probability alone.
-  let strength = p >= 63 ? "STRONG" : p >= 57 ? "BET" : p >= 52 ? "LEAN" : "PASS";
+  let strength = p >= 63 ? "STRONG" : p >= 55 ? "BET" : p >= 52 ? "LEAN" : "PASS";
   const notes = [];
 
   // 2) Consensus gate: a decisive number with split signals is fragile.
@@ -7772,7 +7772,7 @@ function FirstInning() {
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 4 }}>
         {sellers.map((s) => (
           <span key={s.id} style={{ fontSize: 12, color: s.active ? "var(--dim)" : "var(--amber)" }}>
-            {s.active ? (s.record ? s.name + " tail: " + s.record.wins + "-" + s.record.losses : s.name + ": active") : s.name + ": paused"}
+            {s.active ? (s.record ? s.name + ": " + s.record.wins + "-" + s.record.losses : s.name + ": active") : s.name + ": paused"}
           </span>
         ))}
         <span style={{ fontSize: 12, color: "var(--dim)" }}>{"Calibrated: backtest (" + NRFI_CALIB_SEED.n + "g) · +" + liveCalib.n + " live"}</span>
