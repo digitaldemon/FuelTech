@@ -6592,7 +6592,7 @@ function NrfiCalendar({ rec, bankroll, riskLevel }) {
   const [calView, setCalView] = useState("calendar");
   const [expandedDay, setExpandedDay] = useState(null);
   // Risk config for estimating bet size when contracts not logged
-  const _RC = { ghost:{mult:0.10,max:0.02}, conservative:{mult:0.25,max:0.06}, moderate:{mult:0.50,max:0.12}, standard:{mult:0.75,max:0.18}, aggressive:{mult:1.00,max:0.25}, turbo:{mult:1.50,max:0.35} };
+  const _RC = { ghost:{mult:0.10,max:0.02}, conservative:{mult:0.25,max:0.06}, moderate:{mult:0.50,max:0.12}, standard:{mult:0.75,max:0.18}, aggressive:{mult:1.00,max:0.25}, turbo:{mult:1.50,max:0.35}, xtreme:{mult:2.00,max:0.50}, degen:{mult:3.00,max:0.65}, yolo:{mult:5.00,max:0.80} };
   const _rc = _RC[riskLevel] || _RC.moderate;
   // Estimate dollar P&L — exact when contracts logged, Kelly estimate when bankroll set, flat 5% fallback
   const estPL = (e) => {
@@ -7405,13 +7405,15 @@ function FirstInning() {
                 <span style={{ fontWeight: 700, color: "var(--bone)" }}>{r.market.yesPrice.toFixed(0)}¢</span>
               </span>
               {r.kelly != null && (() => {
-                const _rCfg = { ghost: { mult: 0.10, maxPct: 0.02 }, conservative: { mult: 0.25, maxPct: 0.06 }, moderate: { mult: 0.50, maxPct: 0.12 }, standard: { mult: 0.75, maxPct: 0.18 }, aggressive: { mult: 1.00, maxPct: 0.25 }, turbo: { mult: 1.50, maxPct: 0.35 } };
+                const _rCfg = { ghost:{mult:0.10,maxPct:0.02}, conservative:{mult:0.25,maxPct:0.06}, moderate:{mult:0.50,maxPct:0.12}, standard:{mult:0.75,maxPct:0.18}, aggressive:{mult:1.00,maxPct:0.25}, turbo:{mult:1.50,maxPct:0.35}, xtreme:{mult:2.00,maxPct:0.50}, degen:{mult:3.00,maxPct:0.65}, yolo:{mult:5.00,maxPct:0.80} };
                 const _rc = _rCfg[riskLevel] || _rCfg.moderate;
-                const sized = Math.min(r.kelly * _rc.mult, _rc.maxPct);
+                const confMult = r.confidence != null ? Math.max(0.30, r.confidence) : 1;
+                const sized = Math.min(r.kelly * _rc.mult * confMult, _rc.maxPct);
                 const betPct = (sized * 100).toFixed(1);
                 const betAmt = bankroll ? Math.round(bankroll * sized * 100) / 100 : null;
+                const confNote = confMult < 0.95 ? " (confidence adj ×" + confMult.toFixed(2) + ")" : "";
                 return (
-                  <span title={"Suggested bet size at " + riskLevel + " risk: " + betPct + "% of bankroll" + (betAmt ? " = $" + betAmt : "") + ". Kelly-sized to your edge, capped at " + (_rc.maxPct * 100).toFixed(0) + "% max per bet."} style={{ cursor: "help", padding: "8px 12px" }}>
+                  <span title={"Suggested bet size at " + riskLevel + " risk: " + betPct + "% of bankroll" + (betAmt ? " = $" + betAmt : "") + ". Kelly-sized to your edge, capped at " + (_rc.maxPct * 100).toFixed(0) + "% max per bet." + confNote} style={{ cursor: "help", padding: "8px 12px" }}>
                     <span style={{ color: "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>BET SIZE</span>
                     <span style={{ fontWeight: 800, color: "var(--moss)" }}>{betAmt ? "$" + betAmt : betPct + "%"}</span>
                   </span>
