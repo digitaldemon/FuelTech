@@ -15,9 +15,17 @@ function slice(a, b) {
   return src.slice(i, j + b.length);
 }
 // re-run the exact slice list the backtest uses
-const list = [...bt.matchAll(/slice\((".*?"),\s*(".*?")\)/g)].map((m) => [JSON.parse(m[1]), JSON.parse(m[2])]);
-if (list.length < 10) throw new Error(`only ${list.length} slices found in ${LIB} — the list moved again, ` +
+// Two slice lists live in the library and both can go stale: the model bundle,
+// written as slice("a", "b") calls, and VERDICT_SLICES, written as ["a", "b"]
+// pairs. Only scanning the first missed nClamp out of the verdict bundle, which
+// threw ReferenceError at the first call — the same failure this file exists to
+// catch, in the one list it was not reading.
+const callList = [...bt.matchAll(/slice\((".*?"),\s*(".*?")\)/g)].map((m) => [JSON.parse(m[1]), JSON.parse(m[2])]);
+const pairList = [...bt.matchAll(/^\s*\[(".*?"),\s*(".*?")\],\s*$/gm)].map((m) => [JSON.parse(m[1]), JSON.parse(m[2])]);
+const list = [...callList, ...pairList];
+if (callList.length < 10) throw new Error(`only ${callList.length} model slices found in ${LIB} — the list moved again, ` +
   "and this checker was about to pass by looking at nothing");
+if (pairList.length < 5) throw new Error(`only ${pairList.length} verdict slices found in ${LIB} — VERDICT_SLICES moved or changed shape`);
 const model = list.map(([a, b]) => slice(a, b)).join("\n");
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 const clean = strip(model);

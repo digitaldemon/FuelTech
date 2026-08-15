@@ -181,6 +181,36 @@ function scoreBothPaths(ctx, lg) {
   return { ev, evLam };
 }
 
-module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP,
+// The verdict half of the pipeline, loaded separately so the ladder thresholds
+// can be substituted. `pNRFI` is only the first step: nrfiVerdict then applies a
+// consensus gate, a confidence gate and thin-arm penalties, any of which can
+// drop a game two rungs. Sweeping thresholds against the raw probability would
+// therefore promise volume the real board never produces.
+//
+// `overrides` replaces the ladder constants by name, e.g. {NRFI_BET_MIN: 53}.
+// Substitution is on the literal declaration in app.jsx, so a rename here fails
+// loudly rather than silently sweeping the shipped numbers.
+const VERDICT_SLICES = [
+  ["const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));", ";"],
+  ["const NRFI_STRONG_MIN = 63, NRFI_BET_MIN = 55, NRFI_LEAN_MIN = 52;", ";"],
+  ["const NRFI_TIER_STRONG = 57;", ";"],
+  ["const NRFI_THIN_STARTS = 5, NRFI_RELIEF_APPS = 15, NRFI_RELIEF_IP = 25;", ";"],
+  ["function nrfiThinArm(", "\n}"],
+  ["function nrfiReliefBacked(", "\n}"],
+  ["function nrfiTier(", "\n}"],
+  ["function applyCalibration(", "\n}"],
+  ["function nrfiVerdict(", "\n}"],
+];
+function makeVerdict(overrides) {
+  let bundle = VERDICT_SLICES.map(([a, b]) => slice(a, b)).join("\n");
+  for (const [k, v] of Object.entries(overrides || {})) {
+    const re = new RegExp("(\\b" + k + "\\s*=\\s*)(\\d+(?:\\.\\d+)?)");
+    if (!re.test(bundle)) throw new Error(`cannot override ${k}: no literal assignment found in the verdict bundle`);
+    bundle = bundle.replace(re, "$1" + v);
+  }
+  return eval('"use strict";\n' + bundle + "\n;({ nrfiVerdict, nrfiTier, applyCalibration, nrfiThinArm })");
+}
+
+module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP, makeVerdict,
   J, parseIp, memo, pitI01, teamOff, pitMeta, topOrder, travelRest, savant, mapLimit,
   buildCtx, scoreBothPaths, C };

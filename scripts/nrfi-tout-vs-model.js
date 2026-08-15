@@ -24,8 +24,9 @@
 // backtest uses, so this measures the shipped model rather than a copy of it.
 const fs = require("fs");
 const path = require("path");
-const { J, savant, mapLimit, buildCtx, scoreBothPaths } = require("./nrfi-model-lib");
+const { J, savant, mapLimit, buildCtx, scoreBothPaths, makeVerdict } = require("./nrfi-model-lib");
 const { gradeSeller } = require("./nrfi-tout-grade");
+const { nrfiThinArm: thinArm } = makeVerdict();
 
 const pc = (x) => (x * 100).toFixed(1) + "%";
 const mean = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
@@ -96,8 +97,16 @@ async function collect(id, maxDates, se) {
       if (ev.pNRFI == null) return null;
       const inn1 = g.linescore.innings[0];
       const runs = (+(inn1.away?.runs || 0)) + (+(inn1.home?.runs || 0));
+      // Cache the verdict gates alongside the probability. nrfiVerdict downgrades
+      // on check consensus, confidence and thin arms, so a threshold sweep that
+      // sees only `p` would promise volume the real board never shows. Thin-arm
+      // state is stored as booleans rather than the whole pitProfiles object,
+      // which is the only part of it nrfiVerdict reads.
       return { gamePk: g.gamePk, p: ev.pNRFI, actual: runs === 0 ? 1 : 0,
-        label: `${g.teams.away.team.abbreviation}@${g.teams.home.team.abbreviation}` };
+        label: `${g.teams.away.team.abbreviation}@${g.teams.home.team.abbreviation}`,
+        aligned: ev.aligned || null, confidence: ev.confidence == null ? 1 : ev.confidence,
+        thinAway: thinArm(ev.pitProfiles && ev.pitProfiles.away),
+        thinHome: thinArm(ev.pitProfiles && ev.pitProfiles.home) };
     });
     const keep = rows.filter(Boolean);
     failed += rows.length - keep.length;
