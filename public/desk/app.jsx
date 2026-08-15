@@ -7172,7 +7172,7 @@ function FirstInning() {
     // Size on the same anchored probability the edge is quoted from, and never
     // size a game that is already under way.
     const kelly = market && !started ? kellyNRFI(pFinal, market.yesPrice, call) : null;
-    const tails = sellers.filter((s) => s.active).map((s) => ({ name: s.name, pick: matchKingPick(r, s.open || []) })).filter((t) => t.pick);
+    const tails = sellers.filter((s) => s.active).map((s) => ({ name: s.name, pick: matchKingPick(r, s.open || []), record: s.record || null })).filter((t) => t.pick);
     const base = Object.assign({}, r, { call, pMax, pModel: pcal, pFinal, pCal: pcal, tails, tier: nrfiTier(pMax), market, kelly });
     base.v = nrfiVerdict(base);
     return base;
@@ -7599,11 +7599,20 @@ function FirstInning() {
               {r.market.mktMove > 0 ? "↑" : "↓"} MKT {r.market.mktMove > 0 ? "+" : ""}{r.market.mktMove.toFixed(0)}¢
             </span>
           )}
-          {(r.tails || []).map((t, i) => (
-            <span key={i} title={t.name + " has a " + t.pick.side + " pick on this game" + (t.pick.side === r.call ? " — agrees with our model." : " — disagrees with our model, use caution.")} style={{ cursor: "help", display: "inline-flex", alignItems: "center", padding: "3px 10px", border: "1px solid " + (t.pick.side === r.call ? "rgba(127,185,139,0.5)" : "rgba(230,160,0,0.5)"), borderRadius: 20, fontSize: 11, fontWeight: 600, color: t.pick.side === r.call ? "var(--moss)" : "var(--amber)" }}>
-              {t.name}: {t.pick.side} {t.pick.side === r.call ? "✓" : "⚠"}
-            </span>
-          ))}
+          {(r.tails || []).map((t, i) => {
+            const rec = t.record;
+            const recStr = rec && rec.sample >= 5
+              ? rec.wins + "W-" + rec.losses + "L" + (rec.sample > 0 ? " (" + Math.round(rec.wins / Math.max(rec.sample - rec.pushes, 1) * 100) + "%)" : "")
+              : null;
+            const agrees = t.pick.side === r.call;
+            const tipDetail = (recStr ? " Season record: " + recStr + " NRFI." : "") + (agrees ? " Agrees with desk model." : " Disagrees with desk model — use caution.");
+            return (
+              <span key={i} title={t.name + " → " + t.pick.side + "." + tipDetail} style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", border: "1px solid " + (agrees ? "rgba(127,185,139,0.5)" : "rgba(230,160,0,0.5)"), borderRadius: 20, fontSize: 11, fontWeight: 600, color: agrees ? "var(--moss)" : "var(--amber)" }}>
+                <span>{t.name}: {t.pick.side} {agrees ? "✓" : "⚠"}</span>
+                {recStr && <span style={{ fontSize: 9, opacity: 0.7 }}>{recStr}</span>}
+              </span>
+            );
+          })}
           {graded && gradedWon !== null && recE && recE.strength !== "PASS" && !recE.thinPass && (recE.mktAtPick != null || recE.isBet === true) && (() => {
             const won = gradedWon;
             const clv = recE && recE.mktAtPick != null && recE.mktAtClose != null ? recE.mktAtClose - recE.mktAtPick : null;
