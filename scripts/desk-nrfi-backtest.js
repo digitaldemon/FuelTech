@@ -18,7 +18,7 @@ function slice(a, b) {
 }
 // Pull the real model math out of app.jsx.
 const model = [
-  slice("const NRFI_LG_LAMBDA = 0.52;", "const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));"),
+  slice("const NRFI_SIM_W = 0.20;", "const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));"),
   slice("function nrfiRegress(", "\n}"),
   slice("function halfNoRun(", "\n}"),
   slice("function pitchSkillFactor(", "\n}"),
@@ -182,7 +182,7 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
       const ev = nrfiEvaluate(ctx);
       const noB = (l) => ({ ...l, batters: null });
       const evLam = nrfiEvaluate({ ...ctx, awayLineup: noB(ctx.awayLineup), homeLineup: noB(ctx.homeLineup) });
-      if (evLam.method === "sim") throw new Error("suppressing batters did not stand the sim down");
+      if (evLam.method !== "model") throw new Error("suppressing batters did not stand the sim down: " + evLam.method);
       const inn1 = g.linescore.innings[0];
       const runs = (+(inn1.away?.runs || 0)) + (+(inn1.home?.runs || 0));
       if (ev.pNRFI == null || evLam.pNRFI == null) return null;
@@ -277,7 +277,7 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
     });
   }
 
-  const simRows = samples.filter((s) => s.method === "sim");
+  const simRows = samples.filter((s) => s.method !== "model"); // "blend" today, "sim" historically
   const P = (r) => r.pModel, L = (r) => r.pLam;
 
   console.log("\n================ NRFI BACKTEST — BOTH PATHS ================");
@@ -355,6 +355,31 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
         `(actual ${pc(raw.actualRate)}, bias ${((meanShift - raw.actualRate) * 100).toFixed(1)} pts), ` +
         `Brier ${bShift.toFixed(4)} vs ${raw.brier.toFixed(4)} raw -> ${bShift < raw.brier ? "helped" : "HURT"}`);
     }
+  }
+
+  // ---- what mix of the two paths is actually best? ----
+  // The app currently sets w=1.00 (sim wins outright the moment lineups post).
+  // That was never measured. Sweep the blend in logit space -- averaging
+  // probabilities directly would drag every blend toward 0.5 and make the
+  // midpoint look good for the wrong reason. Report Brier, AUC and playable
+  // volume together, because a mix that wins Brier by compressing toward the
+  // base rate has bought accuracy with the picks you actually wanted.
+  if (simRows.length) {
+    console.log("\n============ BLEND SWEEP: w*sim + (1-w)*lambda, in logit space ============");
+    console.log("  w      Brier     AUC      pick-acc   BET55+ vol   mean pred");
+    let best = null;
+    for (let w = 0; w <= 1.0001; w += 0.1) {
+      const get = (r) => unlogit(w * logit(cl(P(r))) + (1 - w) * logit(cl(L(r))));
+      const m = metrics(simRows, get);
+      const vol = simRows.filter((r) => get(r) >= 0.55 || 1 - get(r) >= 0.55).length;
+      const flag = Math.abs(w - 1) < 1e-6 ? "  <- shipped" : "";
+      console.log(`  ${w.toFixed(1)}  ${m.brier.toFixed(4)}  ${(m.auc || 0).toFixed(4)}   ${pc(m.pickAcc).padStart(6)}` +
+        `     ${String(vol).padStart(3)}       ${pc(m.meanPred)}${flag}`);
+      if (!best || m.brier < best.brier) best = { w, brier: m.brier, auc: m.auc, vol };
+    }
+    console.log(`\n  best Brier at w=${best.w.toFixed(1)} (${best.brier.toFixed(4)}, AUC ${best.auc.toFixed(4)}, ${best.vol} playable at BET55+)`);
+    console.log("  NOTE: this is an in-sample optimum over one 30-day window. Treat a");
+    console.log("  shallow minimum as 'anything in this range is fine', not as a precise w.");
   }
 
   console.log("\n============ LAMBDA PATH OVER EVERY GAME ============");

@@ -5227,6 +5227,13 @@ function Commodities({ onPick }) {
    picks (JuiceReel) ride along as a tailing signal. Self-graded from the
    real first-inning line score. */
 
+/* How much of the final probability the base-out sim gets once lineups post.
+   Was effectively 1.00 (the sim replaced the lambda path outright); measured at
+   0.20. See the table in nrfiEvaluate for the 395-game paired backtest, and
+   scripts/desk-nrfi-backtest.js to re-run it. Do not raise this without
+   re-running that backtest — the old value was never measured at all. */
+const NRFI_SIM_W = 0.20;
+
 const NRFI_LG_LAMBDA = 0.52;  // league avg runs per team in the 1st inning
 const NRFI_LG_P0 = 0.72;      // league P(no run in a half-inning) -> ~52% NRFI
 const NRFI_PIT_REG = 12;      // heavy regression — 1st-inning rate is a tiebreaker, not the thesis
@@ -6821,7 +6828,39 @@ function nrfiEvaluate(ctx) {
     const s0bot = simHalfNoRun(homeB, awayAllow, NRFI_LG_PA);
     const pRunTop = nClamp((1 - s0top) * homeCtx * ctx.awayTravel.factor * awayOffAdv.f * awayOffSim * env, 0.02, 0.97);
     const pRunBot = nClamp((1 - s0bot) * awayCtx * ctx.homeTravel.factor * homeOffAdv.f * homeOffSim * env, 0.02, 0.97);
-    p0top = 1 - pRunTop; p0bot = 1 - pRunBot; method = "sim";
+    /* The sim used to overwrite the lambda path outright the moment lineups
+       posted. That was never measured. When it finally was, it lost.
+
+       Paired over 395 games — same games, same inputs, only the path differs
+       (scripts/desk-nrfi-backtest.js, 45-day window):
+
+           w:       0.0     0.2     0.5     1.0 (old)
+           Brier    .2321   .2321   .2332   .2377
+           AUC      .6570   .6593   .6551   .6221
+           BET55+    389     369     343     300
+
+       Pure sim was worst on every column at once: worse Brier, worse
+       discrimination, AND a third fewer playable games. It compresses toward
+       50 (sd 8.1pp vs lambda's 10.5pp), so the 52/55/57/63 ladder has less to
+       bite on. That compression is what "the model got less accurate and
+       stopped giving me picks" actually was.
+
+       Blend in logit space, not probability space: averaging probabilities
+       drags every mix toward 0.5, which would make the midpoint look good for
+       a reason unrelated to either path being right.
+
+       w = 0.20 rather than 0 because the minimum is shallow — 0.0 through 0.3
+       sit within 0.0002 Brier of each other — and AUC peaks at 0.2. The sim
+       carries real matchup information, just far less than one full vote. */
+    const pSim = (1 - pRunTop) * (1 - pRunBot);
+    const pLam = p0top * p0bot;
+    const lgt = (p) => Math.log(p / (1 - p));
+    // Folded into one half so the `p0top * p0bot` product below reproduces the
+    // blend exactly rather than re-multiplying two already-combined halves.
+    p0top = 1 / (1 + Math.exp(-(NRFI_SIM_W * lgt(nClamp(pSim, 0.02, 0.98)) +
+      (1 - NRFI_SIM_W) * lgt(nClamp(pLam, 0.02, 0.98)))));
+    p0bot = 1;
+    method = "blend";
   }
   // dayGameShift is 0 — see the block above for the measurement that withdrew
   // it. Kept as a named term rather than deleted so the next person to reach for
@@ -7334,7 +7373,30 @@ function nrfiTier(pMax) {
 // exactly 50.0, edgeRaw went negative, and the value gate's `edge < 1.5 → PASS`
 // blanked the board — LEANs included, since that gate outranks the ladder.
 // A refit must run the real nrfiEvaluate over history before it ships again.
-const NRFI_CALIB_SEED = { c: 0.050, n: 4015, active: true, source: "backtest-v5" };
+// REFIT 2026-08-15: c 0.050 -> -0.073, n 4015 -> 558.
+//
+// The old seed's real problem was not its value, it was that nothing could
+// check it. scripts/desk-nrfi-backtest.js had been throwing ReferenceError on
+// every single game — nine factor helpers were added to nrfiEvaluate without
+// matching slices, and mapLimit's bare `catch {}` turned each throw into a null
+// row, so the harness printed "No samples." and read as an empty schedule. The
+// note above demanded "a refit must run the real nrfiEvaluate over history
+// before it ships again", and no refit could, because the instrument was dead.
+//
+// It runs now (34 slices, and it refuses to report when >20% of games fail).
+// Over 558 games the blended evaluator predicts 53.6% against an actual 51.8%,
+// i.e. it leans NRFI by ~1.8pp, so the shift is negative. The old +0.050 pushed
+// in the SAME direction as the bias and made it worse.
+//
+// n=558 is what was actually measured, not the inherited 4015. It matters: n is
+// the weight this prior carries against live calibration (lcW = n_live /
+// (n_live + n_seed)), so the honest smaller number lets graded picks take over
+// in a season rather than never.
+//
+// CAVEAT: one 45-day window, and split stats are current-season, so there is
+// mild look-ahead leakage (see the harness header). Re-run before trusting this
+// into a new season.
+const NRFI_CALIB_SEED = { c: -0.073, n: 558, active: true, source: "backtest-v6-blend" };
 
 // Pitcher backtest rankings — 4,015 MLB games (2025 full + 2026 Apr 1 – Aug 13).
 // clean = % of 1st innings kept scoreless. n = starts evaluated.
