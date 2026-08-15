@@ -1106,7 +1106,23 @@ const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.f
  * urgent still cuts everything, because a run scoring is the ticket resolving.
  *
  * `_sayOn` is a latch rather than a read of s.speaking: Chrome reports speaking
- * for a beat after `end`, and a drain that trusted it would stall the queue. */const SAY_MAX=3;const _sayQ=[];let _sayOn=false,_sayGuard=null;function _sayDrain(s){if(_sayOn)return;const text=_sayQ.shift();if(text==null)return;_sayOn=true;const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}// 1.1 clipped the ends of words on the neural voices, which read more slowly
+ * for a beat after `end`, and a drain that trusted it would stall the queue. */const SAY_MAX=3;/* A line is worth saying because of when the PITCH was thrown, not because of
+ * when it reached the queue, and those come apart badly when the tab is hidden.
+ * Chrome intensively throttles — and eventually freezes — timers in a hidden
+ * tab, and speechSynthesis does not earn the audio-playback exemption a <video>
+ * would. The poll then stops for up to a minute and the next tick delivers the
+ * whole backlog in one go. Every one of those lines is freshly enqueued, so a
+ * depth cap keeps the newest three and speaks them as if they were live: the
+ * call runs a minute behind the park, most pitches never get said at all, and
+ * what does come out sounds like the inning being read back.
+ *
+ * So staleness is carried on the event timestamp. A pitch thrown 40 seconds ago
+ * is dropped at drain time no matter how it got here, which re-anchors the call
+ * to the live edge by itself on every wake-up. SAY_MAX still bounds the queue;
+ * this bounds its AGE, which is the thing that was actually wrong. */const SAY_STALE_MS=12000;const _sayQ=[];let _sayOn=false,_sayGuard=null;function _sayDrain(s){if(_sayOn)return;let item;// Skip anything that went stale while it waited, and keep skipping: after a
+// freeze the whole queue can be stale, and stopping at the first live line is
+// the point.
+for(;;){item=_sayQ.shift();if(item==null)return;if(!(item.at>0)||Date.now()-item.at<=SAY_STALE_MS)break;}const text=item.text;if(text==null)return;_sayOn=true;const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}// 1.1 clipped the ends of words on the neural voices, which read more slowly
 // and more naturally than the formant ones. Just above conversational.
 u.rate=1.02;u.pitch=1;u.volume=1;const done=()=>{if(!_sayOn)return;_sayOn=false;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayDrain(s);};u.onend=done;// An utterance that errors (or that Chrome silently drops, which it does after
 // a cancel) never fires end, and without this the latch stays set and the
@@ -1115,8 +1131,10 @@ u.rate=1.02;u.pitch=1;u.volume=1;const done=()=>{if(!_sayOn)return;_sayOn=false;
 // character plus a second, so a normal line never trips it.
 u.onerror=done;_sayGuard=setTimeout(done,1000+text.length*90);s.speak(u);// Chrome can leave synthesis parked in a paused state after a cancel; a queued
 // utterance then never starts. Nudging it is free when it is already running.
-if(s.paused)s.resume();}function speak(text,urgent){const s=typeof window!=="undefined"&&window.speechSynthesis;if(!s||!text)return;if(!_voice){_voice=pickVoice(s);// Ask once for a re-resolve when the engine finishes enumerating.
-if(!_voice&&!_voiceTried&&s.addEventListener){_voiceTried=true;s.addEventListener("voiceschanged",()=>{_voice=pickVoice(s);},{once:true});}}if(urgent){_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;s.cancel();}_sayQ.push(text);// Trim from the FRONT: the stale lines are the ones not worth saying.
+if(s.paused)s.resume();}/* `at` is the event's own timestamp — when the pitch was thrown or the play
+ * ended — not when this was called. Omit it for lines that are true whenever
+ * they are said (the intro, a settle): those are never stale. */function speak(text,urgent,at){const s=typeof window!=="undefined"&&window.speechSynthesis;if(!s||!text)return;if(!_voice){_voice=pickVoice(s);// Ask once for a re-resolve when the engine finishes enumerating.
+if(!_voice&&!_voiceTried&&s.addEventListener){_voiceTried=true;s.addEventListener("voiceschanged",()=>{_voice=pickVoice(s);},{once:true});}}if(urgent){_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;s.cancel();}_sayQ.push({text,at:typeof at==="number"&&isFinite(at)?at:0});// Trim from the FRONT: the stale lines are the ones not worth saying.
 while(_sayQ.length>SAY_MAX)_sayQ.shift();_sayDrain(s);}// Stopping the callout has to clear the queue too, or the lines already buffered
 // keep arriving after the switch is off.
 function speakStop(){const s=typeof window!=="undefined"&&window.speechSynthesis;_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;if(s)s.cancel();}async function pitcherFirstInning(pid,season){if(pid==null)return null;const k=pid+":"+season;if(_pitI01.has(k))return _pitI01.get(k);let val=null;try{const d=await getJson("https://statsapi.mlb.com/api/v1/people/"+pid+"/stats?stats=statSplits&group=pitching&sitCodes=i01&season="+season);const st=d.stats&&d.stats[0]&&d.stats[0].splits&&d.stats[0].splits[0]&&d.stats[0].splits[0].stat;if(st&&st.gamesPlayed){const bf=Number(st.battersFaced||0);const ip=st.inningsPitched!=null?parseIp(st.inningsPitched):null;const k9=ip&&ip>0?Number(st.strikeOuts||0)*9/ip:null;const bb9=ip&&ip>0?Number(st.baseOnBalls||0)*9/ip:null;const hr9=ip&&ip>0?Number(st.homeRuns||0)*9/ip:null;val={rate:Number(st.runs||0)/st.gamesPlayed,sample:st.gamesPlayed,era:st.era!=null?Number(st.era):null,whip:st.whip!=null?Number(st.whip):null,k9,bb9,hr9,innings:ip,krate:bf?Number(st.strikeOuts||0)/bf:null,obpA:bf?(Number(st.hits||0)+Number(st.baseOnBalls||0)+Number(st.hitByPitch||0))/bf:null,hits:Number(st.hits||0),bb:Number(st.baseOnBalls||0),k:Number(st.strikeOuts||0),hr:Number(st.homeRuns||0)};}}catch{/* leave null */}_pitI01.set(k,val);return val;}// One call gets 1st-inning offense AND platoon splits (OPS vs LHP/RHP).
@@ -2088,14 +2106,18 @@ if(!st.pitch){st.pitch=new Set();// Same mid-inning catch-up rule the plays use:
 // thrown is history, and reciting it would put the voice a minute behind
 // the park for the rest of the inning. A pitch with no usable timestamp
 // is treated as old for the same reason.
-for(const p of live.pitches)if(!(Date.now()-p.ts<CALLOUT_STALE_MS))st.pitch.add(p.id);}for(const p of live.pitches){if(st.pitch.has(p.id))continue;st.pitch.add(p.id);if(loud)speak(p.text);}// Runs are read against the play before, so a two-run double is called as
+for(const p of live.pitches)if(!(Date.now()-p.ts<CALLOUT_STALE_MS))st.pitch.add(p.id);}for(const p of live.pitches){if(st.pitch.has(p.id))continue;st.pitch.add(p.id);// p.ts is when the pitch was thrown; a wake-up after a throttled gap
+// drops it at drain rather than calling it a minute late.
+if(loud)speak(p.text,false,p.ts);}// Runs are read against the play before, so a two-run double is called as
 // two — the feed only ever reports a cumulative score.
 // A settle cuts through focus. Running commentary from an unfocused game is
 // noise, but a run scoring there is the ticket resolving — two seconds of
 // audio, and the one thing that is strictly worse to miss than to hear. It
 // gets the matchup name in front of it so it cannot be mistaken for the
 // game actually being listened to.
-const tag=loud?"":named+". ";for(let i=st.n;i<live.plays.length;i++){const line=playCallout(live.plays[i]);const runs=playRuns(live.plays[i],live.plays[i-1]);const verdict=". "+(runs===1?"A run scores":runs+" runs score")+". That is Y-R-F-I — "+(side==="YRFI"?mine?"you are a winner":"the desk had it":mine?"that ticket is dead":"the desk was wrong")+".";if(runs>0){speak(tag+(loud&&line?line+verdict:verdict.slice(2)),true);st.settled=true;}else if(loud&&line)speak(line);}st.n=live.plays.length;if(!st.settled&&live.past1){speak(tag+"First inning is clean in "+r.home+". N-R-F-I — "+(side==="NRFI"?mine?"you are a winner":"that is a winner":mine?"that ticket is dead":"the desk was wrong")+".",true);st.settled=true;}spoken.current.set(r.gamePk,st);}async function tick(){// A slow round trip must not stack ticks on top of each other; skipping is
+const tag=loud?"":named+". ";for(let i=st.n;i<live.plays.length;i++){const line=playCallout(live.plays[i]);const runs=playRuns(live.plays[i],live.plays[i-1]);const verdict=". "+(runs===1?"A run scores":runs+" runs score")+". That is Y-R-F-I — "+(side==="YRFI"?mine?"you are a winner":"the desk had it":mine?"that ticket is dead":"the desk was wrong")+".";// A settle is never stale — it is the ticket resolving, and it stays
+// worth hearing however late it arrives. Running commentary is not.
+if(runs>0){speak(tag+(loud&&line?line+verdict:verdict.slice(2)),true);st.settled=true;}else if(loud&&line)speak(line,false,Date.now()-playAgeMs(live.plays[i]));}st.n=live.plays.length;if(!st.settled&&live.past1){speak(tag+"First inning is clean in "+r.home+". N-R-F-I — "+(side==="NRFI"?mine?"you are a winner":"that is a winner":mine?"that ticket is dead":"the desk was wrong")+".",true);st.settled=true;}spoken.current.set(r.gamePk,st);}async function tick(){// A slow round trip must not stack ticks on top of each other; skipping is
 // correct because the next poll is 2.5s away and reads the same state.
 if(inFlight)return;inFlight=true;try{await Promise.all(tracked().map(pollGame));}finally{inFlight=false;}}tick();const id=setInterval(tick,CALLOUT_POLL_MS);return()=>{stopped=true;clearInterval(id);};// Positions load asynchronously and usually land AFTER the board does, so
 // they have to be in the dep list — otherwise the effect closes over an

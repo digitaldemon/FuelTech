@@ -5544,11 +5544,35 @@ function pickVoice(s) {
  * `_sayOn` is a latch rather than a read of s.speaking: Chrome reports speaking
  * for a beat after `end`, and a drain that trusted it would stall the queue. */
 const SAY_MAX = 3;
+/* A line is worth saying because of when the PITCH was thrown, not because of
+ * when it reached the queue, and those come apart badly when the tab is hidden.
+ * Chrome intensively throttles — and eventually freezes — timers in a hidden
+ * tab, and speechSynthesis does not earn the audio-playback exemption a <video>
+ * would. The poll then stops for up to a minute and the next tick delivers the
+ * whole backlog in one go. Every one of those lines is freshly enqueued, so a
+ * depth cap keeps the newest three and speaks them as if they were live: the
+ * call runs a minute behind the park, most pitches never get said at all, and
+ * what does come out sounds like the inning being read back.
+ *
+ * So staleness is carried on the event timestamp. A pitch thrown 40 seconds ago
+ * is dropped at drain time no matter how it got here, which re-anchors the call
+ * to the live edge by itself on every wake-up. SAY_MAX still bounds the queue;
+ * this bounds its AGE, which is the thing that was actually wrong. */
+const SAY_STALE_MS = 12000;
 const _sayQ = [];
 let _sayOn = false, _sayGuard = null;
 function _sayDrain(s) {
   if (_sayOn) return;
-  const text = _sayQ.shift();
+  let item;
+  // Skip anything that went stale while it waited, and keep skipping: after a
+  // freeze the whole queue can be stale, and stopping at the first live line is
+  // the point.
+  for (;;) {
+    item = _sayQ.shift();
+    if (item == null) return;
+    if (!(item.at > 0) || Date.now() - item.at <= SAY_STALE_MS) break;
+  }
+  const text = item.text;
   if (text == null) return;
   _sayOn = true;
   const u = new window.SpeechSynthesisUtterance(text);
@@ -5575,7 +5599,10 @@ function _sayDrain(s) {
   // utterance then never starts. Nudging it is free when it is already running.
   if (s.paused) s.resume();
 }
-function speak(text, urgent) {
+/* `at` is the event's own timestamp — when the pitch was thrown or the play
+ * ended — not when this was called. Omit it for lines that are true whenever
+ * they are said (the intro, a settle): those are never stale. */
+function speak(text, urgent, at) {
   const s = typeof window !== "undefined" && window.speechSynthesis;
   if (!s || !text) return;
   if (!_voice) {
@@ -5592,7 +5619,7 @@ function speak(text, urgent) {
     _sayOn = false;
     s.cancel();
   }
-  _sayQ.push(text);
+  _sayQ.push({ text, at: typeof at === "number" && isFinite(at) ? at : 0 });
   // Trim from the FRONT: the stale lines are the ones not worth saying.
   while (_sayQ.length > SAY_MAX) _sayQ.shift();
   _sayDrain(s);
@@ -8391,7 +8418,9 @@ function FirstInning() {
       for (const p of live.pitches) {
         if (st.pitch.has(p.id)) continue;
         st.pitch.add(p.id);
-        if (loud) speak(p.text);
+        // p.ts is when the pitch was thrown; a wake-up after a throttled gap
+        // drops it at drain rather than calling it a minute late.
+        if (loud) speak(p.text, false, p.ts);
       }
       // Runs are read against the play before, so a two-run double is called as
       // two — the feed only ever reports a cumulative score.
@@ -8408,8 +8437,10 @@ function FirstInning() {
           ". That is Y-R-F-I — " + (side === "YRFI"
             ? (mine ? "you are a winner" : "the desk had it")
             : (mine ? "that ticket is dead" : "the desk was wrong")) + ".";
+        // A settle is never stale — it is the ticket resolving, and it stays
+        // worth hearing however late it arrives. Running commentary is not.
         if (runs > 0) { speak(tag + (loud && line ? line + verdict : verdict.slice(2)), true); st.settled = true; }
-        else if (loud && line) speak(line);
+        else if (loud && line) speak(line, false, Date.now() - playAgeMs(live.plays[i]));
       }
       st.n = live.plays.length;
       if (!st.settled && live.past1) {
