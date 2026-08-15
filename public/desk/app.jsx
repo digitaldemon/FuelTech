@@ -5392,6 +5392,7 @@ async function pitcherRollingNRFI(pid, season) {
           l50: { pct: pct(valid.slice(-50)),   n: Math.min(valid.length, 50) },
           l30: { pct: pct(valid.slice(-30)),   n: Math.min(valid.length, 30) },
           l10: { pct: pct(valid.slice(-10)),   n: Math.min(valid.length, 10) },
+          l5:  { pct: pct(valid.slice(-5)),    n: Math.min(valid.length, 5)  },
           lastClean: valid.length > 0 ? valid[valid.length - 1] : null,
         };
       }
@@ -7154,7 +7155,7 @@ function FirstInning() {
               const headlineC = headline >= 65 ? "var(--moss)" : headline >= 50 ? "var(--amber)" : "var(--rose)";
               const kbb = p.k9 != null && p.bb9 != null ? (p.k9 - p.bb9).toFixed(1) : null;
               const pClr = (v) => v >= 65 ? "var(--moss)" : v >= 50 ? "var(--fg)" : v >= 38 ? "var(--amber)" : "var(--rose)";
-              const windows = rl ? [{ label: "SZN", ...rl.szn }, { label: "L50", ...rl.l50 }, { label: "L30", ...rl.l30 }, { label: "L10", ...rl.l10 }] : [];
+              const windows = rl ? [{ label: "SZN", ...rl.szn }, { label: "L30", ...rl.l30 }, { label: "L10", ...rl.l10 }, { label: "L5", ...(rl.l5 || {}) }] : [];
               const bt = pitcherBT(name);
               // Derive tier: prefer backtest table; fall back to live model clean %
               const btClean = bt ? bt.clean : headline;
@@ -7215,7 +7216,7 @@ function FirstInning() {
                   {windows.length > 0 && (
                     <div className="pit-windows" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 3, marginBottom: 9 }}>
                       {windows.map((w) => (
-                        <div key={w.label} title={{ SZN: "Full season clean 1st inning rate", L50: "Last 50 starts clean %", L30: "Last 30 starts clean %", L10: "Last 10 starts clean % — most recent form" }[w.label] + " — " + (w.pct != null ? w.pct + "% in " + w.n + " games" : "no data")} style={{ cursor: "help", textAlign: "center", background: "rgba(255,255,255,0.04)", borderRadius: 6, padding: "4px 0" }}>
+                        <div key={w.label} title={{ SZN: "Full season clean 1st inning rate", L30: "Last 30 starts clean %", L10: "Last 10 starts clean % — recent form", L5: "Last 5 starts clean % — sharpest recent signal (noisy at small n)" }[w.label] + " — " + (w.pct != null ? w.pct + "% in " + w.n + " games" : "no data")} style={{ cursor: "help", textAlign: "center", background: w.label === "L5" ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.04)", borderRadius: 6, padding: "4px 0", border: w.label === "L5" ? "1px solid rgba(255,255,255,0.1)" : "none" }}>
                           <div style={{ fontSize: 9, color: "var(--dim)", marginBottom: 1 }}>{w.label}</div>
                           <div style={{ fontWeight: 700, fontSize: 12, color: w.pct != null ? pClr(w.pct) : "var(--dim)" }}>{w.pct != null ? w.pct + "%" : "—"}</div>
                           <div style={{ fontSize: 9, color: "var(--dim)", opacity: 0.7 }}>{w.n != null ? w.n + "g" : ""}</div>
@@ -7295,6 +7296,19 @@ function FirstInning() {
           {!r.lineupPosted && (
             <span title="Official starting lineups haven't been posted yet. The model is using projected batting orders, which are less accurate than the real lineup. Check back closer to game time." style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", background: "rgba(230,160,0,0.1)", border: "1px solid rgba(230,160,0,0.4)", borderRadius: 20, fontSize: 11, fontWeight: 700, color: "var(--amber)" }}>⚠ LINEUPS PENDING</span>
           )}
+          {!r.lineupPosted && r.pNRFI_simProj != null && (() => {
+            const calProj = applyCalibration(r.pNRFI_simProj, calib);
+            const blendProj = r.market ? nrfiBlend(calProj, r.market.marketNRFI) : calProj;
+            const projPct = Math.max(blendProj, 1 - blendProj) * 100;
+            const projCall = blendProj >= 0.5 ? "NRFI" : "YRFI";
+            const diff = projPct - r.pMax;
+            const arrow = Math.abs(diff) < 1 ? "" : diff > 0 ? " ↑" : " ↓";
+            return (
+              <span title={"Sim projection: if the lineup were the top active-roster batters vs this starter, model says " + projCall + " " + projPct.toFixed(0) + "%. Actual may shift once real lineups post. Δ " + (diff > 0 ? "+" : "") + diff.toFixed(0) + "pp vs λ-model."} style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", background: "rgba(120,130,150,0.08)", border: "1px solid rgba(120,130,150,0.25)", borderRadius: 20, fontSize: 11, fontWeight: 700, color: "var(--dim)" }}>
+                SIM PROJ {projCall} {projPct.toFixed(0)}%{arrow}
+              </span>
+            );
+          })()}
           {r.parkEnv && (() => {
             const f = r.parkEnv.factor;
             const label = f >= 1.06 ? "HITTER FRIENDLY" : f >= 1.02 ? "SLIGHT HITTER LEAN" : f <= 0.95 ? "PITCHER FRIENDLY" : f <= 0.98 ? "SLIGHT PITCHER LEAN" : null;
