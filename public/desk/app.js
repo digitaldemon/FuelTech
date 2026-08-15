@@ -2066,7 +2066,18 @@ const loud=!focusRef.current||focusRef.current===r.gamePk;const named=r.away+" a
 // start calling from the live edge, rather than reciting the half-inning.
 // Switching focus TO a game clears `opened`, so it re-introduces itself and
 // re-anchors to the live edge — a switch is a fresh attach.
-if(!st.opened){const fresh=live.plays.findIndex(p=>playAgeMs(p)<CALLOUT_STALE_MS);st.n=fresh===-1?live.plays.length:fresh;if(live.plays.length||live.inning===1){if(loud)speak(named+". First inning. "+stake+".");st.opened=true;}}// Pitches go out BEFORE the play lines, and that ordering is not cosmetic:
+if(!st.opened){const fresh=live.plays.findIndex(p=>playAgeMs(p)<CALLOUT_STALE_MS);// Math.max, because this block runs on RE-attach too. Switching focus
+// clears `opened`, and st.n is already current by then — the plays loop
+// below advances it on every tick even while muted, since only `speak`
+// is gated by `loud`, not the loop. Assigning `fresh` therefore rewound
+// the pointer to the first play under 45s old and re-announced every
+// play in that window, which is the "repeating old plays" report; the
+// replayed backlog is also what put the voice behind the park.
+//
+// The pitch path never had this bug because st.pitch is an id Set built
+// once behind `if (!st.pitch)`, so it cannot rewind. An index can, and
+// an attach must only ever move it forward.
+const edge=fresh===-1?live.plays.length:fresh;st.n=Math.max(st.n,edge);if(live.plays.length||live.inning===1){if(loud)speak(named+". First inning. "+stake+".");st.opened=true;}}// Pitches go out BEFORE the play lines, and that ordering is not cosmetic:
 // the last pitch this code speaks in an at-bat is always the one before the
 // ball is put in play (in-play calls are skipped outright), so pitches-then-
 // play is the true chronological order within a single poll.

@@ -8355,7 +8355,19 @@ function FirstInning() {
       // re-anchors to the live edge — a switch is a fresh attach.
       if (!st.opened) {
         const fresh = live.plays.findIndex((p) => playAgeMs(p) < CALLOUT_STALE_MS);
-        st.n = fresh === -1 ? live.plays.length : fresh;
+        // Math.max, because this block runs on RE-attach too. Switching focus
+        // clears `opened`, and st.n is already current by then — the plays loop
+        // below advances it on every tick even while muted, since only `speak`
+        // is gated by `loud`, not the loop. Assigning `fresh` therefore rewound
+        // the pointer to the first play under 45s old and re-announced every
+        // play in that window, which is the "repeating old plays" report; the
+        // replayed backlog is also what put the voice behind the park.
+        //
+        // The pitch path never had this bug because st.pitch is an id Set built
+        // once behind `if (!st.pitch)`, so it cannot rewind. An index can, and
+        // an attach must only ever move it forward.
+        const edge = fresh === -1 ? live.plays.length : fresh;
+        st.n = Math.max(st.n, edge);
         if (live.plays.length || live.inning === 1) {
           if (loud) speak(named + ". First inning. " + stake + ".");
           st.opened = true;
