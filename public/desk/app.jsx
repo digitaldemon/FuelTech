@@ -6486,10 +6486,10 @@ function nrfiVerdict(r) {
     const edge = r.market.edge;           // model% - market% on our side
     const mktProb = r.market.marketSide;  // market's implied % on our side
     if (edge == null) { strength = "PASS"; notes.push("game under way — no pregame edge left"); }
-    else if (edge < 2) { strength = "PASS"; notes.push("market efficient — no value"); }
-    else if (mktProb >= 62 && edge < 5) { strength = "PASS"; notes.push("juice too short"); }
-    else if ((strength === "STRONG" || strength === "BET") && edge < 3) { strength = down(strength, 1); notes.push("thin value"); }
-    else if (edge >= 3) notes.push("value +" + edge.toFixed(0) + "% vs market");
+    else if (edge < 1.5) { strength = "PASS"; notes.push("market efficient — no value"); }
+    else if (mktProb >= 65 && edge < 5) { strength = "PASS"; notes.push("juice too short"); }
+    else if ((strength === "STRONG" || strength === "BET") && edge < 2.5) { strength = down(strength, 1); notes.push("thin value"); }
+    else if (edge >= 2.5) notes.push("value +" + edge.toFixed(1) + "% vs market");
   }
 
   const isBet = strength === "STRONG" || strength === "BET";
