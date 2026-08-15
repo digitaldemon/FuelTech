@@ -6340,10 +6340,10 @@ function NrfiCalendar({ rec, bankroll, riskLevel }) {
     const qty = Math.max(1, Math.round(betDollars / price));
     return e.result === "won" ? qty * (1 - price) : -qty * price;
   };
-  // Include all non-skipped entries that have a date
+  // Only show entries explicitly marked as bets
   const byDate = {};
   for (const e of rec || []) {
-    if (!e.date || e.skipped) continue;
+    if (!e.date || e.skipped || !e.isBet) continue;
     const d = String(e.date).replace(/-/g, "").slice(0, 8);
     if (!byDate[d]) byDate[d] = [];
     byDate[d].push(e);
