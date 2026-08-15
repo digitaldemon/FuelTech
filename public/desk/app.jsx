@@ -5706,18 +5706,36 @@ function formFactor(era, fip) {
   const label = fip != null ? "FIP" : "ERA";
   return { f: nClamp(1 + ((metric - 4.15) / 4.15) * 0.25, 0.85, 1.2), note: "L3 " + metric.toFixed(2) + " " + label };
 }
-// Pitcher rest days: backtest v5 (4,015 games) showed counterintuitive results:
-// short rest ≤3d: tired arm → more runs → YRFI lean (f > 1 increases pitcher lambda)
-// extra rest 6-7d: 48.7% NRFI vs 50.8% normal — opposite of assumption, YRFI lean
-// long layoff 8+d: rust risk → slight YRFI lean
-// All three increase pitcher lambda (→ YRFI). Weight is 0.10 so effect is tiny (< 0.3pp).
-function restFactor(days) {
-  if (days == null || days < 1 || days > 30) return { f: 1, note: "" };
-  if (days <= 3)              return { f: 1.05, note: days + "d rest (short)" };
-  if (days >= 6 && days <= 7) return { f: 1.03, note: days + "d extra rest" };
-  if (days >= 8)              return { f: 1.02, note: days + "d rest (long layoff)" };
-  return { f: 1, note: "" };
-}
+/* Pitcher rest days: REMOVED. There was a restFactor here returning 1.05 on <=3
+ * days, 1.03 on 6-7 and 1.02 on 8+, with a comment reading "Weight is 0.10 so
+ * effect is tiny (< 0.3pp)". The weight was not 0.10 — pitMult took the value as
+ * `_rest` and never read it, so the real weight was zero. The factor was
+ * computed, described on the card, and cast a YRFI consensus ballot, while
+ * contributing nothing to the probability that ballot was voting on.
+ *
+ * Before deleting the ballot the claim was measured, at the half-inning level a
+ * rest claim is actually about — rest belongs to one pitcher, so the question is
+ * whether HIS half goes clean (scripts/nrfi-rest-measure.js, 3,349 regular-season
+ * starts, baseline 70.6% clean):
+ *
+ *   <=3 (short)      13   69.2%  [42.4, 87.3]
+ *   4 (normal)       12   83.3%  [55.2, 95.3]
+ *   5 (normal)     1031   69.7%  [66.9, 72.5]
+ *   6-7 (extra)    1869   70.9%  [68.8, 73.0]
+ *   >=8 (layoff)    358   71.8%  [66.9, 76.2]
+ *   penalised      2240   71.1%  [69.2, 72.9]
+ *   not penalised  1043   69.9%  [67.0, 72.6]
+ *
+ * Every interval covers the baseline. The three buckets the model penalised come
+ * back marginally CLEANER than the two it left alone, so the sign was wrong as
+ * well as the size. And the headline case, short rest, has n=13 — with a modern
+ * five-man rotation it essentially never happens, so the branch the comment led
+ * with was the one that almost never fired.
+ *
+ * Nothing here is worth a term, and a factor at weight zero cannot be worth a
+ * vote. Travel-and-rest, which is a different measurement (days since the team's
+ * last game plus miles flown), is unaffected and still votes.
+ */
 // Pitcher rolling trend: L10 and L5 clean % vs season clean %.
 // L5 confirms or extends the L10 signal; when both point the same way use the
 // average (higher confidence), when they diverge dampen toward the less extreme.
@@ -6437,14 +6455,6 @@ function nrfiEvaluate(ctx) {
   // Form: prefer FIP (removes defense noise) over ERA for last-3-start form.
   const awayForm = formFactor(ctx.awayMeta && ctx.awayMeta.form, ctx.awayMeta && ctx.awayMeta.fipForm);
   const homeForm = formFactor(ctx.homeMeta && ctx.homeMeta.form, ctx.homeMeta && ctx.homeMeta.fipForm);
-  // Rest days: compute from game date vs pitcher's last start date.
-  const gameDate = ctx.startUtc ? ctx.startUtc.slice(0, 10) : null;
-  const awayRestDays = gameDate && ctx.awayMeta && ctx.awayMeta.lastStartDate
-    ? Math.round((new Date(gameDate) - new Date(ctx.awayMeta.lastStartDate)) / 86400000) : null;
-  const homeRestDays = gameDate && ctx.homeMeta && ctx.homeMeta.lastStartDate
-    ? Math.round((new Date(gameDate) - new Date(ctx.homeMeta.lastStartDate)) / 86400000) : null;
-  const awayRest = restFactor(awayRestDays);
-  const homeRest = restFactor(homeRestDays);
   /* ---- day / night ----
    * This used to read `new Date(startUtc).getUTCHours() < 20`, described as
    * "before ~4pm local (approximated as UTC < 20:00)". The approximation only
@@ -6526,13 +6536,14 @@ function nrfiEvaluate(ctx) {
   // - opener (1st-inn ERA vs season ERA): still useful signal → 0.5
   // - openG (bullpen game pattern): strong → 1.0
   // - load (season IP): small but logical → 0.7
-  // - rest: LR coeff -0.066, extra-rest games showed LOWER NRFI rate → 0.0 (removed)
+  // - rest: gone entirely. It had sat here as a `_rest` parameter at weight 0
+  //   while still being computed and voted on; see the note where restFactor was.
   // - trend (L10 vs SZN clean %): hot/cold streak captured here, weight 0.30
   // - homeAdv: REMOVED. It multiplied the same half's lambda as the offense-side
   //   home factor, so the two were one fact fitted twice; the measured split now
   //   lives entirely in homeOffAdvantage.
   // - venue: pitcher-specific home/road split beyond average, weight 0.5 (smaller sample)
-  const pitMult = (skill, form, opener, openG, load, _rest, trend, venue) =>
+  const pitMult = (skill, form, opener, openG, load, trend, venue) =>
     nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30 + (venue.f - 1) * 0.5, 0.78, 1.25);
   const awayOffKRate = offKrateFactor(ctx.awayOff);
   const homeOffKRate = offKrateFactor(ctx.homeOff);
@@ -6566,8 +6577,8 @@ function nrfiEvaluate(ctx) {
   const homeOffSim = offSimCtx(homeOffTrend, homeOffVenue, homeOffKRate);
   const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel, awayOffTrend, awayOffAdv, awayOffVenue, awayOffKRate);
   const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel, homeOffTrend, homeOffAdv, homeOffVenue, homeOffKRate);
-  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest, awayTrend, awayVenue);
-  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeRest, homeTrend, homeVenue);
+  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayTrend, awayVenue);
+  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeTrend, homeVenue);
   const umpFactor = ctx.umpFactor || 1;
   const env = nClamp(1 + (ctx.wx.factor - 1) + (umpFactor - 1), 0.85, 1.20);
   // λ-model (fallback when we don't have posted batters + pitcher allow-rates).
@@ -6771,12 +6782,29 @@ function nrfiEvaluate(ctx) {
       // and the tired-team side has to be more than routine to count.
       lean: (ctx.awayTravel.factor * ctx.homeTravel.factor) <= 0.955 ? "nrfi"
         : (ctx.awayTravel.factor * ctx.homeTravel.factor) >= 1.045 ? "yrfi" : "neutral" },
+    // Informational, and deliberately not a vote — same reason as Day game below.
+    //
+    // seasonLoadFactor bottoms out at 1.00 and climbs to 1.04, so it cannot
+    // express a rested arm, only a worn one. A check built on it is structurally
+    // incapable of voting NRFI: it either says YRFI or abstains, which in a
+    // consensus tally is a thumb on the scale rather than a reading. This one
+    // was one-sided twice over — it also fired on `awayLoad.f >= 1.03 ||
+    // homeLoad.f >= 1.03`, so a single heavy arm carried the row, where every
+    // other paired check averages the two sides.
+    //
+    // Measured by cumulative starts, the proxy for season IP the schedule feed
+    // supports at ~5.3 IP a start (scripts/nrfi-rest-measure.js, 3,349 starts,
+    // 70.6% clean baseline): >=23 starts — the ~120 IP line where the factor
+    // first fires — runs 72.0% [58.3, 82.5] against 70.6% for everything below
+    // it. Marginally cleaner, not dirtier. But n=50: coverage is essentially
+    // complete (3,736 of 3,738 starter slots, 334 distinct pitchers) and the
+    // thin tail is simply mid-August, where nobody has made 28 starts yet. So
+    // the direction is unconfirmed rather than refuted, and the honest state is
+    // under-powered — worth re-measuring on a full season before the 0.7-weight
+    // term stays or goes. Until then it nudges the number and does not vote.
     { label: "Pitcher season load",
       detail: ctx.homePP + ": " + (homeLoad.note || "normal") + " · " + ctx.awayPP + ": " + (awayLoad.note || "normal"),
-      lean: (awayLoad.f >= 1.03 || homeLoad.f >= 1.03) ? "yrfi" : "neutral" },
-    (awayRest.note || homeRest.note) ? { label: "Pitcher rest days",
-      detail: [ctx.awayPP + ": " + (awayRest.note || "normal rest"), ctx.homePP + ": " + (homeRest.note || "normal rest")].join(" · "),
-      lean: (awayRest.f >= 1.05 || homeRest.f >= 1.05) ? "yrfi" : "neutral" } : null,
+      lean: "neutral" },
     // Informational, and deliberately not a vote. The YRFI ballot this used to
     // cast rested on the same contaminated split as the withdrawn logit shift;
     // on MLB's own labels day games are 51.1% NRFI against night's 48.9%, which
@@ -6901,7 +6929,7 @@ const awayPit0 = (o) => (o && o.rate != null ? o.rate.toFixed(2) + " R/1st" : "T
 // different views of one thing, so they share a single consensus vote — see the
 // famVotes block in the evaluator. Anything unmatched votes on its own.
 const CHECK_FAMILIES = [
-  [/^(Starting pitching|Pitcher skill|Opener \/ bullpen|Starter recent form|Pitcher K9 trend|Clean opener|Pitcher season load|Pitcher rest days|Last start momentum|Pitcher trend|Pitcher venue split|Backtest profile)/, "pitching"],
+  [/^(Starting pitching|Pitcher skill|Opener \/ bullpen|Starter recent form|Pitcher K9 trend|Clean opener|Pitcher season load|Last start momentum|Pitcher trend|Pitcher venue split|Backtest profile)/, "pitching"],
   [/^(1st-inning offense|Offense trend|Offense venue split|Team K%|Platoon|Lineups)/, "offense"],
   [/^(Day game|Weather & park|Umpire|Travel & rest)/, "environment"],
 ];
