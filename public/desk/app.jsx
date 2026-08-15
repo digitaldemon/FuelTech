@@ -5393,6 +5393,7 @@ async function pitcherRollingNRFI(pid, season) {
           l30: { pct: pct(valid.slice(-30)),   n: Math.min(valid.length, 30) },
           l10: { pct: pct(valid.slice(-10)),   n: Math.min(valid.length, 10) },
           l5:  { pct: pct(valid.slice(-5)),    n: Math.min(valid.length, 5)  },
+          streak: valid.slice(-5),              // last 5 results oldest→newest for visual display
           lastClean: valid.length > 0 ? valid[valid.length - 1] : null,
         };
       }
@@ -7236,6 +7237,21 @@ function FirstInning() {
                           <div style={{ fontSize: 9, color: "var(--dim)", opacity: 0.7 }}>{w.n != null ? w.n + "g" : ""}</div>
                         </div>
                       ))}
+                    </div>
+                  )}
+                  {rl && rl.streak && rl.streak.length > 0 && (
+                    <div title={"Last " + rl.streak.length + " starts in order (oldest → newest). Green = clean first inning. Red = allowed a run."} style={{ cursor: "help", display: "flex", alignItems: "center", gap: 5, marginBottom: 9 }}>
+                      <span style={{ fontSize: 9, color: "var(--dim)", fontWeight: 700, letterSpacing: "0.04em", marginRight: 2 }}>LAST {rl.streak.length}</span>
+                      {rl.streak.map((clean, idx) => (
+                        <span key={idx} title={clean ? "Clean start" : "Allowed a run"} style={{ width: 14, height: 14, borderRadius: "50%", background: clean ? "var(--moss)" : "var(--rose)", display: "inline-block", opacity: 0.4 + (idx / rl.streak.length) * 0.6, flexShrink: 0 }} />
+                      ))}
+                      {(() => {
+                        const consec = [...rl.streak].reverse().findIndex((c) => c === !rl.streak[rl.streak.length - 1]);
+                        const run = consec === -1 ? rl.streak.length : consec;
+                        if (run < 3) return null;
+                        const hot = rl.streak[rl.streak.length - 1] === true;
+                        return <span style={{ fontSize: 9, fontWeight: 800, color: hot ? "var(--moss)" : "var(--rose)", marginLeft: 2 }}>{run} straight {hot ? "clean" : "dirty"}</span>;
+                      })()}
                     </div>
                   )}
                   {(p.sample || 0) < 5 && (
