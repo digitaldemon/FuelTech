@@ -6633,7 +6633,6 @@ function FirstInning() {
   const [err, setErr] = useState(null);
   const [open, setOpen] = useState({});
   const [rfi, setRfi] = useState([]);
-  const [simView, setSimView] = useState({});
   const recRef = useRef(null);
   const priceSnap = useRef({});
   const refreshedFor = useRef(new Set());
@@ -6872,9 +6871,7 @@ function FirstInning() {
     // size a game that is already under way.
     const kelly = market && !started ? kellyNRFI(pFinal, market.yesPrice, call) : null;
     const tails = sellers.filter((s) => s.active).map((s) => ({ name: s.name, pick: matchKingPick(r, s.open || []) })).filter((t) => t.pick);
-    const pSimProj = r.pNRFI_simProj != null ? nrfiBlend(applyCalibration(r.pNRFI_simProj, calib), mk ? mk.marketNRFI : null) : null;
-    const pMax_simProj = pSimProj != null ? Math.max(pSimProj, 1 - pSimProj) * 100 : null;
-    const base = Object.assign({}, r, { call, pMax, pModel: pcal, pFinal, pCal: pcal, tails, tier: nrfiTier(pMax), market, kelly, pMax_simProj });
+    const base = Object.assign({}, r, { call, pMax, pModel: pcal, pFinal, pCal: pcal, tails, tier: nrfiTier(pMax), market, kelly });
     base.v = nrfiVerdict(base);
     return base;
   });
@@ -6908,12 +6905,6 @@ function FirstInning() {
 
   const card = (r) => {
     const isOpen = !!open[r.gamePk];
-    const showSim = !!simView[r.gamePk];
-    const toggleSim = () => setSimView((v) => ({ ...v, [r.gamePk]: !v[r.gamePk] }));
-    const simAvail = r.method !== "sim" && r.pMax_simProj != null;
-    const displayMax = showSim && simAvail ? r.pMax_simProj : r.pMax;
-    const simCall = r.pNRFI_simProj != null ? (r.pNRFI_simProj >= 0.5 ? "NRFI" : "YRFI") : r.call;
-    const displayCall = showSim && simAvail ? simCall : r.call;
     const graded = r.inning1runs != null && (r.currentInning > 1 || r.final);
     const openPos = r.market && openPositions && !openPositions.error
       ? (openPositions.positions || []).find((p) => p.ticker === r.market.ticker)
@@ -6969,18 +6960,12 @@ function FirstInning() {
     return (
       <div className={"pick " + r.tier.cls} key={r.gamePk}>
         {/* ── Verdict badge — centered at top ── */}
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10, gap: 8, alignItems: "flex-start" }}>
-          <div title={r.v.blurb} style={{ cursor: "help", textAlign: "center", border: "2px solid " + r.v.color, background: r.v.color + "15", borderRadius: 12, padding: "6px 20px", flex: "0 0 auto" }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+          <div title={r.v.blurb} style={{ cursor: "help", textAlign: "center", border: "2px solid " + r.v.color, background: r.v.color + "15", borderRadius: 12, padding: "6px 20px" }}>
             <div style={{ fontWeight: 900, fontSize: 12, color: r.v.color, lineHeight: 1, letterSpacing: "0.05em", textTransform: "uppercase" }}>{r.v.label}</div>
-            <div style={{ fontWeight: 800, fontSize: 26, color: r.v.color, lineHeight: 1, marginTop: 5 }}>{displayMax.toFixed(0)}%</div>
-            <div style={{ fontSize: 9, letterSpacing: "0.10em", color: r.v.color, marginTop: 3, opacity: 0.6 }}>{showSim && simAvail ? "SIM PROJ" : r.tier.t}</div>
+            <div style={{ fontWeight: 800, fontSize: 26, color: r.v.color, lineHeight: 1, marginTop: 5 }}>{r.pMax.toFixed(0)}%</div>
+            <div style={{ fontSize: 9, letterSpacing: "0.10em", color: r.v.color, marginTop: 3, opacity: 0.6 }}>{r.tier.t}</div>
           </div>
-          {simAvail && (
-            <button onClick={toggleSim} title={showSim ? "Switch back to lambda-regression model probability" : "Project probability via base-out Markov simulation with avg team lineup vs this pitcher's allow rates"} style={{ border: "1px solid " + (showSim ? "#60a5fa" : "rgba(120,130,150,0.3)"), background: showSim ? "rgba(96,165,250,0.15)" : "rgba(255,255,255,0.04)", color: showSim ? "#60a5fa" : "var(--dim)", borderRadius: 7, padding: "4px 8px", cursor: "pointer", fontSize: 9, fontWeight: 800, letterSpacing: "0.08em", marginTop: 4, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-              <span>⚙</span>
-              <span>{showSim ? "MODEL" : "SIM"}</span>
-            </button>
-          )}
         </div>
         {/* ── Header ── */}
         <div style={{ marginBottom: 12 }}>
@@ -7153,9 +7138,9 @@ function FirstInning() {
 
         {/* ── Stats strip ── */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 0, alignItems: "stretch", fontSize: 12, marginBottom: 8, background: "rgba(255,255,255,0.04)", borderRadius: 10, border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
-          <span title={(showSim && simAvail) ? "Base-out Markov simulation using average team lineup vs this pitcher's season allow rates. Lineups not yet posted — this is a projection." : "Our model's probability of " + r.call + " happening in the 1st inning — built from pitcher splits, lineups, park, weather, and Kalshi market price."} style={{ cursor: "help", padding: "8px 12px", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
-            <span style={{ color: showSim && simAvail ? "#60a5fa" : "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>{showSim && simAvail ? "SIM PROJ" : "MODEL"}</span>
-            <span style={{ fontWeight: 800, color: r.v.color }}>{displayMax.toFixed(0)}% {displayCall}</span>
+          <span title={"Our model's probability of " + r.call + " happening in the 1st inning — built from pitcher splits, lineups, park, weather, and Kalshi market price."} style={{ cursor: "help", padding: "8px 12px", borderRight: "1px solid rgba(255,255,255,0.06)" }}>
+            <span style={{ color: "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>MODEL</span>
+            <span style={{ fontWeight: 800, color: r.v.color }}>{r.pMax.toFixed(0)}% {r.call}</span>
           </span>
           {r.market && (
             <>
