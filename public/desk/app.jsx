@@ -6734,7 +6734,7 @@ function FirstInning() {
         // Lineups posted: upgrade from λ-model to sim, re-evaluate with real batter rates.
         if (!started && r.method === "sim" && e.method !== "sim") {
           const v2 = nrfiVerdict({ ...r, pMax, call });
-          e.prob = r1(pMax); e.call = call; e.strength = v2.strength; e.isBet = v2.isBet; e.thinPass = v2.thinPass;
+          e.prob = r1(pMax); e.call = call; e.strength = v2.strength; e.isBet = e.isBet && v2.isBet; e.thinPass = v2.thinPass;
           e.method = "sim"; e.lineupUpdatedAt = Date.now();
           if (!changed.includes(e)) changed.push(e);
         }
