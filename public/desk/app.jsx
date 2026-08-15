@@ -5452,13 +5452,21 @@ function pitcherTrendFactor(rolling) {
   const delta = (d10 != null && d5 != null)
     ? (Math.sign(d5) === Math.sign(d10) ? (d10 + d5) / 2 : (Math.abs(d10) <= Math.abs(d5) ? d10 : d5))
     : (d10 ?? d5);
+  // runsPerStart supplement: continuous signal that differentiates mild vs severe non-clean starts.
+  // Scaled to pp: 100% run rate reduction vs season average → +10pp boost.
+  const l10rps = rolling.l10 && rolling.l10.runsPerStart != null ? rolling.l10.runsPerStart : null;
+  const sznRps = rolling.szn && rolling.szn.runsPerStart != null ? rolling.szn.runsPerStart : null;
+  const rpsBoost = (l10rps != null && sznRps != null && sznRps > 0)
+    ? (sznRps - l10rps) / sznRps * 10 : 0;
+  const combined = (delta ?? 0) + rpsBoost;
   const l5tag = l5pct != null ? " · L5 " + l5pct + "%" : "";
-  if      (delta >=  25) return { f: 0.84, note: "L10+" + Math.round(delta) + "pp vs SZN (blazing hot)" + l5tag };
-  else if (delta >=  15) return { f: 0.90, note: "L10+" + Math.round(delta) + "pp vs SZN (hot)" + l5tag };
-  else if (delta >=   8) return { f: 0.95, note: "L10+" + Math.round(delta) + "pp vs SZN (warm)" };
-  else if (delta <= -25) return { f: 1.16, note: "L10" + Math.round(delta) + "pp vs SZN (icy cold)" + l5tag };
-  else if (delta <= -15) return { f: 1.09, note: "L10" + Math.round(delta) + "pp vs SZN (cold)" + l5tag };
-  else if (delta <=  -8) return { f: 1.04, note: "L10" + Math.round(delta) + "pp vs SZN (cooling)" };
+  const rpsTag = l10rps != null ? " · " + l10rps.toFixed(2) + "R/st" : "";
+  if      (combined >=  25) return { f: 0.84, note: "L10+" + Math.round(combined) + "pp vs SZN (blazing hot)" + l5tag + rpsTag };
+  else if (combined >=  15) return { f: 0.90, note: "L10+" + Math.round(combined) + "pp vs SZN (hot)" + l5tag + rpsTag };
+  else if (combined >=   8) return { f: 0.95, note: "L10+" + Math.round(combined) + "pp vs SZN (warm)" + rpsTag };
+  else if (combined <= -25) return { f: 1.16, note: "L10" + Math.round(combined) + "pp vs SZN (icy cold)" + l5tag + rpsTag };
+  else if (combined <= -15) return { f: 1.09, note: "L10" + Math.round(combined) + "pp vs SZN (cold)" + l5tag + rpsTag };
+  else if (combined <=  -8) return { f: 1.04, note: "L10" + Math.round(combined) + "pp vs SZN (cooling)" + rpsTag };
   return { f: 1, note: "" };
 }
 // Team first-inning offense rolling trend: L10 scored-in-1st rate vs season rate.
@@ -6065,9 +6073,10 @@ function nrfiEvaluate(ctx) {
   const lean = (v, hi, lo) => (v >= hi ? "yrfi" : v <= lo ? "nrfi" : "neutral");
   const facLean = (f) => (f >= 1.05 ? "yrfi" : f <= 0.96 ? "nrfi" : "neutral");
   const hand = (m) => (m && m.hand ? " (" + m.hand + "HP)" : "");
+  const thinNote = (p) => (p && p.sample && p.sample < 8) ? " [" + p.sample + "gs]" : "";
   const checks = [
     { label: "Starting pitching (1st inning)",
-      detail: ctx.homePP + hand(ctx.homeMeta) + " " + awayPit0(ctx.homePit) + " · " + ctx.awayPP + hand(ctx.awayMeta) + " " + awayPit0(ctx.awayPit),
+      detail: ctx.homePP + hand(ctx.homeMeta) + thinNote(ctx.homePit) + " " + awayPit0(ctx.homePit) + " · " + ctx.awayPP + hand(ctx.awayMeta) + thinNote(ctx.awayPit) + " " + awayPit0(ctx.awayPit),
       lean: lean((awayPitBase + homePitBase) / 2, 0.6, 0.42) },
     { label: "Pitcher skill (K/BB/barrel/GB)",
       detail: ctx.homePP + ": " + homeSkill.note + " · " + ctx.awayPP + ": " + awaySkill.note,
