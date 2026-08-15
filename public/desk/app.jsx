@@ -5688,24 +5688,44 @@ async function pitcherRollingNRFI(pid, season) {
   return val;
 }
 
-// Platoon edge: an offense's OPS vs the opposing starter's hand, relative to
-// its own two-hand average. >1 favours a run (YRFI), <1 favours NRFI.
-function platoonFactor(off, oppHand) {
-  if (!off || !oppHand || off.opsVsR == null || off.opsVsL == null) return { f: 1, note: "platoon data n/a" };
-  const ops = oppHand === "L" ? off.opsVsL : off.opsVsR;
-  const base = (off.opsVsR + off.opsVsL) / 2;
-  if (!base) return { f: 1, note: "platoon data n/a" };
-  return { f: nClamp(ops / base, 0.85, 1.18), note: "OPS " + ops.toFixed(3) + " vs " + (oppHand === "L" ? "LHP" : "RHP") };
-}
-// Recent form: prefer FIP (fielding-independent, removes defense noise) over ERA.
-// FIP = 3.13 + (13*HR + 3*BB - 2*K) / IP — more predictive of next-start performance.
-function formFactor(era, fip) {
-  const metric = fip != null ? fip : era;
-  // `== null` lets NaN through, and NaN survives nClamp into the factor product.
-  if (!Number.isFinite(metric)) return { f: 1, note: "recent form n/a" };
-  const label = fip != null ? "FIP" : "ERA";
-  return { f: nClamp(1 + ((metric - 4.15) / 4.15) * 0.25, 0.85, 1.2), note: "L3 " + metric.toFixed(2) + " " + label };
-}
+/* Platoon edge: REMOVED. It took an offense's OPS vs the opposing starter's
+ * hand over its own two-hand average, at weight 0.20 in offMult.
+ *
+ * It was redundant by construction. topOrderStrength already reads the POSTED
+ * lineup's top-of-order OBP *against that same starter's hand* — the platoon
+ * matchup measured on the actual batters due up, rather than on a team-season
+ * aggregate that includes the eight men who are not leading off. Both were
+ * pricing one fact, and the weight had already been cut from 0.6 to 0.2 in
+ * acknowledgement of that without the last step being taken.
+ *
+ * Measured worth on a live board (scripts/nrfi-factor-contrib.js): 0.010pp
+ * mean, 0.10pp max, zero verdict changes. The value gate needs 1.5pp to see
+ * anything, so this was three orders of magnitude below the threshold at which
+ * it could alter a decision. Its centring was separately checked and found
+ * sound (nrfi-platoon-audit.js, +0.06% of lambda) — it was not broken, it was
+ * simply already counted elsewhere.
+ *
+ * Note it only ever applied on the lambda path anyway: the base-out sim reads
+ * real batters against real allow-rates, so handedness is inside it.
+ */
+/* Recent form (L3 FIP/ERA): REMOVED. It mapped a starter's last-three-start FIP
+ * against a 4.15 baseline, at weight 0.10.
+ *
+ * FIP is 3.13 + (13*HR + 3*BB - 2*K)/IP, and pitchSkillFactor already prices
+ * barrel, BB and K SEPARATELY with individually tuned weights (0.25 / 0.30 /
+ * 0.35) instead of FIP's fixed 13/3/-2 coefficients. So this did not add
+ * fielding-independent information; it restated three variables the model
+ * measures more finely, over a three-start window noisy enough that the 4,015-
+ * game backtest returned a logistic coefficient of -0.018 — the wrong sign,
+ * i.e. counterproductive once pitBase is controlled for. That is why the weight
+ * had already been walked down from 0.6 to 0.10.
+ *
+ * Measured worth: 0.178pp mean, 0.52pp max, zero verdict changes on a live
+ * board. Still under the 1.5pp gate at its maximum.
+ *
+ * This was the only consumer of fipForm. Season-level pitcher quality is
+ * unaffected and lives in pitchSkillFactor + pitBase.
+ */
 /* Pitcher rest days: REMOVED. There was a restFactor here returning 1.05 on <=3
  * days, 1.03 on 6-7 and 1.02 on 8+, with a comment reading "Weight is 0.10 so
  * effect is tiny (< 0.3pp)". The weight was not 0.10 — pitMult took the value as
@@ -6449,12 +6469,9 @@ function nrfiEvaluate(ctx) {
   const awayPitBase = nrfiRegress(ctx.awayPit && ctx.awayPit.rate, (ctx.awayPit && ctx.awayPit.sample) || 0, NRFI_PIT_REG);
   const homePitBase = nrfiRegress(ctx.homePit && ctx.homePit.rate, (ctx.homePit && ctx.homePit.sample) || 0, NRFI_PIT_REG);
 
-  // Platoon: each offense vs the opposing starter's hand. Recent form + skill peripherals per starter.
-  const awayPlat = platoonFactor(ctx.awayOff, ctx.homeMeta && ctx.homeMeta.hand);
-  const homePlat = platoonFactor(ctx.homeOff, ctx.awayMeta && ctx.awayMeta.hand);
-  // Form: prefer FIP (removes defense noise) over ERA for last-3-start form.
-  const awayForm = formFactor(ctx.awayMeta && ctx.awayMeta.form, ctx.awayMeta && ctx.awayMeta.fipForm);
-  const homeForm = formFactor(ctx.homeMeta && ctx.homeMeta.form, ctx.homeMeta && ctx.homeMeta.fipForm);
+  // Platoon and L3 form both removed — see the notes where their factors were.
+  // Handedness now enters once, through the posted lineup's OBP vs the starter's
+  // hand; pitcher quality enters once, through skill peripherals and pitBase.
   /* ---- day / night ----
    * This used to read `new Date(startUtc).getUTCHours() < 20`, described as
    * "before ~4pm local (approximated as UTC < 20:00)". The approximation only
@@ -6538,8 +6555,8 @@ function nrfiEvaluate(ctx) {
   //   unidentifiable; see homeOffAdvantage.
   // offVenue: team-specific home/road 1st-inn scoring gap, weight 0.3 (partial overlap with homeAdv).
   // kRate: team 1st-inn K% vs league avg — high K = contact scarce = NRFI lean. Weight 0.35.
-  const offMult = (lineup, plat, travel, offTrend, homeAdv, venue, kRate) =>
-    nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.2 + (travel.factor - 1) * 0.6 + (offTrend.f - 1) * 0.5 + (homeAdv.f - 1) * 1.0 + (venue.f - 1) * 0.3 + (kRate.f - 1) * 0.35, 0.80, 1.30);
+  const offMult = (lineup, travel, offTrend, homeAdv, venue, kRate) =>
+    nClamp(1 + (lineup.factor - 1) * 1.0 + (travel.factor - 1) * 0.6 + (offTrend.f - 1) * 0.5 + (homeAdv.f - 1) * 1.0 + (venue.f - 1) * 0.3 + (kRate.f - 1) * 0.35, 0.80, 1.30);
   // Offense home field: the measured split, applied at the offense entry only.
   const awayOffAdv = homeOffAdvantage(false);
   const homeOffAdv = homeOffAdvantage(true);
@@ -6562,8 +6579,8 @@ function nrfiEvaluate(ctx) {
   //   home factor, so the two were one fact fitted twice; the measured split now
   //   lives entirely in homeOffAdvantage.
   // - venue: pitcher-specific home/road split beyond average, weight 0.5 (smaller sample)
-  const pitMult = (skill, form, opener, openG, load, trend, venue) =>
-    nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30 + (venue.f - 1) * 0.5, 0.78, 1.25);
+  const pitMult = (skill, opener, openG, load, trend, venue) =>
+    nClamp(1 + (skill.f - 1) * 1.0 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30 + (venue.f - 1) * 0.5, 0.78, 1.25);
   const awayOffKRate = offKrateFactor(ctx.awayOff);
   const homeOffKRate = offKrateFactor(ctx.homeOff);
   /* The offense adjustments the base-out sim does NOT already contain.
@@ -6594,10 +6611,10 @@ function nrfiEvaluate(ctx) {
     nClamp(1 + (trend.f - 1) * 0.5 + (venue.f - 1) * 0.3 + (kRate.f - 1) * 0.35, 0.88, 1.12);
   const awayOffSim = offSimCtx(awayOffTrend, awayOffVenue, awayOffKRate);
   const homeOffSim = offSimCtx(homeOffTrend, homeOffVenue, homeOffKRate);
-  const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel, awayOffTrend, awayOffAdv, awayOffVenue, awayOffKRate);
-  const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel, homeOffTrend, homeOffAdv, homeOffVenue, homeOffKRate);
-  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayTrend, awayVenue);
-  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeTrend, homeVenue);
+  const awayOff = awayOffBase * offMult(ctx.awayLineup, ctx.awayTravel, awayOffTrend, awayOffAdv, awayOffVenue, awayOffKRate);
+  const homeOff = homeOffBase * offMult(ctx.homeLineup, ctx.homeTravel, homeOffTrend, homeOffAdv, homeOffVenue, homeOffKRate);
+  const awayPit = awayPitBase * pitMult(awaySkill, awayOpen, awayOpenG, awayLoad, awayTrend, awayVenue);
+  const homePit = homePitBase * pitMult(homeSkill, homeOpen, homeOpenG, homeLoad, homeTrend, homeVenue);
   const umpFactor = ctx.umpFactor || 1;
   const env = nClamp(1 + (ctx.wx.factor - 1) + (umpFactor - 1), 0.85, 1.20);
   // λ-model (fallback when we don't have posted batters + pitcher allow-rates).
@@ -6613,8 +6630,8 @@ function nrfiEvaluate(ctx) {
     // from the raw rates. Apply only what the season rates DON'T contain:
     // recent form, opener/bullpen, travel, and park/weather/umpire.
     // Form weight 0.10 (down from 0.6) matches lambda path — backtest LR showed form counterproductive.
-    const homeCtx = nClamp(1 + (homeForm.f - 1) * 0.10 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0 + (homeLoad.f - 1) * 0.7 + (homeTrend.f - 1) * 0.30 + (homeVenue.f - 1) * 0.5, 0.82, 1.2);
-    const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.10 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7 + (awayTrend.f - 1) * 0.30 + (awayVenue.f - 1) * 0.5, 0.82, 1.2);
+    const homeCtx = nClamp(1 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0 + (homeLoad.f - 1) * 0.7 + (homeTrend.f - 1) * 0.30 + (homeVenue.f - 1) * 0.5, 0.82, 1.2);
+    const awayCtx = nClamp(1 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7 + (awayTrend.f - 1) * 0.30 + (awayVenue.f - 1) * 0.5, 0.82, 1.2);
     const s0top = simHalfNoRun(awayB, homeAllow, NRFI_LG_PA);
     const s0bot = simHalfNoRun(homeB, awayAllow, NRFI_LG_PA);
     const pRunTop = nClamp((1 - s0top) * homeCtx * ctx.awayTravel.factor * awayOffAdv.f * awayOffSim * env, 0.02, 0.97);
@@ -6647,8 +6664,8 @@ function nrfiEvaluate(ctx) {
     const homeSimBatters = ctx.homeBestLineup || synthLine(ctx.homeOff);
     const sTop = simHalfNoRun(awaySimBatters, homeAllow, NRFI_LG_PA);
     const sBot = simHalfNoRun(homeSimBatters, awayAllow, NRFI_LG_PA);
-    const hPC = nClamp(1 + (homeForm.f-1)*0.10 + (homeOpen.f-1)*0.5 + (homeOpenG.f-1)*1.0 + (homeLoad.f-1)*0.7 + (homeTrend.f-1)*0.30 + (homeVenue.f-1)*0.5, 0.82, 1.2);
-    const aPC = nClamp(1 + (awayForm.f-1)*0.10 + (awayOpen.f-1)*0.5 + (awayOpenG.f-1)*1.0 + (awayLoad.f-1)*0.7 + (awayTrend.f-1)*0.30 + (awayVenue.f-1)*0.5, 0.82, 1.2);
+    const hPC = nClamp(1 + (homeOpen.f-1)*0.5 + (homeOpenG.f-1)*1.0 + (homeLoad.f-1)*0.7 + (homeTrend.f-1)*0.30 + (homeVenue.f-1)*0.5, 0.82, 1.2);
+    const aPC = nClamp(1 + (awayOpen.f-1)*0.5 + (awayOpenG.f-1)*1.0 + (awayLoad.f-1)*0.7 + (awayTrend.f-1)*0.30 + (awayVenue.f-1)*0.5, 0.82, 1.2);
     // Was the odd one out: it multiplied offVenue in raw and at full strength
     // while the real sim applied none of the three, so the projected number and
     // the number that replaced it were built to different recipes. Both now go
@@ -6687,9 +6704,6 @@ function nrfiEvaluate(ctx) {
     { label: "Opener / bullpen game",
       detail: ctx.homePP + ": " + homeOpenG.note + " · " + ctx.awayPP + ": " + awayOpenG.note,
       lean: (awayOpenG.opener || homeOpenG.opener) ? "nrfi" : "neutral" },
-    { label: "Starter recent form",
-      detail: ctx.homePP + ": " + homeForm.note + " · " + ctx.awayPP + ": " + awayForm.note,
-      lean: facLean((awayForm.f + homeForm.f) / 2) },
     (() => {
       // A K/9 read off three starts is noisy: the standard error is
       // sqrt(9*K9/IP), so at a typical 17 IP window one SE is ~2.2 K/9. The
@@ -6786,9 +6800,6 @@ function nrfiEvaluate(ctx) {
       return { label: "Team K% (1st inn)", detail: notes.join(" · "),
         lean: fAvg <= 0.97 ? "nrfi" : fAvg >= 1.04 ? "yrfi" : "neutral" };
     })(),
-    { label: "Platoon / handedness",
-      detail: ctx.awayName + ": " + awayPlat.note + " · " + ctx.homeName + ": " + homePlat.note,
-      lean: facLean((awayPlat.f + homePlat.f) / 2) },
     { label: "Lineups (leadoff-weighted)",
       detail: ctx.awayName + ": " + ctx.awayLineup.note + " · " + ctx.homeName + ": " + ctx.homeLineup.note,
       lean: facLean((ctx.awayLineup.factor + ctx.homeLineup.factor) / 2) },
@@ -6949,8 +6960,8 @@ const awayPit0 = (o) => (o && o.rate != null ? o.rate.toFixed(2) + " R/1st" : "T
 // different views of one thing, so they share a single consensus vote — see the
 // famVotes block in the evaluator. Anything unmatched votes on its own.
 const CHECK_FAMILIES = [
-  [/^(Starting pitching|Pitcher skill|Opener \/ bullpen|Starter recent form|Pitcher K9 trend|Clean opener|Pitcher season load|Last start momentum|Pitcher trend|Pitcher venue split|Backtest profile)/, "pitching"],
-  [/^(1st-inning offense|Offense trend|Offense venue split|Team K%|Platoon|Lineups)/, "offense"],
+  [/^(Starting pitching|Pitcher skill|Opener \/ bullpen|Pitcher K9 trend|Clean opener|Pitcher season load|Last start momentum|Pitcher trend|Pitcher venue split|Backtest profile)/, "pitching"],
+  [/^(1st-inning offense|Offense trend|Offense venue split|Team K%|Lineups)/, "offense"],
   [/^(Day game|Weather & park|Umpire|Travel & rest)/, "environment"],
 ];
 function checkFamily(label) {
@@ -8212,7 +8223,19 @@ function FirstInning() {
   const clvSet = (rec || []).filter((r) => r.source !== "kalshi-import" && r.mktAtPick != null && r.mktAtClose != null && (r.result === "won" || r.result === "lost"));
   const avgCLV = clvSet.length ? clvSet.reduce((a, r) => a + (r.mktAtClose - r.mktAtPick), 0) / clvSet.length : null;
   const byConf = (a, b) => b.pMax - a.pMax;
-  const validRows = enriched.filter((r) => !r.v.thinPass);
+  // A game you have money on is pinned to the top of the board and stays there,
+  // whatever today's verdict says about it. The sections below are a shopping
+  // list — they answer "what should I bet", and a model change that demotes a
+  // game to PASS correctly drops it off that list. But it does NOT drop the
+  // contract: the position is still open and still needs watching, and burying
+  // it in the Pass section (or, on a thinPass, removing it from the board
+  // outright, since validRows filters those out) reads as "your bet is gone".
+  // So held games come off `enriched` rather than `validRows`, and are removed
+  // from the other four sections so each game renders exactly once.
+  const heldSides = calloutHeld(openPositions);
+  const isHeld = (r) => !!calloutHeldSide(r, heldSides);
+  const held = enriched.filter(isHeld).sort(byConf);
+  const validRows = enriched.filter((r) => !r.v.thinPass && !isHeld(r));
   const betNRFI = validRows.filter((r) => r.v.isBet && r.call === "NRFI").sort(byConf);
   const betYRFI = validRows.filter((r) => r.v.isBet && r.call === "YRFI").sort(byConf);
   const leans = validRows.filter((r) => r.v.strength === "LEAN").sort(byConf);
@@ -8796,8 +8819,8 @@ function FirstInning() {
     <div>
       <p className="help">
         Calibrated first-inning (NRFI/YRFI) model from MLB StatsAPI + Statcast. Every game runs a full research
-        pass — starting pitching (1st-inning splits), pitcher skill (1st-inn K%, Statcast whiff, control), recent
-        form, both teams' 1st-inning offense, platoon/handedness, leadoff-weighted lineups (also catches
+        pass — starting pitching (1st-inning splits), pitcher skill (1st-inn K%, Statcast whiff, control),
+        both teams' 1st-inning offense, leadoff-weighted lineups (also catches
         scratches), travel &amp; rest, weather/park, and the home-plate umpire. The de-vig Kalshi market is the PRIOR —
         "our number" is market-anchored with the model as the tiebreaker; we bet only when the model clears the market
         by a real margin, and track closing-line value (CLV), the honest edge test. Graded against the real 1st-inning score.
@@ -9396,6 +9419,17 @@ function FirstInning() {
               <span style={{ color: "var(--dim)" }}>= ~{pair.combProb}% parlay hit</span>
             </div>
           ))}
+        </div>
+      )}
+      {held.length > 0 && (
+        <div className="panel" style={{ marginTop: 12, border: "1px solid rgba(120,110,200,0.35)", background: "rgba(120,110,200,0.05)" }}>
+          <p className="sect" style={{ margin: 0, color: "var(--violet)" }}>Your positions ({held.length})</p>
+          <p style={{ fontSize: 11, color: "var(--dim)", margin: "4px 0 8px" }}>
+            Games you hold contracts on, pinned here whatever the model says today. The verdict on each card is the
+            live read, so a card marked PASS means the model no longer sees an edge at the current price — not that
+            the position closed.
+          </p>
+          <div style={{ marginTop: 8, display: "grid", gap: 8 }}>{held.map(card)}</div>
         </div>
       )}
       {sect("Bets — ranked by confidence", [...betNRFI, ...betYRFI].sort(byConf), "var(--moss)")}
