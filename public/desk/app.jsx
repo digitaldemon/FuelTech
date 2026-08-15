@@ -5299,9 +5299,12 @@ async function teamOffenseSplits(teamId, season) {
     const find = (re) => { const s = splits.find((x) => re.test((x.split && x.split.description) || "")); return s && s.stat; };
     const i01 = find(/first inning/i), vr = find(/right/i), vl = find(/left/i);
     if (i01 && i01.gamesPlayed) {
+      const pa = Number(i01.plateAppearances || 0);
       val = { rate: Number(i01.runs || 0) / i01.gamesPlayed, sample: i01.gamesPlayed,
         opsVsR: vr && vr.ops != null ? Number(vr.ops) : null,
-        opsVsL: vl && vl.ops != null ? Number(vl.ops) : null };
+        opsVsL: vl && vl.ops != null ? Number(vl.ops) : null,
+        kRate: pa > 0 ? Number(i01.strikeOuts || 0) / pa : null,
+        kSample: pa };
     }
   } catch { /* leave null */ }
   _teamI01.set(k, val);
@@ -5513,6 +5516,19 @@ function offenseVenueFactor(rolling, isHome) {
   else if (effectiveDelta >=  0.15) return { f: 1.03, note: tag + " offense +" + pp + "pp venue" };
   else if (effectiveDelta <= -0.25) return { f: 0.95, note: tag + " offense -" + pp + "pp venue" };
   else if (effectiveDelta <= -0.15) return { f: 0.98, note: tag + " offense -" + pp + "pp venue" };
+  return { f: 1, note: "" };
+}
+// Team first-inning K rate: high-K teams put fewer balls in play → fewer runs → NRFI lean.
+// Uses season I01 PA-based K rate vs league average (~0.21). Weight 0.35 in offMult.
+function offKrateFactor(off) {
+  if (!off || off.kRate == null || (off.kSample || 0) < 80) return { f: 1, note: "" };
+  const LG_K = 0.21;
+  const r = off.kRate / LG_K;
+  const pct = Math.round(off.kRate * 100);
+  if      (r >= 1.22) return { f: 0.93, note: "K%" + pct + "% (high K team)" };
+  else if (r >= 1.10) return { f: 0.97, note: "K%" + pct + "% (above avg K)" };
+  else if (r <= 0.78) return { f: 1.07, note: "K%" + pct + "% (low K — contact heavy)" };
+  else if (r <= 0.90) return { f: 1.03, note: "K%" + pct + "% (below avg K)" };
   return { f: 1, note: "" };
 }
 // Pitching home advantage: starters allow ~3% fewer first-inning runs at their home park.
@@ -5967,8 +5983,9 @@ function nrfiEvaluate(ctx) {
   // so the platoon factor partially double-counts the hand matchup.
   // homeAdv: home offense scores ~2% more at home park, weight 1.0 (structural).
   // offVenue: team-specific home/road 1st-inn scoring gap, weight 0.3 (partial overlap with homeAdv).
-  const offMult = (lineup, plat, travel, offTrend, homeAdv, venue) =>
-    nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.2 + (travel.factor - 1) * 0.6 + (offTrend.f - 1) * 0.5 + (homeAdv.f - 1) * 1.0 + (venue.f - 1) * 0.3, 0.80, 1.30);
+  // kRate: team 1st-inn K% vs league avg — high K = contact scarce = NRFI lean. Weight 0.35.
+  const offMult = (lineup, plat, travel, offTrend, homeAdv, venue, kRate) =>
+    nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.2 + (travel.factor - 1) * 0.6 + (offTrend.f - 1) * 0.5 + (homeAdv.f - 1) * 1.0 + (venue.f - 1) * 0.3 + (kRate.f - 1) * 0.35, 0.80, 1.30);
   // Home field edge: home pitcher knows the mound; away pitcher pitches at opponent's park.
   const awayPitAdv = homePitAdvantage(false);
   const homePitAdv = homePitAdvantage(true);
@@ -5993,8 +6010,10 @@ function nrfiEvaluate(ctx) {
   // - venue: pitcher-specific home/road split beyond average, weight 0.5 (smaller sample)
   const pitMult = (skill, form, opener, openG, load, _rest, trend, homeAdv, venue) =>
     nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30 + (homeAdv.f - 1) * 1.0 + (venue.f - 1) * 0.5, 0.78, 1.25);
-  const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel, awayOffTrend, awayOffAdv, awayOffVenue);
-  const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel, homeOffTrend, homeOffAdv, homeOffVenue);
+  const awayOffKRate = offKrateFactor(ctx.awayOff);
+  const homeOffKRate = offKrateFactor(ctx.homeOff);
+  const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel, awayOffTrend, awayOffAdv, awayOffVenue, awayOffKRate);
+  const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel, homeOffTrend, homeOffAdv, homeOffVenue, homeOffKRate);
   const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest, awayTrend, awayPitAdv, awayVenue);
   const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeRest, homeTrend, homePitAdv, homeVenue);
   const umpFactor = ctx.umpFactor || 1;
@@ -6135,6 +6154,16 @@ function nrfiEvaluate(ctx) {
       const fAvg = ((awayOffVenue.f - 1) + (homeOffVenue.f - 1)) / 2 + 1;
       return { label: "Offense venue split", detail: notes.join(" · "),
         lean: fAvg >= 1.04 ? "yrfi" : fAvg <= 0.97 ? "nrfi" : "neutral" };
+    })(),
+    (() => {
+      const aK = awayOffKRate, hK = homeOffKRate;
+      if (aK.f === 1 && hK.f === 1) return null;
+      const notes = [];
+      if (aK.note) notes.push(ctx.awayName + " " + aK.note);
+      if (hK.note) notes.push(ctx.homeName + " " + hK.note);
+      const fAvg = ((aK.f - 1) + (hK.f - 1)) / 2 + 1;
+      return { label: "Team K% (1st inn)", detail: notes.join(" · "),
+        lean: fAvg <= 0.97 ? "nrfi" : fAvg >= 1.04 ? "yrfi" : "neutral" };
     })(),
     { label: "Platoon / handedness",
       detail: ctx.awayName + ": " + awayPlat.note + " · " + ctx.homeName + ": " + homePlat.note,
@@ -7144,12 +7173,11 @@ function FirstInning() {
   const clvSet = (rec || []).filter((r) => r.source !== "kalshi-import" && r.mktAtPick != null && r.mktAtClose != null && (r.result === "won" || r.result === "lost"));
   const avgCLV = clvSet.length ? clvSet.reduce((a, r) => a + (r.mktAtClose - r.mktAtPick), 0) / clvSet.length : null;
   const byConf = (a, b) => b.pMax - a.pMax;
-  const tailed = enriched.filter((r) => r.tails && r.tails.length && !r.v.thinPass).sort(byConf);
-  const rest = enriched.filter((r) => !(r.tails && r.tails.length));
-  const betNRFI = rest.filter((r) => r.v.isBet && r.call === "NRFI").sort(byConf);
-  const betYRFI = rest.filter((r) => r.v.isBet && r.call === "YRFI").sort(byConf);
-  const leans = rest.filter((r) => r.v.strength === "LEAN").sort(byConf);
-  const passes = rest.filter((r) => r.v.strength === "PASS" && !r.v.thinPass).sort(byConf);
+  const validRows = enriched.filter((r) => !r.v.thinPass);
+  const betNRFI = validRows.filter((r) => r.v.isBet && r.call === "NRFI").sort(byConf);
+  const betYRFI = validRows.filter((r) => r.v.isBet && r.call === "YRFI").sort(byConf);
+  const leans = validRows.filter((r) => r.v.strength === "LEAN").sort(byConf);
+  const passes = validRows.filter((r) => r.v.strength === "PASS").sort(byConf);
 
   const leanColor = (l) => (l === "nrfi" ? "var(--moss)" : l === "yrfi" ? "var(--rose)" : "var(--dim)");
   const leanLabel = (l) => (l === "nrfi" ? "NRFI lean" : l === "yrfi" ? "YRFI lean" : "neutral");
@@ -8201,7 +8229,6 @@ function FirstInning() {
           ))}
         </div>
       )}
-      {sect("Sharps tailing (your subs)", tailed, "var(--amber)")}
       {sect("Bets — ranked by confidence", [...betNRFI, ...betYRFI].sort(byConf), "var(--moss)")}
       {sect("Leans", leans, "var(--amber)")}
       {sect("Pass", passes, "var(--dim)")}
