@@ -6081,8 +6081,13 @@ function nrfiVerdict(r) {
 
   // 3) Confidence gate: don't fire a strong wager on missing data.
   const conf = r.confidence != null ? r.confidence : 1;
+  const pp = r.pitProfiles;
+  const awayThin = !pp || !pp.away || (pp.away.sample || 0) < 5;
+  const homeThin = !pp || !pp.home || (pp.home.sample || 0) < 5;
   if (conf < 0.35) { strength = "PASS"; notes.push("thin data"); }
   else if (conf < 0.55 && (strength === "STRONG" || strength === "BET")) { strength = "LEAN"; notes.push("limited data"); }
+  // Both starters under 5 starts: not enough real signal for even a lean.
+  if (awayThin && homeThin && strength === "LEAN") { strength = "PASS"; notes.push("both pitchers thin data"); }
   // STRONG demands both high confidence AND strong agreement.
   if (strength === "STRONG" && !(conf >= 0.7 && frac >= 0.6)) { strength = "BET"; notes.push("not full confidence"); }
 
@@ -6801,11 +6806,16 @@ function FirstInning() {
                       ))}
                     </div>
                   )}
+                  {(p.sample || 0) < 5 && (
+                    <div title={"Only " + (p.sample || 0) + " first-inning start" + ((p.sample || 0) === 1 ? "" : "s") + " on record. Stats below are from a tiny sample and should not be trusted — the model's pitch-skill signal is heavily regressed toward league average."} style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 7, padding: "2px 8px", background: "rgba(230,160,0,0.10)", border: "1px solid rgba(230,160,0,0.35)", borderRadius: 5, fontSize: 10, fontWeight: 700, color: "var(--amber)" }}>
+                      ⚠ THIN DATA · {p.sample || 0} start{(p.sample || 0) === 1 ? "" : "s"}
+                    </div>
+                  )}
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                    {kbb != null && <span title={"K/9 minus BB/9 = " + kbb + ". Strikeouts minus walks per 9 innings — how dominant the pitcher is. " + p.k9.toFixed(1) + " K/9, " + p.bb9.toFixed(1) + " BB/9. League avg ~5.3. Higher = more dominant."} style={{ cursor: "help", fontSize: 11, color: "var(--dim)", background: "rgba(255,255,255,0.05)", borderRadius: 4, padding: "1px 6px" }}>K-BB {kbb}</span>}
-                    {p.whip != null && <span title={"WHIP = " + p.whip.toFixed(2) + ". Walks + Hits per inning in the 1st. League avg ~1.28. Lower = harder to score against. Elite is under 1.00."} style={{ cursor: "help", fontSize: 11, color: p.whip <= 1.10 ? "var(--moss)" : p.whip >= 1.50 ? "var(--rose)" : "var(--dim)", background: "rgba(255,255,255,0.05)", borderRadius: 4, padding: "1px 6px" }}>WHIP {p.whip.toFixed(2)}</span>}
-                    {p.fstrike != null && <span title={"First-pitch strike rate = " + p.fstrike.toFixed(1) + "%. How often the pitcher throws a strike on the very first pitch of an at-bat. Gets ahead in counts early = harder to score. League avg ~60%. Green = above average."} style={{ cursor: "help", fontSize: 11, color: p.fstrike >= 64 ? "var(--moss)" : p.fstrike <= 56 ? "var(--rose)" : "var(--dim)", background: "rgba(255,255,255,0.05)", borderRadius: 4, padding: "1px 6px" }}>FPS {p.fstrike.toFixed(0)}%</span>}
-                    {p.whiff != null && <span title={"Whiff rate = " + p.whiff.toFixed(1) + "%. Percentage of swings that completely miss the ball. Higher = harder to make contact = fewer hits = fewer runs. League avg ~24.5%. Green = above average."} style={{ cursor: "help", fontSize: 11, color: p.whiff >= 28 ? "var(--moss)" : p.whiff <= 20 ? "var(--rose)" : "var(--dim)", background: "rgba(255,255,255,0.05)", borderRadius: 4, padding: "1px 6px" }}>Whiff {p.whiff.toFixed(0)}%</span>}
+                    {kbb != null && <span title={"K/9 minus BB/9 = " + kbb + (p.sample < 5 ? " — SMALL SAMPLE (" + p.sample + " starts), treat as noise" : ". Strikeouts minus walks per 9 innings. League avg ~5.3. Higher = more dominant.")} style={{ cursor: "help", fontSize: 11, color: "var(--dim)", background: "rgba(255,255,255,0.05)", borderRadius: 4, padding: "1px 6px", opacity: (p.sample || 0) < 5 ? 0.45 : 1 }}>K-BB {kbb}</span>}
+                    {p.whip != null && <span title={"WHIP = " + p.whip.toFixed(2) + (p.sample < 5 ? " — SMALL SAMPLE (" + p.sample + " starts), treat as noise" : ". Walks + Hits per inning in the 1st. League avg ~1.28.")} style={{ cursor: "help", fontSize: 11, color: p.whip <= 1.10 ? "var(--moss)" : p.whip >= 1.50 ? "var(--rose)" : "var(--dim)", background: "rgba(255,255,255,0.05)", borderRadius: 4, padding: "1px 6px", opacity: (p.sample || 0) < 5 ? 0.45 : 1 }}>WHIP {p.whip.toFixed(2)}</span>}
+                    {p.fstrike != null && <span title={"First-pitch strike rate = " + p.fstrike.toFixed(1) + "%. Gets ahead in counts early = harder to score. League avg ~60%."} style={{ cursor: "help", fontSize: 11, color: p.fstrike >= 64 ? "var(--moss)" : p.fstrike <= 56 ? "var(--rose)" : "var(--dim)", background: "rgba(255,255,255,0.05)", borderRadius: 4, padding: "1px 6px" }}>FPS {p.fstrike.toFixed(0)}%</span>}
+                    {p.whiff != null && <span title={"Whiff rate = " + p.whiff.toFixed(1) + "%. Percentage of swings that completely miss. League avg ~24.5%."} style={{ cursor: "help", fontSize: 11, color: p.whiff >= 28 ? "var(--moss)" : p.whiff <= 20 ? "var(--rose)" : "var(--dim)", background: "rgba(255,255,255,0.05)", borderRadius: 4, padding: "1px 6px" }}>Whiff {p.whiff.toFixed(0)}%</span>}
                   </div>
                 </div>
               );

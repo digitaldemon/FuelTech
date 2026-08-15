@@ -63,9 +63,13 @@ function parseGameLabel(ticker: string): string {
   const parsed = splitTeams(teamsPart);
   const teams = parsed ? parsed[0] + " @ " + parsed[1] : teamsPart;
   // Format time as HH:MM ET
-  const hh = timePart.slice(0, 2);
+  // Ticker times are ET (Eastern). Convert to PT (subtract 3h; MLB season is always on DST so EDT→PDT).
+  const etH = parseInt(timePart.slice(0, 2), 10);
+  const ptH = (etH - 3 + 24) % 24;
+  const displayH = ptH === 0 ? 12 : ptH > 12 ? ptH - 12 : ptH;
+  const period = ptH < 12 ? "AM" : "PM";
   const mm = timePart.slice(2, 4);
-  return teams + "  " + hh + ":" + mm + " ET";
+  return teams + "  " + displayH + ":" + mm + " " + period + " PT";
 }
 
 export async function GET(req: Request) {
