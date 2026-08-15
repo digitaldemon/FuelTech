@@ -206,10 +206,11 @@ export async function GET(req: Request) {
   const brierNaive = rows.reduce((s, r) => s + Math.pow(nrfiActual / total - r.actual, 2), 0) / total;
   const brierSkill = 1 - brier / brierNaive;
 
-  // BET-tier win rate (≥65% model probability)
-  const betRows  = rows.filter(r => Math.max(r.pNRFI, 1 - r.pNRFI) >= 0.65);
+  // BET-tier win rate — raw thresholds equivalent to calibrated ≥57% (BET) and ≥63% (STRONG)
+  // after Platt scaling: logit(cal) = 1.243*logit(raw) - 0.7396
+  const betRows  = rows.filter(r => Math.max(r.pNRFI, 1 - r.pNRFI) >= 0.70);
   const betWins  = betRows.filter(r => (r.pNRFI >= 0.5 && r.actual === 1) || (r.pNRFI < 0.5 && r.actual === 0)).length;
-  const strongRows = rows.filter(r => Math.max(r.pNRFI, 1 - r.pNRFI) >= 0.70);
+  const strongRows = rows.filter(r => Math.max(r.pNRFI, 1 - r.pNRFI) >= 0.74);
   const strongWins = strongRows.filter(r => (r.pNRFI >= 0.5 && r.actual === 1) || (r.pNRFI < 0.5 && r.actual === 0)).length;
 
   const pct = (w: number, n: number) => n ? `${(w / n * 100).toFixed(1)}% (${n}g)` : "—";
@@ -226,8 +227,8 @@ export async function GET(req: Request) {
       brierSkillScore: (brierSkill * 100).toFixed(1) + "%",
     },
     tiers: {
-      "BET (≥65%)":    pct(betWins,    betRows.length),
-      "STRONG (≥70%)": pct(strongWins, strongRows.length),
+      "BET (raw≥70%, cal≥57%)":    pct(betWins,    betRows.length),
+      "STRONG (raw≥74%, cal≥63%)": pct(strongWins, strongRows.length),
     },
     dayVsNight: {
       day:   `${pct(dayNrfi, day.length)} NRFI rate`,

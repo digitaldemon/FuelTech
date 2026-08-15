@@ -6071,20 +6071,18 @@ function kellyNRFI(pModel, yesPrice, call) {
 }
 
 function nrfiTier(pMax) {
-  return pMax >= 70 ? { t: "STRONGEST", cls: "t-strongest", c: "var(--moss)" }
-    : pMax >= 63 ? { t: "STRONG", cls: "t-strong", c: "var(--moss)" }
-    : pMax >= 57 ? { t: "LEAN", cls: "t-lean", c: "var(--amber)" }
+  return pMax >= 63 ? { t: "STRONGEST", cls: "t-strongest", c: "var(--moss)" }
+    : pMax >= 57 ? { t: "STRONG", cls: "t-strong", c: "var(--moss)" }
+    : pMax >= 52 ? { t: "LEAN", cls: "t-lean", c: "var(--amber)" }
     : { t: "TOSS-UP", cls: "", c: "var(--dim)" };
 }
 
-// Backtest v5: 4,015 games (2025 full season + 2026 Apr 1 – Aug 13).
-// AUC-ROC: 0.6188. Brier skill score: +4.6% over naive baseline.
-// 2025 bias: +0.0pp (perfect). 2026 bias: +2.1pp (model slightly conservative).
-// Combined: model under-predicts by ~1pp → keep c=0.050 logit shift.
-// Win rates: pMax≥63 = 67.4% (479 bets); pMax≥70 = 75.9% (79 bets).
-// Key tuning from LR: form weight 0.4→0.10, rest weight 0.8→0.10, day-game shift 0.025→0.15.
-// Live calibration takes over after 25 graded picks.
-const NRFI_CALIB_SEED = { c: 0.050, n: 4015, active: true, source: "backtest-v5" };
+// Backtest 2026 (Apr 1 – Aug 14, 1,763 games): model over-estimates directional confidence by 13.6pp.
+// Platt scaling (WLS on calibration buckets): logit(cal) = 1.243 * logit(raw_dir) − 0.7396
+// Directional win rates raw: BET≥65% raw = 60.2% (972g); STRONG≥70% raw = 67.3% (551g).
+// Post-calibration thresholds: STRONG≥63%, BET≥57%, LEAN≥52% (on calibrated+blended pMax).
+// Live calibration overrides c (not slope) once ≥25 picks are graded.
+const NRFI_CALIB_SEED = { c: -0.7396, slope: 1.243, n: 1763, active: true, source: "backtest-2026" };
 
 // Pitcher backtest rankings — 4,015 MLB games (2025 full + 2026 Apr 1 – Aug 13).
 // clean = % of 1st innings kept scoreless. n = starts evaluated.
@@ -6186,7 +6184,12 @@ function applyCalibration(pNRFI, calib) {
   if (!calib || !calib.active) return pNRFI;
   const lg = (p) => Math.log(p / (1 - p));
   const ul = (x) => 1 / (1 + Math.exp(-x));
-  return nClamp(ul(lg(nClamp(pNRFI, 0.02, 0.98)) + calib.c), 0.02, 0.98);
+  const slope = calib.slope != null ? calib.slope : 1;
+  // Operate on directional confidence (always ≥0.5) so YRFI picks are pulled toward 0.5, not amplified.
+  const isNRFI = pNRFI >= 0.5;
+  const pDir = isNRFI ? pNRFI : 1 - pNRFI;
+  const calDir = nClamp(ul(slope * lg(nClamp(pDir, 0.5001, 0.98)) + calib.c), 0.5, 0.98);
+  return isNRFI ? calDir : 1 - calDir;
 }
 
 // Market-as-prior: the de-vig market (efficient) is the anchor; the model only
@@ -6214,7 +6217,7 @@ function nrfiVerdict(r) {
   const down = (s, n) => ORDER[Math.max(0, ORDER.indexOf(s) - n)];
 
   // 1) Raw strength from the probability alone.
-  let strength = p >= 70 ? "STRONG" : p >= 65 ? "BET" : p >= 57 ? "LEAN" : "PASS";
+  let strength = p >= 63 ? "STRONG" : p >= 57 ? "BET" : p >= 52 ? "LEAN" : "PASS";
   const notes = [];
 
   // 2) Consensus gate: a decisive number with split signals is fragile.
@@ -6711,7 +6714,7 @@ function FirstInning() {
       let e = recl.find((x) => x.id === id);
       const awThin = !(r.pitProfiles && r.pitProfiles.away && (r.pitProfiles.away.sample || 0) >= 5);
       const hmThin = !(r.pitProfiles && r.pitProfiles.home && (r.pitProfiles.home.sample || 0) >= 5);
-      if (!e && r.state === "Preview" && r.hasPitchers && r.dataOk && pMax >= 57 && !(awThin && hmThin)) {
+      if (!e && r.state === "Preview" && r.hasPitchers && r.dataOk && pMax >= 52 && !(awThin && hmThin)) {
         const v = nrfiVerdict({ ...r, pMax, call });
         const pp = r.pitProfiles;
         e = { id, at: Date.now(), date: r.date.replace(/-/g, ""), gamePk: r.gamePk,
@@ -6937,12 +6940,12 @@ function FirstInning() {
         return { e: "🤡", tag: "BATTER FUMBLED IT · somehow stayed scoreless, clown behavior", c: "var(--rose)", bg: "rgba(220,60,60,0.08)" };
       }
       if (r.call === "NRFI") {
-        if (r.pMax >= 72 && r.v.isBet) return { e: "⚰️", tag: "BATTERS: DO NOT RESUSCITATE", c: "var(--moss)", bg: "rgba(80,160,80,0.06)" };
+        if (r.pMax >= 66 && r.v.isBet) return { e: "⚰️", tag: "BATTERS: DO NOT RESUSCITATE", c: "var(--moss)", bg: "rgba(80,160,80,0.06)" };
         if (r.v.isBet) return { e: "💀", tag: "OFFENSE IN CRITICAL CONDITION", c: "var(--moss)", bg: "rgba(80,160,80,0.06)" };
         if (r.v.strength === "LEAN") return { e: "😬", tag: "BATTERS ARE SWEATING BULLETS", c: "var(--amber)", bg: "rgba(230,160,0,0.06)" };
         return { e: "🎲", tag: "COIN FLIP ENERGY · god help us all", c: "var(--dim)", bg: "rgba(120,130,150,0.05)" };
       }
-      if (r.pMax >= 72 && r.v.isBet) return { e: "🔥", tag: "PITCHER: ABOUT TO GET ABSOLUTELY COOKED", c: "var(--rose)", bg: "rgba(220,60,60,0.06)" };
+      if (r.pMax >= 66 && r.v.isBet) return { e: "🔥", tag: "PITCHER: ABOUT TO GET ABSOLUTELY COOKED", c: "var(--rose)", bg: "rgba(220,60,60,0.06)" };
       if (r.v.isBet) return { e: "💥", tag: "PITCHER SURVIVAL ODDS: BLEAK", c: "var(--rose)", bg: "rgba(220,60,60,0.06)" };
       if (r.v.strength === "LEAN") return { e: "😤", tag: "BATTERS SMELL BLOOD IN THE WATER", c: "var(--amber)", bg: "rgba(230,160,0,0.06)" };
       return { e: "🎲", tag: "COIN FLIP ENERGY · god help us all", c: "var(--dim)", bg: "rgba(120,130,150,0.05)" };
@@ -7322,7 +7325,7 @@ function FirstInning() {
           const color = pct == null ? "var(--dim)" : pct >= 55 ? "var(--moss)" : pct >= 45 ? "var(--bone)" : "var(--rose)";
           const partTxt = betSignalCount > 0 ? participatedCount + " of " + betSignalCount + " taken" : null;
           return (
-            <div title={"BET and STRONG quality picks only (model prob ≥ 63%) — highest-conviction calls." + (partTxt ? " Participation: " + partTxt + " (matched to your Kalshi imports by date + call direction)." : "")} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div title={"BET and STRONG quality picks only (model prob ≥ 57%) — highest-conviction calls." + (partTxt ? " Participation: " + partTxt + " (matched to your Kalshi imports by date + call direction)." : "")} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 5 }}>BET SIGNALS</div>
               <div style={{ fontSize: 17, fontWeight: 800, color }}>{tot > 0 ? betWins + "W / " + betLosses + "L" : "—"}</div>
               {pct != null && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{pct}%{partTxt ? " · " + partTxt : ""}</div>}
@@ -7390,9 +7393,9 @@ function FirstInning() {
           turbo:        { mult: 1.50, maxPct: 0.35, label: "Turbo",        drawdownEst: "35–60%", desc: "1.5× Kelly — over-Kelly, elite slates only." },
         };
         const SPEED_CFG = {
-          patient:  { minProb: 70, evMult: 0.45, betsRec: "1–2",  label: "Patient",   desc: "STRONG picks only (≥70%)" },
-          selective:{ minProb: 63, evMult: 0.70, betsRec: "2–4",  label: "Selective", desc: "BET + STRONG (≥63%)" },
-          steady:   { minProb: 57, evMult: 1.00, betsRec: "3–6",  label: "Steady",    desc: "All rated picks (≥57%)" },
+          patient:  { minProb: 63, evMult: 0.45, betsRec: "1–2",  label: "Patient",   desc: "STRONG picks only (≥63%)" },
+          selective:{ minProb: 57, evMult: 0.70, betsRec: "2–4",  label: "Selective", desc: "BET + STRONG (≥57%)" },
+          steady:   { minProb: 52, evMult: 1.00, betsRec: "3–6",  label: "Steady",    desc: "All rated picks (≥52%)" },
           fast:     { minProb: 57, evMult: 1.20, betsRec: "4–8",  label: "Fast",      desc: "All picks, maximize volume" },
           blitz:    { minProb: 50, evMult: 1.45, betsRec: "all",  label: "Blitz",     desc: "Every game on slate" },
         };
@@ -7557,9 +7560,9 @@ function FirstInning() {
                 <span style={{ fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>GROWTH SPEED</span>
                 <select value={growthSpeed} onChange={(e) => { setGrowthSpeed(e.target.value); saveBankrollSettings({ startingBankroll: bankroll, riskLevel, growthSpeed: e.target.value }); }}
                   style={{ fontSize: 12, padding: "6px 10px", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 6, color: "var(--fg)", height: 34 }}>
-                  <option value="patient">Patient — STRONG only (≥70%)</option>
-                  <option value="selective">Selective — BET+ (≥63%)</option>
-                  <option value="steady">Steady — all picks (≥57%)</option>
+                  <option value="patient">Patient — STRONG only (≥63%)</option>
+                  <option value="selective">Selective — BET+ (≥57%)</option>
+                  <option value="steady">Steady — all picks (≥52%)</option>
                   <option value="fast">Fast — maximize volume</option>
                   <option value="blitz">Blitz — every game</option>
                 </select>
@@ -7814,7 +7817,7 @@ function FirstInning() {
       {rows.length > 0 && (
         <div style={{ marginTop: 6, marginBottom: 2, padding: "8px 12px", background: "rgba(255,255,255,0.04)", borderRadius: 6, fontSize: 12, color: "var(--dim)", lineHeight: 1.7 }}>
           <div><b style={{ color: "var(--fg)" }}>Confidence:</b>{" "}
-            <b style={{ color: "var(--moss)" }}>★ BET</b> ≥70% · <b style={{ color: "var(--moss)" }}>BET</b> ≥63% · <b style={{ color: "var(--amber)" }}>LEAN</b> ≥57% · <b style={{ color: "var(--dim)" }}>PASS</b> = too close.
+            <b style={{ color: "var(--moss)" }}>★ BET</b> ≥63% · <b style={{ color: "var(--moss)" }}>BET</b> ≥57% · <b style={{ color: "var(--amber)" }}>LEAN</b> ≥52% · <b style={{ color: "var(--dim)" }}>PASS</b> = too close.
             {" "}<b style={{ color: "var(--fg)" }}>NRFI</b> = no run in the 1st inning. <b style={{ color: "var(--fg)" }}>YRFI</b> = a run scores.
           </div>
           <div><b style={{ color: "var(--fg)" }}>Pitcher badge</b> (e.g. <span style={{ fontWeight: 700, fontSize: 11, color: "var(--moss)", border: "1px solid var(--moss)", borderRadius: 3, padding: "0 3px" }}>A+</span>): 1st-inning grade — A+/A = elite suppressor, B = solid, C = average, D/F = hitter-friendly. Hover for detail.</div>
