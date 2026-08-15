@@ -192,6 +192,45 @@ check(!!lgk && Number(lgk[1]) >= 0.235 && Number(lgk[1]) <= 0.255,
   "LG_K=" + (lgk ? lgk[1] : "?") + ". At 0.21, 22 of 30 clubs graded above-average-K and the\n" +
   "check could never vote YRFI; offMult carried that bias into the probability at weight 0.35.");
 
+// A recent-form window compared against a baseline that CONTAINS it measures a
+// fraction of the move it is trying to detect. teamOffenseRolling caps its window
+// at 25 games, so L10 was 40% of "szn" and every delta arrived at exactly 60% of
+// true size — confirmed on all 30 clubs to machine precision, mean ratio 0.6000
+// with zero deviation. The synthetic case below is the regression test.
+console.log("\ntrend baselines exclude their own window");
+{
+  // A club that scored in the 1st in 8 of its last 10 and 3 of the 15 before
+  // that: true delta is 80% - 20% = +60pp. Against the overlapping 25-game rate
+  // (11/25 = 44%) it reads +36pp — three fifths, and a different verdict.
+  const l10 = { rate: 0.80, n: 10, avgRuns: 1.0 };
+  const szn = { rate: 11 / 25, n: 25, avgRuns: 0.6 };
+  const base = c.trendBaseline(szn, l10);
+  check(!!base && Math.abs(base.rate - 3 / 15) < 1e-9 && base.n === 15,
+    "trendBaseline subtracts the recent window back out",
+    "expected the prior 15 games at 20%, got " + (base ? base.n + "g @ " + (base.rate * 100).toFixed(1) + "%" : "null"));
+  const dTrue = l10.rate - (base ? base.rate : 0), dOverlap = l10.rate - szn.rate;
+  check(Math.abs(dOverlap / dTrue - 0.6) < 1e-9,
+    "the overlap attenuation is the predicted 0.6, not an approximation",
+    "measured " + (dOverlap / dTrue).toFixed(6) + " — the window arithmetic has changed.");
+  // Too little left over to be a baseline: fall back rather than invent one.
+  check(c.trendBaseline({ rate: 0.4, n: 12 }, { rate: 0.5, n: 10 }) === null,
+    "a prior window under 5 games is refused, not extrapolated",
+    "a 2-game baseline was accepted as a season rate.");
+  // The gates must stay on the de-overlapped scale. At the old 0.12/0.20 the
+  // corrected delta (1.67x larger) would fire roughly half again as often.
+  const gates = /const HOT = ([\d.]+), WARM = ([\d.]+);/.exec(src);
+  check(!!gates && Number(gates[1]) >= 0.30 && Number(gates[2]) >= 0.18,
+    "offense trend gates are stated on the de-overlapped scale",
+    "HOT/WARM = " + (gates ? gates[1] + "/" + gates[2] : "?") + ". Values near 0.20/0.12 belong to\n" +
+    "the attenuated delta and will over-fire now that the baseline is clean.");
+  // The note has to quote the number that decided the call. "off L10 hot (+4pp)"
+  // shipped because the verdict came from L5 at +44 and the note printed d10
+  // regardless — a label contradicting its own number reads as a broken model.
+  check(/const pp = Math\.round\(\(delta \?\? 0\) \* 100\)/.test(src),
+    "the trend note prints the delta that drove the verdict",
+    "the note is back to printing d10 while the call is made on the L5/L10 blend.");
+}
+
 console.log("\n" + "=".repeat(72));
 if (fails) { console.log(fails + " invariant(s) VIOLATED"); process.exit(1); }
 console.log("all invariants hold");

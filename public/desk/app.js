@@ -987,9 +987,31 @@ const delta=d10!=null&&d5!=null?Math.sign(d5)===Math.sign(d10)?(d10+d5)/2:Math.a
 const l10rps=rolling.l10&&rolling.l10.runsPerStart!=null?rolling.l10.runsPerStart:null;const sznRps=rolling.szn&&rolling.szn.runsPerStart!=null?rolling.szn.runsPerStart:null;const rpsBoost=l10rps!=null&&sznRps!=null&&sznRps>0?(sznRps-l10rps)/sznRps*10:0;const combined=(delta??0)+rpsBoost;const l5tag=l5pct!=null?" · L5 "+l5pct+"%":"";const rpsTag=l10rps!=null?" · "+l10rps.toFixed(2)+"R/st":"";if(combined>=25)return{f:0.84,note:"L10+"+Math.round(combined)+"pp vs SZN (blazing hot)"+l5tag+rpsTag};else if(combined>=15)return{f:0.90,note:"L10+"+Math.round(combined)+"pp vs SZN (hot)"+l5tag+rpsTag};else if(combined>=8)return{f:0.95,note:"L10+"+Math.round(combined)+"pp vs SZN (warm)"+rpsTag};else if(combined<=-25)return{f:1.16,note:"L10"+Math.round(combined)+"pp vs SZN (icy cold)"+l5tag+rpsTag};else if(combined<=-15)return{f:1.09,note:"L10"+Math.round(combined)+"pp vs SZN (cold)"+l5tag+rpsTag};else if(combined<=-8)return{f:1.04,note:"L10"+Math.round(combined)+"pp vs SZN (cooling)"+rpsTag};return{f:1,note:""};}// Team first-inning offense rolling trend: L10 scored-in-1st rate vs season rate.
 // Positive delta = team scoring more often in 1st than usual = more offense = YRFI lean.
 // Weight 0.5 in offMult — direct measurement of the same stat the model is predicting.
-function teamOffenseTrendFactor(rolling){if(!rolling)return{f:1,note:""};const l10=rolling.l10&&(rolling.l10.n||0)>=5?rolling.l10.rate:null;const l5=rolling.l5&&(rolling.l5.n||0)>=3?rolling.l5.rate:null;const szn=rolling.szn&&rolling.szn.rate!=null?rolling.szn.rate:null;if(l10==null&&l5==null||szn==null||szn<=0)return{f:1,note:""};const d10=l10!=null?l10-szn:null;const d5=l5!=null?l5-szn:null;// Same direction → average (confirmed); opposite → use less extreme (noise dampener).
+// A recent window has to be measured against games it is NOT part of. rolling.szn
+// is capped at the last 25 games (see teamOffenseRolling), so L10 is 40% of it:
+// szn = 0.4*L10 + 0.6*prior, which makes (L10 - szn) collapse to exactly
+// 0.6*(L10 - prior). Every delta this function saw was three fifths of its real
+// size, measured on all 30 clubs 2026-08-15 — a club reading "-12pp vs SZN" was
+// actually 20pp below the games before the streak. Subtracting the recent window
+// back out recovers the baseline the comparison was always meant to use.
+//
+// Returns null when the leftover window is too short to be a baseline; the caller
+// falls back to the whole-window rate rather than inventing a number.
+function trendBaseline(whole,recent){if(!whole||!recent||whole.rate==null||recent.rate==null)return null;const n=whole.n||0,k=recent.n||0;if(n-k<5)return null;return{rate:(whole.rate*n-recent.rate*k)/(n-k),n:n-k};}function teamOffenseTrendFactor(rolling){if(!rolling)return{f:1,note:""};const l10=rolling.l10&&(rolling.l10.n||0)>=5?rolling.l10:null;const l5=rolling.l5&&(rolling.l5.n||0)>=3?rolling.l5:null;const szn=rolling.szn&&rolling.szn.rate!=null?rolling.szn:null;if(l10==null&&l5==null||szn==null||szn.rate<=0)return{f:1,note:""};// Each window gets its own baseline: L5's prior is games 6..N, L10's is 11..N.
+const b10=l10?trendBaseline(szn,l10)||szn:null;const b5=l5?trendBaseline(szn,l5)||szn:null;const d10=l10&&b10?l10.rate-b10.rate:null;const d5=l5&&b5?l5.rate-b5.rate:null;// Same direction → average (confirmed); opposite → use less extreme (noise dampener).
 const delta=d10!=null&&d5!=null?Math.sign(d5)===Math.sign(d10)?(d10+d5)/2:Math.abs(d10)<=Math.abs(d5)?d10:d5:d10??d5;// Secondary: avg runs/game quantitative delta (positive = more runs in L10 = hot offense)
-const l10rg=rolling.l10&&rolling.l10.avgRuns!=null?rolling.l10.avgRuns:null;const sznRg=rolling.szn&&rolling.szn.avgRuns!=null?rolling.szn.avgRuns:null;const rgBoost=l10rg!=null&&sznRg!=null&&sznRg>0?(l10rg-sznRg)/sznRg*0.12:0;const combined=delta+rgBoost;const pp=Math.round((d10??d5??0)*100);if(combined>=0.20)return{f:1.08,note:"off L10 hot (+"+pp+"pp vs SZN)"};else if(combined>=0.12)return{f:1.04,note:"off L10 warm (+"+pp+"pp)"};else if(combined<=-0.20)return{f:0.93,note:"off L10 cold ("+pp+"pp vs SZN)"};else if(combined<=-0.12)return{f:0.97,note:"off L10 cooling ("+pp+"pp)"};return{f:1,note:""};}// Team offense venue split: captures team-specific home/road first-inning scoring gaps
+const l10rg=l10&&l10.avgRuns!=null?l10.avgRuns:null;const baseRg=b10&&szn.avgRuns!=null&&l10&&l10.avgRuns!=null&&szn.n-l10.n>=5?(szn.avgRuns*szn.n-l10.avgRuns*l10.n)/(szn.n-l10.n):szn.avgRuns!=null?szn.avgRuns:null;const rgBoost=l10rg!=null&&baseRg!=null&&baseRg>0?(l10rg-baseRg)/baseRg*0.12:0;const combined=delta+rgBoost;// Gates are stated on the same de-overlapped scale the delta now carries, so
+// they hold sensitivity where it was rather than firing 1.67x more often. They
+// also line up with the noise floor: L10 against a ~15-game prior has a
+// difference-of-proportions SE near 20pp, so HOT/COLD is ~1.65 SE and
+// WARM/COOLING ~1 SE. Anything tighter is reading coin flips as a streak.
+const HOT=0.33,WARM=0.20;// Print the delta that actually decided the call, and name the window it came
+// from. The old note always printed d10 even when d5 drove the verdict, which is
+// how a club landed on the card as "off L10 hot (+4pp vs SZN)" — hot on four
+// points, because the real mover was L5 at +44. A label that contradicts its own
+// number reads as a broken model, so the blended case says so rather than
+// claiming a number that is not the L10 figure.
+const drove=d10==null?"L5":d5==null?"L10":Math.sign(d5)===Math.sign(d10)?"L5+L10":Math.abs(d10)<=Math.abs(d5)?"L10":"L5";const pp=Math.round((delta??0)*100);const tag=" ("+(pp>=0?"+":"")+pp+"pp "+drove+" vs prior "+(b10||b5||szn).n+"g)";if(combined>=HOT)return{f:1.08,note:"off hot"+tag};else if(combined>=WARM)return{f:1.04,note:"off warm"+tag};else if(combined<=-HOT)return{f:0.93,note:"off cold"+tag};else if(combined<=-WARM)return{f:0.97,note:"off cooling"+tag};return{f:1,note:""};}// Team offense venue split: captures team-specific home/road first-inning scoring gaps
 // beyond the flat homeOffAdvantage average. Requires ≥6 home AND ≥6 road games in rolling window.
 // Weight 0.3 in offMult (partial overlap with homeOffAdvantage; only activates on clear outliers).
 function offenseVenueFactor(rolling,isHome){if(!rolling||!rolling.home||!rolling.road)return{f:1,note:""};const h=rolling.home,r=rolling.road;if((h.n||0)<6||(r.n||0)<6||h.rate==null||r.rate==null)return{f:1,note:""};// delta: positive = team scores more at home than on road
