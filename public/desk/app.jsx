@@ -5478,6 +5478,11 @@ function teamOffenseTrendFactor(rolling) {
 function homePitAdvantage(isHome) {
   return isHome ? { f: 0.97 } : { f: 1.03 };
 }
+// Offense home advantage: teams score ~2% more often in the 1st at their home park.
+// Complements pitching home advantage; travel factor captures fatigue, this captures venue familiarity.
+function homeOffAdvantage(isHome) {
+  return isHome ? { f: 1.02 } : { f: 0.98 };
+}
 // Pitcher THESIS — stable season peripherals (the real predictors), not the
 // noisy first-inning run rate: strikeouts + whiff + first-pitch strikes suppress
 // runs; walks + barrels (HR risk, no sequencing needed) inflate; grounders (DPs)
@@ -5899,11 +5904,15 @@ function nrfiEvaluate(ctx) {
   // is lower now that lineups are measured directly vs the starter's hand.
   // Platoon reduced to 0.20: lineup OBP is already computed vs the starter's hand,
   // so the platoon factor partially double-counts the hand matchup.
-  const offMult = (lineup, plat, travel, offTrend) =>
-    nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.2 + (travel.factor - 1) * 0.6 + (offTrend.f - 1) * 0.5, 0.80, 1.30);
+  // homeAdv: home offense scores ~2% more at home park, weight 1.0 (structural).
+  const offMult = (lineup, plat, travel, offTrend, homeAdv) =>
+    nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.2 + (travel.factor - 1) * 0.6 + (offTrend.f - 1) * 0.5 + (homeAdv.f - 1) * 1.0, 0.80, 1.30);
   // Home field edge: home pitcher knows the mound; away pitcher pitches at opponent's park.
   const awayPitAdv = homePitAdvantage(false);
   const homePitAdv = homePitAdvantage(true);
+  // Offense home field: home batters score slightly more at their home park (familiar crowd, no travel).
+  const awayOffAdv = homeOffAdvantage(false);
+  const homeOffAdv = homeOffAdvantage(true);
   // Weights tuned from 4,015-game backtest (logistic regression on normalized features):
   // - skill (K%, BB%, barrel, GB): dominant after pitBase — keep at 1.0
   // - form (FIP/ERA L3): LR coeff -0.018 = counterproductive once pitBase controlled → 0.10
@@ -5915,8 +5924,8 @@ function nrfiEvaluate(ctx) {
   // - homeAdv: ~3% home park advantage for home pitcher, weight 1.0 (structural, not talent)
   const pitMult = (skill, form, opener, openG, load, _rest, trend, homeAdv) =>
     nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30 + (homeAdv.f - 1) * 1.0, 0.78, 1.25);
-  const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel, awayOffTrend);
-  const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel, homeOffTrend);
+  const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel, awayOffTrend, awayOffAdv);
+  const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel, homeOffTrend, homeOffAdv);
   const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest, awayTrend, awayPitAdv);
   const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeRest, homeTrend, homePitAdv);
   const umpFactor = ctx.umpFactor || 1;
@@ -5938,8 +5947,8 @@ function nrfiEvaluate(ctx) {
     const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.10 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7 + (awayTrend.f - 1) * 0.30 + (awayPitAdv.f - 1) * 1.0, 0.82, 1.2);
     const s0top = simHalfNoRun(awayB, homeAllow, NRFI_LG_PA);
     const s0bot = simHalfNoRun(homeB, awayAllow, NRFI_LG_PA);
-    const pRunTop = nClamp((1 - s0top) * homeCtx * ctx.awayTravel.factor * env, 0.02, 0.97);
-    const pRunBot = nClamp((1 - s0bot) * awayCtx * ctx.homeTravel.factor * env, 0.02, 0.97);
+    const pRunTop = nClamp((1 - s0top) * homeCtx * ctx.awayTravel.factor * awayOffAdv.f * env, 0.02, 0.97);
+    const pRunBot = nClamp((1 - s0bot) * awayCtx * ctx.homeTravel.factor * homeOffAdv.f * env, 0.02, 0.97);
     p0top = 1 - pRunTop; p0bot = 1 - pRunBot; method = "sim";
   }
   // Apply day game logit shift (day games historically run ~2pp higher scoring).
@@ -5969,8 +5978,8 @@ function nrfiEvaluate(ctx) {
     const sBot = simHalfNoRun(homeSimBatters, awayAllow, NRFI_LG_PA);
     const hPC = nClamp(1 + (homeForm.f-1)*0.10 + (homeOpen.f-1)*0.5 + (homeOpenG.f-1)*1.0 + (homeLoad.f-1)*0.7 + (homeTrend.f-1)*0.30 + (homePitAdv.f-1)*1.0, 0.82, 1.2);
     const aPC = nClamp(1 + (awayForm.f-1)*0.10 + (awayOpen.f-1)*0.5 + (awayOpenG.f-1)*1.0 + (awayLoad.f-1)*0.7 + (awayTrend.f-1)*0.30 + (awayPitAdv.f-1)*1.0, 0.82, 1.2);
-    const pRT = nClamp((1-sTop) * hPC * ctx.awayTravel.factor * env, 0.02, 0.97);
-    const pRB = nClamp((1-sBot) * aPC * ctx.homeTravel.factor * env, 0.02, 0.97);
+    const pRT = nClamp((1-sTop) * hPC * ctx.awayTravel.factor * awayOffAdv.f * env, 0.02, 0.97);
+    const pRB = nClamp((1-sBot) * aPC * ctx.homeTravel.factor * homeOffAdv.f * env, 0.02, 0.97);
     const rawP = (1-pRT) * (1-pRB);
     pNRFI_simProj = dayGameShift > 0
       ? nClamp(unlogit(logit(nClamp(rawP, 0.02, 0.98)) - dayGameShift), 0.02, 0.98)
@@ -7256,6 +7265,20 @@ function FirstInning() {
                       ))}
                     </div>
                   )}
+                  {rl && rl.l10 && rl.szn && rl.l10.runsPerStart != null && rl.szn.runsPerStart != null && (rl.l10.n || 0) >= 5 && (() => {
+                    const delta = rl.szn.runsPerStart - rl.l10.runsPerStart; // positive = fewer runs L10 (improving)
+                    const deltaAbs = Math.abs(delta);
+                    const improving = delta > 0;
+                    const color = deltaAbs >= 0.15 ? (improving ? "var(--moss)" : "var(--rose)") : "var(--dim)";
+                    return (
+                      <div title={"Season avg " + rl.szn.runsPerStart.toFixed(2) + " runs/start in 1st. L10 avg " + rl.l10.runsPerStart.toFixed(2) + ". " + (deltaAbs >= 0.10 ? (improving ? "Allowing fewer runs recently — trending better." : "Allowing more runs recently — trending worse.") : "Run rate stable.")} style={{ cursor: "help", display: "flex", alignItems: "center", gap: 6, marginBottom: 7, fontSize: 9 }}>
+                        <span style={{ color: "var(--dim)" }}>R/start:</span>
+                        <span style={{ color, fontWeight: 700 }}>L10 {rl.l10.runsPerStart.toFixed(2)}</span>
+                        <span style={{ color: "var(--dim)" }}>vs SZN {rl.szn.runsPerStart.toFixed(2)}</span>
+                        {deltaAbs >= 0.10 && <span style={{ color, fontWeight: 800 }}>{improving ? "↓" : "↑"} {deltaAbs.toFixed(2)} {improving ? "improving" : "worsening"}</span>}
+                      </div>
+                    );
+                  })()}
                   {rl && rl.streak && rl.streak.length > 0 && (
                     <div title={"Last " + rl.streak.length + " starts in order (oldest → newest). Green = clean first inning. Red = allowed a run."} style={{ cursor: "help", display: "flex", alignItems: "center", gap: 5, marginBottom: 9 }}>
                       <span style={{ fontSize: 9, color: "var(--dim)", fontWeight: 700, letterSpacing: "0.04em", marginRight: 2 }}>LAST {rl.streak.length}</span>
