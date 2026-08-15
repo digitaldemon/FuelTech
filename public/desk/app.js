@@ -981,10 +981,28 @@ function restFactor(days){if(days==null||days<1||days>30)return{f:1,note:""};if(
 // L5 confirms or extends the L10 signal; when both point the same way use the
 // average (higher confidence), when they diverge dampen toward the less extreme.
 // Weight 0.30 in pitMult — meaningful but capped; short windows are still noisy.
-function pitcherTrendFactor(rolling){if(!rolling)return{f:1,note:""};const l10pct=rolling.l10&&(rolling.l10.n||0)>=5?rolling.l10.pct:null;const l5pct=rolling.l5&&(rolling.l5.n||0)>=3?rolling.l5.pct:null;const sznPct=rolling.szn?rolling.szn.pct:null;if(sznPct==null||l10pct==null&&l5pct==null)return{f:1,note:""};const d10=l10pct!=null?l10pct-sznPct:null;const d5=l5pct!=null?l5pct-sznPct:null;// Same direction → use average (confirmed); opposite direction → use less extreme reading.
+function pitcherTrendFactor(rolling){if(!rolling)return{f:1,note:""};// Same window-inside-its-own-baseline defect the offense trend carried: szn is
+// every start including the last ten, so L10 sat on both sides of the
+// subtraction. Starters carry ~15-30 starts, so the attenuation here is milder
+// than the offense side's fixed 0.6 but varies by workload — a 20-start arm
+// reads half its true move, a 30-start arm two thirds.
+const l10w=rolling.l10&&(rolling.l10.n||0)>=5?rolling.l10:null;const l5w=rolling.l5&&(rolling.l5.n||0)>=3?rolling.l5:null;const szn=rolling.szn&&rolling.szn.pct!=null?rolling.szn:null;if(szn==null||l10w==null&&l5w==null)return{f:1,note:""};const b10=l10w?trendBaseline(szn,l10w,"pct")||szn:null;const b5=l5w?trendBaseline(szn,l5w,"pct")||szn:null;const l10pct=l10w?l10w.pct:null,l5pct=l5w?l5w.pct:null;const d10=l10w&&b10?l10w.pct-b10.pct:null;const d5=l5w&&b5?l5w.pct-b5.pct:null;// Same direction → use average (confirmed); opposite direction → use less extreme reading.
 const delta=d10!=null&&d5!=null?Math.sign(d5)===Math.sign(d10)?(d10+d5)/2:Math.abs(d10)<=Math.abs(d5)?d10:d5:d10??d5;// runsPerStart supplement: continuous signal that differentiates mild vs severe non-clean starts.
 // Scaled to pp: 100% run rate reduction vs season average → +10pp boost.
-const l10rps=rolling.l10&&rolling.l10.runsPerStart!=null?rolling.l10.runsPerStart:null;const sznRps=rolling.szn&&rolling.szn.runsPerStart!=null?rolling.szn.runsPerStart:null;const rpsBoost=l10rps!=null&&sznRps!=null&&sznRps>0?(sznRps-l10rps)/sznRps*10:0;const combined=(delta??0)+rpsBoost;const l5tag=l5pct!=null?" · L5 "+l5pct+"%":"";const rpsTag=l10rps!=null?" · "+l10rps.toFixed(2)+"R/st":"";if(combined>=25)return{f:0.84,note:"L10+"+Math.round(combined)+"pp vs SZN (blazing hot)"+l5tag+rpsTag};else if(combined>=15)return{f:0.90,note:"L10+"+Math.round(combined)+"pp vs SZN (hot)"+l5tag+rpsTag};else if(combined>=8)return{f:0.95,note:"L10+"+Math.round(combined)+"pp vs SZN (warm)"+rpsTag};else if(combined<=-25)return{f:1.16,note:"L10"+Math.round(combined)+"pp vs SZN (icy cold)"+l5tag+rpsTag};else if(combined<=-15)return{f:1.09,note:"L10"+Math.round(combined)+"pp vs SZN (cold)"+l5tag+rpsTag};else if(combined<=-8)return{f:1.04,note:"L10"+Math.round(combined)+"pp vs SZN (cooling)"+rpsTag};return{f:1,note:""};}// Team first-inning offense rolling trend: L10 scored-in-1st rate vs season rate.
+const l10rps=rolling.l10&&rolling.l10.runsPerStart!=null?rolling.l10.runsPerStart:null;const sznRps=l10w&&szn.runsPerStart!=null&&l10rps!=null&&szn.n-l10w.n>=5?(szn.runsPerStart*szn.n-l10rps*l10w.n)/(szn.n-l10w.n):szn.runsPerStart!=null?szn.runsPerStart:null;// The `> 0` guard was survivable while the denominator was a whole season; a
+// de-overlapped prior can sit at 0.04 R/start, and dividing by that turned a
+// routine cold streak into -124pp (Schlittler, Webb, Ginn on 2026-08-15) which
+// pinned the factor at its clamp. Require a denominator big enough to divide by
+// and cap the supplement at the +-10pp the comment above describes.
+const RPS_FLOOR=0.15;const rpsBoost=l10rps!=null&&sznRps!=null&&sznRps>=RPS_FLOOR?nClamp((sznRps-l10rps)/sznRps*10,-10,10):0;const combined=(delta??0)+rpsBoost;const l5tag=l5pct!=null?" · L5 "+l5pct+"%":"";const rpsTag=l10rps!=null?" · "+l10rps.toFixed(2)+"R/st":"";// Baseline is now the starts OUTSIDE the recent window, so the note says which
+// games it is comparing against instead of the old "vs SZN", which named a
+// figure that contained the window under test.
+const vs=" vs prior "+(b10||b5||szn).n+"gs";// Gates restated for the de-overlapped delta. Unlike the offense side the
+// attenuation was not a constant — szn is every start, so the overlap ran
+// (n-10)/n and moved with workload, measured 0.16..1.29 across the slate with a
+// 0.669 mean. These were searched rather than divided: 36/18/10 reproduces the
+// old bucket on 23 of 28 live arms and holds the fire rate at 14/28.
+const HOT2=36,HOT1=18,WARM=10;if(combined>=HOT2)return{f:0.84,d:combined,note:"L10+"+Math.round(combined)+"pp"+vs+" (blazing hot)"+l5tag+rpsTag};else if(combined>=HOT1)return{f:0.90,d:combined,note:"L10+"+Math.round(combined)+"pp"+vs+" (hot)"+l5tag+rpsTag};else if(combined>=WARM)return{f:0.95,d:combined,note:"L10+"+Math.round(combined)+"pp"+vs+" (warm)"+rpsTag};else if(combined<=-HOT2)return{f:1.16,d:combined,note:"L10"+Math.round(combined)+"pp"+vs+" (icy cold)"+l5tag+rpsTag};else if(combined<=-HOT1)return{f:1.09,d:combined,note:"L10"+Math.round(combined)+"pp"+vs+" (cold)"+l5tag+rpsTag};else if(combined<=-WARM)return{f:1.04,d:combined,note:"L10"+Math.round(combined)+"pp"+vs+" (cooling)"+rpsTag};return{f:1,d:combined,note:""};}// Team first-inning offense rolling trend: L10 scored-in-1st rate vs season rate.
 // Positive delta = team scoring more often in 1st than usual = more offense = YRFI lean.
 // Weight 0.5 in offMult — direct measurement of the same stat the model is predicting.
 // A recent window has to be measured against games it is NOT part of. rolling.szn
@@ -997,10 +1015,17 @@ const l10rps=rolling.l10&&rolling.l10.runsPerStart!=null?rolling.l10.runsPerStar
 //
 // Returns null when the leftover window is too short to be a baseline; the caller
 // falls back to the whole-window rate rather than inventing a number.
-function trendBaseline(whole,recent){if(!whole||!recent||whole.rate==null||recent.rate==null)return null;const n=whole.n||0,k=recent.n||0;if(n-k<5)return null;return{rate:(whole.rate*n-recent.rate*k)/(n-k),n:n-k};}function teamOffenseTrendFactor(rolling){if(!rolling)return{f:1,note:""};const l10=rolling.l10&&(rolling.l10.n||0)>=5?rolling.l10:null;const l5=rolling.l5&&(rolling.l5.n||0)>=3?rolling.l5:null;const szn=rolling.szn&&rolling.szn.rate!=null?rolling.szn:null;if(l10==null&&l5==null||szn==null||szn.rate<=0)return{f:1,note:""};// Each window gets its own baseline: L5's prior is games 6..N, L10's is 11..N.
+//
+// key selects the field to de-overlap ("rate" for team offense, "pct" for pitcher
+// clean%), since both sides of the model carry the same window shape under
+// different names.
+function trendBaseline(whole,recent,key){const k=key||"rate";if(!whole||!recent||whole[k]==null||recent[k]==null)return null;const n=whole.n||0,m=recent.n||0;if(n-m<5)return null;const out={n:n-m};out[k]=(whole[k]*n-recent[k]*m)/(n-m);return out;}function teamOffenseTrendFactor(rolling){if(!rolling)return{f:1,note:""};const l10=rolling.l10&&(rolling.l10.n||0)>=5?rolling.l10:null;const l5=rolling.l5&&(rolling.l5.n||0)>=3?rolling.l5:null;const szn=rolling.szn&&rolling.szn.rate!=null?rolling.szn:null;if(l10==null&&l5==null||szn==null||szn.rate<=0)return{f:1,note:""};// Each window gets its own baseline: L5's prior is games 6..N, L10's is 11..N.
 const b10=l10?trendBaseline(szn,l10)||szn:null;const b5=l5?trendBaseline(szn,l5)||szn:null;const d10=l10&&b10?l10.rate-b10.rate:null;const d5=l5&&b5?l5.rate-b5.rate:null;// Same direction → average (confirmed); opposite → use less extreme (noise dampener).
 const delta=d10!=null&&d5!=null?Math.sign(d5)===Math.sign(d10)?(d10+d5)/2:Math.abs(d10)<=Math.abs(d5)?d10:d5:d10??d5;// Secondary: avg runs/game quantitative delta (positive = more runs in L10 = hot offense)
-const l10rg=l10&&l10.avgRuns!=null?l10.avgRuns:null;const baseRg=b10&&szn.avgRuns!=null&&l10&&l10.avgRuns!=null&&szn.n-l10.n>=5?(szn.avgRuns*szn.n-l10.avgRuns*l10.n)/(szn.n-l10.n):szn.avgRuns!=null?szn.avgRuns:null;const rgBoost=l10rg!=null&&baseRg!=null&&baseRg>0?(l10rg-baseRg)/baseRg*0.12:0;const combined=delta+rgBoost;// Gates are stated on the same de-overlapped scale the delta now carries, so
+const l10rg=l10&&l10.avgRuns!=null?l10.avgRuns:null;const baseRg=b10&&szn.avgRuns!=null&&l10&&l10.avgRuns!=null&&szn.n-l10.n>=5?(szn.avgRuns*szn.n-l10.avgRuns*l10.n)/(szn.n-l10.n):szn.avgRuns!=null?szn.avgRuns:null;// Same near-zero denominator hazard as the pitcher side: a de-overlapped prior
+// can be a fraction of a run, and dividing by it swamps the delta it is only
+// meant to supplement. Floor the denominator and cap the boost at its weight.
+const RG_FLOOR=0.15;const rgBoost=l10rg!=null&&baseRg!=null&&baseRg>=RG_FLOOR?nClamp((l10rg-baseRg)/baseRg*0.12,-0.12,0.12):0;const combined=delta+rgBoost;// Gates are stated on the same de-overlapped scale the delta now carries, so
 // they hold sensitivity where it was rather than firing 1.67x more often. They
 // also line up with the noise floor: L10 against a ~15-game prior has a
 // difference-of-proportions SE near 20pp, so HOT/COLD is ~1.65 SE and
@@ -1011,7 +1036,7 @@ const HOT=0.33,WARM=0.20;// Print the delta that actually decided the call, and 
 // points, because the real mover was L5 at +44. A label that contradicts its own
 // number reads as a broken model, so the blended case says so rather than
 // claiming a number that is not the L10 figure.
-const drove=d10==null?"L5":d5==null?"L10":Math.sign(d5)===Math.sign(d10)?"L5+L10":Math.abs(d10)<=Math.abs(d5)?"L10":"L5";const pp=Math.round((delta??0)*100);const tag=" ("+(pp>=0?"+":"")+pp+"pp "+drove+" vs prior "+(b10||b5||szn).n+"g)";if(combined>=HOT)return{f:1.08,note:"off hot"+tag};else if(combined>=WARM)return{f:1.04,note:"off warm"+tag};else if(combined<=-HOT)return{f:0.93,note:"off cold"+tag};else if(combined<=-WARM)return{f:0.97,note:"off cooling"+tag};return{f:1,note:""};}// Team offense venue split: captures team-specific home/road first-inning scoring gaps
+const drove=d10==null?"L5":d5==null?"L10":Math.sign(d5)===Math.sign(d10)?"L5+L10":Math.abs(d10)<=Math.abs(d5)?"L10":"L5";const pp=Math.round((delta??0)*100);const tag=" ("+(pp>=0?"+":"")+pp+"pp "+drove+" vs prior "+(b10||b5||szn).n+"g)";if(combined>=HOT)return{f:1.08,d:combined,note:"off hot"+tag};else if(combined>=WARM)return{f:1.04,d:combined,note:"off warm"+tag};else if(combined<=-HOT)return{f:0.93,d:combined,note:"off cold"+tag};else if(combined<=-WARM)return{f:0.97,d:combined,note:"off cooling"+tag};return{f:1,d:combined,note:""};}// Team offense venue split: captures team-specific home/road first-inning scoring gaps
 // beyond the flat homeOffAdvantage average. Requires ≥6 home AND ≥6 road games in rolling window.
 // Weight 0.3 in offMult (partial overlap with homeOffAdvantage; only activates on clear outliers).
 function offenseVenueFactor(rolling,isHome){if(!rolling||!rolling.home||!rolling.road)return{f:1,note:""};const h=rolling.home,r=rolling.road;if((h.n||0)<6||(r.n||0)<6||h.rate==null||r.rate==null)return{f:1,note:""};// delta: positive = team scores more at home than on road
@@ -1045,7 +1070,28 @@ const note=peri.k!=null?"K "+peri.k.toFixed(0)+"% · BB "+(peri.bb!=null?peri.bb
 // underrated NRFI arm.
 function openerGameFactor(meta){if(!meta||meta.gs==null||meta.g==null)return{f:1,note:"",opener:false};const startShare=meta.g>0?meta.gs/meta.g:1;const ipPerG=meta.g>0&&meta.ip!=null?meta.ip/meta.g:null;const opener=meta.gs===0||ipPerG!=null&&ipPerG<3.2||startShare<0.5;return opener?{f:0.93,note:"likely opener/bullpen game",opener:true}:{f:1,note:"starter",opener:false};}// Clean opener vs slow starter: a starter whose 1st-inning ERA runs well below
 // his overall ERA specializes in clean opening frames (NRFI); above it = slow starter.
-function openerFactor(i01Era,seasonEra){if(i01Era==null||seasonEra==null||seasonEra<=0)return{f:1,note:"n/a"};const ratio=i01Era/seasonEra;const tag=ratio<=0.8?"clean opener":ratio>=1.25?"slow starter":"typical";return{f:nClamp(1+(ratio-1)*0.15,0.9,1.12),note:"1st-inn "+i01Era.toFixed(2)+" vs "+seasonEra.toFixed(2)+" ERA ("+tag+")"};}// Pitcher season workload: deep-season fatigue nudges the first-inning risk up.
+// "Slow starter": is this arm worse in the 1st than in the rest of his outing?
+//
+// Measured r = +0.658 against pitBase on the 2026-08-15 slate — by far the
+// strongest overlap of any adjustment, and pitBase is the regressed 1st-inning
+// run rate. Two separate causes, fixed here; note that neither flips the sign of
+// the signal, which is a betting decision and needs a backtest, not a cleanup.
+//
+// 1. seasonEra INCLUDES the first innings being tested. A starter averaging ~5.5
+//    IP has ~18% of his season innings in the 1st, so the old ratio divided a
+//    number by a baseline partly made of itself: it both damped the comparison
+//    and tied it to its own numerator. Innings 2+ is the baseline the comment
+//    always claimed. Exact, since ER = ERA*IP/9 on both sides.
+//
+// 2. i01Era over ~20 innings is extremely noisy — two bad first innings move it a
+//    full run — and that noise is precisely the component pitBase already carries,
+//    which is what produced the correlation. Regressing it toward the same
+//    baseline before taking the ratio removes noise the model has already priced
+//    without touching the underlying signal.
+const OPENER_REG_IP=12;function openerFactor(i01Era,seasonEra,seasonIp,i01Ip){if(i01Era==null||seasonEra==null||seasonEra<=0)return{f:1,note:"n/a"};let baseEra=seasonEra,basis="SZN";if(seasonIp!=null&&i01Ip!=null&&seasonIp-i01Ip>=20){const rest=(seasonEra*seasonIp-i01Era*i01Ip)/(seasonIp-i01Ip);// A starter whose earned runs are almost all in the 1st leaves a near-zero
+// rest-ERA; dividing by it would manufacture a huge ratio out of a small
+// denominator. Fall back to the season line rather than trust that.
+if(rest>0.5){baseEra=rest;basis="inn 2+";}}const ip=i01Ip||0;const regEra=ip>0?(i01Era*ip+baseEra*OPENER_REG_IP)/(ip+OPENER_REG_IP):i01Era;const ratio=regEra/baseEra;const tag=ratio<=0.8?"clean opener":ratio>=1.25?"slow starter":"typical";return{f:nClamp(1+(ratio-1)*0.15,0.9,1.12),note:"1st-inn "+i01Era.toFixed(2)+" vs "+baseEra.toFixed(2)+" ERA "+basis+" ("+tag+")"};}// Pitcher season workload: deep-season fatigue nudges the first-inning risk up.
 // Starters who have already thrown 130+ IP are carrying accumulated wear.
 function seasonLoadFactor(ip){if(ip==null)return{f:1,note:""};if(ip>=150)return{f:1.04,note:Math.round(ip)+" IP (heavy load)"};if(ip>=130)return{f:1.02,note:Math.round(ip)+" IP (high load)"};if(ip>=120)return{f:1.01,note:Math.round(ip)+" IP (building load)"};return{f:1,note:""};}// Top-of-order strength from the posted lineup (first 3 due up). One batched
 // people call. Because it reads the ACTUAL lineup, late scratches/injuries are
@@ -1112,7 +1158,7 @@ const utcHour=ctx.startUtc?new Date(ctx.startUtc).getUTCHours():null;const isDay
 // which is the safe side to miss on. (The withdrawn Platt seed's 1.243 slope
 // would have scaled this to ~4.6pp; that slope is gone, this value is not
 // tuned to it — 0.15 predates it and is unchanged.)
-const dayGameShift=isDayGame?0.15:0;const awayTrend=pitcherTrendFactor(ctx.awayRolling);const homeTrend=pitcherTrendFactor(ctx.homeRolling);const awayOffTrend=teamOffenseTrendFactor(ctx.awayOffRolling);const homeOffTrend=teamOffenseTrendFactor(ctx.homeOffRolling);const awaySkill=pitchSkillFactor(ctx.awayPeri,ctx.lg);const homeSkill=pitchSkillFactor(ctx.homePeri,ctx.lg);const awayOpen=openerFactor(ctx.awayPit&&ctx.awayPit.era,ctx.awayMeta&&ctx.awayMeta.seasonEra);const homeOpen=openerFactor(ctx.homePit&&ctx.homePit.era,ctx.homeMeta&&ctx.homeMeta.seasonEra);const awayOpenG=openerGameFactor(ctx.awayMeta);const homeOpenG=openerGameFactor(ctx.homeMeta);const awayLoad=seasonLoadFactor(ctx.awayMeta&&ctx.awayMeta.ip);const homeLoad=seasonLoadFactor(ctx.homeMeta&&ctx.homeMeta.ip);// Blend each side's adjustments by DEVIATION-from-neutral (not raw product)
+const dayGameShift=isDayGame?0.15:0;const awayTrend=pitcherTrendFactor(ctx.awayRolling);const homeTrend=pitcherTrendFactor(ctx.homeRolling);const awayOffTrend=teamOffenseTrendFactor(ctx.awayOffRolling);const homeOffTrend=teamOffenseTrendFactor(ctx.homeOffRolling);const awaySkill=pitchSkillFactor(ctx.awayPeri,ctx.lg);const homeSkill=pitchSkillFactor(ctx.homePeri,ctx.lg);const awayOpen=openerFactor(ctx.awayPit&&ctx.awayPit.era,ctx.awayMeta&&ctx.awayMeta.seasonEra,ctx.awayMeta&&ctx.awayMeta.ip,ctx.awayPit&&ctx.awayPit.innings);const homeOpen=openerFactor(ctx.homePit&&ctx.homePit.era,ctx.homeMeta&&ctx.homeMeta.seasonEra,ctx.homeMeta&&ctx.homeMeta.ip,ctx.homePit&&ctx.homePit.innings);const awayOpenG=openerGameFactor(ctx.awayMeta);const homeOpenG=openerGameFactor(ctx.homeMeta);const awayLoad=seasonLoadFactor(ctx.awayMeta&&ctx.awayMeta.ip);const homeLoad=seasonLoadFactor(ctx.homeMeta&&ctx.homeMeta.ip);// Blend each side's adjustments by DEVIATION-from-neutral (not raw product)
 // so correlated signals don't compound, then cap the net swing. Platoon weight
 // is lower now that lineups are measured directly vs the starter's hand.
 // Platoon reduced to 0.20: lineup OBP is already computed vs the starter's hand,

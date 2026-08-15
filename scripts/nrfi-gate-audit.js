@@ -229,6 +229,92 @@ console.log("\ntrend baselines exclude their own window");
   check(/const pp = Math\.round\(\(delta \?\? 0\) \* 100\)/.test(src),
     "the trend note prints the delta that drove the verdict",
     "the note is back to printing d10 while the call is made on the L5/L10 blend.");
+
+  // The pitcher side carries the same defect under a different field name, and
+  // there the overlap is (n-10)/n — it moves with workload instead of sitting at
+  // a constant, so it cannot be corrected by dividing.
+  const pitSzn = { pct: 60, n: 22, runsPerStart: 0.55 };
+  const pitL10 = { pct: 90, n: 10, runsPerStart: 0.20 };
+  const pb = c.trendBaseline(pitSzn, pitL10, "pct");
+  check(!!pb && Math.abs(pb.pct - (60 * 22 - 90 * 10) / 12) < 1e-9,
+    "pitcher trend de-overlaps on pct, not just rate",
+    "trendBaseline did not handle the pitcher window's field name.");
+
+  // De-overlapping made a near-zero denominator reachable for the first time. The
+  // runs-per-start supplement divides by the prior window, and a prior of 0.04
+  // R/start turned routine cold streaks into -124pp on the 2026-08-15 slate
+  // (Schlittler, Webb, Ginn), pinning the factor at its clamp. The old `> 0`
+  // guard was only ever survivable because a full season never got that small.
+  // Bounding `combined` outright is the wrong assertion — a large clean-start
+  // delta is a legitimate reading, and an earlier cut of this check failed on
+  // synthetic data whose OWN pct delta was -65pp. What has to be bounded is the
+  // SUPPLEMENT. So run the same windows twice, once with runsPerStart stripped
+  // (boost forced to 0) and once with a fractional prior, and measure only the
+  // difference the supplement made.
+  const rpsWindows = (rps) => ({
+    szn: { pct: 60, n: 25, runsPerStart: rps ? 0.576 : undefined },  // prior 15 st = 0.16 R/st
+    l10: { pct: 55, n: 10, runsPerStart: rps ? 1.20 : undefined },
+    l5:  { pct: 55, n: 5,  runsPerStart: rps ? 1.20 : undefined },
+  });
+  const rpsOff = c.pitcherTrendFactor(rpsWindows(false));
+  const rpsOn  = c.pitcherTrendFactor(rpsWindows(true));
+  check(rpsOff && rpsOn && rpsOff.d != null && rpsOn.d != null &&
+        Math.abs(rpsOn.d - rpsOff.d) <= 10.0001,
+    "a near-zero trend baseline cannot blow up the runs-per-start supplement",
+    "the supplement moved combined by " +
+      (rpsOn && rpsOff ? (rpsOn.d - rpsOff.d).toFixed(2) : "?") + "pp off a 0.16 R/start prior; " +
+      "it is weighted to be worth +-10pp.");
+  // Same isolation on the offense side. avgRuns 0.456 over 25 with 0.90 in the
+  // L10 leaves a prior of 0.16 R/g — above the floor, so this exercises the CLAMP
+  // rather than the floor (a smaller prior would just zero the boost and pass
+  // trivially).
+  const rgWindows = (rg) => ({
+    szn: { rate: 0.30, n: 25, avgRuns: rg ? 0.456 : undefined },
+    l10: { rate: 0.35, n: 10, avgRuns: rg ? 0.90 : undefined },
+    l5:  { rate: 0.35, n: 5,  avgRuns: rg ? 0.90 : undefined },
+  });
+  const rgOff = c.teamOffenseTrendFactor(rgWindows(false));
+  const rgOn  = c.teamOffenseTrendFactor(rgWindows(true));
+  check(rgOff && rgOn && rgOff.d != null && rgOn.d != null &&
+        Math.abs(rgOn.d - rgOff.d) <= 0.12001,
+    "the offense runs/game boost is capped at its own weight",
+    "the boost moved combined by " +
+      (rgOn && rgOff ? (rgOn.d - rgOff.d).toFixed(4) : "?") + " off a 0.16 R/g prior; weight is 0.12.");
+}
+
+// opener measured r=+0.658 against pitBase, the strongest overlap in the model,
+// because it is a transform of the same first-inning line pitBase is built from.
+// Correlation is scale-invariant so no input fix can remove it — what the fixes
+// remove is MAGNITUDE. Two causes, both pinned here.
+console.log("\nopener is not a restatement of the base rate");
+{
+  // seasonEra includes the 1st innings under test (~18% of a starter's innings),
+  // so the old ratio divided a number by a baseline partly made of itself.
+  const withRest = c.openerFactor(6.00, 3.60, 130, 22);
+  const seasonOnly = c.openerFactor(6.00, 3.60, null, null);
+  check(withRest.f !== seasonOnly.f && /inn 2\+/.test(withRest.note),
+    "opener compares the 1st inning against innings 2+, not against a season containing it",
+    "note=" + withRest.note + " — the baseline is still the contaminated season line.");
+  // A 20-inning ERA moves a full run on two bad frames, and that noise is exactly
+  // what pitBase already carries. Regressing shrinks the ratio toward its
+  // baseline, so a wild first-inning line must not reach the clamp on its own.
+  // The test has to sit where regression is the only thing keeping the factor off
+  // the rail: at 6.00 the unregressed ratio clears the clamp, the regressed one
+  // lands at ~1.08. Asserting on a 12.00 instead would prove nothing, because a
+  // first-inning ERA that extreme is genuinely a pinned reading either way.
+  const hot  = c.openerFactor(6.00, 3.60, 130, 20);
+  const mid  = c.openerFactor(4.00, 3.60, 130, 20);
+  const calm = c.openerFactor(3.00, 3.60, 130, 20);
+  check(hot.f < 1.12 && hot.f > mid.f && mid.f > calm.f,
+    "a noisy first-inning ERA is regressed before it becomes a multiplier",
+    "6.00=" + hot.f.toFixed(4) + " 4.00=" + mid.f.toFixed(4) + " 3.00=" + calm.f.toFixed(4) +
+    "; unregressed, a 6.00 over 20 IP already pins the clamp and the ordering flattens.");
+  // A starter whose earned runs are nearly all in the 1st leaves a rest-ERA near
+  // zero; dividing by it manufactures a huge ratio from a tiny denominator.
+  const allInFirst = c.openerFactor(9.00, 1.50, 40, 18);
+  check(isFinite(allInFirst.f) && allInFirst.f <= 1.12 && allInFirst.f >= 0.90,
+    "a near-zero rest-of-game ERA falls back instead of dividing",
+    "f=" + (allInFirst ? allInFirst.f : "?"));
 }
 
 console.log("\n" + "=".repeat(72));
