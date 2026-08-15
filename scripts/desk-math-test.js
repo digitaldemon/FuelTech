@@ -63,10 +63,20 @@ const code = [
   slice("const NRFI_LG_LAMBDA = 0.52;", "const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));"),
   slice("function nrfiRegress(", "\n}"),
   slice("function halfNoRun(", "\n}"),
+  // The ladder cut-points nrfiTier and nrfiVerdict close over. Without these the
+  // eval threw ReferenceError inside the first nrfiTier call, which aborted the
+  // whole file — every assertion below that point had silently stopped running.
+  slice("const NRFI_STRONG_MIN = 63,", ";"),
+  slice("const NRFI_TIER_STRONG =", ";"),
   slice("function nrfiTier(", "\n}"),
+  // nrfiVerdict calls nrfiThinArm, which lives 4,000 lines away and was never
+  // sliced in. Every assertion below the first nrfiVerdict call had been dying on
+  // the ReferenceError — the file reported PASSes and then aborted, which reads
+  // like a completed run unless you count the lines.
+  slice("const NRFI_THIN_STARTS = 5,", ";"),
+  slice("function nrfiThinArm(", "\n}"),
+  slice("function nrfiReliefBacked(", "\n}"),
   slice("function nrfiVerdict(", "\n}"),
-  slice("function platoonFactor(", "\n}"),
-  slice("function formFactor(", "\n}"),
   slice("function pitchSkillFactor(", "\n}"),
   slice("function openerGameFactor(", "\n}"),
   slice("function openerFactor(", "\n}"),
@@ -78,8 +88,8 @@ const code = [
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, platoonFactor, formFactor, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, platoonFactor, formFactor, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -293,8 +303,11 @@ ok(nrfiRegress(null, 0, 6) === 0.52, "missing rate regresses fully to the league
 ok(Math.abs(nrfiRegress(0.2, 20, 4) - 0.2533) < 1e-3, "small-sample rate pulled toward league (Montero 0.20 -> 0.25)");
 ok(halfNoRun(0.5, 0.15, 1) > halfNoRun(0.5, 0.52, 1), "an elite 1st-inning starter raises the no-run probability");
 ok(halfNoRun(0.5, 0.5, 1.1) < halfNoRun(0.5, 0.5, 1), "hitter-friendly park/weather lowers the no-run probability");
-ok(nrfiTier(75).t === "STRONGEST" && nrfiTier(64).t === "STRONG" && nrfiTier(58).t === "LEAN" && nrfiTier(52).t === "TOSS-UP",
-  "NRFI tiers threshold correctly (70/63/57)");
+// Boundaries, not midpoints: an off-by-one in a cut-point only shows at the edge.
+// Cut-points are NRFI_STRONG_MIN 63, NRFI_TIER_STRONG 57, NRFI_LEAN_MIN 52.
+ok(nrfiTier(63).t === "STRONGEST" && nrfiTier(62).t === "STRONG", "STRONGEST starts at 63, not 64");
+ok(nrfiTier(57).t === "STRONG" && nrfiTier(56).t === "LEAN", "STRONG starts at 57, not 58");
+ok(nrfiTier(52).t === "LEAN" && nrfiTier(51).t === "TOSS-UP", "LEAN starts at 52, below which it is a toss-up");
 const rfiList = [{ ticker: "KXMLBRFI-26AUG161920SEAHOU", date: "20260816",
   codes: teamCodes("KXMLBRFI-26AUG161920SEAHOU"), yesPrice: 45, marketNRFI: 55 }];
 ok(matchRFI({ date: "2026-08-16", awayAbbr: "SEA", homeAbbr: "HOU" }, rfiList) === rfiList[0],
@@ -305,48 +318,90 @@ ok(matchRFI({ date: "2026-08-16", awayAbbr: "NYY", homeAbbr: "BOS" }, rfiList) =
   "matchRFI rejects a game whose teams don't match the market");
 
 // Plain-English verdicts
-const vStrong = nrfiVerdict({ pMax: 75, call: "NRFI", market: null });
+//
+// nrfiVerdict applies two gates that have nothing to do with the number: a
+// family-consensus gate (no check confirms the call -> downgrade) and a thin-arm
+// gate (a starter with almost no history -> downgrade). A bare {pMax, call} trips
+// both, so tests written that way were not measuring the ladder at all — they
+// were measuring the penalties, and every one of them read LEAN regardless of
+// what it claimed to assert. HEALTHY supplies a game where neither gate fires,
+// so each assertion below tests the one thing it names. The gates themselves are
+// asserted separately, further down.
+const HEALTHY = {
+  checks: [{ label: "Starting pitching (1st inning)", lean: "nrfi" },
+           { label: "1st-inning offense", lean: "nrfi" },
+           { label: "Weather & park", lean: "nrfi" }],
+  confidence: 0.9,
+  aligned: { agree: 6, total: 8 },
+  pitProfiles: { away: { sample: 20, apps: 30, seasonIp: 120 },
+                 home: { sample: 20, apps: 30, seasonIp: 120 } },
+};
+const H = (o) => ({ ...HEALTHY, ...o });
+// A bare object still trips the gates — assert that, so the fixture above cannot
+// quietly stop being necessary without this file noticing.
+const vBare = nrfiVerdict({ pMax: 75, call: "NRFI", market: null });
+ok(vBare.strength === "LEAN" && /no check confirms this/.test(vBare.blurb),
+  "a 75% call with no checks and no pitcher history is downgraded, not trusted");
+const vStrong = nrfiVerdict(H({ pMax: 75, call: "NRFI", market: null }));
 ok(vStrong.isBet && vStrong.label === "★ BET NRFI", "75% -> ★ BET NRFI");
-const vPass = nrfiVerdict({ pMax: 52, call: "YRFI", market: null });
-ok(!vPass.isBet && /Pass/.test(vPass.label), "52% -> pass, too close");
-const vLean = nrfiVerdict({ pMax: 59, call: "NRFI", market: null });
-ok(vLean.strength === "LEAN" && vLean.label === "Lean NRFI", "59% -> Lean NRFI");
+const vPass = nrfiVerdict(H({ pMax: 52, call: "YRFI", market: null }));
+ok(!vPass.isBet && /Lean/.test(vPass.label), "52% -> lean only, too close to bet");
+const vLean = nrfiVerdict(H({ pMax: 59, call: "NRFI", market: null }));
+ok(vLean.strength === "BET" && vLean.label === "BET NRFI", "59% clears NRFI_BET_MIN (55) -> BET NRFI");
 // The market never changes the model's PROBABILITY (pMax/call are inputs), but
 // it DOES gate the wager: no value / market above the model -> PASS.
-const vNoValue = nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 6, total: 8 }, market: { edge: -20, marketSide: 95 } });
+const vNoValue = nrfiVerdict(H({ pMax: 75, call: "NRFI", market: { edge: -20, marketSide: 95 } }));
 ok(vNoValue.strength === "PASS", "market well above the model (no value) -> PASS, though the 75% prediction still stands");
 // With no market at all, the pick is purely model-driven.
-ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 6, total: 8 } }).strength === "STRONG",
+ok(nrfiVerdict(H({ pMax: 75, call: "NRFI" })).strength === "STRONG",
   "no market -> model-only STRONG");
-const vAligned = nrfiVerdict({ pMax: 66, call: "NRFI", aligned: { agree: 5, total: 6 } });
+const vAligned = nrfiVerdict(H({ pMax: 66, call: "NRFI", aligned: { agree: 5, total: 6 } }));
 ok(/5\/6 checks agree/.test(vAligned.blurb), "verdict reports how many stats checks agree");
 // Wager-decision gates (the fine-tune)
-ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.3, aligned: { agree: 5, total: 6 } }).strength === "PASS",
+ok(nrfiVerdict(H({ pMax: 75, call: "NRFI", confidence: 0.3, aligned: { agree: 5, total: 6 } })).strength === "PASS",
   "thin data (conf 0.3) forces a PASS even at 75%");
-ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.5, aligned: { agree: 5, total: 6 } }).strength === "LEAN",
+ok(nrfiVerdict(H({ pMax: 75, call: "NRFI", confidence: 0.5, aligned: { agree: 5, total: 6 } })).strength === "LEAN",
   "limited data (conf 0.5) caps a strong number at LEAN");
-const vSplit = nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 2, total: 8 } });
+const vSplit = nrfiVerdict(H({ pMax: 75, call: "NRFI", aligned: { agree: 2, total: 8 } }));
 ok(vSplit.strength === "BET" && /signals split/.test(vSplit.blurb), "split checks downgrade STRONG -> BET");
-ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 7, total: 8 } }).strength === "STRONG",
+ok(nrfiVerdict(H({ pMax: 75, call: "NRFI", aligned: { agree: 7, total: 8 } })).strength === "STRONG",
   "decisive number + high confidence + agreement -> STRONG");
-ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 4, total: 8 } }).strength === "BET",
+ok(nrfiVerdict(H({ pMax: 75, call: "NRFI", aligned: { agree: 4, total: 8 } })).strength === "BET",
   "STRONG requires >=60% agreement, else BET");
+// The thin-arm gate, asserted directly rather than by accident. A starter with
+// two career starts and no relief workload cannot support a STRONG.
+ok(nrfiVerdict(H({ pMax: 75, call: "NRFI",
+  pitProfiles: { away: { sample: 2, apps: 2, seasonIp: 8 }, home: { sample: 20, apps: 30, seasonIp: 120 } } })).strength !== "STRONG",
+  "a thin starting arm downgrades an otherwise strong call");
+// The consensus gate, likewise: checks that split evenly abstain, and a call no
+// family confirms loses a rung.
+// The gate keys off `aligned.total`, not off `checks` — an empty checks array
+// with a populated aligned count does NOT trip it, which is worth pinning down
+// because the two look interchangeable from the call site.
+ok(!/no check confirms this/.test(nrfiVerdict(H({ pMax: 75, call: "NRFI", checks: [] })).blurb),
+  "an empty checks array does not trip the consensus gate — `aligned` is what counts");
+ok(/no check confirms this/.test(nrfiVerdict(H({ pMax: 75, call: "NRFI", aligned: { agree: 0, total: 0 } })).blurb),
+  "zero aligned checks -> the verdict says no check confirms this");
 // Value gate — market decides whether there's a wager (probability stays model-only)
-ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 6, total: 8 }, market: { edge: 1, marketSide: 70 } }).strength === "PASS",
+ok(nrfiVerdict(H({ pMax: 75, call: "NRFI", market: { edge: 1, marketSide: 70 } })).strength === "PASS",
   "efficient market (edge <2) -> PASS despite a great matchup");
-ok(nrfiVerdict({ pMax: 75, call: "NRFI", confidence: 0.9, aligned: { agree: 6, total: 8 }, market: { edge: 4, marketSide: 66 } }).strength === "PASS",
-  "short juice (66% price, edge <5) -> PASS");
-ok(nrfiVerdict({ pMax: 66, call: "NRFI", confidence: 0.9, aligned: { agree: 6, total: 8 }, market: { edge: 2.5, marketSide: 55 } }).strength === "LEAN",
-  "thin value (edge <3) downgrades BET -> LEAN");
-const vVal = nrfiVerdict({ pMax: 66, call: "NRFI", confidence: 0.9, aligned: { agree: 6, total: 8 }, market: { edge: 6, marketSide: 55 } });
-ok(vVal.isBet && /value \+6% vs market/.test(vVal.blurb), "real edge keeps the bet and surfaces the value");
+// Short juice no longer forces a PASS — it downgrades a rung and says so, on the
+// reasoning that a real edge at a short price is still an edge, just a smaller
+// one. Asserted as it behaves, with the annotation, so a silent revert is caught.
+const vShort = nrfiVerdict(H({ pMax: 75, call: "NRFI", market: { edge: 4, marketSide: 66 } }));
+ok(vShort.strength === "BET" && /short juice — sized down/.test(vShort.blurb),
+  "short juice (66% price, edge 4) downgrades STRONG -> BET and flags the sizing");
+const vThin = nrfiVerdict(H({ pMax: 66, call: "NRFI", market: { edge: 2.5, marketSide: 55 } }));
+ok(vThin.isBet && /value \+2\.5% vs market/.test(vThin.blurb),
+  "an edge over the 1.5pp gate is a bet and reports its size");
+const vVal = nrfiVerdict(H({ pMax: 66, call: "NRFI", market: { edge: 6, marketSide: 55 } }));
+ok(vVal.isBet && /value \+6\.0% vs market/.test(vVal.blurb), "real edge keeps the bet and surfaces the value");
 
-// Platoon & recent-form checks
-ok(platoonFactor({ opsVsR: 0.780, opsVsL: 0.680 }, "R").f > 1, "strong vs RHP -> run-favouring platoon factor");
-ok(platoonFactor({ opsVsR: 0.780, opsVsL: 0.680 }, "L").f < 1, "weak vs LHP -> NRFI-favouring platoon factor");
-ok(platoonFactor(null, "R").f === 1, "missing platoon data -> neutral factor");
-ok(formFactor(3.0).f < 1 && formFactor(6.0).f > 1, "hot starter suppresses, cold starter inflates the 1st");
-ok(formFactor(null).f === 1, "missing form -> neutral factor");
+// platoonFactor and formFactor were removed from the model (worth 0.010pp and
+// 0.178pp on a full board, and neither ever changed a verdict). Their assertions
+// are deleted rather than skipped: a test for a function that no longer exists
+// aborts this whole file on load, which is how ~40 assertions below here stopped
+// running silently for a day.
 
 // Pitcher skill: season peripherals as the thesis (K/BB/barrel/GB/whiff/f-strike)
 const lgP = { k: 22, bb: 8, barrel: 7.5, gb: 44, whiff: 24.5, fstrike: 60 };
@@ -360,21 +415,46 @@ ok(openerGameFactor({ gs: 25, g: 26, ip: 150 }).opener === false, "a true starte
 ok(openerFactor(2.0, 4.0).f < 1 && openerFactor(6.0, 3.0).f > 1, "clean opener (low 1st-inn ERA) suppresses; slow starter inflates");
 
 // Empirical calibration
-ok(nrfiCalibration([]).active === false, "no graded games -> calibration inactive");
-ok(nrfiCalibration(Array.from({ length: 10 }, () => ({ pNRFI: 0.6, firstInningRuns: 0 }))).active === false,
-  "under 25 graded games -> calibration still inactive");
+// nrfiCalibration returns the LIVE component only — {liveC, n} — which the two
+// call sites blend against NRFI_CALIB_SEED weighted by n. It does not return a
+// ready-to-use {c}, and handing its output straight to applyCalibration is a bug
+// (see the guard asserted below). These tests previously expected the old
+// single-object API and had never run.
+ok(nrfiCalibration([]).n === 0 && nrfiCalibration([]).liveC === 0,
+  "no graded games -> no live correction to contribute");
+ok(nrfiCalibration(Array.from({ length: 10 }, () => ({ pNRFI: 0.6, firstInningRuns: 0 }))).n === 10,
+  "graded games are counted so the caller can weight them against the seed");
+// PASS rows and thin passes are excluded: calibrating on calls the desk never
+// made would fit the model to games it did not bet.
+ok(nrfiCalibration([{ pNRFI: 0.6, firstInningRuns: 0, strength: "PASS" },
+                    { pNRFI: 0.6, firstInningRuns: 0, thinPass: true },
+                    { pNRFI: 0.6, firstInningRuns: 0, source: "kalshi-import" },
+                    { pNRFI: 0.6, firstInningRuns: 0 }]).n === 1,
+  "PASS, thin-pass and kalshi-import rows are excluded from calibration");
 // model predicted 60% NRFI but only 50% actually hit -> should shift down
 const overRec = Array.from({ length: 40 }, (_, i) => ({ pNRFI: 0.60, firstInningRuns: i < 20 ? 0 : 1 }));
 const calO = nrfiCalibration(overRec);
-ok(calO.active && calO.c < 0, "over-predicting model -> negative calibration shift");
-ok(applyCalibration(0.60, calO) < 0.60, "calibration pulls a 60% prediction down toward reality");
+ok(calO.n === 40 && calO.liveC < 0, "over-predicting model -> negative live calibration shift");
+ok(applyCalibration(0.60, { c: calO.liveC, active: true }) < 0.60,
+  "calibration pulls a 60% prediction down toward reality");
+// The footgun, guarded: liveC is not c, and a caller that forgets must not get
+// a silent NaN priced into a wager.
+ok(applyCalibration(0.60, calO) === 0.60,
+  "a calib object with no `c` is ignored rather than producing NaN");
 ok(applyCalibration(0.60, { active: false }) === 0.60, "inactive calibration leaves the probability unchanged");
 
 // Market-as-prior blend (anchor to market, model nudges)
 ok(nrfiBlend(0.70, null) === 0.70, "no market -> pure model");
-ok(Math.abs(nrfiBlend(0.70, 55) - 0.6025) < 1e-6, "model 70%, market 55% -> anchored to ~60% (market prior)");
-ok(nrfiBlend(0.70, 55) < 0.70 && nrfiBlend(0.70, 55) > 0.55, "blend sits between market prior and model, closer to market");
-ok(Math.abs(nrfiBlend(0.30, 55) - 0.4625) < 1e-6, "bearish model still anchored toward the market");
+// The blend weight is a ladder on directional conviction, not the flat
+// NRFI_BLEND these tests were written against: conv>=0.68 -> 0.65, >=0.62 ->
+// 0.58, >=0.57 -> 0.45, else 0.35.
+ok(Math.abs(nrfiBlend(0.70, 55) - (0.55 + 0.65 * 0.15)) < 1e-6,
+  "model 70% (conv 0.70) earns the top 0.65 weight -> 0.6475");
+ok(nrfiBlend(0.70, 55) < 0.70 && nrfiBlend(0.70, 55) > 0.55, "blend sits between market prior and model");
+ok(Math.abs(nrfiBlend(0.30, 55) - (0.55 + 0.65 * -0.25)) < 1e-6,
+  "a 70%-conviction YRFI read gets the same 0.65 weight as the mirrored NRFI read");
+ok(Math.abs(nrfiBlend(0.54, 55) - (0.55 + 0.35 * -0.01)) < 1e-6,
+  "a low-conviction read falls back to the NRFI_BLEND floor of 0.35");
 ok(pickWon("CWS", "CHW") === true, "grading respects cross-feed aliases");
 ok(pickWon("TIE", "TIE") === true && pickWon("MIL", "TIE") === false, "draw pick only wins on a draw");
 

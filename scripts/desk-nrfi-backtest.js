@@ -21,24 +21,23 @@ const model = [
   slice("const NRFI_LG_LAMBDA = 0.52;", "const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));"),
   slice("function nrfiRegress(", "\n}"),
   slice("function halfNoRun(", "\n}"),
-  slice("function platoonFactor(", "\n}"),
-  slice("function formFactor(", "\n}"),
   slice("function pitchSkillFactor(", "\n}"),
   slice("function openerGameFactor(", "\n}"),
   slice("function openerFactor(", "\n}"),
   slice("function seasonLoadFactor(", "\n}"),
+  slice("const NRFI_TEMP_REF = 73.7;", "const ENV_W_WIND = 1.00;"),
   slice("function weatherPark(", "\n}"),
   slice("const rate2 = (o)", ";"),
   slice("const awayPit0 = (o)", ";"),
-  slice("const NRFI_LG_PA = { out:", "const NRFI_LG_PA = { out: 0.685, bb: 0.085, s1: 0.140, s2: 0.045, s3: 0.004, hr: 0.033 };"),
+  slice("const NRFI_LG_PA = (() => {", "const NRFI_PA_REG_H2H = 50;"),
   slice("function paRates(", "\n}"),
   slice("function matchupPA(", "\n}"),
   slice("function advanceBaseOut(", "\n}"),
   slice("function simHalfNoRun(", "\n}"),
   slice("function nrfiEvaluate(", "\n}"),
 ].join("\n");
-const { nrfiEvaluate, weatherPark, paRates } = eval('"use strict";\n' + model +
-  "\n;({ nrfiEvaluate, weatherPark, paRates })");
+const { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP } = eval('"use strict";\n' + model +
+  "\n;({ nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP })");
 
 // ---- data (Node fetchers; faithful to the app's getJson logic) ----
 const J = async (u) => { const r = await fetch(u, { headers: { accept: "application/json" } }); if (!r.ok) throw new Error(u + " " + r.status); return r.json(); };
@@ -68,7 +67,11 @@ const pitMeta = (id, se) => id == null ? Promise.resolve({ hand: null, form: nul
   } catch { /* nulls */ }
   return { hand, form, seasonEra, gs, g, ip, allow, id };
 });
-const LG_OBP = 0.318, C = (x, a, b) => Math.max(a, Math.min(b, x));
+// Read from app.jsx, never redeclared here. A backtest that carries its own copy
+// of a model constant stops backtesting the model the moment the two drift, and
+// the drift is silent — the numbers still look like numbers.
+const LG_OBP = NRFI_LG_TOP3_OBP, C = (x, a, b) => Math.max(a, Math.min(b, x));
+if (!(LG_OBP > 0.2 && LG_OBP < 0.5)) throw new Error("NRFI_LG_TOP3_OBP did not come through the slice: " + LG_OBP);
 const topOrder = async (players, se, oppHand, oppPitcherId) => {
   const ids = (players || []).slice(0, 5).map((p) => p?.id).filter(Boolean);
   if (ids.length < 3) return { factor: 1, obp: null, note: "lineup n/a", batters: null };

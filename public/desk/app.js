@@ -934,8 +934,32 @@ useEffect(()=>{let alive=true,timer=null;const loop=async()=>{await run();if(!al
 const NRFI_LG_P0=0.72;// league P(no run in a half-inning) -> ~52% NRFI
 const NRFI_PIT_REG=12;// heavy regression — 1st-inning rate is a tiebreaker, not the thesis
 const NRFI_OFF_REG=6;// regression games for a team's 1st-inning offense
-const NRFI_LG_OBP=0.318;// league on-base baseline for lineup strength
-// Run-scoring park factors by home-team abbreviation (1.0 = neutral,
+/* Lineup-strength baseline. This is NOT league OBP, and the difference is the
+ * whole point. The numerator it divides is a 0.5/0.3/0.2-weighted OBP of the
+ * posted 1-2-3 hitters — a population selected precisely because it gets on
+ * base. It was 0.318, the all-hitters league OBP, which made the ratio "top of
+ * a lineup vs everybody" rather than "this lineup vs an average one", and that
+ * is above 1.0 almost by construction.
+ *
+ * Measured by scripts/nrfi-lineup-center.js over 1,116 posted lineups (45 days,
+ * 2026, gameType=R), recomputing the model's exact statistic — same weights,
+ * same vs-LHP/vs-RHP split selection, same reweighting when a split is missing:
+ *
+ *     mean 0.3467   sd 0.0255   p10 0.321   p90 0.380
+ *
+ * The split and season-fallback subsets agree to four decimals, so the constant
+ * is not an artefact of which stat line the check happens to find.
+ *
+ *     under 0.318:  91.8% of lineups score above 1.0, mean factor 1.0884
+ *     under 0.347:  47.9% score above 1.0,            mean factor 0.9999
+ *
+ * A check that calls 92% of lineups above-average is not measuring lineups, it
+ * is applying a constant. Re-centred it sits on 1.0000 and the sign carries
+ * information again. The 0.82/1.24 clamp now binds on 1.16% of lineups, so it
+ * is a guard against a broken stat line rather than a routine truncation.
+ *
+ * Re-measure this if the weights in topOrder change; it is the mean of that
+ * specific statistic, not a league rate that can be looked up. */const NRFI_LG_TOP3_OBP=0.3467;// Run-scoring park factors by home-team abbreviation (1.0 = neutral,
 // directional estimates compressed toward 1 for a single inning).
 const NRFI_PARK={COL:1.14,BOS:1.06,CIN:1.06,KC:1.04,ARI:1.04,BAL:1.03,PHI:1.03,TEX:1.02,TOR:1.02,LAA:1.02,MIN:1.02,ATL:1.01,HOU:1.01,CHC:1.01,NYY:1.01,WSH:1.01,MIL:1.00,CWS:1.00,LAD:0.99,STL:0.99,PIT:0.99,TB:0.98,CLE:0.98,DET:0.97,NYM:0.97,OAK:0.97,ATH:0.97,SAC:0.97,MIA:0.95,SEA:0.94,SD:0.94,SF:0.93};const nClamp=(x,lo,hi)=>Math.max(lo,Math.min(hi,x));const _pitI01=new Map();// pid:season -> {rate,sample,era,whip}
 const _teamI01=new Map();// teamId:season -> {rate,sample,ops}
@@ -1299,7 +1323,7 @@ function seasonLoadFactor(ip){if(ip==null)return{f:1,note:""};if(ip>=150)return{
 // in (shrunk by sample size) for a sharper per-matchup estimate.
 async function topOrderStrength(players,season,oppHand,oppPitcherId){const ordered=(players||[]).slice(0,5).map(p=>p&&p.id).filter(Boolean);if(ordered.length<3)return{factor:1,obp:null,note:"lineup not posted",batters:null};const sit=oppHand==="L"?"vl":oppHand==="R"?"vr":null;const k=ordered.join(",")+":"+(sit||"all")+":"+season+":v2";if(_obpCache.has(k))return _obpCache.get(k);let val={factor:1,obp:null,note:"lineup not posted",batters:null};try{const type=sit?"type=[statSplits],sitCodes=["+sit+"]":"type=[season]";const d=await getJson("https://statsapi.mlb.com/api/v1/people?personIds="+ordered.join(",")+"&hydrate=stats(group=[hitting],"+type+",season="+season+")");const byId={};(d.people||[]).forEach(p=>{const s=p.stats&&p.stats[0]&&p.stats[0].splits&&p.stats[0].splits[0]&&p.stats[0].splits[0].stat;if(s)byId[p.id]={obp:s.obp!=null?Number(s.obp):null,rates:paRates(s,s.plateAppearances)};});const w=[0.5,0.3,0.2];let num=0,den=0;ordered.slice(0,3).forEach((id,i)=>{const o=byId[id]&&byId[id].obp;if(o!=null){num+=o*w[i];den+=w[i];}});let batters=ordered.map(id=>byId[id]&&byId[id].rates||null);// Batter vs pitcher H2H: blend actual history into per-batter rates.
 if(oppPitcherId&&batters.some(Boolean)){try{const h2hD=await getJson("https://statsapi.mlb.com/api/v1/people?personIds="+ordered.join(",")+"&hydrate=stats(group=[hitting],type=[vsPlayer],opposingPlayerId="+oppPitcherId+",season="+season+")");const h2hById={};(h2hD.people||[]).forEach(p=>{const s=p.stats&&p.stats[0]&&p.stats[0].splits&&p.stats[0].splits[0]&&p.stats[0].splits[0].stat;const pa=s?Number(s.plateAppearances||s.atBats||0):0;if(s&&pa>=5)h2hById[p.id]={pa,rates:paRates(s,pa,NRFI_PA_REG_H2H)};});batters=batters.map((b,i)=>{const h=h2hById[ordered[i]];if(!b||!h||!h.rates)return b;const wH=Math.min(0.65,h.pa/20);// shrink to log5 when sparse
-const keys=["out","bb","s1","s2","s3","hr"];const blended={};for(const k of keys)blended[k]=b[k]*(1-wH)+h.rates[k]*wH;return blended;});}catch{/* H2H unavailable; keep season rates */}}const hasB=batters.some(Boolean);if(den>0){const obp=num/den;val={factor:nClamp(obp/NRFI_LG_OBP,0.82,1.24),obp,batters:hasB?batters:null,note:"1-3 OBP "+obp.toFixed(3)+(sit?" vs "+(oppHand==="L"?"LHP":"RHP"):"")};}else if(hasB){val={factor:1,obp:null,batters,note:"lineup posted"};}}catch{/* leave neutral */}_obpCache.set(k,val);return val;}// Fetch the team's top-OBP batters from the active roster — used for the sim
+const keys=["out","bb","s1","s2","s3","hr"];const blended={};for(const k of keys)blended[k]=b[k]*(1-wH)+h.rates[k]*wH;return blended;});}catch{/* H2H unavailable; keep season rates */}}const hasB=batters.some(Boolean);if(den>0){const obp=num/den;val={factor:nClamp(obp/NRFI_LG_TOP3_OBP,0.82,1.24),obp,batters:hasB?batters:null,note:"1-3 OBP "+obp.toFixed(3)+(sit?" vs "+(oppHand==="L"?"LHP":"RHP"):"")};}else if(hasB){val={factor:1,obp:null,batters,note:"lineup posted"};}}catch{/* leave neutral */}_obpCache.set(k,val);return val;}// Fetch the team's top-OBP batters from the active roster — used for the sim
 // projection toggle when the real lineup hasn't been posted yet.
 // Sorted by OBP desc, top 9 kept, H2H vs the opposing pitcher blended in.
 async function teamBestLineup(teamId,season,oppHand,oppPitcherId){if(teamId==null)return null;const sit=oppHand==="L"?"vl":oppHand==="R"?"vr":null;const k=teamId+":"+season+":"+(sit||"all")+":"+(oppPitcherId||"");if(_rosterCache.has(k))return _rosterCache.get(k);let val=null;try{const roster=await getJson("https://statsapi.mlb.com/api/v1/teams/"+teamId+"/roster?rosterType=active&season="+season);const posPlayers=(roster.roster||[]).filter(p=>p.position&&p.position.type!=="Pitcher");const ids=posPlayers.map(p=>p.person&&p.person.id).filter(Boolean);if(!ids.length){_rosterCache.set(k,null);return null;}const type=sit?"type=[statSplits],sitCodes=["+sit+"]":"type=[season]";const d=await getJson("https://statsapi.mlb.com/api/v1/people?personIds="+ids.join(",")+"&hydrate=stats(group=[hitting],"+type+",season="+season+")");const players=[];(d.people||[]).forEach(p=>{const s=p.stats&&p.stats[0]&&p.stats[0].splits&&p.stats[0].splits[0]&&p.stats[0].splits[0].stat;if(!s)return;const pa=Number(s.plateAppearances||0);if(pa<50)return;const obp=s.obp!=null?Number(s.obp):null;const rates=paRates(s,pa);if(obp!=null&&rates)players.push({id:p.id,obp,rates});});if(!players.length){_rosterCache.set(k,null);return null;}players.sort((a,b)=>b.obp-a.obp);const top9=players.slice(0,9);let batters=top9.map(p=>p.rates);if(oppPitcherId&&batters.some(Boolean)){try{const topIds=top9.map(p=>p.id);const h2hD=await getJson("https://statsapi.mlb.com/api/v1/people?personIds="+topIds.join(",")+"&hydrate=stats(group=[hitting],type=[vsPlayer],opposingPlayerId="+oppPitcherId+",season="+season+")");const h2hById={};(h2hD.people||[]).forEach(p=>{const s=p.stats&&p.stats[0]&&p.stats[0].splits&&p.stats[0].splits[0]&&p.stats[0].splits[0].stat;const pa=s?Number(s.plateAppearances||s.atBats||0):0;if(s&&pa>=5)h2hById[p.id]={pa,rates:paRates(s,pa,NRFI_PA_REG_H2H)};});batters=batters.map((b,i)=>{const h=h2hById[top9[i].id];if(!b||!h||!h.rates)return b;const wH=Math.min(0.65,h.pa/20);const keys=["out","bb","s1","s2","s3","hr"];const blended={};for(const key of keys)blended[key]=b[key]*(1-wH)+h.rates[key]*wH;return blended;});}catch{/* keep season rates */}}val=batters;}catch{/* leave null */}_rosterCache.set(k,val);return val;}// Travel & rest: fatigue nudges early offense down slightly (favours NRFI).
@@ -1370,16 +1394,50 @@ async function teamOffenseRolling(teamId,todayStr,season){if(teamId==null)return
  * is not. The surviving values are roughly HALF the measured deviation, a
  * deliberate shrink given that out-to-corner does not survive a correction for
  * the ~30 comparisons this measurement ran and the tier anomaly is unexplained.
- */const ENV_W_PARK=1.00;// park factors are the best-established of the three
-const ENV_W_TEMP=0.60;// measured x1.113 across the band span vs x1.120 applied
-// Wind is now measured rather than assumed, so it carries its own number
-// directly instead of being shrunk twice. The shrink lives in the band values,
-// where it is visible, rather than in a weight that hides it.
-const ENV_W_WIND=1.00;function weatherPark(game,homeAbbr){const parkFactor=NRFI_PARK[homeAbbr]||1;let tFactor=1,wFactor=1,note="neutral park";const w=game.weather||{};const temp=w.temp!=null&&w.temp!==""?Number(w.temp):null;const cond=String(w.condition||"");const wind=String(w.wind||"");if(/Dome|Roof Closed/i.test(cond)){// Under a roof there is no wind and the temperature is set, so both drop out;
+ *//* Temperature is a gradient, and it used to ship as a cliff.
+ *
+ * The band was: below 82F nothing, at 82F and above x1.20 (x1.120 after the
+ * 0.60 weight). That is a 12%-of-lambda jump across one degree, applied to BOTH
+ * half-innings, so an 81F game and an 83F game came out ~5pp apart on P(NRFI)
+ * for no reason a thermometer would recognise. On a mid-August board that is not
+ * an edge case: five of fifteen games sat between 82F and 84F, right on the step.
+ *
+ * The band also does not replicate. Venue+month held out, by season:
+ *
+ *     2024  >=82   x1.466  z=+2.55      2025  x1.218  z=+1.44
+ *     2026  >=82   x1.006  z=+0.03
+ *
+ * A term worth +47% in one season and +0.6% in another is a term fit to 2024.
+ *
+ * What DOES replicate is the continuous trend, which is one test on the full
+ * sample rather than five band tests, and is the shape the physics predicts —
+ * air density is monotone in temperature, it has no threshold at 82F:
+ *
+ *     n=5339   slope 0.1224pp of YRFI per degree F   t=1.97
+ *     across the 56F->86F span that is x1.113 of lambda
+ *
+ * So: 0.113 / 30F = 0.00377 of lambda per degree, centred on the mean outdoor
+ * game temperature (73.7F over 5,531 outdoor games) so the term is unbiased
+ * across the season rather than only at one end of it.
+ *
+ * The clamp is +-~24F from the reference. Beyond that the linear fit is
+ * extrapolating past where the sample is dense, and a 38F April game should not
+ * inherit a coefficient estimated in July.
+ *
+ * Net effect: a 84F game carries x1.039 instead of x1.120. That is a large
+ * reduction, and it is the measurement's number, not a hedge — the old value
+ * was a 30-degree effect being handed to every game one degree over a line. */const NRFI_TEMP_REF=73.7;// mean outdoor game temperature, 2024-2026
+const NRFI_TEMP_SLOPE=0.00377;// of lambda per degree F
+const ENV_W_PARK=1.00;// park factors are the best-established of the three
+// Temperature and wind now carry their own measured magnitudes directly, so
+// their weights are 1.00: the shrink lives in the coefficient, where it is
+// visible, rather than in a second weight that hides it. These three are kept as
+// named terms at 1.00 rather than deleted because they are the ablation handles
+// scripts/nrfi-factor-contrib.js patches to switch each part of env off.
+const ENV_W_TEMP=1.00;const ENV_W_WIND=1.00;function weatherPark(game,homeAbbr){const parkFactor=NRFI_PARK[homeAbbr]||1;let tFactor=1,wFactor=1,note="neutral park";const w=game.weather||{};const temp=w.temp!=null&&w.temp!==""?Number(w.temp):null;const cond=String(w.condition||"");const wind=String(w.wind||"");if(/Dome|Roof Closed/i.test(cond)){// Under a roof there is no wind and the temperature is set, so both drop out;
 // the park factor already describes the building.
-note="indoors (roof)";}else{if(temp!=null&&isFinite(temp)){// 92+ is not separable from 82-91 (x1.144 vs x1.158), so one hot band.
-if(temp>=82)tFactor=1.20;else if(temp>=56)tFactor=1;// neutral band — the reference
-else if(temp>=46)tFactor=0.92;else tFactor=0.90;}// MLB wind string is field-relative ("Out To CF", "In From CF", "L To R").
+note="indoors (roof)";}else{if(temp!=null&&isFinite(temp)){// Continuous, not banded. See NRFI_TEMP_SLOPE for why the step went away.
+tFactor=nClamp(1+NRFI_TEMP_SLOPE*(temp-NRFI_TEMP_REF),0.91,1.09);}// MLB wind string is field-relative ("Out To CF", "In From CF", "L To R").
 // Direction only: the speed tiers this used to carry ran backwards, so they
 // are gone rather than re-fitted. Centre field is neutral because it
 // measured neutral twice, in both directions, on 905 games.
@@ -1400,9 +1458,11 @@ let wNote="";if(wind&&mph>=5){if(/out to c|in from c/i.test(wind))wNote=" (centr
 // Widened to admit the legitimate combinations and guard only the real tail.
 // All three components are independently measured, already shrunk, and blended
 // by deviation rather than multiplied, so the old blowup this defended against
-// cannot occur. Worst case with every component simultaneously at its measured
-// extreme is 0.768 (SF, sub-46F, wind in) and 1.262 (COL, 95F, wind out); both
-// still clamp. env multiplies lambda in BOTH halves, so these stay tight.
+// cannot occur. Worst case with every component simultaneously at its own
+// extreme is 0.750 (SF park 0.93, temp clamped 0.91, wind in 0.91) and 1.280
+// (COL park 1.14, temp clamped 1.09, wind out 1.05); both still clamp, so the
+// bound is doing real work at the tail and nothing in the body of the
+// distribution. env multiplies lambda in BOTH halves, so these stay tight.
 const factor=nClamp(1+(parkFactor-1)*ENV_W_PARK+(tFactor-1)*ENV_W_TEMP+(wFactor-1)*ENV_W_WIND,0.82,1.20);return{factor,park:parkFactor,temp:tFactor,wind:wFactor,note:note||"neutral"};}function nrfiRegress(rate,sample,reg){if(rate==null)return NRFI_LG_LAMBDA;const d=(sample||0)+(reg||0);if(!(d>0))return NRFI_LG_LAMBDA;// 0/0 would return NaN, which survives nClamp
 return(rate*sample+NRFI_LG_LAMBDA*reg)/d;}// Turn a first-inning run RATE into P(the team scores at all), for display.
 //
@@ -1763,7 +1823,12 @@ add("Cam Schlittler",21,14,"danger");add("David Peterson",21,14,"danger");add("E
 function nrfiCalibration(record){// Exclude kalshi-import entries: their pNRFI is the market entry price, not model output.
 // Training on market prices would teach the calibration to correct for market bias, not model bias.
 const g=(record||[]).filter(e=>e.pNRFI!=null&&e.firstInningRuns!=null&&e.source!=="kalshi-import"&&e.strength!=="PASS"&&!e.thinPass);const lg=p=>Math.log(p/(1-p));const cp=x=>nClamp(x,0.05,0.95);const meanPred=g.reduce((s,e)=>s+e.pNRFI,0)/(g.length||1);const actual=g.length?g.filter(e=>e.firstInningRuns===0).length/g.length:0.5;const liveC=g.length?lg(cp(actual))-lg(cp(meanPred)):0;// Blend live correction with seed using sample-count weighting — smooth transition instead of hard cutover.
-return{liveC,n:g.length,active:true};}function applyCalibration(pNRFI,calib){if(!calib||!calib.active)return pNRFI;const lg=p=>Math.log(p/(1-p));const ul=x=>1/(1+Math.exp(-x));// c is a bias shift on P(NRFI) itself, not on directional confidence: both the
+return{liveC,n:g.length,active:true};}function applyCalibration(pNRFI,calib){if(!calib||!calib.active)return pNRFI;// nrfiCalibration returns {liveC, n}, NOT {c} — its output is the live
+// component that the caller blends against NRFI_CALIB_SEED weighted by n.
+// Passing it here directly reads calib.c as undefined and returns NaN, which
+// nClamp propagates rather than catching, so a NaN probability would reach the
+// ladder and price a wager. Fail closed to the uncalibrated number instead.
+if(!Number.isFinite(calib.c))return pNRFI;const lg=p=>Math.log(p/(1-p));const ul=x=>1/(1+Math.exp(-x));// c is a bias shift on P(NRFI) itself, not on directional confidence: both the
 // seed and nrfiCalibration's liveC are derived as lg(actual) − lg(meanPred)
 // over pNRFI. Applying that number directionally (as the withdrawn Platt seed
 // did) measures one thing and corrects another.

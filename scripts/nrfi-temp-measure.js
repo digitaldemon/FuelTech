@@ -1,6 +1,17 @@
 // Is the temperature band real, or is it summer?
 //
-// ENV_W_TEMP is 0.60 on a factor that reaches 1.20 at 82F, which makes heat the
+// ANSWER, and what shipped: the band is not real; the gradient underneath it is.
+// The >=82F band does not replicate across seasons (x1.466 / x1.218 / x1.006,
+// venue+month held out) — a term worth +47% in 2024 and +0.6% in 2026 is fit to
+// 2024. The continuous trend does hold: 0.1224pp of YRFI per degree F, t=1.97 on
+// n=5339, one test on the full sample, and monotone as air density actually is.
+// Temperature now ships as a ramp centred on the mean outdoor game temperature
+// (see NRFI_TEMP_SLOPE in app.jsx) instead of a 0.120-of-lambda cliff at 82F
+// that five of a fifteen-game August board were sitting directly on top of.
+// Sections 1-4 below are the measurement that established this; section 5 shows
+// what ships and section 6 guards it.
+//
+// ENV_W_TEMP was 0.60 on a factor that reached 1.20 at 82F, which made heat the
 // single largest environmental adjustment in the model outside the park factor.
 // The band was fit in scripts/nrfi-env-measure.js against 1,821 games, and the
 // comment above the constant concedes the fit is "confounded with venue and
@@ -272,11 +283,25 @@ const lamOf = (p) => -Math.log(1 - p);
 
   /* ---- 5. what the model does with it ---- */
   console.log("\n" + "-".repeat(78));
-  console.log("5. WHAT SHIPS.  tFactor 1.20 at >=82F, ENV_W_TEMP 0.60, so env carries");
-  console.log("   x" + (1 + 0.20 * 0.60).toFixed(3) + " on lambda — applied to BOTH halves.");
+  console.log("5. WHAT SHIPS.  A continuous ramp, not a band: tFactor = 1 + 0.00377*(T-73.7),");
+  console.log("   clamped to 0.91/1.09, ENV_W_TEMP 1.00 — applied to BOTH halves.");
+  const ship = (t) => Math.max(0.91, Math.min(1.09, 1 + 0.00377 * (t - 73.7)));
+  console.log("   temp:   " + [40, 50, 60, 70, 74, 80, 82, 84, 90, 100]
+    .map((t) => t + "F").map((s) => s.padStart(7)).join(""));
+  console.log("   ships:  " + [40, 50, 60, 70, 74, 80, 82, 84, 90, 100]
+    .map((t) => ship(t).toFixed(3)).map((s) => s.padStart(7)).join(""));
+  // The band this replaced jumped 1.000 -> 1.120 between 81F and 82F. Quantify
+  // what that step was worth so a future reader can see why it had to go.
+  console.log("   the retired band went 1.000 -> 1.120 across 81F/82F; the ramp moves " +
+    (ship(82) - ship(81)).toFixed(4) + " there.");
   const hot = open.filter((r) => r.temp >= 82).length;
-  console.log("   " + hot + " of " + open.length + " outdoor games (" +
-    pct(hot / open.length) + ") are in that band, so this is not a rare correction.");
+  console.log("   " + hot + " of " + open.length + " outdoor games (" + pct(hot / open.length) +
+    ") were over that step, so it was not a rare correction — it was a quarter of the slate.");
+  const meanT = open.reduce((a, r) => a + r.temp, 0) / open.length;
+  console.log("   mean outdoor temp " + meanT.toFixed(1) + "F vs NRFI_TEMP_REF 73.7 — the ramp is");
+  console.log("   centred on the season, so it is unbiased on average rather than only when cold.");
+  if (Math.abs(meanT - 73.7) > 1.0)
+    console.log("   ^ REF IS STALE by " + (meanT - 73.7).toFixed(1) + "F — re-centre NRFI_TEMP_REF.");
   /* ---- 6. regression guards ---- */
   // Comments survive the Babel build, and the note above weatherPark quotes the
   // very code it replaced, so assert against code only.
@@ -296,8 +321,13 @@ const lamOf = (p) => -Math.log(1 - p);
   // carries its own explanatory branches and pushed the terminator out of range.
   const wb = (src.match(/Number\(\(wind\.match[\s\S]{0,700}?note\s*=/) || [""])[0];
   if (!wb) throw new Error("could not locate the wind block — the guards below would vacuously pass");
-  ok(/temp\s*>=\s*82/.test(src) && !/temp\s*>=\s*92/.test(src),
-    "the >=92 band is gone — it held the same 1.20 as >=82 and could never differ");
+  // Temperature bands are gone entirely. Assert on the absence of ANY threshold
+  // test against temp, so re-introducing a band anywhere in the chain fails here
+  // rather than quietly shipping a second cliff next to the ramp.
+  ok(!/temp\s*[<>]=?\s*\d/.test(src),
+    "temperature is banded nowhere — the 82F cliff is gone, not merely moved");
+  ok(/ENV_W_TEMP\s*=\s*1(?:\.0+)?\b/.test(src),
+    "temperature carries its magnitude in the slope, not hidden in a second weight");
   ok(!/mph\s*>=\s*(?:12|20)/.test(wb),
     "wind is not tiered by speed — the tiers ran backwards and were never fit");
   ok(/out to c\|in from c/i.test(wb) || /!\/(?:out to c|in from c)/i.test(wb),
@@ -320,6 +350,24 @@ const lamOf = (p) => -Math.log(1 - p);
       "centre field is exactly neutral in both directions");
     ok(f("3 mph, In From LF") === 1,
       "sub-5mph readings are treated as no wind, as they were in the measurement");
+
+    // Temperature, behaviourally. A regex can confirm the band literals are gone
+    // while the ramp is still wired up wrong, so exercise the real function.
+    const t = (deg) => wp({ weather: { temp: String(deg), condition: "Clear", wind: "" } }, "CHC").temp;
+    ok(Math.abs(t(73.7) - 1) < 1e-9,
+      "the ramp is centred on NRFI_TEMP_REF: 73.7F is exactly neutral (" + t(73.7).toFixed(6) + ")");
+    // The defect that started this: one degree used to be worth 0.120 of lambda.
+    ok(Math.abs(t(82) - t(81) - 0.00377) < 1e-6,
+      "81F -> 82F is one slope step (" + (t(82) - t(81)).toFixed(5) + "), not a 0.120 cliff");
+    ok(t(84) > 1.03 && t(84) < 1.05,
+      "84F carries x" + t(84).toFixed(3) + " — the measured gradient, not the retired band's x1.120");
+    // Monotone across the whole plausible range, which the band was not: it was
+    // flat from 56F to 81F and then vertical.
+    let mono = true;
+    for (let d = 30; d < 110; d++) if (t(d + 1) < t(d)) mono = false;
+    ok(mono, "the ramp is monotone in temperature from 30F to 110F");
+    ok(t(30) === 0.91 && t(110) === 1.09,
+      "the ramp clamps outside the dense sample rather than extrapolating the fit");
   }
   console.log(fail ? "\n" + fail + " FAILED" : "\nall guards pass");
   process.exitCode = fail ? 1 : 0;
