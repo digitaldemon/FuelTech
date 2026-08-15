@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-14.nrfi-edge12-backtest-v5";
+const BUILD = "2026-08-14.nrfi-edge13-trend";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -5396,6 +5396,21 @@ function restFactor(days) {
   if (days >= 8)              return { f: 1.02, note: days + "d rest (long layoff)" };
   return { f: 1, note: "" };
 }
+// Pitcher rolling trend: L10 clean % vs season clean % shows if a pitcher is
+// running hot or cold over his last 10 starts. Minimum n=5 for signal.
+// Weight 0.30 — meaningful but capped; L10 is still only 10 games.
+function pitcherTrendFactor(rolling) {
+  if (!rolling) return { f: 1, note: "" };
+  const l10pct = rolling.l10 && (rolling.l10.n || 0) >= 5 ? rolling.l10.pct : null;
+  const sznPct = rolling.szn ? rolling.szn.pct : null;
+  if (l10pct == null || sznPct == null) return { f: 1, note: "" };
+  const delta = l10pct - sznPct;
+  if (delta >= 20) return { f: 0.88, note: "L10 +" + delta + "pp vs SZN (hot)" };
+  if (delta >= 10) return { f: 0.94, note: "L10 +" + delta + "pp vs SZN (warm)" };
+  if (delta <= -20) return { f: 1.12, note: "L10 " + delta + "pp vs SZN (cold streak)" };
+  if (delta <= -10) return { f: 1.06, note: "L10 " + delta + "pp vs SZN (cooling)" };
+  return { f: 1, note: "" };
+}
 // Pitcher THESIS — stable season peripherals (the real predictors), not the
 // noisy first-inning run rate: strikeouts + whiff + first-pitch strikes suppress
 // runs; walks + barrels (HR risk, no sequencing needed) inflate; grounders (DPs)
@@ -5688,6 +5703,8 @@ function nrfiEvaluate(ctx) {
   // Day game: backtest confirmed -4.3pp NRFI rate vs night (2,041 day / 1,974 night across 4,015 games).
   // A logit shift of -0.15 ≈ -3.5pp at p=0.50 — conservative vs the raw 4.3pp to avoid over-fitting.
   const dayGameShift = isDayGame ? 0.15 : 0;
+  const awayTrend = pitcherTrendFactor(ctx.awayRolling);
+  const homeTrend = pitcherTrendFactor(ctx.homeRolling);
   const awaySkill = pitchSkillFactor(ctx.awayPeri, ctx.lg);
   const homeSkill = pitchSkillFactor(ctx.homePeri, ctx.lg);
   const awayOpen = openerFactor(ctx.awayPit && ctx.awayPit.era, ctx.awayMeta && ctx.awayMeta.seasonEra);
@@ -5700,21 +5717,24 @@ function nrfiEvaluate(ctx) {
   // Blend each side's adjustments by DEVIATION-from-neutral (not raw product)
   // so correlated signals don't compound, then cap the net swing. Platoon weight
   // is lower now that lineups are measured directly vs the starter's hand.
+  // Platoon reduced to 0.20: lineup OBP is already computed vs the starter's hand,
+  // so the platoon factor partially double-counts the hand matchup.
   const offMult = (lineup, plat, travel) =>
-    nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.4 + (travel.factor - 1) * 0.6, 0.80, 1.30);
+    nClamp(1 + (lineup.factor - 1) * 1.0 + (plat.f - 1) * 0.2 + (travel.factor - 1) * 0.6, 0.80, 1.30);
   // Weights tuned from 4,015-game backtest (logistic regression on normalized features):
   // - skill (K%, BB%, barrel, GB): dominant after pitBase — keep at 1.0
-  // - form (FIP/ERA L3): LR coeff -0.018 = counterproductive once pitBase controlled → cut to 0.10
-  // - opener (1st-inn ERA vs season ERA): still useful signal → keep at 0.5
-  // - openG (bullpen game pattern): strong → keep at 1.0
-  // - load (season IP): small but logical → keep at 0.7
-  // - rest: LR coeff -0.066, extra-rest games showed LOWER NRFI rate → cut to 0.10 (effectively off)
-  const pitMult = (skill, form, opener, openG, load, rest) =>
-    nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (rest.f - 1) * 0.10, 0.78, 1.25);
+  // - form (FIP/ERA L3): LR coeff -0.018 = counterproductive once pitBase controlled → 0.10
+  // - opener (1st-inn ERA vs season ERA): still useful signal → 0.5
+  // - openG (bullpen game pattern): strong → 1.0
+  // - load (season IP): small but logical → 0.7
+  // - rest: LR coeff -0.066, extra-rest games showed LOWER NRFI rate → 0.0 (removed)
+  // - trend (L10 vs SZN clean %): hot/cold streak captured here, weight 0.30
+  const pitMult = (skill, form, opener, openG, load, _rest, trend) =>
+    nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30, 0.78, 1.25);
   const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel);
   const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel);
-  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest);
-  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeRest);
+  const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest, awayTrend);
+  const homePit = homePitBase * pitMult(homeSkill, homeForm, homeOpen, homeOpenG, homeLoad, homeRest, homeTrend);
   const umpFactor = ctx.umpFactor || 1;
   const env = nClamp(1 + (ctx.wx.factor - 1) + (umpFactor - 1), 0.85, 1.20);
   // λ-model (fallback when we don't have posted batters + pitcher allow-rates).
@@ -5730,8 +5750,8 @@ function nrfiEvaluate(ctx) {
     // from the raw rates. Apply only what the season rates DON'T contain:
     // recent form, opener/bullpen, travel, and park/weather/umpire.
     // Form weight 0.10 (down from 0.6) matches lambda path — backtest LR showed form counterproductive.
-    const homeCtx = nClamp(1 + (homeForm.f - 1) * 0.10 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0 + (homeLoad.f - 1) * 0.7, 0.82, 1.2);
-    const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.10 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7, 0.82, 1.2);
+    const homeCtx = nClamp(1 + (homeForm.f - 1) * 0.10 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0 + (homeLoad.f - 1) * 0.7 + (homeTrend.f - 1) * 0.30, 0.82, 1.2);
+    const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.10 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7 + (awayTrend.f - 1) * 0.30, 0.82, 1.2);
     const s0top = simHalfNoRun(awayB, homeAllow, NRFI_LG_PA);
     const s0bot = simHalfNoRun(homeB, awayAllow, NRFI_LG_PA);
     const pRunTop = nClamp((1 - s0top) * homeCtx * ctx.awayTravel.factor * env, 0.02, 0.97);
@@ -5838,7 +5858,9 @@ function nrfiEvaluate(ctx) {
       }
       const anyDown = diffs.some(d => d <= -15);
       const allUp = diffs.length > 0 && diffs.every(d => d >= 10);
-      return { label: "Pitcher L10 clean rate", detail: notes.join(" · "),
+      const trendNotes = [awayTrend.note, homeTrend.note].filter(Boolean);
+      const detail = notes.join(" · ") + (trendNotes.length ? "  ·  model: " + trendNotes.join(", ") : "");
+      return { label: "Pitcher trend (L10 vs SZN)", detail,
         lean: anyDown ? "yrfi" : allUp ? "nrfi" : "neutral" };
     })(),
     (() => {
