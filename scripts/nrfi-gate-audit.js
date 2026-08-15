@@ -130,6 +130,30 @@ console.log("          notifier floor 57 vs NRFI_BET_MIN " + BET +
   (57 > BET ? " — floor sits ABOVE the BET cut; only isBet keeps 55-56% picks sending"
             : " — floor at or below the BET cut, no picks withheld"));
 
+// ── 7. Thin-arm gate tells a reliever apart from an unknown ───────────────
+console.log("\nthin-arm gate");
+const thinArm = c.read("nrfiThinArm");
+const ARMS = [
+  ["reliever/opener, full season of work", { sample: 2, apps: 29, seasonIp: 61.2 }, false],
+  ["established starter", { sample: 11, apps: 25, seasonIp: 104.2 }, false],
+  ["swingman at the threshold", { sample: 3, apps: 15, seasonIp: 25 }, false],
+  ["September callup", { sample: 0, apps: 4, seasonIp: 4 }, true],
+  ["one-out specialist — apps but no innings", { sample: 2, apps: 40, seasonIp: 22 }, true],
+  ["no profile", null, true],
+  // Records written before apps/seasonIp existed must fail closed, not open.
+  ["legacy record with no workload fields", { sample: 2 }, true],
+];
+for (const [name, p, want] of ARMS) {
+  check(thinArm(p) === want, name + " -> " + (want ? "thin" : "not thin"),
+    "got " + (thinArm(p) ? "thin" : "not thin") + "; a wrong answer here moves the verdict a full rung.");
+}
+// The reconcile block used to keep its own copy of the `sample >= 5` rule, which
+// let the record refuse a pick the board was showing. One definition, both sites.
+check(/nrfiThinArm\(r\.pitProfiles/.test(require("fs").readFileSync(
+  require("path").join(__dirname, "..", "public", "desk", "app.jsx"), "utf8")),
+  "record reconcile shares the verdict's thin definition",
+  "the reconcile site has re-inlined its own sample threshold.");
+
 console.log("\n" + "=".repeat(72));
 if (fails) { console.log(fails + " invariant(s) VIOLATED"); process.exit(1); }
 console.log("all invariants hold");

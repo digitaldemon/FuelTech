@@ -6339,8 +6339,14 @@ function nrfiEvaluate(ctx) {
     if ((v.nrfi > v.yrfi ? "nrfi" : "yrfi") === call) agree++;
   }
   const pitProfiles = {
-    away: { name: ctx.awayPP, pid: ctx.awayPPId, hand: ctx.awayMeta && ctx.awayMeta.hand, ...pitcherI01Profile(ctx.awayPit, ctx.awayMeta && ctx.awayMeta.seasonEra, ctx.awayRolling, ctx.awayPeri) },
-    home: { name: ctx.homePP, pid: ctx.homePPId, hand: ctx.homeMeta && ctx.homeMeta.hand, ...pitcherI01Profile(ctx.homePit, ctx.homeMeta && ctx.homeMeta.seasonEra, ctx.homeRolling, ctx.homePeri) },
+    // apps/seasonIp are the whole-season workload, relief included, so the thin
+    // gate can tell a reliever apart from a genuine unknown (see nrfiThinArm).
+    away: { name: ctx.awayPP, pid: ctx.awayPPId, hand: ctx.awayMeta && ctx.awayMeta.hand,
+      apps: (ctx.awayMeta && ctx.awayMeta.g) || 0, seasonIp: (ctx.awayMeta && ctx.awayMeta.ip) || 0,
+      ...pitcherI01Profile(ctx.awayPit, ctx.awayMeta && ctx.awayMeta.seasonEra, ctx.awayRolling, ctx.awayPeri) },
+    home: { name: ctx.homePP, pid: ctx.homePPId, hand: ctx.homeMeta && ctx.homeMeta.hand,
+      apps: (ctx.homeMeta && ctx.homeMeta.g) || 0, seasonIp: (ctx.homeMeta && ctx.homeMeta.ip) || 0,
+      ...pitcherI01Profile(ctx.homePit, ctx.homeMeta && ctx.homeMeta.seasonEra, ctx.homeRolling, ctx.homePeri) },
   };
   // A non-finite probability must never leave this function. Downstream,
   // `pFinal >= 0.5` is false for NaN, so the game would render as a confident-
@@ -6457,6 +6463,30 @@ const NRFI_STRONG_MIN = 63, NRFI_BET_MIN = 55, NRFI_LEAN_MIN = 52;
 // The badge is a heat scale, not a verdict, so it carries one extra mid-band cut
 // that has no counterpart on the ladder.
 const NRFI_TIER_STRONG = 57;
+
+// Is this arm an unknown quantity? The first-inning profile is built from starts
+// only (see the gamesStarted filter in pitcherRollingNRFI), so a reliever reads
+// as thin no matter how much he has actually pitched. An opener with a full
+// season of relief work is not unknown: the model already prices him off his
+// complete season line via paRates, and 25+ innings across 15+ appearances is a
+// real book on how he handles a fresh inning. Penalising that identically to a
+// September callup with four innings discards the workload we do have.
+//
+// This is not a free pass. A reliever enters against a random slot in the order
+// while a first inning is always the top of it, and the displayed clean% is
+// still built on the two starts — so the percentage stays untrusted. All this
+// decides is whether the verdict takes a rung penalty for missing data.
+const NRFI_THIN_STARTS = 5, NRFI_RELIEF_APPS = 15, NRFI_RELIEF_IP = 25;
+function nrfiThinArm(p) {
+  if (!p) return true;
+  if ((p.sample || 0) >= NRFI_THIN_STARTS) return false;
+  return !((p.apps || 0) >= NRFI_RELIEF_APPS && (p.seasonIp || 0) >= NRFI_RELIEF_IP);
+}
+// Start-thin but carrying enough relief work to clear the gate — worth saying out
+// loud on the card, because the card also shows a clean% built on a tiny sample.
+function nrfiReliefBacked(p) {
+  return !!p && (p.sample || 0) < NRFI_THIN_STARTS && !nrfiThinArm(p);
+}
 
 function nrfiTier(pMax) {
   return pMax >= NRFI_STRONG_MIN ? { t: "STRONGEST", cls: "t-strongest", c: "var(--moss)" }
@@ -6631,8 +6661,12 @@ function nrfiVerdict(r) {
   // 3) Confidence gate: don't fire a strong wager on missing data.
   const conf = r.confidence != null ? r.confidence : 1;
   const pp = r.pitProfiles;
-  const awayThin = !pp || !pp.away || (pp.away.sample || 0) < 5;
-  const homeThin = !pp || !pp.home || (pp.home.sample || 0) < 5;
+  const awayThin = nrfiThinArm(pp && pp.away);
+  const homeThin = nrfiThinArm(pp && pp.home);
+  for (const [p, nm] of [[pp && pp.away, r.awayPP], [pp && pp.home, r.homePP]]) {
+    if (nrfiReliefBacked(p)) notes.push(nm + " is a reliever/opener — few starts, but " +
+      Math.round(p.seasonIp) + " IP over " + p.apps + " apps; clean% is small-sample");
+  }
   if (conf < 0.35) { strength = "PASS"; notes.push("thin data"); }
   else if (conf < 0.55 && (strength === "STRONG" || strength === "BET")) { strength = "LEAN"; notes.push("limited data"); }
   // One thin starter: drop one level — the model is half-blind on pitching.
@@ -7133,8 +7167,11 @@ function FirstInning() {
       const started = r.currentInning >= 1 || r.final || (r.state && r.state !== "Preview");
       const id = "nrfi-" + r.gamePk;
       let e = recl.find((x) => x.id === id);
-      const awThin = !(r.pitProfiles && r.pitProfiles.away && (r.pitProfiles.away.sample || 0) >= 5);
-      const hmThin = !(r.pitProfiles && r.pitProfiles.home && (r.pitProfiles.home.sample || 0) >= 5);
+      // Same definition the verdict uses — these two had their own copy of the
+      // `sample >= 5` rule, so the record could refuse to store a pick the board
+      // was happily showing.
+      const awThin = nrfiThinArm(r.pitProfiles && r.pitProfiles.away);
+      const hmThin = nrfiThinArm(r.pitProfiles && r.pitProfiles.home);
       // The board runs the value gate; the record has to run it too, or it stores
       // a verdict that was never on screen. That stored strength drives both the
       // record shown to the user and nrfiCalibration's `strength !== "PASS"`
@@ -7157,8 +7194,10 @@ function FirstInning() {
           method: r.method || "model",
           awayPP: r.awayPP, homePP: r.homePP,
           pitProfiles: pp ? {
-            away: { name: pp.away.name, hand: pp.away.hand, sample: pp.away.sample, cleanPct: pp.away.cleanPct, score: pp.away.score, grade: pp.away.grade, rolling: pp.away.rolling },
-            home: { name: pp.home.name, hand: pp.home.hand, sample: pp.home.sample, cleanPct: pp.home.cleanPct, score: pp.home.score, grade: pp.home.grade, rolling: pp.home.rolling },
+            // apps/seasonIp ride along so a reloaded record re-grades identically;
+            // without them nrfiThinArm would see a reliever as a bare 2-start unknown.
+            away: { name: pp.away.name, hand: pp.away.hand, sample: pp.away.sample, apps: pp.away.apps, seasonIp: pp.away.seasonIp, cleanPct: pp.away.cleanPct, score: pp.away.score, grade: pp.away.grade, rolling: pp.away.rolling },
+            home: { name: pp.home.name, hand: pp.home.hand, sample: pp.home.sample, apps: pp.home.apps, seasonIp: pp.home.seasonIp, cleanPct: pp.home.cleanPct, score: pp.home.score, grade: pp.home.grade, rolling: pp.home.rolling },
           } : null };
         recl.unshift(e); changed.push(e);
       } else if (e && e.result == null && !e.skipped) {
