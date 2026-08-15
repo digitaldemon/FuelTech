@@ -122,6 +122,15 @@ const check = (ok, what, detail) => {
   check(named.length === 2 && /^Aaron Judge\. /.test(named[0].text) && !/Judge/.test(named[1].text),
     "the batter is named on his first pitch and not on the rest of the at-bat",
     "batter naming is wrong: " + JSON.stringify(named.map((p) => p.text)));
+  // "Luis García Jr." already ends the sentence.
+  const suffix = c.firstInningPitches({ liveData: { plays: { allPlays: [{
+    about: { inning: 1 }, atBatIndex: 0, matchup: { batter: { fullName: "Luis García Jr." } },
+    playEvents: [{ isPitch: true, playId: "a", details: { call: { code: "B", description: "Ball" } },
+      count: { balls: 1, strikes: 0 } }],
+  }] } } });
+  check(suffix.length === 1 && suffix[0].text.startsWith("Luis García Jr. ball."),
+    "a name ending in a suffix does not get a second full stop",
+    "double punctuation survived: " + JSON.stringify(suffix.map((p) => p.text)));
   // A play with no description must not be spoken as an empty utterance.
   check(c.playCallout({ result: {} }) === null, "a play with no description is skipped, not spoken as silence",
     "playCallout returned a non-null for an empty result.");

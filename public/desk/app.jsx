@@ -5337,7 +5337,10 @@ function firstInningPitches(feed) {
   const out = [];
   for (const p of all) {
     if (!p.about || p.about.inning !== 1) continue;
-    const batter = (p.matchup && p.matchup.batter && p.matchup.batter.fullName) || "";
+    // "Luis García Jr." already ends the sentence; appending another full stop
+    // gives "Jr.." and the synthesiser reads the extra one as a longer pause.
+    const batter = String((p.matchup && p.matchup.batter && p.matchup.batter.fullName) || "")
+      .replace(/\.$/, "");
     let first = true;
     const evs = p.playEvents || [];
     for (let i = 0; i < evs.length; i++) {
