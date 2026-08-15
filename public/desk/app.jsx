@@ -6445,15 +6445,45 @@ function nrfiEvaluate(ctx) {
     ? Math.round((new Date(gameDate) - new Date(ctx.homeMeta.lastStartDate)) / 86400000) : null;
   const awayRest = restFactor(awayRestDays);
   const homeRest = restFactor(homeRestDays);
-  // Day game: games before ~4pm local (approximated as UTC < 20:00) run slightly higher scoring.
-  const utcHour = ctx.startUtc ? new Date(ctx.startUtc).getUTCHours() : null;
-  const isDayGame = utcHour != null && utcHour < 20;
-  // Day game: 2026 backtest (886 day / 877 night) = 4.5pp less NRFI. A 0.15 logit
-  // shift lands ~3.6pp at a typical p≈0.6 — a little under the empirical penalty,
-  // which is the safe side to miss on. (The withdrawn Platt seed's 1.243 slope
-  // would have scaled this to ~4.6pp; that slope is gone, this value is not
-  // tuned to it — 0.15 predates it and is unchanged.)
-  const dayGameShift = isDayGame ? 0.15 : 0;
+  /* ---- day / night ----
+   * This used to read `new Date(startUtc).getUTCHours() < 20`, described as
+   * "before ~4pm local (approximated as UTC < 20:00)". The approximation only
+   * holds for Eastern first pitches earlier than 8pm: anything later crosses
+   * midnight UTC and re-enters the window from the BOTTOM, so a 7:10pm Central
+   * or 6:40pm Pacific night game came back as hour 0 or 1 and was graded a day
+   * game. Measured over 286 games it was wrong on 29.7% of them, and 73 night
+   * games were taking the day-game penalty.
+   *
+   * MLB publishes its own designation on the schedule, so take that instead of
+   * deriving one. It agrees with venue local time on 95.0% of 1,936 games and
+   * carries the doubleheader and special-start cases that no hour rule does.
+   * When the field is missing the answer is "unknown", not a guess — the rule
+   * that produced the guess is exactly what this replaces.
+   */
+  const isDayGame = ctx.dayNight === "day";
+  /* The penalty this used to feed is gone, and the label is why it existed.
+   *
+   * The shipped -0.15 cited a 2026 backtest of 886 day / 877 night showing
+   * 4.5pp less NRFI. That is a 50/50 split, but day games are ~a third of a
+   * schedule — the backtest had counted with the same broken rule, so its "day"
+   * bucket was half genuine day games and half late West-Coast and Central
+   * starts. Re-measured on 1,936 finals (scripts/nrfi-daynight-measure.js):
+   *
+   *   shipped labels:      day 47.5% / night 52.2%   gap -4.74pp
+   *   MLB dayNight:        day 51.1% / night 48.9%   gap +2.27pp, logit +0.091
+   *
+   * The -4.7pp the model believed was self-generated: it reappears only under
+   * the labelling that produced it. On clean labels the gap is small, POSITIVE
+   * (day games are marginally more NRFI, not less) and its intervals overlap
+   * throughout — [47.6, 54.7] against [46.0, 51.7]. There is no effect here to
+   * price, and the old sign was pointing the wrong way.
+   *
+   * What does survive the relabelling is start hour, which is not the same
+   * thing: 7pm+ local runs 45.6% NRFI against ~51% for everything earlier.
+   * That is ~1.9 SE and confounded with venue, so it is a candidate for a
+   * fitted term, not a constant to swap in here.
+   */
+  const dayGameShift = 0;
   const awayTrend = pitcherTrendFactor(ctx.awayRolling);
   const homeTrend = pitcherTrendFactor(ctx.homeRolling);
   const awayOffTrend = teamOffenseTrendFactor(ctx.awayOffRolling);
@@ -6506,6 +6536,34 @@ function nrfiEvaluate(ctx) {
     nClamp(1 + (skill.f - 1) * 1.0 + (form.f - 1) * 0.10 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30 + (venue.f - 1) * 0.5, 0.78, 1.25);
   const awayOffKRate = offKrateFactor(ctx.awayOff);
   const homeOffKRate = offKrateFactor(ctx.homeOff);
+  /* The offense adjustments the base-out sim does NOT already contain.
+   *
+   * The sim reads real batters against real allow-rates, so lineup strength and
+   * platoon are genuinely inside it and must not be applied twice — that part of
+   * the original reasoning was right. But it left out three that season rates
+   * cannot contain, and the sim path is the one that runs once lineups post,
+   * which is to say almost all of them: measured 13 of 15 on the 2026-08-15
+   * board. So the model's headline number changed character a few hours before
+   * first pitch, and the checks list — which is built from the factors on either
+   * path — kept printing "off cold (-33pp)" and casting its ballot while nothing
+   * behind the probability carried it. Three such games on that same slate, all
+   * between 48% and 51%, which is exactly where a 0.5-weight offense term
+   * decides the call.
+   *
+   *   offTrend  0.5   last ten games of 1st-inning scoring; a recent deviation
+   *                   from the season is by construction not in the season.
+   *   offVenue  0.3   team-specific home/road gap; batter rates are venue-blended.
+   *   kRate     0.35  1st-inning K% vs league.
+   *
+   * Weights match offMult so the two paths agree. kRate does partly overlap the
+   * sim's own out-rate, but it overlaps the lambda path's 1st-inning run rate the
+   * same way — a pre-existing double-count in both, not one introduced here.
+   * Clamp is wide enough not to bind: the three terms cap at about +-0.083.
+   */
+  const offSimCtx = (trend, venue, kRate) =>
+    nClamp(1 + (trend.f - 1) * 0.5 + (venue.f - 1) * 0.3 + (kRate.f - 1) * 0.35, 0.88, 1.12);
+  const awayOffSim = offSimCtx(awayOffTrend, awayOffVenue, awayOffKRate);
+  const homeOffSim = offSimCtx(homeOffTrend, homeOffVenue, homeOffKRate);
   const awayOff = awayOffBase * offMult(ctx.awayLineup, awayPlat, ctx.awayTravel, awayOffTrend, awayOffAdv, awayOffVenue, awayOffKRate);
   const homeOff = homeOffBase * offMult(ctx.homeLineup, homePlat, ctx.homeTravel, homeOffTrend, homeOffAdv, homeOffVenue, homeOffKRate);
   const awayPit = awayPitBase * pitMult(awaySkill, awayForm, awayOpen, awayOpenG, awayLoad, awayRest, awayTrend, awayVenue);
@@ -6529,17 +6587,18 @@ function nrfiEvaluate(ctx) {
     const awayCtx = nClamp(1 + (awayForm.f - 1) * 0.10 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7 + (awayTrend.f - 1) * 0.30 + (awayVenue.f - 1) * 0.5, 0.82, 1.2);
     const s0top = simHalfNoRun(awayB, homeAllow, NRFI_LG_PA);
     const s0bot = simHalfNoRun(homeB, awayAllow, NRFI_LG_PA);
-    const pRunTop = nClamp((1 - s0top) * homeCtx * ctx.awayTravel.factor * awayOffAdv.f * env, 0.02, 0.97);
-    const pRunBot = nClamp((1 - s0bot) * awayCtx * ctx.homeTravel.factor * homeOffAdv.f * env, 0.02, 0.97);
+    const pRunTop = nClamp((1 - s0top) * homeCtx * ctx.awayTravel.factor * awayOffAdv.f * awayOffSim * env, 0.02, 0.97);
+    const pRunBot = nClamp((1 - s0bot) * awayCtx * ctx.homeTravel.factor * homeOffAdv.f * homeOffSim * env, 0.02, 0.97);
     p0top = 1 - pRunTop; p0bot = 1 - pRunBot; method = "sim";
   }
-  // Apply day game logit shift (day games historically run ~2pp higher scoring).
+  // dayGameShift is 0 — see the block above for the measurement that withdrew
+  // it. Kept as a named term rather than deleted so the next person to reach for
+  // a day/night adjustment finds the 1,936-game result instead of the intuition.
   const logit = (p) => Math.log(p / (1 - p));
   const unlogit = (x) => 1 / (1 + Math.exp(-x));
-  const rawNRFI = p0top * p0bot;
-  const pNRFI = dayGameShift > 0
-    ? nClamp(unlogit(logit(nClamp(rawNRFI, 0.02, 0.98)) - dayGameShift), 0.02, 0.98)
-    : rawNRFI;
+  const applyShift = (p) => (dayGameShift === 0 ? p
+    : nClamp(unlogit(logit(nClamp(p, 0.02, 0.98)) - dayGameShift), 0.02, 0.98));
+  const pNRFI = applyShift(p0top * p0bot);
 
   // Projected sim: when lineups aren't posted, run the Markov sim with the team's
   // top-OBP active roster batters vs this pitcher's season allow rates.
@@ -6560,12 +6619,13 @@ function nrfiEvaluate(ctx) {
     const sBot = simHalfNoRun(homeSimBatters, awayAllow, NRFI_LG_PA);
     const hPC = nClamp(1 + (homeForm.f-1)*0.10 + (homeOpen.f-1)*0.5 + (homeOpenG.f-1)*1.0 + (homeLoad.f-1)*0.7 + (homeTrend.f-1)*0.30 + (homeVenue.f-1)*0.5, 0.82, 1.2);
     const aPC = nClamp(1 + (awayForm.f-1)*0.10 + (awayOpen.f-1)*0.5 + (awayOpenG.f-1)*1.0 + (awayLoad.f-1)*0.7 + (awayTrend.f-1)*0.30 + (awayVenue.f-1)*0.5, 0.82, 1.2);
-    const pRT = nClamp((1-sTop) * hPC * ctx.awayTravel.factor * awayOffAdv.f * awayOffVenue.f * env, 0.02, 0.97);
-    const pRB = nClamp((1-sBot) * aPC * ctx.homeTravel.factor * homeOffAdv.f * homeOffVenue.f * env, 0.02, 0.97);
-    const rawP = (1-pRT) * (1-pRB);
-    pNRFI_simProj = dayGameShift > 0
-      ? nClamp(unlogit(logit(nClamp(rawP, 0.02, 0.98)) - dayGameShift), 0.02, 0.98)
-      : rawP;
+    // Was the odd one out: it multiplied offVenue in raw and at full strength
+    // while the real sim applied none of the three, so the projected number and
+    // the number that replaced it were built to different recipes. Both now go
+    // through offSimCtx.
+    const pRT = nClamp((1-sTop) * hPC * ctx.awayTravel.factor * awayOffAdv.f * awayOffSim * env, 0.02, 0.97);
+    const pRB = nClamp((1-sBot) * aPC * ctx.homeTravel.factor * homeOffAdv.f * homeOffSim * env, 0.02, 0.97);
+    pNRFI_simProj = applyShift((1-pRT) * (1-pRB));
   }
 
   // Data-confidence: a decisive number on missing inputs isn't a real edge.
@@ -6717,7 +6777,13 @@ function nrfiEvaluate(ctx) {
     (awayRest.note || homeRest.note) ? { label: "Pitcher rest days",
       detail: [ctx.awayPP + ": " + (awayRest.note || "normal rest"), ctx.homePP + ": " + (homeRest.note || "normal rest")].join(" · "),
       lean: (awayRest.f >= 1.05 || homeRest.f >= 1.05) ? "yrfi" : "neutral" } : null,
-    isDayGame ? { label: "Day game", detail: "Daytime first pitch — historically ~2pp higher scoring vs night games", lean: "yrfi" } : null,
+    // Informational, and deliberately not a vote. The YRFI ballot this used to
+    // cast rested on the same contaminated split as the withdrawn logit shift;
+    // on MLB's own labels day games are 51.1% NRFI against night's 48.9%, which
+    // is the opposite direction and inside the noise either way.
+    isDayGame ? { label: "Day game",
+      detail: "Daytime first pitch — measured 51.1% NRFI vs 48.9% at night over 1,936 games, inside the noise. No adjustment applied.",
+      lean: "neutral" } : null,
     { label: "Weather & park", detail: ctx.wx.note, lean: facLean(ctx.wx.factor) },
     { label: "Umpire",
       detail: ctx.umpName ? (ctx.umpName + (ctx.umpNote ? " — " + ctx.umpNote : (umpFactor === 1 ? " (tendency n/a)" : ""))) : "not posted",
@@ -7325,6 +7391,9 @@ async function scanNrfi(onProgress, dateOverride) {
       lg,
       umpName: umpName || null, umpFactor: umpEntry ? umpEntry.runFactor : 1, umpNote: umpEntry ? umpEntry.note : "",
       startUtc: g.gameDate || null,
+      // MLB publishes its own day/night designation on the schedule. Take it
+      // rather than deriving one — see dayNightOf.
+      dayNight: g.dayNight || null,
     };
     const ev = nrfiEvaluate(ctx);
     const ls = g.linescore || {};

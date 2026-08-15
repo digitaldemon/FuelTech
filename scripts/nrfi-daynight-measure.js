@@ -73,6 +73,7 @@ async function pull(a, b) {
       nrfi: runs === 0,
       lh: localHour(g.gameDate, tz),
       shipped: new Date(g.gameDate).getUTCHours() < 20,   // the rule in the model
+      mlb: g.dayNight === "day",                          // MLB's own designation
     });
   }
 
@@ -98,6 +99,15 @@ async function pull(a, b) {
   line("day (local < 4pm)", td); line("night (local >= 4pm)", tn);
   console.log("    share genuinely day: " + pct(td.n / rows.length) +
     "   gap: " + ((td.p - tn.p) * 100).toFixed(2) + "pp");
+
+  console.log("\n  -- by MLB's own dayNight field (what the fix will ship) --");
+  const md = rate((r) => r.mlb), mn = rate((r) => !r.mlb);
+  line("day", md); line("night", mn);
+  console.log("    share labelled day: " + pct(md.n / rows.length) +
+    "   gap: " + ((md.p - mn.p) * 100).toFixed(2) + "pp" +
+    "   logit: " + (logit(md.p) - logit(mn.p) >= 0 ? "+" : "") + (logit(md.p) - logit(mn.p)).toFixed(4));
+  console.log("    agrees with venue local time on " +
+    pct(rows.filter((r) => r.mlb === (r.lh < 16)).length / rows.length) + " of games");
 
   console.log("\n  -- finer, by local hour --");
   for (const [lo, hi, lbl] of [[0, 13, "before 1pm"], [13, 16, "1pm-4pm"], [16, 19, "4pm-7pm"], [19, 24, "7pm+"]])

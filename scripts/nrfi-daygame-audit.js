@@ -1,6 +1,10 @@
 // Does `isDayGame` actually mean "day game"?
 //
-// nrfiEvaluate decides it with `new Date(startUtc).getUTCHours() < 20`, described
+// FIXED — the model now takes MLB's own `dayNight` field off the schedule. This
+// keeps measuring the OLD rule so the size of the defect stays on the record,
+// and asserts the bundle no longer derives day/night from a UTC hour.
+//
+// The defect, for the record: nrfiEvaluate decided it with `new Date(startUtc).getUTCHours() < 20`, described
 // in the code as "before ~4pm local (approximated as UTC < 20:00)". That
 // approximation only holds for Eastern-time first pitches earlier than 8pm. Any
 // start that crosses midnight UTC wraps to a small hour and re-enters the window
@@ -72,4 +76,25 @@ const shipped = (iso) => new Date(iso).getUTCHours() < 20;
   console.log("  day games called night:   " + falseNight);
   console.log("\nexamples:");
   for (const e of examples) console.log(e);
+
+  // Regression guard on the shipped bundle.
+  const fs = require("fs"), path = require("path");
+  // Comments survive the build, and the comment above the fix quotes the rule it
+  // replaced — so a naive search for the old code finds the epitaph and reports
+  // the bug as still present. Assert against code only.
+  const src = fs.readFileSync(path.join(__dirname, "..", "public", "desk", "app.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  let fail = 0;
+  const ok = (c, m) => { console.log((c ? "  PASS  " : "  FAIL  ") + m); if (!c) fail++; };
+  console.log("\nshipped bundle");
+  ok(/isDayGame\s*=\s*ctx\.dayNight\s*===\s*"day"/.test(src),
+    "day/night comes from MLB's designation, not a derived hour");
+  ok(!/getUTCHours\(\)\s*<\s*20/.test(src),
+    "the wrapping UTC-hour rule is gone");
+  ok(/dayNight:\s*g\.dayNight/.test(src),
+    "the schedule field is actually threaded into ctx");
+  ok(/const\s+dayGameShift\s*=\s*0\b/.test(src),
+    "the penalty fitted on the broken labels is withdrawn");
+  console.log(fail ? "\n" + fail + " FAILED" : "\nall checks pass");
+  process.exitCode = fail ? 1 : 0;
 })().catch((e) => { console.error(e); process.exit(1); });
