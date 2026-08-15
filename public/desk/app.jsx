@@ -7091,9 +7091,16 @@ function matchKingPick(row, kingOpen) {
 }
 
 // Scan today's MLB slate and run the research pass on every game.
-async function scanNrfi(onProgress) {
+// `dateOverride` is for offline calibration only — the app never passes it. It
+// exists because the live evaluator could not be pointed at a finished slate,
+// which is why NRFI_CALIB_SEED is still a fit of the SIMPLIFIED lambda-model in
+// the backtest route rather than of the model that actually ships. Note that the
+// pitcher and team feeds this pulls are season-to-date and are NOT rewound, so a
+// historical scan sees stats that postdate the game: usable for measuring the
+// model's mean LEVEL (which is all the seed corrects), not its per-game accuracy.
+async function scanNrfi(onProgress, dateOverride) {
   const season = new Date().getUTCFullYear();
-  const date = today();
+  const date = dateOverride || today();
   const [sch, whiffRes, umpRes] = await Promise.all([
     getJson("https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=" + date +
       "&hydrate=probablePitcher,linescore,team,lineups,weather,venue,officials"),
@@ -7724,10 +7731,17 @@ function FirstInning() {
     return base;
   });
   /* ---- live first-inning callout ----
-   * Follows only games carrying a LEAN-or-better call, and only while their 1st
-   * inning is open — so it is silent all day, talks for the twenty minutes that
-   * decide the ticket, and stops on its own. Each game is announced once by name
-   * when its inning opens, then play by play, then settled out loud.
+   * Follows a game while its 1st inning is open if EITHER the desk has a
+   * LEAN-or-better call on it OR there is real money on it in an open Kalshi
+   * position — so it is silent all day, talks for the twenty minutes that decide
+   * the ticket, and stops on its own. Each game is announced once by name when
+   * its inning opens, then play by play, then settled out loud.
+   *
+   * The verdict alone was the wrong gate. The desk PASSes a game whenever the
+   * market has it priced right, which says nothing about whether the user is in
+   * it — on a live board two of three open positions were PASS, so the callout
+   * sat silent through the innings that settled $1,628 of exposure. A held
+   * position is the strongest possible reason to follow a game.
    *
    * Positions are kept in a ref, not state: a re-render every 2.5s across a
    * 15-game board would be a real cost for a feature that renders nothing.
@@ -7747,8 +7761,14 @@ function FirstInning() {
   const spoken = useRef(new Map()); // gamePk -> { n: plays announced, opened, settled }
   useEffect(() => {
     if (!callout) return;
+    // Ticker -> the side actually held, so a game can be followed for the money
+    // on it and called against that side rather than against the model's read.
+    const heldByTicker = new Map(
+      (openPositions && !openPositions.error ? openPositions.positions || [] : [])
+        .filter((p) => p.ticker && p.contracts > 0).map((p) => [p.ticker, p.call]));
+    const heldSide = (r) => (r.market && r.market.ticker ? heldByTicker.get(r.market.ticker) : null) || null;
     const tracked = () => enriched.filter((r) =>
-      r.gamePk && !r.final && r.v && r.v.strength !== "PASS" &&
+      r.gamePk && !r.final && ((r.v && r.v.strength !== "PASS") || heldSide(r)) &&
       (r.currentInning === 1 || (r.currentInning === 0 && r.startUtc &&
         new Date(r.startUtc).getTime() - Date.now() < 5 * 60 * 1000)));
     let stopped = false;
@@ -7758,13 +7778,19 @@ function FirstInning() {
       if (st.settled) return;
       const live = await fetchFirstInning(r.gamePk);
       if (stopped || !live) return;
+      // What is at stake here: the position if one is held, otherwise the call.
+      // Announcing the model's side on a game the user faded would be worse than
+      // saying nothing.
+      const held = heldSide(r);
+      const side = held || r.call;
+      const stake = held ? "You are on " + held : "Desk is on " + r.call;
       // Joining a game mid-inning: catch up silently to what is already over and
       // start calling from the live edge, rather than reciting the half-inning.
       if (!st.opened) {
         const fresh = live.plays.findIndex((p) => playAgeMs(p) < CALLOUT_STALE_MS);
         st.n = fresh === -1 ? live.plays.length : fresh;
         if (live.plays.length || live.inning === 1) {
-          speak(r.away + " at " + r.home + ". First inning. Desk is on " + r.call + ".");
+          speak(r.away + " at " + r.home + ". First inning. " + stake + ".");
           st.opened = true;
         }
       }
@@ -7775,14 +7801,18 @@ function FirstInning() {
         const runs = playRuns(live.plays[i], live.plays[i - 1]);
         if (line) speak(line + (runs > 0
           ? ". " + (runs === 1 ? "A run scores" : runs + " runs score") +
-            ". That is Y-R-F-I — " + (r.call === "YRFI" ? "the desk had it" : "the desk was wrong") + "."
+            ". That is Y-R-F-I — " + (side === "YRFI"
+              ? (held ? "you are a winner" : "the desk had it")
+              : (held ? "that ticket is dead" : "the desk was wrong")) + "."
           : ""), runs > 0);
         if (runs > 0) st.settled = true;
       }
       st.n = live.plays.length;
       if (!st.settled && live.past1) {
         speak("First inning is clean in " + r.home + ". N-R-F-I — " +
-          (r.call === "NRFI" ? "that is a winner" : "the desk was wrong") + ".", true);
+          (side === "NRFI"
+            ? (held ? "you are a winner" : "that is a winner")
+            : (held ? "that ticket is dead" : "the desk was wrong")) + ".", true);
         st.settled = true;
       }
       spoken.current.set(r.gamePk, st);
@@ -7798,7 +7828,12 @@ function FirstInning() {
     tick();
     const id = setInterval(tick, CALLOUT_POLL_MS);
     return () => { stopped = true; clearInterval(id); };
-  }, [callout, enriched.map((r) => r.gamePk + ":" + r.currentInning).join(",")]);
+    // Positions load asynchronously and usually land AFTER the board does, so
+    // they have to be in the dep list — otherwise the effect closes over an
+    // empty position set and never picks the held games up.
+  }, [callout, enriched.map((r) => r.gamePk + ":" + r.currentInning).join(","),
+      (openPositions && !openPositions.error ? openPositions.positions || [] : [])
+        .map((p) => p.ticker + ":" + p.call).join(",")]);
 
   // Correlated NRFI parlay pairs: two BET NRFI games with both pitchers graded B or higher.
   const nrfiBetRows = enriched.filter((r) => r.v && r.v.isBet && r.call === "NRFI");
