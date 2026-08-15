@@ -5313,7 +5313,19 @@ async function teamOffenseSplits(teamId, season) {
 
 // Starter handedness (people) + recent form (last-3-start ERA from gameLog).
 const _pitMeta = new Map();
-const parseIp = (ip) => { const m = String(ip == null ? "0" : ip).split("."); return Number(m[0] || 0) + (m[1] === "1" ? 1 / 3 : m[1] === "2" ? 2 / 3 : 0); };
+// MLB hands back era/inningsPitched as STRINGS, and uses "-.--" (no innings) and
+// "INF" (runs allowed, no outs) as sentinels. Number() turns both into NaN, and
+// NaN survives nClamp — Math.max(lo, NaN) is NaN — so it rides the whole factor
+// chain into pNRFI, where `pFinal >= 0.5` is false and the game silently renders
+// as "YRFI · Pass — too close" instead of surfacing as missing data. Parse every
+// numeric that comes off the feed through here.
+const numOrNull = (v) => { if (v == null) return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
+const parseIp = (ip) => {
+  const m = String(ip == null ? "0" : ip).split(".");
+  const whole = numOrNull(m[0] || 0);
+  if (whole == null) return 0;   // "-.--" means the pitcher has no innings, not "unknown"
+  return whole + (m[1] === "1" ? 1 / 3 : m[1] === "2" ? 2 / 3 : 0);
+};
 async function pitcherMeta(pid, season) {
   if (pid == null) return { hand: null, form: null };
   const k = pid + ":" + season;
@@ -5327,8 +5339,8 @@ async function pitcherMeta(pid, season) {
     const pp = p.people && p.people[0];
     hand = (pp && pp.pitchHand && pp.pitchHand.code) || null;
     const sst = pp && pp.stats && pp.stats[0] && pp.stats[0].splits && pp.stats[0].splits[0] && pp.stats[0].splits[0].stat;
-    seasonEra = sst && sst.era != null ? Number(sst.era) : null;
-    if (sst) { gs = sst.gamesStarted != null ? Number(sst.gamesStarted) : null; g = sst.gamesPlayed != null ? Number(sst.gamesPlayed) : null; ip = sst.inningsPitched != null ? parseIp(sst.inningsPitched) : null; allow = paRates(sst, sst.battersFaced, NRFI_PA_REG_PIT); }
+    seasonEra = sst ? numOrNull(sst.era) : null;
+    if (sst) { gs = numOrNull(sst.gamesStarted); g = numOrNull(sst.gamesPlayed); ip = sst.inningsPitched != null ? parseIp(sst.inningsPitched) : null; allow = paRates(sst, sst.battersFaced, NRFI_PA_REG_PIT); }
     const sp = (gl.stats && gl.stats[0] && gl.stats[0].splits) || [];
     // Use starts only for form + rest day tracking (exclude relief appearances)
     const starts = sp.filter((s) => Number(s.stat && s.stat.gamesStarted) === 1);
@@ -5341,12 +5353,13 @@ async function pitcherMeta(pid, season) {
     }
     if (recentStarts.length) {
       let er = 0, lip = 0, hr = 0, bb = 0, k = 0;
+      const n0 = (v) => numOrNull(v) || 0;   // a malformed stat is 0, never NaN
       recentStarts.forEach((s) => {
-        er += Number((s.stat && s.stat.earnedRuns) || 0);
+        er += n0(s.stat && s.stat.earnedRuns);
         lip += parseIp(s.stat && s.stat.inningsPitched);
-        hr += Number((s.stat && s.stat.homeRuns) || 0);
-        bb += Number((s.stat && s.stat.baseOnBalls) || 0) + Number((s.stat && s.stat.hitByPitch) || 0);
-        k += Number((s.stat && s.stat.strikeOuts) || 0);
+        hr += n0(s.stat && s.stat.homeRuns);
+        bb += n0(s.stat && s.stat.baseOnBalls) + n0(s.stat && s.stat.hitByPitch);
+        k += n0(s.stat && s.stat.strikeOuts);
       });
       if (lip > 0) {
         form = (er * 9) / lip;
@@ -5429,7 +5442,8 @@ function platoonFactor(off, oppHand) {
 // FIP = 3.13 + (13*HR + 3*BB - 2*K) / IP — more predictive of next-start performance.
 function formFactor(era, fip) {
   const metric = fip != null ? fip : era;
-  if (metric == null) return { f: 1, note: "recent form n/a" };
+  // `== null` lets NaN through, and NaN survives nClamp into the factor product.
+  if (!Number.isFinite(metric)) return { f: 1, note: "recent form n/a" };
   const label = fip != null ? "FIP" : "ERA";
   return { f: nClamp(1 + ((metric - 4.15) / 4.15) * 0.25, 0.85, 1.2), note: "L3 " + metric.toFixed(2) + " " + label };
 }
@@ -5849,7 +5863,9 @@ function weatherPark(game, homeAbbr) {
 
 function nrfiRegress(rate, sample, reg) {
   if (rate == null) return NRFI_LG_LAMBDA;
-  return (rate * sample + NRFI_LG_LAMBDA * reg) / (sample + reg);
+  const d = (sample || 0) + (reg || 0);
+  if (!(d > 0)) return NRFI_LG_LAMBDA;   // 0/0 would return NaN, which survives nClamp
+  return (rate * sample + NRFI_LG_LAMBDA * reg) / d;
 }
 // log5-style matchup of an offense rate vs a pitcher rate around league mean
 function halfNoRun(offLambda, pitLambda, env) {
@@ -5862,7 +5878,18 @@ function halfNoRun(offLambda, pitLambda, env) {
 /* ---- Base-out simulation: model the actual batters through a base/out
    Markov chain vs the starter's outcome profile -> true P(no run). ---- */
 // League-average per-PA outcome distribution (walk includes HBP).
-const NRFI_LG_PA = { out: 0.685, bb: 0.085, s1: 0.140, s2: 0.045, s3: 0.004, hr: 0.033 };
+// The tabulated rates sum to 0.992, not 1 — the ~0.8pp gap is reached-on-error
+// and other non-tabulated outcomes. matchupPA renormalises its own output, so
+// this never escaped as a bad probability, but paRates regresses toward these
+// numbers raw, which made the regression target something other than the league
+// average it claims to be. Normalise once here so both callers see a real
+// distribution; proportions are unchanged.
+const NRFI_LG_PA = (() => {
+  const raw = { out: 0.685, bb: 0.085, s1: 0.140, s2: 0.045, s3: 0.004, hr: 0.033 };
+  const sum = Object.values(raw).reduce((a, b) => a + b, 0);
+  const o = {}; for (const k of Object.keys(raw)) o[k] = raw[k] / sum;
+  return o;
+})();
 // Regression toward the league PA profile, in pseudo-plate-appearances.
 // The sim path (simHalfNoRun) consumes these rates raw, so a starter with one
 // outing would otherwise arrive with out≈1.0 and score a near-certain NRFI —
@@ -5882,6 +5909,12 @@ function paRates(st, denom, reg) {
   const s1 = Math.max(0, n(st.hits) - n(st.doubles) - n(st.triples) - n(st.homeRuns)) / d;
   const out = Math.max(0, 1 - bb - hr - s3 - s2 - s1);
   const raw = { out, bb, s1, s2, s3, hr };
+  // If the events outnumber the denominator (a stat line paired with the wrong
+  // count), `out` floors at 0 while the hit rates keep their full value and the
+  // row stops being a distribution. matchupPA would renormalise it into a silent
+  // reweighting rather than an error, so square it up here.
+  const rawSum = Object.values(raw).reduce((a, b) => a + b, 0);
+  if (rawSum > 1) for (const key of Object.keys(raw)) raw[key] /= rawSum;
   const k = Number(reg || 0);
   if (k <= 0) return raw;
   const o = {};
@@ -6309,7 +6342,14 @@ function nrfiEvaluate(ctx) {
     away: { name: ctx.awayPP, pid: ctx.awayPPId, hand: ctx.awayMeta && ctx.awayMeta.hand, ...pitcherI01Profile(ctx.awayPit, ctx.awayMeta && ctx.awayMeta.seasonEra, ctx.awayRolling, ctx.awayPeri) },
     home: { name: ctx.homePP, pid: ctx.homePPId, hand: ctx.homeMeta && ctx.homeMeta.hand, ...pitcherI01Profile(ctx.homePit, ctx.homeMeta && ctx.homeMeta.seasonEra, ctx.homeRolling, ctx.homePeri) },
   };
-  return { pNRFI, pNRFI_simProj, checks, aligned: { agree, total: famTotal, rows: nonNeutral.length }, confidence: conf, method, pitProfiles };
+  // A non-finite probability must never leave this function. Downstream,
+  // `pFinal >= 0.5` is false for NaN, so the game would render as a confident-
+  // looking "YRFI · Pass — too close" rather than as the missing data it is.
+  // Report it instead: modelError is what the board and the record filter on.
+  const modelError = !Number.isFinite(pNRFI) ? "model produced a non-finite probability" : null;
+  return { pNRFI: modelError ? null : pNRFI, pNRFI_simProj, checks,
+    aligned: { agree, total: famTotal, rows: nonNeutral.length },
+    confidence: conf, method, pitProfiles, modelError };
 }
 const rate2 = (o) => (o && o.rate != null ? o.rate.toFixed(2) : "—");
 const awayPit0 = (o) => (o && o.rate != null ? o.rate.toFixed(2) + " R/1st" : "TBD");
@@ -6731,7 +6771,10 @@ async function scanNrfi(onProgress) {
       awayOffL10: awayOffRolling && awayOffRolling.l10 && awayOffRolling.l10.n >= 5 ? { rate: awayOffRolling.l10.rate, sznRate: awayOffRolling.szn ? awayOffRolling.szn.rate : null, avgRuns: awayOffRolling.l10.avgRuns } : null,
       homeOffL10: homeOffRolling && homeOffRolling.l10 && homeOffRolling.l10.n >= 5 ? { rate: homeOffRolling.l10.rate, sznRate: homeOffRolling.szn ? homeOffRolling.szn.rate : null, avgRuns: homeOffRolling.l10.avgRuns } : null,
       hasPitchers: !!(awayPP && awayPP.id && homePP && homePP.id),
-      dataOk: !!(awayOff && homeOff && awayPit && homePit),
+      // Presence of the four inputs is not enough — the model still has to have
+      // produced a usable number from them.
+      dataOk: !!(awayOff && homeOff && awayPit && homePit) && !ev.modelError && Number.isFinite(ev.pNRFI),
+      modelError: ev.modelError || null,
       lineupPosted: (ctx.awayLineup.obp != null && ctx.homeLineup.obp != null),
       state, currentInning: ls.currentInning || 0,
       inning1runs: (inn1 && inn1.away && inn1.home && inn1.away.runs != null && inn1.home.runs != null) ? (inn1.away.runs + inn1.home.runs) : null,
