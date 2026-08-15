@@ -5258,6 +5258,72 @@ function getLinescore(gamePk) {
   return _linescore.get(gamePk);
 }
 
+/* ---- live first-inning call ----------------------------------------------
+ * MLB's broadcast audio (Gameday Audio / MLB.TV) is authenticated, DRM'd and
+ * licensed per-subscriber; there is no embeddable stream and re-serving one is
+ * not something this app will do. The flagship radio simulcasts black out live
+ * play-by-play on the web for the same reason.
+ *
+ * What IS available is the pitch-by-pitch play feed the desk already reads for
+ * line scores. Spoken through the browser's own speech synthesiser it gives the
+ * thing a broadcast was wanted for — hands off the screen while the inning that
+ * decides the ticket plays out — and it is strictly better targeted, because it
+ * covers every game on the board at once and goes quiet the moment the first
+ * inning closes. No licence, no cost, no second tab.
+ */
+// allPlays carries the whole game; only the 1st inning can settle an NRFI, and a
+// completed play is the only one whose description is final.
+function firstInningPlays(feed) {
+  const all = (feed && feed.liveData && feed.liveData.plays && feed.liveData.plays.allPlays) || [];
+  return all.filter((p) => p.about && p.about.inning === 1 && p.about.isComplete);
+}
+// result.description is written for a box score ("flies out to center fielder
+// Daulton Varsho"), which reads long out loud. Keep the clause that says what
+// happened and drop the fielder's credit.
+function playCallout(p) {
+  const d = String((p.result && p.result.description) || "").replace(/\s+/g, " ").trim().replace(/\.$/, "");
+  if (!d) return null;
+  if (d.length <= 150) return d;
+  // A hard slice lands mid-word and the synthesiser reads the fragment aloud
+  // ("Dillon Dingler to 1s"). Trailing runner advancements are the part that
+  // overruns, and dropping a whole clause is what a broadcaster would do anyway.
+  const cut = d.slice(0, 150);
+  const stop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf(", "));
+  return stop > 60 ? cut.slice(0, stop) : cut.slice(0, cut.lastIndexOf(" "));
+}
+// Runs are the only thing that settles the bet, so they get named as such rather
+// than left for the listener to infer from a description.
+function playRuns(p, prev) {
+  const s = p.result || {}, q = (prev && prev.result) || {};
+  const now = (s.awayScore || 0) + (s.homeScore || 0);
+  const was = prev ? (q.awayScore || 0) + (q.homeScore || 0) : 0;
+  return Math.max(0, now - was);
+}
+async function fetchFirstInning(gamePk) {
+  // Cache-busting is deliberate: this is the one feed read that must not be
+  // served stale, and getJson's shared cache is sized for pregame research.
+  const f = await getJson("https://statsapi.mlb.com/api/v1.1/game/" + gamePk +
+    "/feed/live?_=" + Math.floor(Date.now() / 10000)).catch(() => null);
+  if (!f) return null;
+  const ls = (f.liveData && f.liveData.linescore) || {};
+  return {
+    plays: firstInningPlays(f),
+    inning: ls.currentInning || 0,
+    half: String(ls.inningState || ""),
+    // The inning is over once play has moved past it — not when outs hit 3,
+    // which is briefly true mid-changeover in the feed.
+    past1: (ls.currentInning || 0) > 1 || String(f.gameData && f.gameData.status &&
+      f.gameData.status.abstractGameState || "").toLowerCase() === "final",
+  };
+}
+function speak(text) {
+  const s = typeof window !== "undefined" && window.speechSynthesis;
+  if (!s || !text) return;
+  const u = new window.SpeechSynthesisUtterance(text);
+  u.rate = 1.05; u.pitch = 1; u.volume = 1;
+  s.speak(u);
+}
+
 async function pitcherFirstInning(pid, season) {
   if (pid == null) return null;
   const k = pid + ":" + season;
@@ -7548,6 +7614,58 @@ function FirstInning() {
     base.v = nrfiVerdict(base);
     return base;
   });
+  /* ---- live first-inning callout ----
+   * Follows only games carrying a LEAN-or-better call, and only while their 1st
+   * inning is open — so it is silent all day, talks for the twenty minutes that
+   * decide the ticket, and stops on its own. Each game is announced once by name
+   * when its inning opens, then play by play, then settled out loud.
+   *
+   * Positions are kept in a ref, not state: a re-render every 15s across a
+   * 15-game board would be a real cost for a feature that renders nothing. */
+  const [callout, setCallout] = useState(false);
+  const spoken = useRef(new Map()); // gamePk -> { n: plays announced, opened, settled }
+  useEffect(() => {
+    if (!callout) return;
+    const tracked = () => enriched.filter((r) =>
+      r.gamePk && !r.final && r.v && r.v.strength !== "PASS" &&
+      (r.currentInning === 1 || (r.currentInning === 0 && r.startUtc &&
+        new Date(r.startUtc).getTime() - Date.now() < 5 * 60 * 1000)));
+    let stopped = false;
+    async function tick() {
+      for (const r of tracked()) {
+        const st = spoken.current.get(r.gamePk) || { n: 0, opened: false, settled: false };
+        if (st.settled) continue;
+        const live = await fetchFirstInning(r.gamePk);
+        if (stopped || !live) continue;
+        if (!st.opened && (live.plays.length || live.inning === 1)) {
+          speak(r.away + " at " + r.home + ". First inning. Desk is on " + r.call + ".");
+          st.opened = true;
+        }
+        // Runs are read against the play before, so a two-run double is called as
+        // two — the feed only ever reports a cumulative score.
+        for (let i = st.n; i < live.plays.length; i++) {
+          const line = playCallout(live.plays[i]);
+          const runs = playRuns(live.plays[i], live.plays[i - 1]);
+          if (line) speak(line + (runs > 0
+            ? ". " + (runs === 1 ? "A run scores" : runs + " runs score") +
+              ". That is Y-R-F-I — " + (r.call === "YRFI" ? "the desk had it" : "the desk was wrong") + "."
+            : ""));
+          if (runs > 0) st.settled = true;
+        }
+        st.n = live.plays.length;
+        if (!st.settled && live.past1) {
+          speak("First inning is clean in " + r.home + ". N-R-F-I — " +
+            (r.call === "NRFI" ? "that is a winner" : "the desk was wrong") + ".");
+          st.settled = true;
+        }
+        spoken.current.set(r.gamePk, st);
+      }
+    }
+    tick();
+    const id = setInterval(tick, 15000);
+    return () => { stopped = true; clearInterval(id); };
+  }, [callout, enriched.map((r) => r.gamePk + ":" + r.currentInning).join(",")]);
+
   // Correlated NRFI parlay pairs: two BET NRFI games with both pitchers graded B or higher.
   const nrfiBetRows = enriched.filter((r) => r.v && r.v.isBet && r.call === "NRFI");
   const parlayPairs = [];
@@ -8216,6 +8334,23 @@ function FirstInning() {
           );
         })()}
         <button className="btn btn-ghost btn-sm" onClick={importKalshiBets} disabled={importing} title="Pull your closed NRFI/YRFI bets from Kalshi">{importing ? "Importing…" : "Import Kalshi bets"}</button>
+        {typeof window !== "undefined" && window.speechSynthesis && (
+          <button className="btn btn-ghost btn-sm"
+            onClick={() => {
+              const next = !callout;
+              // Speaking on the click itself is what unlocks audio — browsers gate
+              // speech synthesis behind a user gesture, and the first real callout
+              // can land an hour later with no gesture anywhere near it.
+              if (next) speak("First inning callout on.");
+              else if (window.speechSynthesis.cancel) window.speechSynthesis.cancel();
+              setCallout(next);
+            }}
+            title={"Speaks the first inning of every game on the board that has a call — play by play, then the NRFI result. " +
+              "Built off the MLB play feed, not a broadcast: league game audio is licensed per-subscriber and cannot be embedded here."}
+            style={callout ? { color: "var(--moss)", borderColor: "var(--moss)" } : undefined}>
+            {callout ? "🔊 Callout on" : "🔈 Callout"}
+          </button>
+        )}
         {importMsg && <span style={{ fontSize: 12, color: importMsg.ok ? "var(--moss)" : "var(--rose)" }}>{importMsg.text}</span>}
       </div>
       {/* Bankroll builder */}
