@@ -6700,7 +6700,7 @@ function FirstInning() {
   async function reconcile(rs, rfiList) {
     if (!recRef.current) return;
     const recl = recRef.current.slice(); const changed = [];
-    const lc = nrfiCalibration(recl); const calibNow = lc.active ? lc : NRFI_CALIB_SEED;
+    const lc = nrfiCalibration(recl); const calibNow = lc.active ? { ...lc, slope: NRFI_CALIB_SEED.slope } : NRFI_CALIB_SEED;
     const r1 = (x) => Math.round(x * 10) / 10;
     for (const r of rs) {
       const pcal = applyCalibration(r.pNRFI, calibNow);
@@ -6845,7 +6845,7 @@ function FirstInning() {
   const betSignalCount = allModelBets.length;
 
   const liveCalib = nrfiCalibration(rec || []);
-  const calib = liveCalib.active ? liveCalib : NRFI_CALIB_SEED; // live once ≥25 graded, else backtest prior
+  const calib = liveCalib.active ? { ...liveCalib, slope: NRFI_CALIB_SEED.slope } : NRFI_CALIB_SEED;
   const enriched = rows.filter((r) => !dismissed.has(String(r.gamePk))).map((r) => {
     const pcal = applyCalibration(r.pNRFI, calib);        // model's own NRFI prob
     const mk = matchRFI(r, rfi);
