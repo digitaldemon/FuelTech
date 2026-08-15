@@ -2170,7 +2170,7 @@ async function gradeAllRecords() {
 }
 
 function App() {
-  const [tab, setTab] = useState("picks");
+  const [tab, setTab] = useState("nrfi");
   const [fw, setFw] = useState(buildFrameworks);
   const [ledger, setLedger] = useState([]);
 
@@ -2256,7 +2256,7 @@ function App() {
         </header>
 
         <nav className="tabs">
-          {[["picks", "Predictions"], ["nrfi", "First Inning"], ["analyze", "Ask an event"], ["parlay", "Combos"], ["commodities", "15-Minute"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["ledger", "Accuracy"]].map(([k, l]) => (
+          {[["picks", "Predictions"], ["nrfi", "NRFI"], ["analyze", "Ask an event"], ["parlay", "Combos"], ["commodities", "15-Minute"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["ledger", "Accuracy"]].map(([k, l]) => (
             <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
           ))}
         </nav>
@@ -6314,6 +6314,7 @@ function matchRFI(row, list) {
 
 function NrfiCalendar({ rec }) {
   const [viewMonth, setViewMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const [calView, setCalView] = useState("calendar");
   const byDate = {};
   for (const e of rec || []) {
     if (!e.date || e.skipped) continue;
@@ -6324,9 +6325,10 @@ function NrfiCalendar({ rec }) {
   const { y, m } = viewMonth;
   const firstDay = new Date(y, m, 1).getDay();
   const daysInMonth = new Date(y, m + 1, 0).getDate();
-  const monthStr = new Date(y, m, 1).toLocaleString("default", { month: "long", year: "numeric" });
+  const monthLabel = new Date(y, m, 1).toLocaleString("default", { month: "long", year: "numeric" });
   const mStr = String(m + 1).padStart(2, "0");
-  const todayKey = String(new Date().getFullYear()) + String(new Date().getMonth() + 1).padStart(2, "0") + String(new Date().getDate()).padStart(2, "0");
+  const todayFull = new Date();
+  const todayKey = String(todayFull.getFullYear()) + String(todayFull.getMonth() + 1).padStart(2, "0") + String(todayFull.getDate()).padStart(2, "0");
   const dayKey = (d) => String(y) + mStr + String(d).padStart(2, "0");
   const dayPL = (entries) => {
     let pl = 0;
@@ -6338,71 +6340,164 @@ function NrfiCalendar({ rec }) {
     return pl;
   };
   const hasPLData = (entries) => entries.some((e) => e.contracts > 0 && e.mktAtPick != null && e.result);
+  let mWins = 0, mLosses = 0, mPL = 0, mHasPL = false;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const settled = (byDate[dayKey(d)] || []).filter((e) => e.result === "won" || e.result === "lost");
+    mWins += settled.filter((e) => e.result === "won").length;
+    mLosses += settled.filter((e) => e.result === "lost").length;
+    if (hasPLData(settled)) { mPL += dayPL(settled); mHasPL = true; }
+  }
+  const todayAll = byDate[todayKey] || [];
+  const todaySettled = todayAll.filter((e) => e.result === "won" || e.result === "lost");
+  const todayPending = todayAll.filter((e) => !e.result && !e.skipped);
+  const todayWins = todaySettled.filter((e) => e.result === "won").length;
+  const todayLosses = todaySettled.length - todayWins;
+  const todayPL = dayPL(todaySettled);
+  const todayHasPL = hasPLData(todaySettled);
   const cells = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  let mWins = 0, mTotal = 0, mPL = 0, mHasPL = false;
-  for (let d = 1; d <= daysInMonth; d++) {
-    const entries = (byDate[dayKey(d)] || []).filter((e) => e.result === "won" || e.result === "lost");
-    mWins += entries.filter((e) => e.result === "won").length;
-    mTotal += entries.length;
-    if (hasPLData(entries)) { mPL += dayPL(entries); mHasPL = true; }
-  }
+  const allSettled = Object.entries(byDate)
+    .flatMap(([date, entries]) => entries.filter((e) => e.result === "won" || e.result === "lost").map((e) => ({ ...e, _date: date })))
+    .sort((a, b) => b._date.localeCompare(a._date));
   return (
-    <div style={{ marginTop: 16, padding: "14px 16px", background: "rgba(255,255,255,0.03)", borderRadius: 10, border: "1px solid rgba(255,255,255,0.08)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={() => setViewMonth(({ y, m }) => m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 })} className="btn btn-ghost btn-sm" style={{ padding: "2px 8px" }}>←</button>
-          <span style={{ fontWeight: 700, fontSize: 13, minWidth: 130, textAlign: "center" }}>{monthStr}</span>
-          <button onClick={() => setViewMonth(({ y, m }) => m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 })} className="btn btn-ghost btn-sm" style={{ padding: "2px 8px" }}>→</button>
-        </div>
-        {mTotal > 0 && (
-          <div style={{ display: "flex", gap: 14, alignItems: "center", fontSize: 12 }}>
-            <span style={{ fontWeight: 700 }}><span style={{ color: "var(--moss)" }}>{mWins}W</span> / <span style={{ color: "var(--rose)" }}>{mTotal - mWins}L</span> <span style={{ color: mWins >= mTotal - mWins ? "var(--moss)" : "var(--rose)" }}>({Math.round(mWins / mTotal * 100)}%)</span></span>
-            {mHasPL && <span style={{ fontWeight: 700, color: mPL >= 0 ? "var(--moss)" : "var(--rose)" }}>{mPL >= 0 ? "+" : ""}${mPL.toFixed(2)} P&L</span>}
-          </div>
-        )}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3 }}>
-        {["Su","Mo","Tu","We","Th","Fr","Sa"].map((d, i) => (
-          <div key={i} style={{ textAlign: "center", fontSize: 9, fontWeight: 700, color: "var(--dim)", padding: "2px 0", letterSpacing: "0.05em" }}>{d}</div>
-        ))}
-        {cells.map((d, i) => {
-          if (!d) return <div key={"p" + i} />;
-          const key = dayKey(d);
-          const all = byDate[key] || [];
-          const settled = all.filter((e) => e.result === "won" || e.result === "lost");
-          const wins = settled.filter((e) => e.result === "won").length;
-          const losses = settled.length - wins;
-          const pl = dayPL(settled);
-          const hasPL = hasPLData(settled);
-          const pending = all.filter((e) => !e.result).length;
-          const isToday = key === todayKey;
-          const ratio = settled.length > 0 ? wins / settled.length : null;
-          const bg = ratio === null ? (pending > 0 ? "rgba(230,160,0,0.07)" : "rgba(255,255,255,0.02)") : ratio >= 0.6 ? "rgba(80,160,80,0.14)" : ratio <= 0.4 ? "rgba(220,60,60,0.11)" : "rgba(120,130,150,0.1)";
-          const tip = settled.length > 0
-            ? settled.map((e) => (e.game || "?") + " → " + (e.result || "?").toUpperCase()).join("\n") + (hasPL ? "\nP&L: " + (pl >= 0 ? "+" : "") + "$" + pl.toFixed(2) : "")
-            : pending > 0 ? pending + " pending" : "";
-          return (
-            <div key={key} title={tip} style={{ cursor: settled.length > 0 ? "help" : "default", minHeight: 50, background: bg, borderRadius: 6, border: isToday ? "1.5px solid rgba(80,160,80,0.5)" : "1px solid rgba(255,255,255,0.06)", padding: "4px 3px", textAlign: "center" }}>
-              <div style={{ fontSize: 10, color: isToday ? "var(--moss)" : "var(--dim)", fontWeight: isToday ? 700 : 400, marginBottom: 2 }}>{d}</div>
-              {settled.length > 0 && (
-                <>
-                  <div style={{ fontSize: 11, fontWeight: 800, lineHeight: 1 }}><span style={{ color: "var(--moss)" }}>{wins}W</span><span style={{ color: "var(--dim)", fontSize: 9 }}>/</span><span style={{ color: "var(--rose)" }}>{losses}L</span></div>
-                  {hasPL && <div style={{ fontSize: 9, fontWeight: 700, color: pl >= 0 ? "var(--moss)" : "var(--rose)", marginTop: 1 }}>{pl >= 0 ? "+" : ""}${Math.abs(pl) >= 10 ? Math.round(Math.abs(pl)) : Math.abs(pl).toFixed(1)}</div>}
-                </>
-              )}
-              {settled.length === 0 && pending > 0 && <div style={{ fontSize: 9, color: "var(--amber)", marginTop: 4 }}>{pending}p</div>}
+    <div style={{ marginTop: 8 }}>
+      {/* Today's summary strip */}
+      {(todaySettled.length > 0 || todayPending.length > 0) && (
+        <div style={{ marginBottom: 12, padding: "12px 16px", background: "rgba(80,160,80,0.08)", borderRadius: 10, border: "1px solid rgba(80,160,80,0.25)", display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 3 }}>TODAY</div>
+            <div style={{ fontSize: 24, fontWeight: 800, lineHeight: 1 }}>
+              <span style={{ color: "var(--moss)" }}>{todayWins}</span>
+              <span style={{ color: "var(--dim)", fontSize: 14, margin: "0 5px" }}>–</span>
+              <span style={{ color: todayLosses > 0 ? "var(--rose)" : "var(--dim)" }}>{todayLosses}</span>
             </div>
-          );
-        })}
+          </div>
+          {todayHasPL && (
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 3 }}>P&L TODAY</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: todayPL >= 0 ? "var(--moss)" : "var(--rose)", lineHeight: 1 }}>
+                {todayPL >= 0 ? "+" : ""}${todayPL.toFixed(2)}
+              </div>
+            </div>
+          )}
+          {todayPending.length > 0 && (
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 3 }}>LIVE</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "var(--amber)", lineHeight: 1 }}>{todayPending.length}</div>
+            </div>
+          )}
+          <div style={{ marginLeft: "auto" }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 3 }}>BETS</div>
+            <div style={{ fontSize: 24, fontWeight: 800, lineHeight: 1 }}>{todaySettled.length + todayPending.length}</div>
+          </div>
+        </div>
+      )}
+      {/* Header row */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button onClick={() => setViewMonth(({ y, m }) => m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 })} className="btn btn-ghost btn-sm" style={{ padding: "2px 10px", fontSize: 16, lineHeight: 1 }}>‹</button>
+          <span style={{ fontWeight: 800, fontSize: 14, minWidth: 130, textAlign: "center" }}>{monthLabel}</span>
+          <button onClick={() => setViewMonth(({ y, m }) => m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 })} className="btn btn-ghost btn-sm" style={{ padding: "2px 10px", fontSize: 16, lineHeight: 1 }}>›</button>
+          {(mWins + mLosses) > 0 && (
+            <span style={{ marginLeft: 6, fontSize: 12 }}>
+              <span style={{ color: "var(--moss)", fontWeight: 800 }}>{mWins}W</span>
+              <span style={{ color: "var(--dim)", margin: "0 3px" }}>–</span>
+              <span style={{ color: "var(--rose)", fontWeight: 800 }}>{mLosses}L</span>
+              {mHasPL && <span style={{ marginLeft: 8, color: mPL >= 0 ? "var(--moss)" : "var(--rose)", fontWeight: 700 }}>{mPL >= 0 ? "+" : ""}${Math.abs(mPL) >= 100 ? Math.round(mPL) : mPL.toFixed(0)}</span>}
+            </span>
+          )}
+        </div>
+        <div style={{ display: "flex", borderRadius: 7, overflow: "hidden", border: "1px solid rgba(120,130,150,0.25)" }}>
+          {[["calendar", "Calendar"], ["table", "Table"]].map(([v, l]) => (
+            <button key={v} onClick={() => setCalView(v)} style={{ padding: "5px 14px", fontSize: 12, fontWeight: 700, background: calView === v ? "var(--moss)" : "transparent", color: calView === v ? "#000" : "var(--dim)", border: "none", cursor: "pointer" }}>{l}</button>
+          ))}
+        </div>
       </div>
-      <div style={{ marginTop: 8, display: "flex", gap: 14, fontSize: 10, color: "var(--dim)", flexWrap: "wrap" }}>
-        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "rgba(80,160,80,0.3)", borderRadius: 2, marginRight: 4, verticalAlign: "middle" }} />≥60% win</span>
-        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "rgba(120,130,150,0.25)", borderRadius: 2, marginRight: 4, verticalAlign: "middle" }} />mixed</span>
-        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "rgba(220,60,60,0.25)", borderRadius: 2, marginRight: 4, verticalAlign: "middle" }} />≤40% win</span>
-        <span style={{ marginLeft: "auto" }}>P&L from Kalshi bets only (hover a day for detail)</span>
-      </div>
+      {calView === "calendar" ? (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
+            {["SUN","MON","TUE","WED","THU","FRI","SAT"].map((d) => (
+              <div key={d} style={{ textAlign: "center", fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", padding: "2px 0" }}>{d}</div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+            {cells.map((d, i) => {
+              if (!d) return <div key={"p" + i} style={{ minHeight: 64 }} />;
+              const key = dayKey(d);
+              const all = byDate[key] || [];
+              const settled = all.filter((e) => e.result === "won" || e.result === "lost");
+              const wins = settled.filter((e) => e.result === "won").length;
+              const losses = settled.length - wins;
+              const pl = dayPL(settled);
+              const hasPL = hasPLData(settled);
+              const pending = all.filter((e) => !e.result && !e.skipped).length;
+              const isToday = key === todayKey;
+              const bg = settled.length === 0
+                ? (pending > 0 ? "rgba(230,160,0,0.08)" : "rgba(255,255,255,0.025)")
+                : (wins > losses ? "rgba(30,100,50,0.28)" : losses > wins ? "rgba(120,25,25,0.28)" : "rgba(80,80,100,0.18)");
+              const tip = settled.length > 0
+                ? settled.map((e) => (e.game || "?") + " → " + (e.result || "?").toUpperCase()).join("\n") + (hasPL ? "\nP&L: " + (pl >= 0 ? "+" : "") + "$" + pl.toFixed(2) : "")
+                : pending > 0 ? pending + " live" : "";
+              return (
+                <div key={key} title={tip} style={{ minHeight: 64, background: bg, borderRadius: 8, border: "1.5px solid " + (isToday ? "rgba(80,200,100,0.6)" : "rgba(255,255,255,0.07)"), padding: "5px 6px", display: "flex", flexDirection: "column", cursor: settled.length > 0 ? "help" : "default" }}>
+                  <div style={{ fontSize: 11, fontWeight: isToday ? 800 : 500, color: isToday ? "var(--moss)" : settled.length > 0 ? "var(--fg)" : "rgba(255,255,255,0.35)", marginBottom: 2 }}>{d}</div>
+                  {settled.length > 0 && (
+                    <>
+                      {hasPL && (
+                        <div style={{ fontSize: 13, fontWeight: 800, color: pl >= 0 ? "var(--moss)" : "var(--rose)", lineHeight: 1.1, marginBottom: 2 }}>
+                          {pl >= 0 ? "+" : "−"}${Math.abs(pl) >= 100 ? Math.round(Math.abs(pl)) : Math.abs(pl).toFixed(0)}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 10, fontWeight: 700, marginTop: "auto", color: "var(--dim)" }}>
+                        <span style={{ color: wins > 0 ? "var(--moss)" : "var(--dim)" }}>{wins}</span>
+                        <span style={{ margin: "0 2px", opacity: 0.4 }}>–</span>
+                        <span style={{ color: losses > 0 ? "var(--rose)" : "var(--dim)" }}>{losses}</span>
+                      </div>
+                    </>
+                  )}
+                  {settled.length === 0 && pending > 0 && <div style={{ fontSize: 9, color: "var(--amber)", fontWeight: 700, marginTop: 3 }}>{pending} live</div>}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <div style={{ borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.07)" }}>
+          {allSettled.length === 0 ? (
+            <div style={{ padding: "20px", color: "var(--dim)", fontSize: 12, textAlign: "center" }}>No settled bets yet.</div>
+          ) : (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "72px 1fr 60px 70px 84px", padding: "7px 12px", background: "rgba(255,255,255,0.04)", fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>
+                {["DATE","GAME","CALL","STAKE","RESULT"].map((h) => <div key={h}>{h}</div>)}
+              </div>
+              {allSettled.slice(0, 40).map((e, i) => {
+                const d = e._date;
+                const label = d ? d.slice(4, 6) + "/" + d.slice(6, 8) + "/" + d.slice(2, 4) : "—";
+                const price = (e.mktAtPick != null && e.contracts > 0) ? Math.min(0.99, Math.max(0.01, e.mktAtPick / 100)) : null;
+                const stake = price != null ? e.contracts * price : null;
+                const betPL = price != null ? (e.result === "won" ? e.contracts * (1 - price) : -e.contracts * price) : null;
+                return (
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "72px 1fr 60px 70px 84px", padding: "9px 12px", background: i % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent", borderTop: "1px solid rgba(255,255,255,0.04)", fontSize: 12, alignItems: "center" }}>
+                    <div style={{ color: "var(--dim)", fontSize: 11 }}>{label}</div>
+                    <div style={{ fontWeight: 600, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.game || "—"}</div>
+                    <div><span style={{ padding: "1px 6px", borderRadius: 4, fontSize: 10, fontWeight: 800, background: e.call === "NRFI" ? "rgba(80,160,80,0.15)" : "rgba(220,60,60,0.15)", color: e.call === "NRFI" ? "var(--moss)" : "var(--rose)", border: "1px solid " + (e.call === "NRFI" ? "rgba(80,160,80,0.3)" : "rgba(220,60,60,0.3)") }}>{e.call || "—"}</span></div>
+                    <div style={{ color: "var(--dim)", fontSize: 11 }}>{stake != null ? "$" + stake.toFixed(0) : "—"}</div>
+                    <div style={{ fontWeight: 800, color: e.result === "won" ? "var(--moss)" : "var(--rose)" }}>
+                      {betPL != null ? (e.result === "won" ? "+" : "−") + "$" + Math.abs(betPL).toFixed(2) : (e.result === "won" ? "W" : "L")}
+                    </div>
+                  </div>
+                );
+              })}
+              {allSettled.length > 40 && (
+                <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--dim)", textAlign: "center", background: "rgba(255,255,255,0.02)", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                  Showing 40 of {allSettled.length} bets
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -7624,8 +7719,7 @@ function FirstInning() {
       {sect("Pass", passes, "var(--dim)")}
       {rec && rec.length > 0 && (
         <div className="panel" style={{ marginTop: 12 }}>
-          <p className="sect" style={{ margin: "0 0 2px" }}>History calendar</p>
-          <p style={{ fontSize: 11, color: "var(--dim)", margin: "0 0 4px" }}>Daily W-L and P&L from your NRFI calls. P&L only shows for Kalshi bets with contract data.</p>
+          <p className="sect" style={{ margin: "0 0 6px" }}>Daily Profit Tracker</p>
           <NrfiCalendar rec={rec} />
         </div>
       )}
