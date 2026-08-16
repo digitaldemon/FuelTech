@@ -1336,7 +1336,22 @@ const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.f
  *
  * A freeze trips both: the poll stops, nothing enqueues, and on wake every event
  * is a minute old by event time and dropped by the first gate — which is the
- * re-anchoring behaviour the original comment describes, now actually reachable. */const SAY_STALE_MS=45000;const SAY_WAIT_MS=6000;const _sayQ=[];/* Why the callout is producing no sound, when the reason is the browser and not
+ * re-anchoring behaviour the original comment describes, now actually reachable.
+ *
+ * WHY 45s AND NOT SOMETHING TIGHTER, given the feed itself tops out at 26.2s.
+ *
+ * Because the tab is usually in the background, and sayKeepAlive() does not make
+ * a background tab behave like a foreground one — it removes Chrome's 60-second
+ * intensive-throttle stall, measured, but gaps of ~22s survive it. Stack a 22s
+ * poll gap on a 26s feed and a perfectly ordinary line arrives at 48s.
+ *
+ * So this number is a compromise and should be read as one. Tightening it toward
+ * the feed's own ceiling does not make the call fresher — the lateness is not the
+ * gate's doing — it only converts late lines back into silence, which is the
+ * worse of the two failures and the one just fixed. Widening it past a minute
+ * would let a throttled tab read out backlog as though it were live. SAY_MAX and
+ * the front-trim keep a post-stall queue short; this only decides how old the
+ * survivors are allowed to be. */const SAY_STALE_MS=45000;const SAY_WAIT_MS=6000;const _sayQ=[];/* Why the callout is producing no sound, when the reason is the browser and not
  * us. Null means nothing is known to be wrong.
  *
  * This exists because the honest failure was invisible. `u.onerror = done` treats
@@ -1447,7 +1462,40 @@ function speakStop(){const s=typeof window!=="undefined"&&window.speechSynthesis
 // has started and drain the queue out from under it.
 _sayGen++;// A stop ends the session, so the next line is not a repeat of anything —
 // switching games and switching back must be able to re-announce the intro.
-_sayLast=null;if(s)s.cancel();}async function pitcherFirstInning(pid,season){if(pid==null)return null;const k=pid+":"+season;if(_pitI01.has(k))return _pitI01.get(k);let val=null;try{const d=await getJson("https://statsapi.mlb.com/api/v1/people/"+pid+"/stats?stats=statSplits&group=pitching&sitCodes=i01&season="+season);const st=d.stats&&d.stats[0]&&d.stats[0].splits&&d.stats[0].splits[0]&&d.stats[0].splits[0].stat;if(st&&st.gamesPlayed){const bf=Number(st.battersFaced||0);const ip=st.inningsPitched!=null?parseIp(st.inningsPitched):null;const k9=ip&&ip>0?Number(st.strikeOuts||0)*9/ip:null;const bb9=ip&&ip>0?Number(st.baseOnBalls||0)*9/ip:null;const hr9=ip&&ip>0?Number(st.homeRuns||0)*9/ip:null;val={rate:Number(st.runs||0)/st.gamesPlayed,sample:st.gamesPlayed,// numOrNull, not Number. MLB returns "-.--" for a pitcher with no
+_sayLast=null;if(s)s.cancel();}/* THE CALLOUT IS A POLL, AND CHROME STOPS POLLS IN HIDDEN TABS.
+ *
+ * Measured on the live desk while the tab sat in the background, same 1200ms
+ * interval the callout uses:
+ *
+ *   without keepalive   18 ticks in 97.1s   median gap 1214ms   MAX GAP 60003ms
+ *   with keepalive      17 ticks in 35.4s   median gap 1215ms   max gap 13005ms
+ *
+ * Sixty seconds. That is Chrome's intensive throttling, which caps a background
+ * tab at one timer wake per minute, and it lands on top of statsapi's own
+ * publication lag (14.3s to 26.2s, median 24.7s, measured the same afternoon).
+ * A pitch therefore reaches the queue up to eighty seconds after it was thrown,
+ * where it is either read out long after the fact — "way delayed" — or fails the
+ * freshness gate and is dropped — "sometimes doesn't play at all". Both reported
+ * symptoms, one cause, and neither of them is the queue's doing.
+ *
+ * Chrome exempts a tab that is PLAYING AUDIO from intensive throttling.
+ * speechSynthesis does not earn that exemption: it is not an <audio> element or
+ * an audio graph, and the browser does not count it. So while the callout is on,
+ * hold a real audio graph open — a 20Hz oscillator at 0.0001 gain, which is
+ * below the bottom of hearing and then attenuated to nothing again. It is
+ * genuinely playing, so the exemption is earned rather than spoofed, and the
+ * claim it makes is true: this tab is an audio broadcast.
+ *
+ * Started from the toggle's click handler. An AudioContext needs a user gesture
+ * to leave the suspended state, and that click is the same gesture the intro
+ * line already uses to unlock synthesis — there is no second one to wait for.
+ *
+ * Deliberately NOT called from speakStop(): desk-callout-queue-test.js builds
+ * its harness by slicing that function out of this file, and a call to something
+ * defined outside the slice would throw a ReferenceError through the whole
+ * suite. The toggle turns it off explicitly, and FirstInning stops it on unmount. */let _kaCtx=null,_kaOsc=null;function sayKeepAlive(on){if(!on){if(_kaOsc){try{_kaOsc.stop();}catch{/* already stopped */}_kaOsc=null;}if(_kaCtx){try{_kaCtx.close();}catch{/* already closed */}_kaCtx=null;}return;}// Re-entrant: the toggle can fire while a context is already up (or suspended
+// by the browser after a sleep), and rebuilding it would drop the exemption.
+if(_kaCtx){if(_kaCtx.state==="suspended")_kaCtx.resume().catch(()=>{});return;}const AC=typeof window!=="undefined"&&(window.AudioContext||window.webkitAudioContext);if(!AC)return;try{_kaCtx=new AC();const gain=_kaCtx.createGain();gain.gain.value=0.0001;_kaOsc=_kaCtx.createOscillator();_kaOsc.frequency.value=20;_kaOsc.connect(gain);gain.connect(_kaCtx.destination);_kaOsc.start();if(_kaCtx.state==="suspended")_kaCtx.resume().catch(()=>{});}catch{_kaCtx=null;_kaOsc=null;}}async function pitcherFirstInning(pid,season){if(pid==null)return null;const k=pid+":"+season;if(_pitI01.has(k))return _pitI01.get(k);let val=null;try{const d=await getJson("https://statsapi.mlb.com/api/v1/people/"+pid+"/stats?stats=statSplits&group=pitching&sitCodes=i01&season="+season);const st=d.stats&&d.stats[0]&&d.stats[0].splits&&d.stats[0].splits[0]&&d.stats[0].splits[0].stat;if(st&&st.gamesPlayed){const bf=Number(st.battersFaced||0);const ip=st.inningsPitched!=null?parseIp(st.inningsPitched):null;const k9=ip&&ip>0?Number(st.strikeOuts||0)*9/ip:null;const bb9=ip&&ip>0?Number(st.baseOnBalls||0)*9/ip:null;const hr9=ip&&ip>0?Number(st.homeRuns||0)*9/ip:null;val={rate:Number(st.runs||0)/st.gamesPlayed,sample:st.gamesPlayed,// numOrNull, not Number. MLB returns "-.--" for a pitcher with no
 // recorded innings and "INF" for one who has allowed runs without
 // retiring anybody, and Number() turns both into NaN — which is not
 // null, so every `x != null` guard downstream waves it through. That is
@@ -2851,7 +2899,10 @@ const kelly=market&&!started?kellyNRFI(pFinal,market.yesPrice,call):null;const t
 // the inning — the backlog never drains, it just delays everything after it.
 const CALLOUT_STALE_MS=45000;const[callout,setCallout]=useState(false);/* The browser refusing to speak is the one callout failure a listener cannot
    * diagnose: the button says on, the games are tracked, and nothing comes out.
-   * Subscribed once here so the label can say so. */const[voiceBlocked,setVoiceBlocked]=useState(null);useEffect(()=>{onSayBlocked(setVoiceBlocked);return()=>onSayBlocked(null);},[]);/* Which game is being listened to. null = all of them, the original behaviour.
+   * Subscribed once here so the label can say so. */const[voiceBlocked,setVoiceBlocked]=useState(null);useEffect(()=>{onSayBlocked(setVoiceBlocked);return()=>onSayBlocked(null);},[]);/* Unmount must release the audio graph, or navigating away from the desk
+   * leaves a context open for the life of the tab. Empty deps on purpose: a dep
+   * on `callout` would tear the keepalive down on the very transition that just
+   * built it, because cleanup runs before the next effect body. */useEffect(()=>()=>sayKeepAlive(false),[]);/* Which game is being listened to. null = all of them, the original behaviour.
    *
    * That behaviour is fine at 7:05 and unusable at 4:10, when five games open
    * the 1st within a few minutes of each other: the utterances interleave, and
@@ -2923,7 +2974,13 @@ if(runs>0){speak(tag+(loud&&line?line+verdict:verdict.slice(2)),true);st.settled
 // still gets announced; if it does not, the listener has already heard it.
 st.n=Math.max(st.n,live.plays.length);if(!st.settled&&live.past1){speak(tag+"First inning is clean in "+r.home+". N-R-F-I — "+(side==="NRFI"?mine?"you are a winner":"that is a winner":mine?"that ticket is dead":"the desk was wrong")+".",true);st.settled=true;}spoken.current.set(r.gamePk,st);}async function tick(){// A slow round trip must not stack ticks on top of each other; skipping is
 // correct because the next poll is 2.5s away and reads the same state.
-if(inFlight)return;inFlight=true;try{await Promise.all(tracked().map(pollGame));}finally{inFlight=false;}}tick();const id=setInterval(tick,CALLOUT_POLL_MS);return()=>{stopped=true;clearInterval(id);};// Positions load asynchronously and usually land AFTER the board does, so
+if(inFlight)return;inFlight=true;try{await Promise.all(tracked().map(pollGame));}finally{inFlight=false;}}tick();const id=setInterval(tick,CALLOUT_POLL_MS);/* Foregrounding the tab re-anchors the call immediately instead of waiting
+     * out whatever is left of a throttled interval. The keepalive above removes
+     * the 60-second stall but not all background throttling — gaps of 20s still
+     * happen with it running — so the moment the tab is visible again is the
+     * moment the poll is cheapest and most useful, and it should not be spent
+     * waiting. Every other polling loop in this file already does this; the
+     * callout, the one loop where latency is the entire product, did not. */const onVis=()=>{if(!document.hidden)tick();};document.addEventListener("visibilitychange",onVis);return()=>{stopped=true;clearInterval(id);document.removeEventListener("visibilitychange",onVis);};// Positions load asynchronously and usually land AFTER the board does, so
 // they have to be in the dep list — otherwise the effect closes over an
 // empty position set and never picks the held games up.
 //
@@ -3007,7 +3064,15 @@ const deltaAbs=Math.abs(delta);const improving=delta>0;const color=deltaAbs>=0.1
 // can land an hour later with no gesture anywhere near it.
 // Spelled out: "NRFI" as a word comes back from every synthesiser
 // as "nerfy". The settle lines already say it this way.
-if(next)speak("Digital Demons N-R-F-I Live. On the air.");else speakStop();setCallout(next);},title:voiceBlocked?"Your browser blocked audio for this page. Tap this button again to allow it — "+"speech has to start from a tap, and the desk will stay silent until it does.":"Digital Demons NRFI Live — the desk's own first-inning broadcast. Calls every game on the board "+"that has a call or a position, pitch by pitch, then the NRFI result. "+"Built off the MLB play feed, not a broadcast: league game audio is licensed per-subscriber and cannot be embedded here.",style:voiceBlocked&&callout?{color:"var(--rust, #c0632f)",borderColor:"var(--rust, #c0632f)"}:callout?{color:"var(--moss)",borderColor:"var(--moss)"}:undefined},voiceBlocked&&callout?"🔇 Blocked by browser · tap to allow":callout?"🔊 Digital Demons NRFI Live · on":"🔈 Digital Demons NRFI Live"),callout&&calloutGames.length>1&&/*#__PURE__*/React.createElement("span",{style:{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}},/*#__PURE__*/React.createElement("span",{style:{fontSize:11,color:"var(--dim)"}},"Listening to"),[{pk:null,label:"All"}].concat(calloutGames.map(r=>({pk:r.gamePk,label:(r.awayAbbr||r.away)+"@"+(r.homeAbbr||r.home)}))).map(g=>/*#__PURE__*/React.createElement("button",{key:String(g.pk),className:"btn btn-ghost btn-sm",onClick:()=>setFocus(g.pk),title:g.pk===null?"Call every game at once. On an overlapping slate they talk over each other.":"Call only this game. Others stay muted, but a run or a clean inning is still announced by name.",style:{fontSize:11,padding:"2px 7px",...(focus===g.pk?{color:"var(--moss)",borderColor:"var(--moss)"}:null)}},g.label))),importMsg&&/*#__PURE__*/React.createElement("span",{style:{fontSize:12,color:importMsg.ok?"var(--moss)":"var(--rose)"}},importMsg.text)),(()=>{const counts={ELITE:0,GREEN:0,YELLOW:0,RED:0,"NO DS":0};for(const r of validRows)counts[dsTier(dsOf(r),dsTh).label]++;const isDefault=dsTh.elite===DS_TIER_DEFAULTS.elite&&dsTh.green===DS_TIER_DEFAULTS.green&&dsTh.yellow===DS_TIER_DEFAULTS.yellow;/* Clamp on commit, not on keystroke, and clamp against BOTH neighbours:
+// Both unlocks happen on this one click and neither can be
+// deferred: synthesis needs the gesture, and so does the
+// AudioContext that keeps the poll alive once the tab goes behind
+// something else. Keepalive first — it is the cheaper failure if
+// the browser refuses one of them.
+if(next){sayKeepAlive(true);speak("Digital Demons N-R-F-I Live. On the air.");}else{sayKeepAlive(false);speakStop();}setCallout(next);},title:voiceBlocked?"Your browser blocked audio for this page. Tap this button again to allow it — "+"speech has to start from a tap, and the desk will stay silent until it does.":"Digital Demons NRFI Live — the desk's own first-inning broadcast. Calls every game on the board "+"that has a call or a position, pitch by pitch, then the NRFI result. "+"Built off the MLB play feed, not a broadcast: league game audio is licensed per-subscriber and cannot be embedded here.\n\n"+// The call is late and always will be. Saying so is the difference between
+// a listener hearing a 25s-old pitch and concluding the feature is broken,
+// and hearing it and knowing that is as live as the data goes.
+"RUNS ABOUT 25 SECONDS BEHIND THE PARK. statsapi does not publish a pitch when it lands — "+"measured 14 to 26 seconds after the fact, median 25. That lag is the feed's and no amount of "+"polling recovers it, so treat this as a delayed call, not a live one. Anything much later than "+"that is dropped rather than read out stale.",style:voiceBlocked&&callout?{color:"var(--rust, #c0632f)",borderColor:"var(--rust, #c0632f)"}:callout?{color:"var(--moss)",borderColor:"var(--moss)"}:undefined},voiceBlocked&&callout?"🔇 Blocked by browser · tap to allow":callout?"🔊 Digital Demons NRFI Live · on":"🔈 Digital Demons NRFI Live"),callout&&calloutGames.length>1&&/*#__PURE__*/React.createElement("span",{style:{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}},/*#__PURE__*/React.createElement("span",{style:{fontSize:11,color:"var(--dim)"}},"Listening to"),[{pk:null,label:"All"}].concat(calloutGames.map(r=>({pk:r.gamePk,label:(r.awayAbbr||r.away)+"@"+(r.homeAbbr||r.home)}))).map(g=>/*#__PURE__*/React.createElement("button",{key:String(g.pk),className:"btn btn-ghost btn-sm",onClick:()=>setFocus(g.pk),title:g.pk===null?"Call every game at once. On an overlapping slate they talk over each other.":"Call only this game. Others stay muted, but a run or a clean inning is still announced by name.",style:{fontSize:11,padding:"2px 7px",...(focus===g.pk?{color:"var(--moss)",borderColor:"var(--moss)"}:null)}},g.label))),importMsg&&/*#__PURE__*/React.createElement("span",{style:{fontSize:12,color:importMsg.ok?"var(--moss)":"var(--rose)"}},importMsg.text)),(()=>{const counts={ELITE:0,GREEN:0,YELLOW:0,RED:0,"NO DS":0};for(const r of validRows)counts[dsTier(dsOf(r),dsTh).label]++;const isDefault=dsTh.elite===DS_TIER_DEFAULTS.elite&&dsTh.green===DS_TIER_DEFAULTS.green&&dsTh.yellow===DS_TIER_DEFAULTS.yellow;/* Clamp on commit, not on keystroke, and clamp against BOTH neighbours:
          * the bands have to stay ordered elite > green > yellow or one of them
          * collapses to nothing and every card on the slate jumps two tiers at
          * once. Each setter pins the other two and moves only its own edge. */const setElite=v=>saveDsTh({...dsTh,elite:Math.min(99,Math.max(dsTh.green+0.5,v))});const setGreen=v=>saveDsTh({...dsTh,green:Math.max(dsTh.yellow+0.5,Math.min(dsTh.elite-0.5,v))});const setYellow=v=>saveDsTh({...dsTh,yellow:Math.max(5,Math.min(dsTh.green-0.5,v))});const num=(label,val,onSet,color,title)=>/*#__PURE__*/React.createElement("span",{style:{display:"flex",alignItems:"center",gap:5},title:title},/*#__PURE__*/React.createElement("span",{style:{fontSize:10,fontWeight:700,letterSpacing:"0.08em",color}},label),/*#__PURE__*/React.createElement("input",{type:"number",step:"0.5",min:"5",max:"95",defaultValue:val,key:label+val,onBlur:e=>{const v=Number(e.target.value);if(Number.isFinite(v))onSet(v);},onKeyDown:e=>{if(e.key==="Enter")e.target.blur();},style:{width:58,fontSize:12,padding:"2px 5px",background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.12)",borderRadius:5,color:"var(--bone)",fontVariantNumeric:"tabular-nums"}}));return/*#__PURE__*/React.createElement("div",{style:{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",margin:"0 0 8px",padding:"7px 10px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:8}},/*#__PURE__*/React.createElement("span",{style:{fontSize:10,fontWeight:700,letterSpacing:"0.08em",color:"var(--dim)"}},"DUAL SCORE TIERS"),num("ELITE ≥",dsTh.elite,setElite,"var(--cyan)","Top 4.5% of the slate; 69.0% NRFI on 58 cached games. NOT his 68 — his DS is a 0-100 rating, ours is a calibrated probability that maxed at 67.2 over 1283 games, so his cutoff would fire zero times ever. This is set where OUR distribution is as selective as he is. He drops to ELITE-only on a thin board (\"Tough board today. Only playing MIL@LAD\")."),num("GREEN ≥",dsTh.green,setGreen,"var(--moss)","GREEN-or-better is 19.4% of the slate, matching his real 19.0% play rate (2.59 of 13.6 games a day). The band itself hits 56.0% on 191 cached games. This is a selectivity anchor, not a reading of his number — see scripts/nrfi-ds-tier-brackets.js for his own cutoffs on his own scale."),num("YELLOW ≥",dsTh.yellow,setYellow,"var(--amber)","Roughly our median p (54.2). Splits the half of the slate we are lukewarm on from the half we are against: yellow band 51.8%, red band 45.3%, base rate 50.0%. The weakest of the three cuts — nothing he publishes is ever red, so his behaviour cannot anchor it."),/*#__PURE__*/React.createElement("span",{style:{fontSize:11,color:"var(--dim)",fontVariantNumeric:"tabular-nums"},title:"How today's board splits at the cutoffs above. Held games and settled games are not counted \u2014 they are not decisions."},"today: ",/*#__PURE__*/React.createElement("span",{style:{color:"var(--cyan)"}},counts.ELITE," elite")," · ",/*#__PURE__*/React.createElement("span",{style:{color:"var(--moss)"}},counts.GREEN," green")," · ",/*#__PURE__*/React.createElement("span",{style:{color:"var(--amber)"}},counts.YELLOW," yellow")," · ",/*#__PURE__*/React.createElement("span",{style:{color:"var(--rose)"}},counts.RED," red"),counts["NO DS"]>0?" · "+counts["NO DS"]+" no DS":""),!isDefault&&/*#__PURE__*/React.createElement("button",{className:"btn btn-ghost btn-sm",style:{fontSize:11,padding:"2px 7px"},onClick:()=>saveDsTh({...DS_TIER_DEFAULTS}),title:"Back to "+DS_TIER_DEFAULTS.elite+" / "+DS_TIER_DEFAULTS.green+" / "+DS_TIER_DEFAULTS.yellow},"Reset"),/*#__PURE__*/React.createElement("span",{style:{fontSize:10,color:"var(--dim)"},title:"The badge is a threshold on the DS level. It is NOT the edge over the break-even price \u2014 his DS 60.0 against BE 51.5% is an +8.5pt edge and still YELLOW, while DS 64.7 at +5.2 is GREEN. The board's #N badge is what carries the edge ordering."},"badge = DS level, not edge"));})(),(()=>{const RISK_CFG={ghost:{mult:0.10,maxPct:0.02,label:"Ghost",drawdownEst:"2–4%",desc:"1/10 Kelly — minimal variance, use while learning."},conservative:{mult:0.25,maxPct:0.06,label:"Conservative",drawdownEst:"5–12%",desc:"1/4 Kelly — proven, sustainable long-term."},moderate:{mult:0.50,maxPct:0.12,label:"Moderate",drawdownEst:"10–22%",desc:"1/2 Kelly — industry standard, recommended."},standard:{mult:0.75,maxPct:0.18,label:"Standard",drawdownEst:"15–30%",desc:"3/4 Kelly — for experienced bettors."},aggressive:{mult:1.00,maxPct:0.25,label:"Aggressive",drawdownEst:"20–40%",desc:"Full Kelly — maximum theoretical growth rate."},turbo:{mult:1.50,maxPct:0.35,label:"Turbo",drawdownEst:"35–60%",desc:"1.5× Kelly — over-Kelly, elite slates only."},xtreme:{mult:2.00,maxPct:0.50,label:"Xtreme",drawdownEst:"50–80%",desc:"2× Kelly — high variance, strong edge required."},degen:{mult:3.00,maxPct:0.65,label:"Degen",drawdownEst:"70–95%",desc:"3× Kelly — ruin risk is significant."},yolo:{mult:5.00,maxPct:0.80,label:"YOLO",drawdownEst:"90–99%",desc:"5× Kelly — max over-bet, expect large swings."}};const SPEED_CFG={patient:{minProb:63,evMult:0.45,betsRec:"1–2",label:"Patient",desc:"STRONG picks only (≥63%)"},selective:{minProb:57,evMult:0.70,betsRec:"2–4",label:"Selective",desc:"BET + STRONG (≥57%)"},steady:{minProb:52,evMult:1.00,betsRec:"3–6",label:"Steady",desc:"All rated picks (≥52%)"},fast:{minProb:57,evMult:1.20,betsRec:"4–8",label:"Fast",desc:"All picks, maximize volume"},blitz:{minProb:50,evMult:1.45,betsRec:"all",label:"Blitz",desc:"Every game on slate"}};const rCfg=RISK_CFG[riskLevel]||RISK_CFG.moderate;const sCfg=SPEED_CFG[growthSpeed]||SPEED_CFG.steady;const riskMult=rCfg.mult;// P&L from settled Kalshi imports — informational context only

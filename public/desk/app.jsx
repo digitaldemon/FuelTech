@@ -5806,7 +5806,22 @@ const SAY_MAX = 3;
  *
  * A freeze trips both: the poll stops, nothing enqueues, and on wake every event
  * is a minute old by event time and dropped by the first gate — which is the
- * re-anchoring behaviour the original comment describes, now actually reachable. */
+ * re-anchoring behaviour the original comment describes, now actually reachable.
+ *
+ * WHY 45s AND NOT SOMETHING TIGHTER, given the feed itself tops out at 26.2s.
+ *
+ * Because the tab is usually in the background, and sayKeepAlive() does not make
+ * a background tab behave like a foreground one — it removes Chrome's 60-second
+ * intensive-throttle stall, measured, but gaps of ~22s survive it. Stack a 22s
+ * poll gap on a 26s feed and a perfectly ordinary line arrives at 48s.
+ *
+ * So this number is a compromise and should be read as one. Tightening it toward
+ * the feed's own ceiling does not make the call fresher — the lateness is not the
+ * gate's doing — it only converts late lines back into silence, which is the
+ * worse of the two failures and the one just fixed. Widening it past a minute
+ * would let a throttled tab read out backlog as though it were live. SAY_MAX and
+ * the front-trim keep a post-stall queue short; this only decides how old the
+ * survivors are allowed to be. */
 const SAY_STALE_MS = 45000;
 const SAY_WAIT_MS = 6000;
 const _sayQ = [];
@@ -6015,6 +6030,62 @@ function speakStop() {
   // switching games and switching back must be able to re-announce the intro.
   _sayLast = null;
   if (s) s.cancel();
+}
+
+/* THE CALLOUT IS A POLL, AND CHROME STOPS POLLS IN HIDDEN TABS.
+ *
+ * Measured on the live desk while the tab sat in the background, same 1200ms
+ * interval the callout uses:
+ *
+ *   without keepalive   18 ticks in 97.1s   median gap 1214ms   MAX GAP 60003ms
+ *   with keepalive      17 ticks in 35.4s   median gap 1215ms   max gap 13005ms
+ *
+ * Sixty seconds. That is Chrome's intensive throttling, which caps a background
+ * tab at one timer wake per minute, and it lands on top of statsapi's own
+ * publication lag (14.3s to 26.2s, median 24.7s, measured the same afternoon).
+ * A pitch therefore reaches the queue up to eighty seconds after it was thrown,
+ * where it is either read out long after the fact — "way delayed" — or fails the
+ * freshness gate and is dropped — "sometimes doesn't play at all". Both reported
+ * symptoms, one cause, and neither of them is the queue's doing.
+ *
+ * Chrome exempts a tab that is PLAYING AUDIO from intensive throttling.
+ * speechSynthesis does not earn that exemption: it is not an <audio> element or
+ * an audio graph, and the browser does not count it. So while the callout is on,
+ * hold a real audio graph open — a 20Hz oscillator at 0.0001 gain, which is
+ * below the bottom of hearing and then attenuated to nothing again. It is
+ * genuinely playing, so the exemption is earned rather than spoofed, and the
+ * claim it makes is true: this tab is an audio broadcast.
+ *
+ * Started from the toggle's click handler. An AudioContext needs a user gesture
+ * to leave the suspended state, and that click is the same gesture the intro
+ * line already uses to unlock synthesis — there is no second one to wait for.
+ *
+ * Deliberately NOT called from speakStop(): desk-callout-queue-test.js builds
+ * its harness by slicing that function out of this file, and a call to something
+ * defined outside the slice would throw a ReferenceError through the whole
+ * suite. The toggle turns it off explicitly, and FirstInning stops it on unmount. */
+let _kaCtx = null, _kaOsc = null;
+function sayKeepAlive(on) {
+  if (!on) {
+    if (_kaOsc) { try { _kaOsc.stop(); } catch { /* already stopped */ } _kaOsc = null; }
+    if (_kaCtx) { try { _kaCtx.close(); } catch { /* already closed */ } _kaCtx = null; }
+    return;
+  }
+  // Re-entrant: the toggle can fire while a context is already up (or suspended
+  // by the browser after a sleep), and rebuilding it would drop the exemption.
+  if (_kaCtx) { if (_kaCtx.state === "suspended") _kaCtx.resume().catch(() => {}); return; }
+  const AC = typeof window !== "undefined" && (window.AudioContext || window.webkitAudioContext);
+  if (!AC) return;
+  try {
+    _kaCtx = new AC();
+    const gain = _kaCtx.createGain();
+    gain.gain.value = 0.0001;
+    _kaOsc = _kaCtx.createOscillator();
+    _kaOsc.frequency.value = 20;
+    _kaOsc.connect(gain); gain.connect(_kaCtx.destination);
+    _kaOsc.start();
+    if (_kaCtx.state === "suspended") _kaCtx.resume().catch(() => {});
+  } catch { _kaCtx = null; _kaOsc = null; }
 }
 
 async function pitcherFirstInning(pid, season) {
@@ -9591,6 +9662,11 @@ function FirstInning() {
    * Subscribed once here so the label can say so. */
   const [voiceBlocked, setVoiceBlocked] = useState(null);
   useEffect(() => { onSayBlocked(setVoiceBlocked); return () => onSayBlocked(null); }, []);
+  /* Unmount must release the audio graph, or navigating away from the desk
+   * leaves a context open for the life of the tab. Empty deps on purpose: a dep
+   * on `callout` would tear the keepalive down on the very transition that just
+   * built it, because cleanup runs before the next effect body. */
+  useEffect(() => () => sayKeepAlive(false), []);
   /* Which game is being listened to. null = all of them, the original behaviour.
    *
    * That behaviour is fine at 7:05 and unusable at 4:10, when five games open
@@ -9729,7 +9805,16 @@ function FirstInning() {
     }
     tick();
     const id = setInterval(tick, CALLOUT_POLL_MS);
-    return () => { stopped = true; clearInterval(id); };
+    /* Foregrounding the tab re-anchors the call immediately instead of waiting
+     * out whatever is left of a throttled interval. The keepalive above removes
+     * the 60-second stall but not all background throttling — gaps of 20s still
+     * happen with it running — so the moment the tab is visible again is the
+     * moment the poll is cheapest and most useful, and it should not be spent
+     * waiting. Every other polling loop in this file already does this; the
+     * callout, the one loop where latency is the entire product, did not. */
+    const onVis = () => { if (!document.hidden) tick(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { stopped = true; clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
     // Positions load asynchronously and usually land AFTER the board does, so
     // they have to be in the dep list — otherwise the effect closes over an
     // empty position set and never picks the held games up.
@@ -10506,8 +10591,13 @@ function FirstInning() {
               // can land an hour later with no gesture anywhere near it.
               // Spelled out: "NRFI" as a word comes back from every synthesiser
               // as "nerfy". The settle lines already say it this way.
-              if (next) speak("Digital Demons N-R-F-I Live. On the air.");
-              else speakStop();
+              // Both unlocks happen on this one click and neither can be
+              // deferred: synthesis needs the gesture, and so does the
+              // AudioContext that keeps the poll alive once the tab goes behind
+              // something else. Keepalive first — it is the cheaper failure if
+              // the browser refuses one of them.
+              if (next) { sayKeepAlive(true); speak("Digital Demons N-R-F-I Live. On the air."); }
+              else { sayKeepAlive(false); speakStop(); }
               setCallout(next);
             }}
             title={voiceBlocked
@@ -10515,7 +10605,14 @@ function FirstInning() {
                 "speech has to start from a tap, and the desk will stay silent until it does."
               : "Digital Demons NRFI Live — the desk's own first-inning broadcast. Calls every game on the board " +
                 "that has a call or a position, pitch by pitch, then the NRFI result. " +
-                "Built off the MLB play feed, not a broadcast: league game audio is licensed per-subscriber and cannot be embedded here."}
+                "Built off the MLB play feed, not a broadcast: league game audio is licensed per-subscriber and cannot be embedded here.\n\n" +
+                // The call is late and always will be. Saying so is the difference between
+                // a listener hearing a 25s-old pitch and concluding the feature is broken,
+                // and hearing it and knowing that is as live as the data goes.
+                "RUNS ABOUT 25 SECONDS BEHIND THE PARK. statsapi does not publish a pitch when it lands — " +
+                "measured 14 to 26 seconds after the fact, median 25. That lag is the feed's and no amount of " +
+                "polling recovers it, so treat this as a delayed call, not a live one. Anything much later than " +
+                "that is dropped rather than read out stale."}
             style={voiceBlocked && callout ? { color: "var(--rust, #c0632f)", borderColor: "var(--rust, #c0632f)" }
               : callout ? { color: "var(--moss)", borderColor: "var(--moss)" } : undefined}>
             {/* Silence with the button lit is indistinguishable from a quiet
