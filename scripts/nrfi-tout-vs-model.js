@@ -97,9 +97,29 @@ const CACHE = path.join(__dirname, "nrfi-tout-vs-model.json");
 
 async function collect(id, maxDates, se) {
   process.stderr.write("grading the seller's book...\n");
-  const { graded } = await gradeSeller(id, true);
+  const { graded, pageErr } = await gradeSeller(id, true);
   const ok = graded.filter((x) => x.a.ok && x.a.day);
   process.stderr.write(`  ${ok.length} legs resolved to a final game\n`);
+
+  /* Stop here rather than "successfully" caching nothing.
+   *
+   * An empty book is not a small book. If the fetch failed there is no
+   * information in this run at all, and every downstream number would be
+   * computed over zero rows — which prints as "nothing to compare" rather than
+   * as an error, and leaves an empty cache file behind that looks valid to the
+   * next reader. The cache on disk is the only copy of ~95 scored dates that
+   * take a long time to rebuild, so the bar for replacing it is that this run
+   * actually has something. */
+  if (!ok.length) {
+    const why = pageErr
+      ? `the seller feed failed (${pageErr})`
+      : "the seller's settled book came back empty";
+    throw new Error(
+      `${why}, so this run resolved 0 legs.\n` +
+      "Refusing to write the cache: an empty result would replace the existing scored\n" +
+      "dates with nothing, and that is not recoverable from this script. Retry when\n" +
+      "JuiceReel is answering; the current cache is left untouched.");
+  }
 
   // Group his picks by the game's official date, because the percentile test is
   // "against the slate he chose from", and the slate is a day.
@@ -157,6 +177,26 @@ async function collect(id, maxDates, se) {
   // clean one and would have printed leaked hit rates with nothing to show for
   // it. The mode is a property of the run, not of the model, so it has to be
   // written down separately.
+  /* A rebuild may not quietly shrink the cache.
+   *
+   * The empty-book guard above catches a total feed failure. This catches the
+   * partial one, which is worse because it still looks like a successful run:
+   * if JuiceReel serves two pages and then 500s, we score a handful of dates,
+   * overwrite 95 with 12, and every band statistic downstream silently loses
+   * most of its power while continuing to print confident-looking numbers.
+   * Losing dates is sometimes legitimate (a smaller --maxDates, a seller who
+   * deleted history), so this is overridable — but it has to be said out loud. */
+  const prevDates = (() => {
+    try { return (JSON.parse(fs.readFileSync(CACHE, "utf8")).dates || []).length; } catch { return 0; }
+  })();
+  if (prevDates && dates.length < prevDates * 0.9 && !process.argv.includes("--shrink")) {
+    throw new Error(
+      `this run scored ${dates.length} dates but the cache on disk holds ${prevDates}.\n` +
+      "Refusing to overwrite: a rebuild that loses more than 10% of its dates is far more\n" +
+      "often a truncated feed than a real change, and the numbers it produces still look\n" +
+      "plausible. If the shrink is intended (smaller maxDates, seller pruned history):\n" +
+      `  node scripts/nrfi-tout-vs-model.js ${id} ${maxDates} --shrink`);
+  }
   fs.writeFileSync(CACHE, JSON.stringify({ at: new Date().toISOString(), season: se, simW, modelSig,
     pitMode: PIT_MODE, pitStats: pitStats(),
     dates, slates: [...slates], byDate: [...byDate] }));

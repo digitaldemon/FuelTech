@@ -183,11 +183,24 @@ async function actualFirstInning(pick) {
 // model-comparison script grades the same legs the same way rather than
 // re-deriving them; `graded` carries the resolved MLB game, which is the
 // expensive part and the part easiest to get subtly wrong.
+/* Returns { rows, picks, graded, pageErr }.
+ *
+ * `pageErr` is the reason paging stopped early, or null if it ran to a natural
+ * empty page. It exists because the two ways this function returns an empty
+ * book are NOT the same event: "this seller has settled nothing" is a fact
+ * about the seller, and "JuiceReel answered 500" is a fact about the network.
+ * Without the distinction a caller sees `rows: []` for both and, if it caches,
+ * happily writes an empty result over a good one. That is exactly what happened
+ * on 2026-08-16: page 0 returned 500, this returned 0 legs, and the cache
+ * rebuild overwrote 95 scored dates with nothing. Callers that persist anything
+ * MUST check this field. */
 async function gradeSeller(id, quiet) {
   const rows = [];
+  let pageErr = null;
   for (let page = 0; page < 40; page++) {
     let j;
-    try { j = await jget(`${JR}/bets/${id}/settled?page=${page}`); } catch (e) { console.error("  page " + page + " failed: " + e.message); break; }
+    try { j = await jget(`${JR}/bets/${id}/settled?page=${page}`); }
+    catch (e) { pageErr = `page ${page}: ${e.message}`; console.error("  page " + page + " failed: " + e.message); break; }
     const r = j?.data?.bets?.data?.rows;
     if (!Array.isArray(r) || !r.length) break;
     rows.push(...r);
@@ -196,7 +209,7 @@ async function gradeSeller(id, quiet) {
   const picks = firstInningSubbets(rows);
   const graded = [];
   for (const p of picks) graded.push({ p, a: await actualFirstInning(p) });
-  return { rows, picks, graded };
+  return { rows, picks, graded, pageErr };
 }
 
 async function main() {
