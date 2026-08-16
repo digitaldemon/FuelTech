@@ -7435,6 +7435,53 @@ function nrfiEvaluate(ctx) {
       apps: (ctx.homeMeta && ctx.homeMeta.g) || 0, seasonIp: (ctx.homeMeta && ctx.homeMeta.ip) || 0,
       ...pitcherI01Profile(ctx.homePit, ctx.homeMeta && ctx.homeMeta.seasonEra, ctx.homeRolling, ctx.homePeri) },
   };
+  /* Every factor that moved the probability, as the SHIPPED number.
+   *
+   * Exists because "what separates his picks from ours" cannot be answered from
+   * pNRFI alone. nrfi-tout-profile.js got as far as it could on the four things
+   * the cache recorded (p, consensus, confidence, thin arms), found his top-half
+   * picks look identical to their band peers on all four while beating them by
+   * 17.3 pts, and ended by prescribing exactly this: a re-score that records the
+   * INPUTS, so the question becomes "does any factor separate them" instead of
+   * "does any summary of the factors".
+   *
+   * Reported from inside the evaluator rather than recomputed by the harness,
+   * and that is the whole point. A harness CAN call pitchSkillFactor and
+   * openerFactor itself — they come out of the same slice bundle — but it would
+   * have to re-supply the arguments, and openerFactor alone takes four of them
+   * off two different context objects. That wiring is a second copy, it drifts
+   * silently, and a factor audit reading a stale copy would attribute the
+   * model's behaviour to numbers the model never used. These are the values the
+   * lambda and the sim were actually built from.
+   *
+   * `.f` for the factor objects and `.factor` for the three that predate that
+   * convention (lineup, travel, wx) — read off the same expressions that feed
+   * offMult/pitMult/env directly above, so a shape change breaks both together
+   * rather than leaving this quietly undefined.
+   */
+  const factors = {
+    awayOffBase, homeOffBase, awayPitBase, homePitBase,
+    awaySkill: awaySkill.f, homeSkill: homeSkill.f,
+    awayOpen: awayOpen.f, homeOpen: homeOpen.f,
+    awayOpenG: awayOpenG.f, homeOpenG: homeOpenG.f,
+    awayLoad: awayLoad.f, homeLoad: homeLoad.f,
+    awayTrend: awayTrend.f, homeTrend: homeTrend.f,
+    awayVenue: awayVenue.f, homeVenue: homeVenue.f,
+    awayOffTrend: awayOffTrend.f, homeOffTrend: homeOffTrend.f,
+    awayOffVenue: awayOffVenue.f, homeOffVenue: homeOffVenue.f,
+    awayOffKRate: awayOffKRate.f, homeOffKRate: homeOffKRate.f,
+    awayOffAdv: awayOffAdv.f, homeOffAdv: homeOffAdv.f,
+    awayLineup: ctx.awayLineup.factor, homeLineup: ctx.homeLineup.factor,
+    awayTravel: ctx.awayTravel.factor, homeTravel: ctx.homeTravel.factor,
+    env,
+    // The composed multipliers, so an audit can ask whether the gap is in one
+    // term or in how they add up. These are the exact expressions applied to
+    // the bases above, not a restatement of them.
+    awayOffMult: offMult(ctx.awayLineup, ctx.awayTravel, awayOffTrend, awayOffAdv, awayOffVenue, awayOffKRate),
+    homeOffMult: offMult(ctx.homeLineup, ctx.homeTravel, homeOffTrend, homeOffAdv, homeOffVenue, homeOffKRate),
+    awayPitMult: pitMult(awaySkill, awayOpen, awayOpenG, awayLoad, awayTrend, awayVenue),
+    homePitMult: pitMult(homeSkill, homeOpen, homeOpenG, homeLoad, homeTrend, homeVenue),
+  };
   // A non-finite probability must never leave this function. Downstream,
   // `pFinal >= 0.5` is false for NaN, so the game would render as a confident-
   // looking "YRFI · Pass — too close" rather than as the missing data it is.
@@ -7442,7 +7489,7 @@ function nrfiEvaluate(ctx) {
   const modelError = !Number.isFinite(pNRFI) ? "model produced a non-finite probability" : null;
   return { pNRFI: modelError ? null : pNRFI, pNRFI_simProj, checks,
     aligned: { agree, total: famTotal, rows: nonNeutral.length },
-    confidence: conf, method, pitProfiles, modelError };
+    confidence: conf, method, pitProfiles, factors, modelError };
 }
 const rate2 = (o) => (o && o.rate != null ? o.rate.toFixed(2) : "—");
 const awayPit0 = (o) => (o && o.rate != null ? o.rate.toFixed(2) + " R/1st" : "TBD");

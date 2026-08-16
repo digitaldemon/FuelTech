@@ -375,18 +375,21 @@ function pitcherIndex() {
   if (pitIndex) return pitIndex;
   const games = leakfreeGames();
   pitIndex = new Map();
-  const push = (id, date, season, runs) => {
+  const push = (id, date, season, runs, isHome) => {
     if (id == null) return;
     const k = String(id);
     let a = pitIndex.get(k); if (!a) pitIndex.set(k, a = []);
-    a.push({ date, season, runs });
+    a.push({ date, season, runs, isHome });
   };
   for (const g of games) {
     // hpRuns is what the HOME starter allowed (the away side batted), and
     // apRuns what the AWAY starter allowed. Crossing these silently inverts
     // every arm in the model, so it is spelled out rather than inferred.
-    push(g.hp, g.date, g.season, g.hpRuns);
-    push(g.ap, g.date, g.season, g.apRuns);
+    // `isHome` is which park the ARM was working in, which is the split
+    // pitcherVenueFactor reads — it is a property of the start, not of the run
+    // total, so it comes straight off which slot the id filled.
+    push(g.hp, g.date, g.season, g.hpRuns, true);
+    push(g.ap, g.date, g.season, g.apRuns, false);
   }
   // Sorted by date so the prefix scan is a walk-forward rather than a filter
   // over an arbitrary order, which is what lets the scan stop at the first
@@ -413,15 +416,17 @@ let teamIndex = null;
 function teamOffIndex() {
   if (teamIndex) return teamIndex;
   teamIndex = new Map();
-  const push = (id, date, season, runs) => {
+  const push = (id, date, season, runs, isHome) => {
     if (id == null) return;
     const k = String(id);
     let a = teamIndex.get(k); if (!a) teamIndex.set(k, a = []);
-    a.push({ date, season, runs });
+    a.push({ date, season, runs, isHome });
   };
   for (const g of leakfreeGames()) {
-    push(g.away, g.date, g.season, g.hpRuns);
-    push(g.home, g.date, g.season, g.apRuns);
+    // Here `isHome` is which park the LINEUP batted in — the away club scored
+    // hpRuns off the home starter, so that row is a road game for them.
+    push(g.away, g.date, g.season, g.hpRuns, false);
+    push(g.home, g.date, g.season, g.apRuns, true);
   }
   for (const log of teamIndex.values()) log.sort(byDateAsc);
   return teamIndex;
@@ -465,7 +470,19 @@ const teamOffApi = (id, se) => memo("t" + id + se, async () => {
   try { const d = await J(`https://statsapi.mlb.com/api/v1/teams/${id}/stats?stats=statSplits&group=hitting&sitCodes=i01,vr,vl&season=${se}`);
     const sp = d.stats?.[0]?.splits || []; const f = (re) => sp.find((x) => re.test(x.split?.description || ""))?.stat;
     const i01 = f(/first inning/i), vr = f(/right/i), vl = f(/left/i); if (!i01 || !i01.gamesPlayed) return null;
-    return { rate: (+i01.runs || 0) / i01.gamesPlayed, sample: i01.gamesPlayed, opsVsR: vr?.ops != null ? +vr.ops : null, opsVsL: vl?.ops != null ? +vl.ops : null }; } catch { return null; }
+    /* kRate/kSample come off the SAME i01 split already in hand, and their
+     * absence here was silent: offKrateFactor reads `off.kRate` and returns a
+     * flat {f:1} when it is null, so every harness run priced team first-inning
+     * K% at exactly neutral on every game while the board — which reads them in
+     * teamOffenseSplits — had it firing on 37% of the slate at weight 0.35.
+     * Not a missing feed, a missing pair of field reads on a response we were
+     * already paying for. Whole-season, like opsVsR/opsVsL beside them and for
+     * the same reason: the leakfree cache carries runs, not strikeouts, so
+     * there is nothing to rewind them against. See the note on teamOff. */
+    const pa = +(i01.plateAppearances || 0);
+    return { rate: (+i01.runs || 0) / i01.gamesPlayed, sample: i01.gamesPlayed,
+      opsVsR: vr?.ops != null ? +vr.ops : null, opsVsL: vl?.ops != null ? +vl.ops : null,
+      kRate: pa > 0 ? (+i01.strikeOuts || 0) / pa : null, kSample: pa }; } catch { return null; }
 });
 teamOff.stats = { pit: 0, miss: 0, api: 0 };
 function teamOff(id, se, asOf) {
@@ -483,8 +500,122 @@ function teamOff(id, se, asOf) {
   return teamOffApi(id, se).then((api) => ({
     rate: runs / n, sample: n,
     opsVsR: api ? api.opsVsR : null, opsVsL: api ? api.opsVsL : null,
-  })).catch(() => ({ rate: runs / n, sample: n, opsVsR: null, opsVsL: null }));
+    kRate: api ? api.kRate : null, kSample: api ? api.kSample : null,
+  })).catch(() => ({ rate: runs / n, sample: n, opsVsR: null, opsVsL: null, kRate: null, kSample: null }));
 }
+/* ---- the rolling windows, which the harness did not have at all ----
+ *
+ * THE DEFECT THESE CLOSE. nrfiEvaluate reads ctx.awayRolling / ctx.homeRolling
+ * and ctx.awayOffRolling / ctx.homeOffRolling. The live board fills all four in
+ * scanNrfi (pitcherRollingNRFI and teamOffenseRolling). buildCtx never did — it
+ * returned a context without those keys, so `if (!rolling) return {f: 1}` fired
+ * at the top of all four factor functions on every game a harness ever scored:
+ *
+ *   pitcherTrendFactor       weight 0.30 in pitMult and the sim context
+ *   pitcherVenueFactor       weight 0.50 in pitMult and the sim context
+ *   teamOffenseTrendFactor   weight 0.50 in offMult and offSimCtx
+ *   offenseVenueFactor       weight 0.30 in offMult and offSimCtx
+ *
+ * It was invisible because "neutral" is a perfectly ordinary value for a
+ * factor: nothing errored, nothing was missing from any output, and a game
+ * whose trend factor is 1.000 looks exactly like an arm with no recent form.
+ * The same failure the umpire term had, in the other direction — there the
+ * harness pinned a factor the board computed, here it pinned four. On the
+ * board's own slate they fire on 47%/7%/43%/40% of games and carry 9.4% of all
+ * factor movement (scripts/nrfi-weight-audit.js), so every backtest Brier,
+ * every calibration fit and the whole NRFIKINGKY band table were computed on a
+ * model the board does not ship.
+ *
+ * Confidence was hit too, and more bluntly: nrfiEvaluate docks 0.04 per side
+ * for a missing rolling window, so EVERY cached confidence was 0.08 low — and
+ * confidence is one of the two features nrfi-tout-profile.js compares his picks
+ * against their peers on.
+ *
+ * REWOUND, which is where these deliberately differ from the board. The app
+ * reads a starter's whole-season game log because on a live board every start
+ * in it has already happened. Scoring a game from May with September's starts
+ * in the L10 is look-ahead, so these take only games strictly before `asOf`,
+ * the same rule pitI01 and teamOff already follow. On a same-day board the two
+ * definitions coincide exactly; they part only when scoring the past, which is
+ * the only time it matters.
+ *
+ * Built off the leakfree cache rather than a fresh fetch. The board pulls a
+ * game log plus a linescore per start — for a 95-date backtest that is tens of
+ * thousands of requests, which is how this stayed unimplemented. Every number
+ * these windows need is already in nrfi-leakfree-games.json, indexed above.
+ * One divergence follows from that and is stated rather than papered over: the
+ * cache is regular season only, so an early-April team window sees fewer games
+ * than the board's 35-day schedule query, which would also catch spring
+ * training. That errs toward too little data, not too much.
+ */
+const rollPct = (arr) => (arr.length ? Math.round(arr.filter(Boolean).length / arr.length * 100) : null);
+const roll2 = (x) => Math.round(x * 100) / 100;
+// The board rounds pct to a whole number and runsPerStart/avgRuns to two
+// places. Reproduced exactly, not approximated: pitcherVenueFactor compares
+// `venue.pct - szn.pct` against integer 10/20 cutoffs, so carrying an unrounded
+// percentage here would move games across those gates in one direction only.
+function pitcherRolling(id, se, asOf) {
+  if (id == null) return null;
+  const log = pitcherIndex().get(String(id));
+  if (!log) return null;
+  const prior = [];
+  for (const e of log) {
+    if (e.season !== se) continue;
+    if (!(e.date < asOf)) break;      // date-sorted, so the first non-prior ends it
+    prior.push({ clean: e.runs === 0, runs: e.runs, home: e.isHome });
+  }
+  if (!prior.length) return null;
+  const cleans = prior.map((v) => v.clean);
+  const rps = (arr) => (arr.length ? roll2(arr.reduce((s, v) => s + v.runs, 0) / arr.length) : null);
+  const win = (arr) => ({ pct: rollPct(arr.map((v) => v.clean)), n: arr.length, runsPerStart: rps(arr) });
+  // >= 5 to activate a venue split, matching the board. pitcherVenueFactor then
+  // asks for >= 8 of its own; both gates are kept so the shapes match on games
+  // that pass one and not the other.
+  const split = (subset) => (subset.length >= 5 ? win(subset) : null);
+  const last = (n) => prior.slice(-n);
+  return {
+    szn: win(prior),
+    l30: win(last(30)),
+    l10: win(last(10)),
+    l5: win(last(5)),
+    home: split(prior.filter((v) => v.home)),
+    road: split(prior.filter((v) => !v.home)),
+    streak: cleans.slice(-5),
+    lastClean: cleans.length ? cleans[cleans.length - 1] : null,
+  };
+}
+const ROLL_OFF_DAYS = 35, ROLL_OFF_MAX = 25;
+function teamOffRolling(teamId, asOf) {
+  if (teamId == null) return null;
+  const log = teamOffIndex().get(String(teamId));
+  if (!log) return null;
+  // Same window the board uses: the last 35 days of games strictly before the
+  // scored date, capped at 25. Deliberately NOT season-filtered, because the
+  // board's schedule query is not either — the offseason gap makes the two
+  // equivalent everywhere except a window that would have to reach back through
+  // it, and there the 35-day bound has already closed.
+  const from = new Date(new Date(asOf + "T12:00:00Z").getTime() - ROLL_OFF_DAYS * 86400000)
+    .toISOString().slice(0, 10);
+  const items = log.filter((e) => e.date >= from && e.date < asOf).slice(-ROLL_OFF_MAX)
+    .map((e) => ({ scored: e.runs > 0, runs: e.runs, isHome: e.isHome }));
+  // The board requires 5 games before it builds the object at all, and returns
+  // null otherwise. A 3-game window is not a trend and must not read as one.
+  if (items.length < 5) return null;
+  const rate = (arr) => (arr.length >= 3 ? arr.filter((v) => v.scored).length / arr.length : null);
+  const avg = (arr) => (arr.length >= 3 ? roll2(arr.reduce((s, v) => s + v.runs, 0) / arr.length) : null);
+  const win = (arr) => ({ rate: rate(arr), n: arr.length, avgRuns: avg(arr) });
+  const venSplit = (arr) => (arr.length >= 6 ? win(arr) : null);
+  const last = (n) => items.slice(-n);
+  return {
+    szn: win(items),
+    l20: win(last(20)),
+    l10: win(last(10)),
+    l5: win(last(5)),
+    home: venSplit(items.filter((v) => v.isHome)),
+    road: venSplit(items.filter((v) => !v.isHome)),
+  };
+}
+
 /* Point-in-time starter season line, summed out of the game log.
  *
  * nrfiEvaluate reads seasonEra, ip, g and allow off this object — openerFactor
@@ -685,6 +816,14 @@ async function buildCtx(g, date, se, peri) {
     pitI01(ap.id, se, date), pitI01(hp.id, se, date), pitMeta(ap.id, se, date), pitMeta(hp.id, se, date),
     teamOff(a.team.id, se, date), teamOff(h.team.id, se, date), travelRest(a.team.id, date, g.venue?.id), travelRest(h.team.id, date, g.venue?.id)]);
   const [awayLineup, homeLineup] = await Promise.all([topOrder(lu.awayPlayers, se, homeMeta.hand, homeMeta.id), topOrder(lu.homePlayers, se, awayMeta.hand, awayMeta.id)]);
+  /* The four rolling windows. Synchronous — they read the leakfree index that
+   * pitI01 and teamOff already load, so they add no requests to a run.
+   *
+   * These were simply absent from this object, which meant four factors and two
+   * checks were pinned neutral in every harness while the board computed them.
+   * See the block above pitcherRolling for what that cost. */
+  const awayRolling = pitcherRolling(ap.id, se, date), homeRolling = pitcherRolling(hp.id, se, date);
+  const awayOffRolling = teamOffRolling(a.team.id, date), homeOffRolling = teamOffRolling(h.team.id, date);
   // No umpire fields. The ABS challenge system retired that term in app.jsx, so
   // there is nothing here for them to feed. This also closes a standing gap
   // between harness and board: buildCtx used to hardcode umpFactor to 1 while
@@ -692,7 +831,18 @@ async function buildCtx(g, date, se, peri) {
   // number described a model the board did not ship. Both are now umpire-free,
   // and for the first time they agree on this input.
   return { awayName: a.team.name, homeName: h.team.name, awayPP: ap.fullName, homePP: hp.fullName,
+    // pitProfiles carries these through to callers as `pid`. Absent here they
+    // came out undefined, which is harmless today only because nothing the
+    // harness runs joins on them — nrfiThinArm reads apps/seasonIp/sample. Free
+    // to supply, so supply them rather than leave a hole shaped like a join key.
+    awayPPId: ap.id, homePPId: hp.id,
     awayOff, homeOff, awayPit, homePit, awayMeta, homeMeta, awayLineup, homeLineup, awayTravel, homeTravel,
+    awayRolling, homeRolling, awayOffRolling, homeOffRolling,
+    // MLB's own designation, the same field scanNrfi passes. dayGameShift is 0
+    // so this moves no probability today, but the "Day game" check reads it and
+    // votes, and a harness that always reported night was casting that vote one
+    // way on every game in the environment family.
+    dayNight: g.dayNight || null,
     wx: weatherPark(g, h.team.abbreviation), awayPeri: peri[ap.id] || null, homePeri: peri[hp.id] || null };
 }
 
@@ -818,7 +968,11 @@ const dataSlice = (() => {
    * and a region that silently shrinks back past buildCtx would restore the
    * hole without failing anything. Under-fingerprinting is the failure that
    * cannot be noticed from the outside, so it gets checked from the inside. */
-  for (const must of ["async function buildCtx(", "function scoreBothPaths(", "const topOrder =", "const travelRest ="]) {
+  for (const must of ["async function buildCtx(", "function scoreBothPaths(", "const topOrder =", "const travelRest =",
+    // The rolling builders decide four factors and two checks. They were not
+    // covered before because they did not exist; a cache scored with them and a
+    // cache scored without them must not share a fingerprint.
+    "function pitcherRolling(", "function teamOffRolling("]) {
     if (!region.includes(must)) {
       throw new Error("modelSig's data region no longer contains " + JSON.stringify(must) + ". " +
         "Something moved the markers and the fingerprint has stopped covering code that decides " +
