@@ -38,6 +38,14 @@ const KNOWN_GLOBALS = new Set([
   "useCallback", "useContext", "useReducer", "useLayoutEffect", "Fragment",
 ]);
 
+// Exported so nrfi-slice-gap.js can ask the same question of the model bundle
+// without keeping a second hand-written copy of this list. Two guessed lists
+// that agree today drift the first time one of them is corrected, and both
+// keep printing green the whole time.
+module.exports = { KNOWN_GLOBALS };
+// desk-build.js spawns this as its own process, so the CLI still runs there.
+if (require.main !== module) return;
+
 const files = process.argv.slice(2);
 if (!files.length) files.push(path.join("public", "desk", "app.jsx"));
 

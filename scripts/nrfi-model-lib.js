@@ -188,6 +188,33 @@ if (!Number.isFinite(NRFI_CALIB_SEED?.c)) {
 for (const [n, v] of [["NRFI_PA_REG_PIT", NRFI_PA_REG_PIT], ["NRFI_PA_REG_H2H", NRFI_PA_REG_H2H]]) {
   if (!(v > 0)) throw new Error(n + " did not come through the slice: " + v);
 }
+/* No matching guard for the four FUNCTIONS beside them, deliberately.
+ *
+ * I wrote one, on the assumption that a name the bundle never defines just
+ * destructures to undefined and fails later at "paRates is not a function" —
+ * the same shape as nrfi-platoon-audit.js's standing "c.platoonFactor is not a
+ * function". Measured instead of assumed, by commenting one slice line out of
+ * MODEL_SLICES and loading this file in a fresh process:
+ *
+ *   function paRates(       -> ReferenceError: Cannot access 'paRates' before initialization
+ *   function weatherPark(   -> ReferenceError: Cannot access 'weatherPark' before initialization
+ *   function simHalfNoRun(  -> LOADED CLEAN, nothing fired
+ *
+ * The eval ends in a shorthand object literal, so a destructured name that the
+ * bundle stopped defining is a bare reference to the const in TDZ right here,
+ * and it throws at load already. A guard after that line cannot run. Adding
+ * one would have been a check that never fires, defended by a paragraph that
+ * was wrong — worse than no check, because the next reader believes it.
+ *
+ * The constants above are different and do still need theirs: they arrive
+ * DEFINED but wrong when a slice cuts short, which no ReferenceError catches.
+ *
+ * simHalfNoRun is the case with no guard at all here: it is used inside the
+ * bundle and never destructured, so dropping it loads clean and would throw at
+ * whichever call site ran first. That one belongs to nrfi-slice-gap.js, which
+ * looks for names the bundle references without defining — verified, it
+ * reports "simHalfNoRun 4x in model" and exits 1. Run it after touching the
+ * slice lists; this file cannot see that class and should not pretend to. */
 
 // ---- data (Node fetchers; faithful to the app's getJson logic) ----
 const J = async (u) => { const r = await fetch(u, { headers: { accept: "application/json" } }); if (!r.ok) throw new Error(u + " " + r.status); return r.json(); };
@@ -731,6 +758,11 @@ function makeVerdict(overrides) {
     if (!re.test(bundle)) throw new Error(`cannot override ${k}: no literal assignment found in the verdict bundle`);
     bundle = bundle.replace(re, "$1" + v);
   }
+  // Ends in a shorthand object literal, so a name VERDICT_SLICES stopped
+  // covering throws here at eval rather than returning undefined — measured:
+  // repointing the nrfiTier entry gives "ReferenceError: nrfiTier is not
+  // defined". A typeof check after this line would never fire. See the note on
+  // the model bundle above for the one gap neither eval can see.
   return eval('"use strict";\n' + bundle + "\n;({ nrfiVerdict, nrfiTier, applyCalibration, nrfiThinArm })");
 }
 
