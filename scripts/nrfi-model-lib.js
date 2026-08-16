@@ -382,7 +382,33 @@ const ROLL_MODE = process.env.NRFI_NO_ROLLING === "1" ? "off (ablation)" : "on";
  * `1 + (ctx.wx.factor - 1)` in BOTH scoring paths, so scaling the deviation here
  * is identical to scaling the weight there — and it means this can be measured
  * without a single change to the shipped model. If it earns its place, it moves
- * into app.jsx as a named constant; until then the board is untouched. */
+ * into app.jsx as a named constant; until then the board is untouched.
+ *
+ * VERDICT 2026-08-16: MEASURED AND REJECTED. ENV_W stays at 1.0. Paired run,
+ * same 1556 games over 120 days, env the only difference:
+ *
+ *                    ENV_W=1 (shipped)   ENV_W=0
+ *     Brier               .2485            .2503   (base rate .2500)
+ *     Brier recentred     .2461            .2477
+ *     AUC                 .5708            .5519
+ *     prediction sd       5.1 pp           4.4 pp
+ *     pick-side acc       53.3%            53.6%
+ *
+ * Turning env off costs 1.9 points of AUC and pushes Brier past the base rate —
+ * an env-free model is worse than predicting 50% on every game. Pick-side
+ * accuracy ticks up 0.3pp on 10 fewer off-the-fence games, which is noise and is
+ * the only column that favours the cut.
+ *
+ * THE REASON THIS WAS NEARLY SHIPPED ANYWAY IS THE INTERESTING PART, and it is a
+ * trap the next person will meet again. Scored against HIS board instead of
+ * against outcomes, ENV_W=0 looks like a clear win: nrfi-tout-vs-model.js moves
+ * his legs' mean percentile in our ranking from 64.9 to 66.9, his share of our
+ * top decile from 21.1% to 26.8%, and our side agreement from 93.4% to 94.9%.
+ * Every selection metric improves. They improve because dropping env makes our
+ * ranking MORE LIKE HIS — and he is not the outcome. Agreement with a good
+ * tout is not accuracy, and where the two disagree the outcome wins. Measure
+ * ablations on Brier and AUC; use the tout comparison to generate hypotheses,
+ * never to settle them. */
 const ENV_W = process.env.NRFI_ENV_W == null ? 1 : Number(process.env.NRFI_ENV_W);
 if (!Number.isFinite(ENV_W) || ENV_W < 0 || ENV_W > 2)
   throw new Error("NRFI_ENV_W must be a number in [0,2], got " + JSON.stringify(process.env.NRFI_ENV_W));
