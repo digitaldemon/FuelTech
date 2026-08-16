@@ -1966,7 +1966,9 @@ function consensusDevig(oddsArray, homeAbbr, awayAbbr) {
 function calibrationFactor(ledger) {
   // Synced positions carry fair === price by construction — including them
   // shrinks the model-vs-market gap and masks real overconfidence.
-  const done = (ledger || []).filter((e) => e.status === "resolved" && e.outcome !== null &&
+  // `e &&` first: the ledger is rehydrated from storage, and a single null entry
+  // in it turned this whole function into a TypeError rather than a calibration.
+  const done = (ledger || []).filter((e) => e && e.status === "resolved" && e.outcome !== null &&
     e.call !== "SYNCED" && typeof e.fair === "number" && typeof e.price === "number");
   if (done.length < 20) return { k: 1, n: done.length, active: false };
   const brier = (p, o) => Math.pow(p / 100 - o, 2);
@@ -5797,7 +5799,14 @@ async function pitcherFirstInning(pid, season) {
       const bb9 = ip && ip > 0 ? Number(st.baseOnBalls || 0) * 9 / ip : null;
       const hr9 = ip && ip > 0 ? Number(st.homeRuns || 0) * 9 / ip : null;
       val = { rate: Number(st.runs || 0) / st.gamesPlayed, sample: st.gamesPlayed,
-        era: st.era != null ? Number(st.era) : null, whip: st.whip != null ? Number(st.whip) : null,
+        // numOrNull, not Number. MLB returns "-.--" for a pitcher with no
+        // recorded innings and "INF" for one who has allowed runs without
+        // retiring anybody, and Number() turns both into NaN — which is not
+        // null, so every `x != null` guard downstream waves it through. That is
+        // how a NaN reached openerFactor and came out the other side as a NaN
+        // multiplier on the lambda. numOrNull maps both sentinels to null, which
+        // is what they mean: no reading, not a reading of nothing.
+        era: numOrNull(st.era), whip: numOrNull(st.whip),
         k9, bb9, hr9, innings: ip,
         krate: bf ? Number(st.strikeOuts || 0) / bf : null,
         obpA: bf ? (Number(st.hits || 0) + Number(st.baseOnBalls || 0) + Number(st.hitByPitch || 0)) / bf : null,
@@ -6299,7 +6308,14 @@ function openerGameFactor(meta) {
 //    without touching the underlying signal.
 const OPENER_REG_IP = 12;
 function openerFactor(i01Era, seasonEra, seasonIp, i01Ip) {
-  if (i01Era == null || seasonEra == null || seasonEra <= 0) return { f: 1, note: "n/a" };
+  // isFinite, not `!= null`. NaN is not null, and every comparison against it is
+  // false — so `seasonEra <= 0` does not reject NaN either, and a NaN walked all
+  // the way through to `f: NaN` and a note reading "1st-inn NaN vs NaN ERA".
+  // Callers hand this ERAs parsed from MLB strings, which include "-.--" and
+  // "INF"; those are now nulled at the parse site above, and this is the second
+  // line of defence, because a factor that returns NaN poisons the whole product
+  // silently rather than failing where it can be seen.
+  if (!Number.isFinite(i01Era) || !Number.isFinite(seasonEra) || seasonEra <= 0) return { f: 1, note: "n/a" };
   let baseEra = seasonEra, basis = "SZN";
   if (seasonIp != null && i01Ip != null && (seasonIp - i01Ip) >= 20) {
     const rest = (seasonEra * seasonIp - i01Era * i01Ip) / (seasonIp - i01Ip);

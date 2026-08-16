@@ -31,13 +31,49 @@ console.log("=".repeat(72) + "\nNRFI MODEL PROPERTIES — shipped bundle\n" + "=
 console.log("\nfactor functions (missing/garbage input must not produce NaN)");
 // Numeric-argument factors vs object-argument factors — fuzz each with the
 // shapes it is actually called with.
-const FACTORS = [["restFactor", NASTY], ["formFactor", NASTY],
-  ["pitchSkillFactor", NASTY_OBJ], ["pitcherTrendFactor", NASTY_OBJ], ["pitcherVenueFactor", NASTY_OBJ],
-  ["platoonFactor", NASTY_OBJ], ["offKrateFactor", NASTY_OBJ], ["offenseVenueFactor", NASTY_OBJ],
-  ["teamOffenseTrendFactor", NASTY_OBJ]];
+// restFactor, formFactor and platoonFactor used to be listed here. All three
+// were withdrawn from the model on measurement — see the REMOVED notes in
+// app.jsx — and this list was never updated, so the audit reported three
+// violations on every run for functions that were correctly gone. That is worse
+// than not checking at all: an audit that always fails teaches you to ignore its
+// exit code, and ignoring it is exactly the state it was in when it was next
+// asked whether anything real had broken.
+//
+// So the list is now reconciled against the bundle in BOTH directions. A name
+// here that no longer exists is a stale assertion. A *Factor in the bundle that
+// is NOT here is an unfuzzed one — and that is the direction that bites: nine
+// helpers were once added to nrfiEvaluate without matching slices, every
+// backtest row threw a ReferenceError, mapLimit swallowed each one, and the
+// harness printed "No samples." A silence that looks like an empty schedule.
+//
+// The four at the end were found by that reverse check on its first run: they
+// had been in the bundle, unfuzzed, the whole time. Each gets the pool matching
+// what it is really called with — openerFactor and seasonLoadFactor take ERA and
+// IP numbers, openerGameFactor takes a pitMeta object, and calibrationFactor
+// takes a LEDGER ARRAY, so handing it a bare object would only prove that
+// `{}.filter` is not a function.
+const NASTY_LEDGER = [undefined, null, [], [null], [{}],
+  [{ status: "resolved", outcome: null }],
+  [{ status: "resolved", outcome: 1, call: "SYNCED", fair: 0.6, price: 0.6 }],
+  [{ status: "resolved", outcome: 1, fair: NaN, price: 0.5 }],
+  [{ status: "resolved", outcome: 1, fair: 0.6, price: 0 }],
+  [{ status: "open", outcome: null, fair: 0.6, price: 0.5 }]];
+const FACTORS = [["pitchSkillFactor", NASTY_OBJ], ["pitcherTrendFactor", NASTY_OBJ],
+  ["pitcherVenueFactor", NASTY_OBJ], ["offKrateFactor", NASTY_OBJ],
+  ["offenseVenueFactor", NASTY_OBJ], ["teamOffenseTrendFactor", NASTY_OBJ],
+  ["openerGameFactor", NASTY_OBJ], ["openerFactor", NASTY], ["seasonLoadFactor", NASTY],
+  ["calibrationFactor", NASTY_LEDGER]];
+{
+  const listed = new Set(FACTORS.map(([n]) => n));
+  const stale = [...listed].filter((n) => typeof c[n] !== "function");
+  const inBundle = Object.keys(c).filter((k) => /Factor$/.test(k) && typeof c[k] === "function");
+  const uncovered = inBundle.filter((k) => !listed.has(k));
+  ok(stale.length === 0, "every listed factor still exists in the bundle", stale.join(", "));
+  ok(uncovered.length === 0, "every *Factor in the bundle is fuzzed here", uncovered.join(", "));
+}
 for (const [name, pool] of FACTORS) {
   const fn = c[name];
-  if (typeof fn !== "function") { ok(false, name + " exists"); continue; }
+  if (typeof fn !== "function") continue;   // already reported as stale, above
   const bad = [];
   for (const a of pool) for (const b of pool) {
     let r;

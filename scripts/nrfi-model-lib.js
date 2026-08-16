@@ -67,6 +67,14 @@ const { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP } = eval('"use stri
 // ---- data (Node fetchers; faithful to the app's getJson logic) ----
 const J = async (u) => { const r = await fetch(u, { headers: { accept: "application/json" } }); if (!r.ok) throw new Error(u + " " + r.status); return r.json(); };
 const parseIp = (ip) => { const m = String(ip == null ? "0" : ip).split("."); return Number(m[0] || 0) + (m[1] === "1" ? 1 / 3 : m[1] === "2" ? 2 / 3 : 0); };
+// MLB sends "-.--" for a pitcher with no recorded innings and "INF" for one who
+// has allowed runs without retiring anybody. Number() maps both to NaN, and NaN
+// is not null, so every `x != null` guard downstream passes it through — which
+// is how a NaN ERA reached openerFactor and came out as a NaN multiplier on the
+// lambda. These are absences of a reading, not readings, so they become null.
+// Mirrors numOrNull in app.jsx; both fetch paths must agree or the backtest
+// stops measuring the app.
+const numOrNull = (v) => { if (v == null) return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
 const cache = new Map();
 const memo = (k, fn) => cache.has(k) ? cache.get(k) : cache.set(k, fn()).get(k);
 
@@ -210,7 +218,7 @@ function teamOffIndex() {
 const pitI01Api = (id, se) => memo("p" + id + se, async () => {
   try { const d = await J(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=statSplits&group=pitching&sitCodes=i01&season=${se}`);
     const s = d.stats?.[0]?.splits?.[0]?.stat; if (!s || !s.gamesPlayed) return null;
-    return { rate: (+s.runs || 0) / s.gamesPlayed, sample: s.gamesPlayed, era: s.era != null ? +s.era : null }; } catch { return null; }
+    return { rate: (+s.runs || 0) / s.gamesPlayed, sample: s.gamesPlayed, era: numOrNull(s.era) }; } catch { return null; }
 });
 function pitI01(id, se, asOf) {
   if (id == null) return Promise.resolve(null);
@@ -272,7 +280,7 @@ const pitMeta = (id, se) => id == null ? Promise.resolve({ hand: null, form: nul
       J(`https://statsapi.mlb.com/api/v1/people/${id}?hydrate=stats(group=[pitching],type=[season],season=${se})`),
       J(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=gameLog&group=pitching&season=${se}`)]);
     const pp = p.people?.[0]; hand = pp?.pitchHand?.code || null;
-    const s = pp?.stats?.[0]?.splits?.[0]?.stat; if (s) { seasonEra = s.era != null ? +s.era : null; gs = s.gamesStarted != null ? +s.gamesStarted : null; g = s.gamesPlayed != null ? +s.gamesPlayed : null; ip = s.inningsPitched != null ? parseIp(s.inningsPitched) : null; allow = paRates(s, s.battersFaced); }
+    const s = pp?.stats?.[0]?.splits?.[0]?.stat; if (s) { seasonEra = numOrNull(s.era); gs = numOrNull(s.gamesStarted); g = numOrNull(s.gamesPlayed); ip = s.inningsPitched != null ? parseIp(s.inningsPitched) : null; allow = paRates(s, s.battersFaced); }
     const last = (gl.stats?.[0]?.splits || []).slice(-3); if (last.length) { let er = 0, lip = 0; last.forEach((x) => { er += +(x.stat?.earnedRuns || 0); lip += parseIp(x.stat?.inningsPitched); }); if (lip > 0) form = er * 9 / lip; }
   } catch { /* nulls */ }
   return { hand, form, seasonEra, gs, g, ip, allow, id };
