@@ -7002,8 +7002,18 @@ function nrfiEvaluate(ctx) {
   const homeOff = homeOffBase * offMult(ctx.homeLineup, ctx.homeTravel, homeOffTrend, homeOffAdv, homeOffVenue, homeOffKRate);
   const awayPit = awayPitBase * pitMult(awaySkill, awayOpen, awayOpenG, awayLoad, awayTrend, awayVenue);
   const homePit = homePitBase * pitMult(homeSkill, homeOpen, homeOpenG, homeLoad, homeTrend, homeVenue);
-  const umpFactor = ctx.umpFactor || 1;
-  const env = nClamp(1 + (ctx.wx.factor - 1) + (umpFactor - 1), 0.85, 1.20);
+  /* No umpire term. MLB's ABS challenge system means the calls a "tight zone"
+   * or "wide zone" reputation was built on now get overturned on request, so
+   * per-umpire run tendency is no longer a stable property of the man behind
+   * the plate — it is a property of how many challenges the teams have left.
+   * A factor fitted on pre-challenge seasons describes a game that is not
+   * being played any more.
+   *
+   * Removed rather than zeroed. Leaving `ctx.umpFactor || 1` wired into env
+   * would mean anything that still wrote that field silently started moving
+   * probabilities again; the point of taking it out is that it cannot come
+   * back by accident. */
+  const env = nClamp(1 + (ctx.wx.factor - 1), 0.85, 1.20);
   // λ-model (fallback when we don't have posted batters + pitcher allow-rates).
   let p0top = halfNoRun(awayOff, homePit, env); // away bats vs home starter
   let p0bot = halfNoRun(homeOff, awayPit, env); // home bats vs away starter
@@ -7015,7 +7025,7 @@ function nrfiEvaluate(ctx) {
   if (awayB && homeAllow && homeB && awayAllow) {
     // Base-out simulation captures matchup + lineup + platoon + pitcher skill
     // from the raw rates. Apply only what the season rates DON'T contain:
-    // recent form, opener/bullpen, travel, and park/weather/umpire.
+    // recent form, opener/bullpen, travel, and park/weather.
     // Form weight 0.10 (down from 0.6) matches lambda path — backtest LR showed form counterproductive.
     const homeCtx = nClamp(1 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0 + (homeLoad.f - 1) * 0.7 + (homeTrend.f - 1) * 0.30 + (homeVenue.f - 1) * 0.5, 0.82, 1.2);
     const awayCtx = nClamp(1 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7 + (awayTrend.f - 1) * 0.30 + (awayVenue.f - 1) * 0.5, 0.82, 1.2);
@@ -7317,9 +7327,6 @@ function nrfiEvaluate(ctx) {
         "and +0.1pp once each park's own rate is held out. Inside the noise. No adjustment applied.",
       lean: "neutral" } : null,
     { label: "Weather & park", detail: ctx.wx.note, lean: facLean(ctx.wx.factor) },
-    { label: "Umpire",
-      detail: ctx.umpName ? (ctx.umpName + (ctx.umpNote ? " — " + ctx.umpNote : (umpFactor === 1 ? " (tendency n/a)" : ""))) : "not posted",
-      lean: umpFactor <= 0.97 ? "nrfi" : umpFactor >= 1.03 ? "yrfi" : "neutral" },
     (() => {
       const aLast = ctx.awayRolling && ctx.awayRolling.lastClean;
       const hLast = ctx.homeRolling && ctx.homeRolling.lastClean;
@@ -7446,7 +7453,7 @@ const awayPit0 = (o) => (o && o.rate != null ? o.rate.toFixed(2) + " R/1st" : "T
 const CHECK_FAMILIES = [
   [/^(Starting pitching|Pitcher skill|Opener \/ bullpen|Pitcher K9 trend|Clean opener|Pitcher season load|Last start momentum|Pitcher trend|Pitcher venue split|Backtest profile)/, "pitching"],
   [/^(1st-inning offense|Offense trend|Offense venue split|Team K%|Lineups)/, "offense"],
-  [/^(Day game|Weather & park|Umpire|Travel & rest)/, "environment"],
+  [/^(Day game|Weather & park|Travel & rest)/, "environment"],
 ];
 function checkFamily(label) {
   const s = String(label || "");
@@ -8139,15 +8146,17 @@ function matchKingPick(row, kingOpen) {
 async function scanNrfi(onProgress, dateOverride) {
   const season = new Date().getUTCFullYear();
   const date = dateOverride || today();
-  const [sch, whiffRes, umpRes] = await Promise.all([
+  // No /api/desk/umpires call: the ABS challenge system retired the umpire
+  // term (see the env multiplier in nrfiEvaluate). Dropping the request also
+  // takes a per-scan round trip to a hand-populated Postgres table off the
+  // path, so every board build is one fetch cheaper.
+  const [sch, whiffRes] = await Promise.all([
     getJson("https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=" + date +
       "&hydrate=probablePitcher,linescore,team,lineups,weather,venue,officials"),
     fetch("/api/desk/savant").then((r) => r.json()).catch(() => null),
-    fetch("/api/desk/umpires").then((r) => r.json()).catch(() => null),
   ]);
   const periById = (whiffRes && whiffRes.byId) || {};
   const lg = (whiffRes && whiffRes.lg) || { k: 22, bb: 8, barrel: 7.5, gb: 44, whiff: 24.5, fstrike: 60 };
-  const umpTable = (umpRes && umpRes.umpires) || {};
   const games = (sch.dates && sch.dates[0] && sch.dates[0].games) || [];
   let done = 0;
   const rows = await mapLimit(games, 4, async (g) => {
@@ -8179,9 +8188,6 @@ async function scanNrfi(onProgress, dateOverride) {
       homePosted ? Promise.resolve(null) : teamBestLineup(home && home.team && home.team.id, season, awayMeta && awayMeta.hand, awayMeta && awayMeta.id),
     ]);
     const wx = weatherPark(g, home && home.team && home.team.abbreviation);
-    const hpUmp = (g.officials || []).find((o) => o.officialType === "Home Plate");
-    const umpName = hpUmp && hpUmp.official && hpUmp.official.fullName;
-    const umpEntry = umpName ? umpTable[umpName] : null;
     const ctx = {
       awayName: away && away.team && away.team.name, homeName: home && home.team && home.team.name,
       awayPP: (awayPP && awayPP.fullName) || "TBD", homePP: (homePP && homePP.fullName) || "TBD",
@@ -8192,7 +8198,6 @@ async function scanNrfi(onProgress, dateOverride) {
       awayPeri: awayPP ? periById[awayPP.id] : null,
       homePeri: homePP ? periById[homePP.id] : null,
       lg,
-      umpName: umpName || null, umpFactor: umpEntry ? umpEntry.runFactor : 1, umpNote: umpEntry ? umpEntry.note : "",
       startUtc: g.gameDate || null,
       // MLB publishes its own day/night designation on the schedule. Take it
       // rather than deriving one — see dayNightOf.
@@ -9628,7 +9633,7 @@ function FirstInning() {
         Calibrated first-inning (NRFI/YRFI) model from MLB StatsAPI + Statcast. Every game runs a full research
         pass — starting pitching (1st-inning splits), pitcher skill (1st-inn K%, Statcast whiff, control),
         both teams' 1st-inning offense, leadoff-weighted lineups (also catches
-        scratches), travel &amp; rest, weather/park, and the home-plate umpire. The de-vig Kalshi market is the PRIOR —
+        scratches), travel &amp; rest, and weather/park. The de-vig Kalshi market is the PRIOR —
         "our number" is market-anchored with the model as the tiebreaker; we bet only when the model clears the market
         by a real margin, and track closing-line value (CLV), the honest edge test. Graded against the real 1st-inning score.
       </p>

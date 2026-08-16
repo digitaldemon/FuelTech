@@ -66,7 +66,12 @@ const FACTORS = {
   pitVenue:  [["(venue.f-1)*0.5", "(venue.f-1)*0"],
               ["(homeVenue.f-1)*0.5", "(homeVenue.f-1)*0"],
               ["(awayVenue.f-1)*0.5", "(awayVenue.f-1)*0"]],
-  umpire:    [["(umpFactor-1)", "(1-1)"]],
+  // No `umpire` entry. The ABS challenge system retired that term, so there is
+  // no expression left to switch off — and patch() throws when a pattern never
+  // matches, which is what would happen if this were merely left here. That
+  // throw is the feature: an ablation that silently blanks nothing would report
+  // 0.000pp and read as "the umpire barely mattered" rather than "the umpire is
+  // gone", and those are different claims.
   // ---- environment ----
   // `weather` is the whole env term, which is park AND temperature AND wind. It
   // reported 2.197pp and got read as "weather is the biggest factor in the

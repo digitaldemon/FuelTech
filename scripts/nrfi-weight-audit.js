@@ -23,9 +23,12 @@
 // nrfi-model-lib uses, which reaches baseballsavant directly and resolves ~750
 // arms, so `skill` is genuinely exercised.
 //
-// What still cannot be reached gets SAID rather than scored. The umpire table
-// lives behind desk auth in Postgres, so it is reported as not-measured instead
-// of being folded into the share column as a zero.
+// What still cannot be reached gets SAID rather than scored — a route this
+// harness refuses is an absence, and folding an absence into the share column as
+// a zero understates every real factor beside it. The umpire table used to be
+// the standing example; the ABS challenge system retired that term, so the list
+// is empty on a normal run and prints nothing. It is kept wired to the report
+// because the next app.jsx input that comes from a Next route will land here.
 const { loadDeskModel } = require("./nrfi-model-load");
 const { savant } = require("./nrfi-model-lib");
 const c = loadDeskModel();
@@ -102,7 +105,6 @@ c.nrfiEvaluate = function (ctx) {
     rec("travel", OFF.travel, ctx[s + "Travel"] && ctx[s + "Travel"].factor);
   }
   rec("weather(env)", 1.0, ctx.wx && ctx.wx.factor);
-  rec("umpire(env)", 1.0, ctx.umpFactor);
   return origEval.apply(this, arguments);
 };
 
@@ -117,8 +119,12 @@ c.nrfiEvaluate = function (ctx) {
    * terms that were never given a chance to move. Each is listed with the
    * reason it could not be measured here. */
   const blind = new Map();
-  if (unreachable.some((u) => u.startsWith("/api/desk/umpires")))
-    blind.set("umpire(env)", "table lives behind desk auth in Postgres — unreachable from a script");
+  // umpire(env) used to be listed blind here — the table lived behind desk auth
+  // and no script could reach it. It is not blind now, it is absent: the ABS
+  // challenge system retired the term from the model entirely. A retired factor
+  // must not sit in the blind list, because that list means "real but not
+  // measurable here" and would keep implying the model still has a term we
+  // simply failed to see.
   if (lineups === 0 && sides > 0)
     blind.set("lineup", `no lineup posted on any of ${sides} sides — forward slate, not an inert factor`);
 
@@ -157,5 +163,13 @@ c.nrfiEvaluate = function (ctx) {
   if (inert.length) {
     console.log("\nMEASURED BUT ALWAYS NEUTRAL — these ran on every game and never moved:");
     for (const o of inert) console.log(`  ${o.name.padEnd(15)}weight ${o.w}, ${o.n} samples`);
+  }
+  // Every route the shim refused, named. Without this the refusals were being
+  // recorded into an array nothing read, which is the same as not recording
+  // them: a factor downstream of a refused route would just show as neutral.
+  const refused = [...new Set(unreachable.map((u) => u.split("?")[0]))];
+  if (refused.length) {
+    console.log("\nROUTES REFUSED to this harness — anything fed by these is absent, NOT neutral:");
+    for (const u of refused) console.log("  " + u);
   }
 })().catch((e) => { console.error(e.message); process.exit(1); });

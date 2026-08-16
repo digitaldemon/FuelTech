@@ -76,7 +76,7 @@ const labels = ["Starting pitching (1st inning)", "Pitcher skill (K/BB/barrel/GB
   "Last start momentum", "Pitcher trend (L10 vs SZN)", "Pitcher venue split",
   "Backtest profile", "1st-inning offense", "Offense trend (1st inn L10)", "Offense venue split",
   "Team K% (1st inn)", "Platoon / handedness", "Lineups (leadoff-weighted)", "Day game", "Weather & park",
-  "Umpire", "Travel & rest", "Some Future Unlisted Check"];
+  "Travel & rest", "Some Future Unlisted Check"];
 const fams = {};
 for (const l of labels) { const f = checkFamily(l); (fams[f] = fams[f] || []).push(l); }
 const solo = Object.entries(fams).filter(([, ls]) => ls.length === 1);

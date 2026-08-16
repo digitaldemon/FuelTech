@@ -175,12 +175,11 @@ if (bh.length >= 10 && bp.length) {
     console.log("\n  -> PRICE DOES NOT EXPLAIN IT. The market could not separate his bottom-half");
     console.log("     picks from their peers either, so blending the line in will not close the");
     console.log("     gap. Whatever he is using, neither our model nor the exchange prices it.");
-    console.log("     Note before hunting for it: buildCtx hardcodes umpFactor to 1, so the");
-    console.log("     backtest above scores a model WITHOUT the umpire term the live board");
-    console.log("     applies. That is a gap between harness and board, not an unused input —");
-    console.log("     the umpire table is hand-populated behind desk auth and a script cannot");
-    console.log("     reach it (see nrfi-local-api.js). Treat these numbers as the model minus");
-    console.log("     one live factor.");
+    console.log("     These numbers now describe the model the board actually ships: the umpire");
+    console.log("     term used to be applied live but hardcoded to 1 in buildCtx, so the");
+    console.log("     backtest scored a different model than the board. The ABS challenge system");
+    console.log("     retired that term from both, so the harness/board gap is closed and there");
+    console.log("     is no missing live factor to discount for.");
   }
 } else {
   console.log("  not enough of his legs joined in the bottom half to read this.");

@@ -685,11 +685,15 @@ async function buildCtx(g, date, se, peri) {
     pitI01(ap.id, se, date), pitI01(hp.id, se, date), pitMeta(ap.id, se, date), pitMeta(hp.id, se, date),
     teamOff(a.team.id, se, date), teamOff(h.team.id, se, date), travelRest(a.team.id, date, g.venue?.id), travelRest(h.team.id, date, g.venue?.id)]);
   const [awayLineup, homeLineup] = await Promise.all([topOrder(lu.awayPlayers, se, homeMeta.hand, homeMeta.id), topOrder(lu.homePlayers, se, awayMeta.hand, awayMeta.id)]);
-  const hpUmp = (g.officials || []).find((o) => o.officialType === "Home Plate");
+  // No umpire fields. The ABS challenge system retired that term in app.jsx, so
+  // there is nothing here for them to feed. This also closes a standing gap
+  // between harness and board: buildCtx used to hardcode umpFactor to 1 while
+  // the live scan read a real per-umpire runFactor, which meant every backtest
+  // number described a model the board did not ship. Both are now umpire-free,
+  // and for the first time they agree on this input.
   return { awayName: a.team.name, homeName: h.team.name, awayPP: ap.fullName, homePP: hp.fullName,
     awayOff, homeOff, awayPit, homePit, awayMeta, homeMeta, awayLineup, homeLineup, awayTravel, homeTravel,
-    wx: weatherPark(g, h.team.abbreviation), awayPeri: peri[ap.id] || null, homePeri: peri[hp.id] || null,
-    umpName: hpUmp?.official?.fullName || null, umpFactor: 1 };
+    wx: weatherPark(g, h.team.abbreviation), awayPeri: peri[ap.id] || null, homePeri: peri[hp.id] || null };
 }
 
 // Score both paths on the SAME game. nrfiEvaluate takes the base-out sim
@@ -789,7 +793,7 @@ function makeVerdict(overrides) {
  * moving a sliced line in app.jsx. buildCtx is where that handing-over
  * happens: it picks which fetchers run, passes `date` to rewind pitI01/pitMeta
  * /teamOff (and pointedly does NOT pass it to topOrder), chooses the arguments
- * topOrder splits on, and hardcodes umpFactor to 1. Measured: the old end
+ * topOrder splits on. Measured: the old end
  * marker cut the region at byte 41085 of 53081, so buildCtx and scoreBothPaths
  * — 12KB including every one of those decisions — were excluded. Editing any
  * of it changed every score a cache held while modelSig sat still, and a stale

@@ -187,10 +187,12 @@ const pc = (x) => (x * 100).toFixed(0) + "%";
 
   console.log("\n" + "=".repeat(94));
   console.log("FINDINGS");
-  /* A feed the harness could not reach makes its check look silent. `Umpire`
-   * came back "appeared 187 times, never voted" on the first run of this file,
-   * which is not a fact about the check: /api/desk/umpires is not served here,
-   * so umpFactor was pinned and the vote was never reachable. Any SILENT
+  /* A feed the harness could not reach makes its check look silent. The worked
+   * example was `Umpire`, which came back "appeared 187 times, never voted" on
+   * the first run of this file — not a fact about the check: /api/desk/umpires
+   * was not served here, so umpFactor was pinned and the vote was never
+   * reachable. That check has since been retired with the ABS challenge system,
+   * but the rule it taught is general and still enforced below. Any SILENT
    * verdict taken while a feed is down is void, exactly as the calibration
    * audit's numbers were void while Statcast was unserved. Say so instead of
    * printing a finding that reads as a code defect. */

@@ -1,14 +1,13 @@
 /* The relative-URL fetch shim every analysis script needs, in one place.
  *
- * WHY THIS FILE EXISTS. app.jsx runs in a browser and pulls two of its inputs
- * from its own Next routes: Statcast peripherals from /api/desk/savant and the
- * home-plate umpire table from /api/desk/umpires. A Node script has no server,
- * so nine scripts had each pasted the same line:
+ * WHY THIS FILE EXISTS. app.jsx runs in a browser and pulls Statcast
+ * peripherals from its own Next route, /api/desk/savant. A Node script has no
+ * server, so nine scripts had each pasted the same line:
  *
  *   c.fetch = (u, o) => (String(u).startsWith("/") ? Promise.reject(...) : realFetch(u, o));
  *
- * which turns both into failures. The umpire table degrades to neutral, which
- * is honest enough. Statcast does not: ctx.awayPeri/homePeri arrive null,
+ * which turns that into a failure. It does not degrade gracefully:
+ * ctx.awayPeri/homePeri arrive null,
  * pitchSkillFactor takes its `!peri` early return, and it returns exactly 1.00
  * on every game. That factor carries weight 1.0 in pitMult and, once actually
  * fed, accounts for ~37% of all movement in the model — the largest single
@@ -22,13 +21,18 @@
  *
  * WHAT IS SERVED vs WHAT IS REFUSED. Savant is served for real, from the same
  * fetcher nrfi-model-lib uses, which reads baseballsavant's leaderboard CSV
- * directly and resolves ~750 arms. The umpire table cannot be served: it is a
- * hand-populated store behind desk auth in Postgres. So it is REFUSED LOUDLY
- * and recorded, and callers can ask what went unserved and say so in their
- * output. A report that cannot reach an input must print that fact rather than
- * quietly scoring the input as neutral — an absence and a zero are not the same
+ * directly and resolves ~750 arms. Anything else is REFUSED LOUDLY and
+ * recorded, and callers can ask what went unserved and say so in their output.
+ * A report that cannot reach an input must print that fact rather than quietly
+ * scoring the input as neutral — an absence and a zero are not the same
  * measurement, and this whole class of bug is what happens when a harness lets
  * them look alike.
+ *
+ * /api/desk/umpires used to be the worked example of a loud refusal here. It is
+ * gone: the ABS challenge system retired the umpire term from the model, so no
+ * caller requests that route any more. The refusal machinery stays, because the
+ * next input added to app.jsx from a Next route will need it and the lesson is
+ * not specific to umpires.
  */
 const { savant } = require("./nrfi-model-lib");
 
