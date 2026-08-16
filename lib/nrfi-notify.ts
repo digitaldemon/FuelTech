@@ -31,11 +31,20 @@ type NotifyEntry = {
   lineupUpdatedAt?: number;
 };
 
+/* Every sender returns whether it actually put a message on the wire.
+ *
+ * "skipped" is not "sent": a channel whose env vars are absent returns without
+ * calling anything, and the dedup decision below has to be able to tell that
+ * apart from a real delivery. Collapsing the two is how you get a desk that
+ * marks a pick notified because two unconfigured channels no-opped while the
+ * one configured channel threw. */
+type Sent = "sent" | "skipped";
+
 // ── Telegram ──────────────────────────────────────────────────────────────────
-async function sendTelegram(text: string): Promise<void> {
+async function sendTelegram(text: string): Promise<Sent> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) return;
+  if (!token || !chatId) return "skipped";
   const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -47,15 +56,16 @@ async function sendTelegram(text: string): Promise<void> {
     }),
   });
   if (!r.ok) throw new Error("Telegram " + r.status + ": " + await r.text());
+  return "sent";
 }
 
 // ── SMS (Twilio) ───────────────────────────────────────────────────────────────
-async function sendSms(body: string): Promise<void> {
+async function sendSms(body: string): Promise<Sent> {
   const sid = process.env.TWILIO_ACCOUNT_SID;
   const token = process.env.TWILIO_AUTH_TOKEN;
   const from = process.env.TWILIO_FROM;
   const to = process.env.ALERT_TO_PHONE;
-  if (!sid || !token || !from || !to) return;
+  if (!sid || !token || !from || !to) return "skipped";
   const r = await fetch(
     `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`,
     {
@@ -68,13 +78,14 @@ async function sendSms(body: string): Promise<void> {
     }
   );
   if (!r.ok) throw new Error("SMS " + r.status + ": " + await r.text());
+  return "sent";
 }
 
 // ── Email (Resend) ─────────────────────────────────────────────────────────────
-async function sendEmail(subject: string, html: string): Promise<void> {
+async function sendEmail(subject: string, html: string): Promise<Sent> {
   const key = process.env.RESEND_API_KEY;
   const to = process.env.ALERT_TO_EMAIL;
-  if (!key || !to) return;
+  if (!key || !to) return "skipped";
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
@@ -86,7 +97,47 @@ async function sendEmail(subject: string, html: string): Promise<void> {
     }),
   });
   if (!r.ok) throw new Error("Email " + r.status + ": " + await r.text());
+  return "sent";
 }
+
+/* Fan a card out to its channels WITHOUT letting one failure void the others.
+ *
+ * This replaced a Promise.all, and the difference is not stylistic. The GET
+ * route is a Vercel cron on a 10-minute tick, and the caller only records a
+ * pick as notified when its send resolves. Under Promise.all, one channel
+ * throwing rejected the whole send even though the other two had already
+ * delivered — so the id never reached "nrfi_notified" and the next tick sent
+ * the same card again through the channels that worked. A Twilio balance
+ * running out, one bad ALERT_TO_PHONE, or an SMS rate limit therefore did not
+ * cost you SMS; it cost you the same Telegram message and the same email every
+ * ten minutes until the game resolved.
+ *
+ * `delivered` counts only channels that actually transmitted, which is what the
+ * dedup rule below keys on. */
+async function deliver(
+  channels: [name: string, send: () => Promise<Sent>][]
+): Promise<{ delivered: number; errors: string[] }> {
+  const settled = await Promise.allSettled(channels.map(([, send]) => send()));
+  let delivered = 0;
+  const errors: string[] = [];
+  settled.forEach((r, i) => {
+    if (r.status === "fulfilled") { if (r.value === "sent") delivered++; }
+    else errors.push(`${channels[i][0]}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`);
+  });
+  return { delivered, errors };
+}
+
+/* Mark a pick notified when at least one channel transmitted, OR when nothing
+ * failed at all.
+ *
+ * The second clause is the all-skipped case — no channel is configured, so no
+ * amount of retrying will ever deliver this card and leaving it unmarked just
+ * means re-walking it every ten minutes forever. The first clause is the
+ * partial-failure case: one delivery is enough, because the alternative is the
+ * duplicate storm described above. Only a run where every configured channel
+ * threw stays unmarked, which is exactly when a retry has something to gain. */
+const shouldMark = (d: { delivered: number; errors: string[] }) =>
+  d.delivered > 0 || d.errors.length === 0;
 
 // ── Message builders ───────────────────────────────────────────────────────────
 function pitLine(p: PitcherProfile | undefined, name: string | undefined): string {
@@ -288,15 +339,14 @@ export async function runLineupNotify(): Promise<{ sent: number; errors: string[
 
   for (const e of toNotify) {
     const card = buildLineupCard(e);
-    try {
-      await Promise.all([
-        sendTelegram(card.telegram),
-        sendEmail(card.subject, card.emailHtml),
-      ]);
-      sent.push(e.id);
-    } catch (err) {
-      errors.push(`${e.id}: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    // No SMS on the lineup ping — it is the second alert for a pick you have
+    // already been told about, and it is not worth a per-message charge.
+    const d = await deliver([
+      ["telegram", () => sendTelegram(card.telegram)],
+      ["email", () => sendEmail(card.subject, card.emailHtml)],
+    ]);
+    for (const msg of d.errors) errors.push(`${e.id}: ${msg}`);
+    if (shouldMark(d)) sent.push(e.id);
   }
 
   if (sent.length) {
@@ -331,19 +381,19 @@ export async function runNrfiNotify(
 
   for (const e of toNotify) {
     const card = buildCard(e);
-    try {
-      await Promise.all([
-        sendTelegram(card.telegram),
-        sendSms(card.sms),
-        sendEmail(card.subject, card.emailHtml),
-      ]);
-      sent.push(e.id);
-    } catch (err) {
-      errors.push(`${e.id}: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    const d = await deliver([
+      ["telegram", () => sendTelegram(card.telegram)],
+      ["sms", () => sendSms(card.sms)],
+      ["email", () => sendEmail(card.subject, card.emailHtml)],
+    ]);
+    for (const msg of d.errors) errors.push(`${e.id}: ${msg}`);
+    if (shouldMark(d)) sent.push(e.id);
   }
 
-  if (sent.length) {
+  // A forced send is a test against an entry the caller supplied; it
+  // deliberately ignores the dedup set on the way in, so writing to it on the
+  // way out would silence the real alert for that game.
+  if (sent.length && !opts?.force) {
     await writeStore("nrfi_notified", [...notified, ...sent]);
   }
 
