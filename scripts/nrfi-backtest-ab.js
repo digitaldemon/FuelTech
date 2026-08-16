@@ -98,12 +98,41 @@ console.log("PAIRED BACKTEST A/B");
 console.log("  baseline " + A.file + "   ablations: " + (A.j.ablations || "none") + "   n=" + A.j.rows.length + "   run " + (A.j.at || "?"));
 console.log("  variant  " + Bv.file + "   ablations: " + (Bv.j.ablations || "none") + "   n=" + Bv.j.rows.length + "   run " + (Bv.j.at || "?"));
 
-if ((A.j.ablations || null) === (Bv.j.ablations || null)) {
-  console.log("\nSTOP: both artifacts report the same ablation set (" + (A.j.ablations || "none") + ").");
+/* Are these actually two different models?
+ *
+ * The ablation flag is not the only way to change one, and for a while this
+ * guard behaved as if it were: it stopped on equal ablation sets alone and told
+ * the operator "these are two runs of the SAME model". That is false for the
+ * commonest edit in this repo — retuning a constant in app.jsx and re-running.
+ * Both sides are `ablations: none`, both are genuinely different models, and the
+ * guard refused the one comparison that could score the change.
+ *
+ * modelSig is the honest test and it was already in the artifact, unread. Stop
+ * only when the ablation set AND the signature both match, which is the case the
+ * guard was written for: the same code run twice, where any gap is cache state.
+ */
+const sameAbl = (A.j.ablations || null) === (Bv.j.ablations || null);
+const sigA = A.j.modelSig || null, sigB = Bv.j.modelSig || null;
+const sameSig = sigA != null && sigA === sigB;
+
+if (sameAbl && sameSig) {
+  console.log("\nSTOP: same ablation set (" + (A.j.ablations || "none") + ") and same model signature (" + sigA + ").");
   console.log("These are two runs of the SAME model, so any difference is cache state or");
   console.log("upstream data drift, not the term under test. That is worth knowing, but it");
   console.log("is not an A/B — re-run one side with the toggle actually set.");
   process.exit(1);
+}
+if (sameAbl && sigA == null) {
+  console.log("\nSTOP: same ablation set (" + (A.j.ablations || "none") + ") and at least one artifact");
+  console.log("predates modelSig, so there is no way to tell a source edit from a re-run.");
+  console.log("Regenerate both sides with the current desk-nrfi-backtest.js.");
+  process.exit(1);
+}
+if (sameAbl) {
+  console.log("\n  same ablation set, DIFFERENT model signature (" + sigA + " -> " + sigB + ")");
+  console.log("  — reading this as a source-level change: a constant or formula moved in");
+  console.log("  app.jsx between the two runs. The pairing below is valid, but nothing here");
+  console.log("  knows WHAT moved, so name it yourself when you quote the result.");
 }
 
 // Join on gamePk, not on the readable key. `date AWY@HOM` collides on

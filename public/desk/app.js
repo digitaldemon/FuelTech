@@ -1660,7 +1660,41 @@ const keys=["out","bb","s1","s2","s3","hr"];const blended={};for(const k of keys
 // projection toggle when the real lineup hasn't been posted yet.
 // Sorted by OBP desc, top 9 kept, H2H vs the opposing pitcher blended in.
 async function teamBestLineup(teamId,season,oppHand,oppPitcherId){if(teamId==null)return null;const sit=oppHand==="L"?"vl":oppHand==="R"?"vr":null;const k=teamId+":"+season+":"+(sit||"all")+":"+(oppPitcherId||"");if(_rosterCache.has(k))return _rosterCache.get(k);let val=null;try{const roster=await getJson("https://statsapi.mlb.com/api/v1/teams/"+teamId+"/roster?rosterType=active&season="+season);const posPlayers=(roster.roster||[]).filter(p=>p.position&&p.position.type!=="Pitcher");const ids=posPlayers.map(p=>p.person&&p.person.id).filter(Boolean);if(!ids.length){_rosterCache.set(k,null);return null;}const type=sit?"type=[statSplits],sitCodes=["+sit+"]":"type=[season]";const d=await getJson("https://statsapi.mlb.com/api/v1/people?personIds="+ids.join(",")+"&hydrate=stats(group=[hitting],"+type+",season="+season+")");const players=[];(d.people||[]).forEach(p=>{const s=p.stats&&p.stats[0]&&p.stats[0].splits&&p.stats[0].splits[0]&&p.stats[0].splits[0].stat;if(!s)return;const pa=Number(s.plateAppearances||0);if(pa<50)return;const obp=s.obp!=null?Number(s.obp):null;const rates=paRates(s,pa);if(obp!=null&&rates)players.push({id:p.id,obp,rates});});if(!players.length){_rosterCache.set(k,null);return null;}players.sort((a,b)=>b.obp-a.obp);const top9=players.slice(0,9);let batters=top9.map(p=>p.rates);if(oppPitcherId&&batters.some(Boolean)){try{const topIds=top9.map(p=>p.id);const h2hD=await getJson("https://statsapi.mlb.com/api/v1/people?personIds="+topIds.join(",")+"&hydrate=stats(group=[hitting],type=[vsPlayer],opposingPlayerId="+oppPitcherId+",season="+season+")");const h2hById={};(h2hD.people||[]).forEach(p=>{const s=p.stats&&p.stats[0]&&p.stats[0].splits&&p.stats[0].splits[0]&&p.stats[0].splits[0].stat;const pa=s?Number(s.plateAppearances||s.atBats||0):0;if(s&&pa>=5)h2hById[p.id]={pa,rates:paRates(s,pa,NRFI_PA_REG_H2H)};});batters=batters.map((b,i)=>{const h=h2hById[top9[i].id];if(!b||!h||!h.rates)return b;const wH=Math.min(0.65,h.pa/20);const keys=["out","bb","s1","s2","s3","hr"];const blended={};for(const key of keys)blended[key]=b[key]*(1-wH)+h.rates[key]*wH;return blended;});}catch{/* keep season rates */}}val=batters;}catch{/* leave null */}_rosterCache.set(k,val);return val;}// Travel & rest: fatigue nudges early offense down slightly (favours NRFI).
-async function travelRest(teamId,todayStr,venueId){if(teamId==null)return{factor:1,note:""};const k=teamId+":"+todayStr;if(_travelCache.has(k))return _travelCache.get(k);let val={factor:1,note:"settled"};try{const d0=new Date(todayStr+"T12:00:00Z");const start=new Date(d0.getTime()-3*864e5).toISOString().slice(0,10);const d=await getJson("https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId="+teamId+"&startDate="+start+"&endDate="+todayStr+"&hydrate=venue");const games=[];(d.dates||[]).forEach(dt=>(dt.games||[]).forEach(g=>games.push({date:dt.date,g})));const prev=games.filter(x=>x.date<todayStr).sort((a,b)=>a.date.localeCompare(b.date)).pop();if(prev){const restDays=Math.round((d0-new Date(prev.date+"T12:00:00Z"))/864e5);const prevVenue=prev.g.venue&&prev.g.venue.id;const traveled=prevVenue&&venueId&&prevVenue!==venueId;if(restDays<=1&&traveled)val={factor:0.93,note:"played yesterday + traveled"};else if(restDays<=1)val={factor:0.98,note:"played yesterday"};else if(restDays>=3)val={factor:1.03,note:restDays+" days rest"};else val={factor:1,note:restDays+"d rest"};}}catch{/* leave neutral */}_travelCache.set(k,val);return val;}// Team first-inning offense rolling: L5/L10/L20 scored-in-1st rate.
+//
+// REFIT 2026-08-16 against 27942 half-innings / 1052 slates, residualised on the
+// walk-forward arm model, bootstrapped by DATE (scripts/nrfi-travel-fit.js).
+// Two of the four arms were guesses pointing the wrong way and are now 1.00:
+//
+//   state                        gap      t     MDE     was    now
+//   played yesterday + traveled  +1.42pp  1.84  1.55pp  0.93   0.93
+//   played yesterday             -1.11pp -1.64  1.35pp  0.98 -> 1.00
+//   2d rest                      -0.21pp -0.27  1.59pp  1.00   1.00
+//   3+ days rest                 +5.17pp  2.47  4.18pp  1.03 -> 1.00
+//
+// gap = this state's clean-rate residual minus every other state's, so POSITIVE
+// is the NRFI direction. Note what that does to the two removed arms: a team
+// that played yesterday at the same park is, if anything, the run-FRIENDLIER
+// state, and 0.98 was nudging it toward NRFI. A wrong-signed constant is worse
+// than a neutral one.
+//
+// 3+ days rest is the sharper embarrassment. It is the only arm that clears its
+// MDE, and it clears it pointing the opposite way from the 1.03 that shipped:
+// rested teams score LESS in the first, not more. The fit wants 0.697 and it is
+// NOT taken — n=440 is the smallest bucket, it is the largest of four t-values
+// tested, and a 30% swing off 440 observations is how the thin-arm profile and
+// the environment tilt both got shipped and then evaporated. Neutral is the
+// honest resting place for an arm we only know is backwards.
+//
+// 0.93 is KEPT despite sitting just under its own MDE (1.42 < 1.55). It is not a
+// guess that survived; it is the one constant that was already right. Converted
+// through offMult's 0.6 weight it moves offence by 4.2%, and the measured gap
+// asks for 5.0% — the point estimate the model already had. A t of 1.84 is not
+// evidence for it and not a reason to drop it either. Do not read the whole
+// term as validated: at six seasons travel is still UNMEASURED, and the crude
+// 2-group decomposition in nrfi-park-rest.js that calls it "something is there"
+// assumes independent half-innings. Clustering by slate is what moved it under
+// the line, and more seasons is the only thing that settles it.
+async function travelRest(teamId,todayStr,venueId){if(teamId==null)return{factor:1,note:""};const k=teamId+":"+todayStr;if(_travelCache.has(k))return _travelCache.get(k);let val={factor:1,note:"settled"};try{const d0=new Date(todayStr+"T12:00:00Z");const start=new Date(d0.getTime()-3*864e5).toISOString().slice(0,10);const d=await getJson("https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId="+teamId+"&startDate="+start+"&endDate="+todayStr+"&hydrate=venue");const games=[];(d.dates||[]).forEach(dt=>(dt.games||[]).forEach(g=>games.push({date:dt.date,g})));const prev=games.filter(x=>x.date<todayStr).sort((a,b)=>a.date.localeCompare(b.date)).pop();if(prev){const restDays=Math.round((d0-new Date(prev.date+"T12:00:00Z"))/864e5);const prevVenue=prev.g.venue&&prev.g.venue.id;const traveled=prevVenue&&venueId&&prevVenue!==venueId;if(restDays<=1&&traveled)val={factor:0.93,note:"played yesterday + traveled"};else if(restDays<=1)val={factor:1,note:"played yesterday"};else if(restDays>=3)val={factor:1,note:restDays+" days rest"};else val={factor:1,note:restDays+"d rest"};}}catch{/* leave neutral */}_travelCache.set(k,val);return val;}// Team first-inning offense rolling: L5/L10/L20 scored-in-1st rate.
 // Shares the linescore cache with pitcherRollingNRFI — fetches from the last
 // 35 days so L20 is always populated mid-season. Rate = P(team scored ≥1 run in 1st).
 async function teamOffenseRolling(teamId,todayStr,season){if(teamId==null)return null;const k=teamId+":"+todayStr;if(_teamOffRolling.has(k))return _teamOffRolling.get(k);let val=null;try{const d0=new Date(todayStr+"T12:00:00Z");const startDate=new Date(d0.getTime()-35*86400000).toISOString().slice(0,10);const sch=await getJson("https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId="+teamId+"&startDate="+startDate+"&endDate="+todayStr);const items=[];(sch.dates||[]).forEach(d=>{if(d.date>=todayStr)return;(d.games||[]).forEach(g=>{const isHome=g.teams&&g.teams.home&&g.teams.home.team&&g.teams.home.team.id===teamId;if(g.gamePk)items.push({gamePk:g.gamePk,isHome});});});if(items.length){const results=await Promise.all(items.slice(-25).map(async item=>{try{const ls=await getLinescore(item.gamePk);const inn1=ls&&ls.innings&&ls.innings[0];if(!inn1)return null;const r=item.isHome?Number(inn1.home&&inn1.home.runs||0):Number(inn1.away&&inn1.away.runs||0);return{scored:r>0,runs:r,isHome:item.isHome};}catch{return null;}}));const valid=results.filter(x=>x!==null);if(valid.length>=5){const rate=arr=>arr.length>=3?arr.filter(v=>v.scored).length/arr.length:null;const avg=arr=>arr.length>=3?Math.round(arr.reduce((s,v)=>s+v.runs,0)/arr.length*100)/100:null;const venSplit=arr=>arr.length>=6?{rate:rate(arr),n:arr.length,avgRuns:avg(arr)}:null;val={szn:{rate:rate(valid),n:valid.length,avgRuns:avg(valid)},l20:{rate:rate(valid.slice(-20)),n:Math.min(valid.length,20),avgRuns:avg(valid.slice(-20))},l10:{rate:rate(valid.slice(-10)),n:Math.min(valid.length,10),avgRuns:avg(valid.slice(-10))},l5:{rate:rate(valid.slice(-5)),n:Math.min(valid.length,5),avgRuns:avg(valid.slice(-5))},home:venSplit(valid.filter(v=>v.isHome)),road:venSplit(valid.filter(v=>!v.isHome))};}}}catch{/* leave null */}_teamOffRolling.set(k,val);return val;}/* ---- park + weather ----
@@ -2110,22 +2144,29 @@ const MIN_RECENT_IP=12,K9_REPORT=2.0,K9_VOTE=3.0;const mk=(m,name)=>{if(!m||m.re
 // weighs at 0.5, so the vote now agrees with the probability instead of
 // deriving its own raw diff. Symmetric 0.03 band — opposed offences still
 // cancel to neutral, because a hot bat against a cold one is not a signal.
-const fAvg=(awayOffTrend.f-1+(homeOffTrend.f-1))/2+1;return{label:"Offense trend (1st inn L10)",detail:notes.join(" · "),lean:fAvg<=0.97?"nrfi":fAvg>=1.03?"yrfi":"neutral"};})(),(()=>{if(!awayOffVenue.note&&!homeOffVenue.note)return null;const notes=[];if(awayOffVenue.note)notes.push(ctx.awayName+": "+awayOffVenue.note);if(homeOffVenue.note)notes.push(ctx.homeName+": "+homeOffVenue.note);const fAvg=(awayOffVenue.f-1+(homeOffVenue.f-1))/2+1;return{label:"Offense venue split",detail:notes.join(" · "),lean:fAvg>=1.04?"yrfi":fAvg<=0.97?"nrfi":"neutral"};})(),(()=>{const aK=awayOffKRate,hK=homeOffKRate;if(aK.f===1&&hK.f===1)return null;const notes=[];if(aK.note)notes.push(ctx.awayName+" "+aK.note);if(hK.note)notes.push(ctx.homeName+" "+hK.note);const fAvg=(aK.f-1+(hK.f-1))/2+1;return{label:"Team K% (1st inn)",detail:notes.join(" · "),lean:fAvg<=0.97?"nrfi":fAvg>=1.04?"yrfi":"neutral"};})(),{label:"Lineups (leadoff-weighted)",detail:ctx.awayName+": "+ctx.awayLineup.note+" · "+ctx.homeName+": "+ctx.homeLineup.note,lean:facLean((ctx.awayLineup.factor+ctx.homeLineup.factor)/2)},{label:"Travel & rest",detail:ctx.awayName+": "+ctx.awayTravel.note+" · "+ctx.homeName+": "+ctx.homeTravel.note,// Was `< 0.97 ? "nrfi" : "neutral"` — structurally unable to vote YRFI, and
-// two teams that both played yesterday multiply to 0.98*0.98 = 0.960, which
-// is under the line. That is the ordinary mid-season state, so this fired
-// NRFI on 14 of 15 live games: a constant, not a signal. Symmetric band,
-// and the tired-team side has to be more than routine to count.
+const fAvg=(awayOffTrend.f-1+(homeOffTrend.f-1))/2+1;return{label:"Offense trend (1st inn L10)",detail:notes.join(" · "),lean:fAvg<=0.97?"nrfi":fAvg>=1.03?"yrfi":"neutral"};})(),(()=>{if(!awayOffVenue.note&&!homeOffVenue.note)return null;const notes=[];if(awayOffVenue.note)notes.push(ctx.awayName+": "+awayOffVenue.note);if(homeOffVenue.note)notes.push(ctx.homeName+": "+homeOffVenue.note);const fAvg=(awayOffVenue.f-1+(homeOffVenue.f-1))/2+1;return{label:"Offense venue split",detail:notes.join(" · "),lean:fAvg>=1.04?"yrfi":fAvg<=0.97?"nrfi":"neutral"};})(),(()=>{const aK=awayOffKRate,hK=homeOffKRate;if(aK.f===1&&hK.f===1)return null;const notes=[];if(aK.note)notes.push(ctx.awayName+" "+aK.note);if(hK.note)notes.push(ctx.homeName+" "+hK.note);const fAvg=(aK.f-1+(hK.f-1))/2+1;return{label:"Team K% (1st inn)",detail:notes.join(" · "),lean:fAvg<=0.97?"nrfi":fAvg>=1.04?"yrfi":"neutral"};})(),{label:"Lineups (leadoff-weighted)",detail:ctx.awayName+": "+ctx.awayLineup.note+" · "+ctx.homeName+": "+ctx.homeLineup.note,lean:facLean((ctx.awayLineup.factor+ctx.homeLineup.factor)/2)},// Travel & rest votes NRFI 89 times out of 89 over 415 games. THE REFIT AT
+// travelRest DID NOT CHANGE THAT — re-measured after it, still 89 of 89,
+// the identical game set. It could not have changed: the vote fires when the
+// product clears 0.955, which has always meant "at least one side traveled
+// overnight", and dropping the 0.98 and 1.03 arms to neutral moves no game
+// across that line. What the refit changed is the size of the nudge those
+// two states apply through offMult, which is a different question from what
+// this row says out loud. Do not read the constants work as a fix here.
 //
-// THE SYMMETRIC BAND DID NOT FIX IT. Measured over 415 games (30 slates,
-// scripts/nrfi-check-votes.js): 89 votes cast, all 89 NRFI, not one YRFI.
-// Symmetric in form only — travelFactor is built from rest days and it
-// reaches 1.045 on a pair about as often as never, so the upper arm is
-// decorative and the check is still the constant it was rewritten to stop
-// being. Left as-is deliberately: removing it or moving the band changes
-// the environment family's tally and therefore the bet slate, and no
-// measurement here supports a specific replacement. This note is so the
-// next reader does not take the paragraph above as evidence it was cured.
-lean:ctx.awayTravel.factor*ctx.homeTravel.factor<=0.955?"nrfi":ctx.awayTravel.factor*ctx.homeTravel.factor>=1.045?"yrfi":"neutral"},// Informational, and deliberately not a vote — same reason as Day game below.
+// It will never vote YRFI, and that is no longer a defect to chase.
+// There is no anti-travel: a team either changed parks or it did not, and
+// the absence is the baseline, not the opposite pole. The earlier notes
+// called the upper arm "decorative" and left it in; leaving an unreachable
+// branch in place is what let two readers believe the term was symmetric.
+// It is directional, it says so, and the yrfi branch is gone rather than
+// pretending otherwise. Removing it changes no output — with a maximum
+// product of 1.00 it could not fire.
+//
+// Keep this prose ABOVE the object. nrfi-check-votes.js reads the `lean:`
+// within 800 characters of the `label:` and throws otherwise; that tight
+// window is what stops it reading a neighbouring check's vote, so the
+// explanation goes here rather than between the two properties.
+{label:"Travel & rest",detail:ctx.awayName+": "+ctx.awayTravel.note+" · "+ctx.homeName+": "+ctx.homeTravel.note,lean:ctx.awayTravel.factor*ctx.homeTravel.factor<=0.955?"nrfi":"neutral"},// Informational, and deliberately not a vote — same reason as Day game below.
 //
 // seasonLoadFactor bottoms out at 1.00 and climbs to 1.04, so it cannot
 // express a rested arm, only a worn one. A check built on it is structurally
