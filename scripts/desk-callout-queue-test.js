@@ -48,6 +48,9 @@ function makeSynth() {
     flushGhosts() { const g = ghosts.splice(0); for (const f of g) f(); },
     // Finish the utterance that is genuinely speaking right now.
     finish() { const u = current; current = null; if (u && u.onend) u.onend(); },
+    // Reject it instead, the way a browser does. `reason` lands on the event as
+    // `error`, which is where the spec puts it and where the queue reads it.
+    fail(reason) { const u = current; current = null; if (u && u.onerror) u.onerror({ error: reason }); },
     pendingGhosts: () => ghosts.length,
   };
 }
@@ -59,10 +62,14 @@ const harness = [
   // Markers deliberately avoid the tunable VALUES — an earlier version ended a
   // slice on "const SAY_STALE_MS = 12000;" and broke the moment that was retuned.
   slice("const SAY_MAX = 3;", "const _sayQ = [];"),   // both caps + the queue
+  // Must come before the _sayOn slice and be pulled separately: _sayDrain calls
+  // _setBlocked, and _setBlocked cannot live between "let _sayOn = false" and
+  // _sayDrain's closing brace without ending that slice early.
+  slice("let _sayBlocked = null;", "\n}"),            // blocked latch + _setBlocked
   slice("let _sayOn = false", "\n}"),                 // _sayGen decl + _sayDrain
   slice("function speak(text, urgent, at)", "\n}"),
   slice("function speakStop()", "\n}"),
-  "return { speak, speakStop, voiceRate, state: () => ({ on: _sayOn, depth: _sayQ.length, gen: _sayGen }) };",
+  "return { speak, speakStop, voiceRate, sayBlocked, onSayBlocked, state: () => ({ on: _sayOn, depth: _sayQ.length, gen: _sayGen }) };",
 ].join("\n");
 
 let fails = 0, passes = 0;
@@ -255,6 +262,57 @@ console.log("\nstopping clears the repeat guard");
   // Switching focus away and straight back has to re-introduce the game.
   api.speak("MIA at CIN. First inning. Desk is on NRFI.", false);
   check("the intro can be re-announced after a stop", synth.spoken.length === 2, synth.spoken.join("|"));
+}
+
+/* The failure that had no symptom.
+ *
+ * Before this, onerror was wired straight to `done`, so a browser refusing
+ * synthesis outright made every queued line "finish" instantly and start the
+ * next — the whole backlog gone in a millisecond, no audio, and a button still
+ * reading "on". The listener's only evidence was silence, which is also what a
+ * quiet inning sounds like. */
+console.log("\na browser that refuses audio does not silently eat the queue");
+{
+  const { synth, api } = fresh();
+  let told = null;
+  api.onSayBlocked((why) => { told = why; });
+  api.speak("ball one", false);
+  api.speak("strike one", false);
+  api.speak("foul.", false);
+  check("first line was attempted", synth.spoken.length === 1, synth.spoken.join("|"));
+  check("the rest are queued", api.state().depth === 2, "depth " + api.state().depth);
+
+  synth.fail("not-allowed");
+  check("nothing further was spoken into the void", synth.spoken.length === 1, synth.spoken.join("|"));
+  check("the latch is released so a later line may try", api.state().on === false);
+  check("the stale backlog is dropped", api.state().depth === 0, "depth " + api.state().depth);
+  check("the reason is recorded", api.sayBlocked() === "not-allowed", String(api.sayBlocked()));
+  check("the UI was told once", told === "not-allowed", String(told));
+}
+
+console.log("\nan ordinary error still drains — one bad line must not mute the inning");
+{
+  const { synth, api } = fresh();
+  api.speak("ball one", false);
+  api.speak("strike one", false);
+  synth.fail("interrupted");
+  check("the next line goes on as normal", synth.spoken.length === 2, synth.spoken.join("|"));
+  check("no complaint is raised", api.sayBlocked() === null, String(api.sayBlocked()));
+}
+
+console.log("\na line that reaches the speakers clears the complaint");
+{
+  const { synth, api } = fresh();
+  let told = "unset";
+  api.onSayBlocked((why) => { told = why; });
+  api.speak("ball one", false);
+  synth.fail("not-allowed");
+  check("blocked to begin with", api.sayBlocked() === "not-allowed");
+  // The listener taps the button; speech now works.
+  api.speak("strike one", false);
+  synth.finish();
+  check("the complaint is withdrawn", api.sayBlocked() === null, String(api.sayBlocked()));
+  check("and the UI was told it cleared", told === null, String(told));
 }
 
 console.log(`\n${passes} passed, ${fails} failed`);

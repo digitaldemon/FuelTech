@@ -5780,6 +5780,31 @@ const SAY_MAX = 3;
  * improvement; it was never tuned for how late a call can be and still be a call. */
 const SAY_STALE_MS = 6000;
 const _sayQ = [];
+/* Why the callout is producing no sound, when the reason is the browser and not
+ * us. Null means nothing is known to be wrong.
+ *
+ * This exists because the honest failure was invisible. `u.onerror = done` treats
+ * every error as a finished line, so a browser refusing synthesis outright drains
+ * the entire queue in milliseconds — each utterance errors, `done` starts the
+ * next, which errors — and leaves the button reading "on" over total silence.
+ * The desk had no way to say the one thing the listener needed to hear.
+ *
+ * Declared ABOVE the _sayOn latch deliberately. desk-callout-queue-test.js
+ * builds its harness by slicing this file from that latch's declaration to the
+ * next line-start brace in order to pull in _sayDrain, so any function defined
+ * between those two points ends the slice early and silently drops _sayDrain
+ * from the suite. Nothing below this block may be a function until _sayDrain.
+ * (Note for the same reason: do not quote that declaration verbatim in a
+ * comment above it, or the slice starts here instead.) */
+let _sayBlocked = null;
+let _sayBlockedCb = null;
+function sayBlocked() { return _sayBlocked; }
+function onSayBlocked(cb) { _sayBlockedCb = cb; }
+function _setBlocked(why) {
+  if (_sayBlocked === why) return;
+  _sayBlocked = why;
+  if (_sayBlockedCb) _sayBlockedCb(why);
+}
 /* _sayGen identifies the utterance the queue currently believes is speaking.
  *
  * `done` is wired to three things — onend, onerror and the watchdog — and until
@@ -5829,13 +5854,36 @@ function _sayDrain(s) {
     if (_sayGuard) { clearTimeout(_sayGuard); _sayGuard = null; }
     _sayDrain(s);
   };
-  u.onend = done;
+  // A line that genuinely reached the speakers clears any standing complaint:
+  // whatever was blocking audio is demonstrably no longer blocking it.
+  u.onend = () => { _setBlocked(null); done(); };
   // An utterance that errors (or that Chrome silently drops, which it does after
   // a cancel) never fires end, and without this the latch stays set and the
   // callout goes silent for the rest of the inning — the same failure the
   // s.paused nudge below was added to work around. Budget generously: ~90ms per
   // character plus a second, so a normal line never trips it.
-  u.onerror = done;
+  u.onerror = (e) => {
+    const why = e && e.error ? String(e.error) : "";
+    /* "not-allowed" is the autoplay policy, not a hiccup. The browser has
+     * refused synthesis for want of a user gesture, so EVERY queued line will
+     * fail identically — draining is the worst possible response, because it
+     * empties the queue in milliseconds and the failure leaves no trace at all.
+     *
+     * Hold instead: drop the latch so a later line can try, bin the backlog
+     * (by the time a listener taps, those pitches are long past — the same
+     * judgement SAY_STALE_MS already makes), and record the reason so the UI
+     * can ask for the gesture that fixes it. Every other error really is a
+     * one-off and must keep draining, or one bad utterance mutes the inning. */
+    if (why === "not-allowed") {
+      _sayOn = false;
+      if (_sayGuard) { clearTimeout(_sayGuard); _sayGuard = null; }
+      _sayQ.length = 0;
+      _sayLast = null;
+      _setBlocked(why);
+      return;
+    }
+    done();
+  };
   /* The old budget was 1000 + 90ms/char, which is roughly 50% clear of what the
    * voice actually takes. That margin existed because firing early is dangerous:
    * `done` drains the next line, so a watchdog that goes off mid-sentence talks
@@ -9037,6 +9085,11 @@ function FirstInning() {
   // the inning — the backlog never drains, it just delays everything after it.
   const CALLOUT_STALE_MS = 45000;
   const [callout, setCallout] = useState(false);
+  /* The browser refusing to speak is the one callout failure a listener cannot
+   * diagnose: the button says on, the games are tracked, and nothing comes out.
+   * Subscribed once here so the label can say so. */
+  const [voiceBlocked, setVoiceBlocked] = useState(null);
+  useEffect(() => { onSayBlocked(setVoiceBlocked); return () => onSayBlocked(null); }, []);
   /* Which game is being listened to. null = all of them, the original behaviour.
    *
    * That behaviour is fine at 7:05 and unusable at 4:10, when five games open
@@ -9973,11 +10026,19 @@ function FirstInning() {
               else speakStop();
               setCallout(next);
             }}
-            title={"Digital Demons NRFI Live — the desk's own first-inning broadcast. Calls every game on the board " +
-              "that has a call or a position, pitch by pitch, then the NRFI result. " +
-              "Built off the MLB play feed, not a broadcast: league game audio is licensed per-subscriber and cannot be embedded here."}
-            style={callout ? { color: "var(--moss)", borderColor: "var(--moss)" } : undefined}>
-            {callout ? "🔊 Digital Demons NRFI Live · on" : "🔈 Digital Demons NRFI Live"}
+            title={voiceBlocked
+              ? "Your browser blocked audio for this page. Tap this button again to allow it — " +
+                "speech has to start from a tap, and the desk will stay silent until it does."
+              : "Digital Demons NRFI Live — the desk's own first-inning broadcast. Calls every game on the board " +
+                "that has a call or a position, pitch by pitch, then the NRFI result. " +
+                "Built off the MLB play feed, not a broadcast: league game audio is licensed per-subscriber and cannot be embedded here."}
+            style={voiceBlocked && callout ? { color: "var(--rust, #c0632f)", borderColor: "var(--rust, #c0632f)" }
+              : callout ? { color: "var(--moss)", borderColor: "var(--moss)" } : undefined}>
+            {/* Silence with the button lit is indistinguishable from a quiet
+                inning, so the blocked state has to say so in the label itself —
+                a tooltip nobody hovers on a phone does not count as surfacing. */}
+            {voiceBlocked && callout ? "🔇 Blocked by browser · tap to allow"
+              : callout ? "🔊 Digital Demons NRFI Live · on" : "🔈 Digital Demons NRFI Live"}
           </button>
         )}
         {/* Game picker. Only worth showing once games actually overlap — with one
