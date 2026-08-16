@@ -157,6 +157,11 @@ const memo = (k, fn) => cache.has(k) ? cache.get(k) : cache.set(k, fn()).get(k);
  * still look like numbers. Misses are counted and the harness reports them.
  */
 const PIT_MODE = process.env.NRFI_LEAKY === "1" ? "leaky" : "point-in-time";
+// Recorded, not just applied. The whole reason the split leak survived so long
+// is that a leaky cache and a clean one were byte-indistinguishable on their
+// metadata, so any artifact written by a run has to carry the mode that
+// produced it or the next reader inherits the same trap.
+const H2H_MODE = process.env.NRFI_NO_H2H === "1" ? "off (ablation)" : "season (leaks)";
 pitI01.stats = { pit: 0, miss: 0, api: 0 };
 let lfGames = null;
 function leakfreeGames() {
@@ -429,7 +434,22 @@ const topOrder = async (players, se, oppHand, oppPitcherId) => {
       const by = {}; (d.people || []).forEach((p) => { const s = p.stats?.[0]?.splits?.[0]?.stat; if (s) by[p.id] = { obp: s.obp != null ? +s.obp : null, rates: paRates(s, s.plateAppearances) }; });
       const w = [0.5, 0.3, 0.2]; let num = 0, den = 0; ids.slice(0, 3).forEach((id, i) => { const o = by[id] && by[id].obp; if (o != null) { num += o * w[i]; den += w[i]; } });
       let batters = ids.map((id) => (by[id] && by[id].rates) || null);
-      if (oppPitcherId && batters.some(Boolean)) {
+      /* The h2h line CANNOT be rewound, and this is how its leak gets bounded.
+       *
+       * type=[vsPlayer] returns this batter's record against this pitcher over
+       * the whole season — including the plate appearances in the game being
+       * scored. Unlike pitI01, teamOff and pitMeta there is no per-game log to
+       * sum, so there is no honest point-in-time version to build.
+       *
+       * What is available is an ablation. NRFI_NO_H2H=1 drops the blend and
+       * leaves the batter on his season rates, which is strictly LESS
+       * information than the app has live, so it under-states the model rather
+       * than over-stating it. Running the backtest both ways brackets the
+       * truth: the clean number is at least the no-h2h number, and at most the
+       * with-h2h one. A bracket you can state is worth more than a single
+       * figure you cannot defend.
+       */
+      if (oppPitcherId && batters.some(Boolean) && process.env.NRFI_NO_H2H !== "1") {
         try {
           const h2hD = await J(`https://statsapi.mlb.com/api/v1/people?personIds=${ids.join(",")}&hydrate=stats(group=[hitting],type=[vsPlayer],opposingPlayerId=${oppPitcherId},season=${se})`);
           const h2h = {}; (h2hD.people || []).forEach((p) => { const s = p.stats?.[0]?.splits?.[0]?.stat; const pa = s ? Number(s.plateAppearances || s.atBats || 0) : 0; if (s && pa >= 5) h2h[p.id] = { pa, rates: paRates(s, pa, NRFI_PA_REG_H2H) }; });
@@ -569,5 +589,6 @@ module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP, makeVer
   // source it ran on. A backtest that does not say whether it rewound its inputs
   // is not reporting a result, and the difference between the two modes here is
   // larger than most of the effects these scripts are built to measure.
-  PIT_MODE, pitStats: () => ({ ...pitI01.stats, off: { ...teamOff.stats }, meta: { ...pitMeta.stats } }),
+  PIT_MODE, H2H_MODE,
+  pitStats: () => ({ ...pitI01.stats, off: { ...teamOff.stats }, meta: { ...pitMeta.stats }, h2h: H2H_MODE }),
   sumPitLog, GLOG_REG, NRFI_CALIB_SEED, NRFI_PA_REG_PIT, NRFI_PA_REG_H2H };

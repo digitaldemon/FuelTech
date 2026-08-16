@@ -80,10 +80,33 @@
 // lambda": the blend sweep below is flat to four decimals across every w, which
 // means the window cannot tell them apart, not that lambda won.
 //
+// THE H2H LEAK IS BOUNDED, AND THE BOUND IS ~ZERO. The batter-vs-pitcher line
+// cannot be rewound — type=[vsPlayer] returns the season record including the
+// game being scored, and there is no per-game log to sum. So it was measured
+// instead, by ablation: NRFI_NO_H2H=1 drops the blend and leaves batters on
+// their season rates, which is strictly LESS information than the app has live
+// and therefore under-states rather than over-states. Same 558 games:
+//
+//                    h2h on (leaking)   h2h off (ablated)
+//     Brier               .2449               .2449
+//     AUC                 .5780               .5769
+//     pick-side acc       56.3%               56.0%
+//
+// The truth is bracketed between those columns, and the bracket is 0.0011 of
+// AUC wide. So no figure above is materially inflated by h2h.
+//
+// Read the other way, that is a finding about the FEATURE, not just the leak:
+// the h2h blend carries up to 65% weight on a batter's rates, costs an extra
+// API call per game, and buys 0.0011 AUC and 0.3pp of pick-side accuracy WHILE
+// BEING ALLOWED TO CHEAT. Its honest contribution is therefore at most that,
+// and plausibly negative. It has not been removed on this evidence alone —
+// within-noise cuts both ways, and one 45-day window should not retire a live
+// feature — but it should not be defended as load-bearing either.
+//
 // STILL LEAKING, so this is not yet a clean walk-forward: topOrder's batter OBP
-// and per-PA rates, the h2h lines, savant's Statcast, and the opsVsR/opsVsL
-// platoon split inside teamOff are all whole-season pulls. Everything still
-// leaking is now on the OFFENCE side; the pitcher side is clean.
+// and per-PA rates, savant's Statcast, and the opsVsR/opsVsL platoon split
+// inside teamOff are all whole-season pulls. Everything still leaking is now on
+// the OFFENCE side; the pitcher side is clean.
 // CLV on live picks remains the cleanest test available.
 const fs = require("fs");
 const path = require("path");
@@ -155,7 +178,8 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
     `\n  pitcher 1st-inn  rewound ${ps.pit}, no prior starts ${ps.miss}, season-aggregate ${ps.api}` +
     `\n  team offence     rewound ${ps.off.pit}, no prior games ${ps.off.miss}, season-aggregate ${ps.off.api}` +
     `\n  starter szn line rewound ${ps.meta.pit}, no prior starts ${ps.meta.miss}, season-aggregate ${ps.meta.api}` +
-    `\n  STILL WHOLE-SEASON: lineup OBP and per-PA rates, batter-vs-pitcher h2h, Statcast, platoon OPS.`);
+    `\n  batter-vs-pitcher h2h  ${ps.h2h}` +
+    `\n  STILL WHOLE-SEASON: lineup OBP and per-PA rates, Statcast, platoon OPS.`);
   if (PIT_MODE === "leaky") console.log("  !! NRFI_LEAKY=1 — season-to-date splits contain the scored game. Control only.");
   else if (ps.miss > ps.pit) console.log("  !! more arms had no prior starts than were rewound — early-window sample, read with care.");
   const cl = (x) => C(x, 1e-6, 1 - 1e-6);
