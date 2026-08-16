@@ -14,18 +14,28 @@ function slice(a, b) {
   const j = src.indexOf(b, i); if (j < 0) throw new Error("end: " + a);
   return src.slice(i, j + b.length);
 }
-// re-run the exact slice list the backtest uses
-// Two slice lists live in the library and both can go stale: the model bundle,
-// written as slice("a", "b") calls, and VERDICT_SLICES, written as ["a", "b"]
-// pairs. Only scanning the first missed nClamp out of the verdict bundle, which
-// threw ReferenceError at the first call — the same failure this file exists to
-// catch, in the one list it was not reading.
-const callList = [...bt.matchAll(/slice\((".*?"),\s*(".*?")\)/g)].map((m) => [JSON.parse(m[1]), JSON.parse(m[2])]);
-const pairList = [...bt.matchAll(/^\s*\[(".*?"),\s*(".*?")\],\s*$/gm)].map((m) => [JSON.parse(m[1]), JSON.parse(m[2])]);
+// Two slice lists live in the library and both can go stale: the model bundle
+// and VERDICT_SLICES. Only scanning the first missed nClamp out of the verdict
+// bundle, which threw ReferenceError at the first call — the same failure this
+// file exists to catch, in the one list it was not reading.
+//
+// IMPORT the lists; do not scrape them. This file used to recover both by
+// regexing nrfi-model-lib.js source for `slice("a", "b")` calls and `["a", "b"]`
+// pairs. On 2026-08-15 VERDICT_SLICES gained a third element (a fingerprint
+// scope tag) and three entries moved to a declMarker() helper, and both regexes
+// silently stopped describing the file: the pair matcher fed `";", "cache"` to
+// JSON.parse and the whole checker died. A drift detector taken out by exactly
+// the kind of drift it exists to detect is worse than no detector, because the
+// green light it used to give was still believed. Reading the exported arrays
+// cannot go stale — if the shape changes, this file changes with it or fails to
+// destructure, and either way it cannot quietly pass.
+const { MODEL_SLICES, VERDICT_SLICES } = require("./" + LIB.replace(/\.js$/, ""));
+const callList = MODEL_SLICES.map(([a, b]) => [a, b]);
+const pairList = VERDICT_SLICES.map(([a, b]) => [a, b]);
 const list = [...callList, ...pairList];
-if (callList.length < 10) throw new Error(`only ${callList.length} model slices found in ${LIB} — the list moved again, ` +
+if (callList.length < 10) throw new Error(`only ${callList.length} model slices exported by ${LIB} — the list moved again, ` +
   "and this checker was about to pass by looking at nothing");
-if (pairList.length < 5) throw new Error(`only ${pairList.length} verdict slices found in ${LIB} — VERDICT_SLICES moved or changed shape`);
+if (pairList.length < 5) throw new Error(`only ${pairList.length} verdict slices exported by ${LIB} — VERDICT_SLICES moved or changed shape`);
 const model = list.map(([a, b]) => slice(a, b)).join("\n");
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 const clean = strip(model);

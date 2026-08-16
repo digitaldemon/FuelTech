@@ -16,45 +16,68 @@ function slice(a, b) {
   const j = src.indexOf(b, i); if (j < 0) throw new Error("end marker not found after: " + a);
   return src.slice(i, j + b.length);
 }
+/* Marker for a numeric const declaration, matched by NAME rather than by value.
+ *
+ * The slice markers below are deliberately literal so that a rename in app.jsx
+ * fails loudly instead of silently scoring a stale model. But for declarations
+ * that exist precisely to be TUNED, a literal marker also fails on the tuning
+ * itself: raising NRFI_BET_MIN from 55 to 57 on 2026-08-15 broke all nine
+ * analysis scripts at once, including the ones whose job is to check whether
+ * such a change was right. A guard that fires on the correct action as loudly
+ * as on the incorrect one stops carrying information.
+ *
+ * So match the shape and the names, and let the numbers move. A rename or a
+ * restructure still throws; a retune does not. */
+function declMarker(...names) {
+  const re = new RegExp("const\\s+" +
+    names.map((n) => n + "\\s*=\\s*-?[\\d.]+").join(",\\s*") + "\\s*;");
+  const m = src.match(re);
+  if (!m) {
+    throw new Error("declaration not found in app.jsx for: " + names.join(", ") +
+      " — these constants were renamed, reordered or restructured, and this slice " +
+      "list is stale. Fix the list; do not delete the entry.");
+  }
+  return m[0];
+}
 // Pull the real model math out of app.jsx.
-const model = [
-  slice("const NRFI_SIM_W = 0.20;", "const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));"),
-  slice("function nrfiRegress(", "\n}"),
-  slice("function halfNoRun(", "\n}"),
-  slice("function pitchSkillFactor(", "\n}"),
-  slice("function openerGameFactor(", "\n}"),
-  slice("function openerFactor(", "\n}"),
-  slice("function seasonLoadFactor(", "\n}"),
+const MODEL_SLICES = [
+  ["const NRFI_SIM_W = 0.20;", "const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));"],
+  ["function nrfiRegress(", "\n}"],
+  ["function halfNoRun(", "\n}"],
+  ["function pitchSkillFactor(", "\n}"],
+  ["function openerGameFactor(", "\n}"],
+  ["function openerFactor(", "\n}"],
+  ["function seasonLoadFactor(", "\n}"],
   // These nine went into nrfiEvaluate after the last time the backtest was run,
   // and nothing caught it: mapLimit swallowed the ReferenceError per row, every
   // row came back null, and the script printed "No samples." A backtest that
   // reports nothing looks like a backtest with no data, not a broken one. See
   // the guard in desk-nrfi-backtest.js, and scripts/nrfi-slice-gap.js, which
   // diffs this list against app.jsx's top-level declarations.
-  slice("function pitcherTrendFactor(", "\n}"),
-  slice("function teamOffenseTrendFactor(", "\n}"),
-  slice("function offenseVenueFactor(", "\n}"),
-  slice("function offKrateFactor(", "\n}"),
-  slice("function trendBaseline(", "\n}"),
-  slice("const HFA_LAMBDA_RATIO = 1.245;", "HFA_DOWN = 1 / Math.sqrt(HFA_LAMBDA_RATIO);"),
-  slice("function homeOffAdvantage(", "\n}"),
-  slice("const NRFI_LEAK_MIN = 1.5;", ";"),
-  slice("function nrfiLeaks(", "\n}"),
+  ["function pitcherTrendFactor(", "\n}"],
+  ["function teamOffenseTrendFactor(", "\n}"],
+  ["function offenseVenueFactor(", "\n}"],
+  ["function offKrateFactor(", "\n}"],
+  ["function trendBaseline(", "\n}"],
+  ["const HFA_LAMBDA_RATIO = 1.245;", "HFA_DOWN = 1 / Math.sqrt(HFA_LAMBDA_RATIO);"],
+  ["function homeOffAdvantage(", "\n}"],
+  ["const NRFI_LEAK_MIN = 1.5;", ";"],
+  ["function nrfiLeaks(", "\n}"],
   // Through the sentinel, not the IIFE's "})();": the PBT_* cutoffs and
   // pbtPosterior sit after the table, and nrfiEvaluate reads them.
-  slice("const PITCHER_BT = (() => {", "// backtest bundle gets the constants and not just the table."),
-  slice("function pitcherVenueFactor(", "\n}"),
-  slice("const OPENER_REG_IP = 12;", ";"),
-  slice("const I01_LG = {", "};"),
-  slice("const CHECK_FAMILIES = [", "\n];"),
-  slice("function checkFamily(", "\n}"),
-  slice("function pitcherI01Profile(", "\n}"),
-  slice("function pitcherBT(", "\n}"),
-  slice("const NRFI_TEMP_REF = 73.7;", "const ENV_W_WIND = 1.00;"),
-  slice("function weatherPark(", "\n}"),
-  slice("const rate2 = (o)", ";"),
-  slice("const awayPit0 = (o)", ";"),
-  slice("const NRFI_LG_PA = (() => {", "const NRFI_PA_REG_H2H = 50;"),
+  ["const PITCHER_BT = (() => {", "// backtest bundle gets the constants and not just the table."],
+  ["function pitcherVenueFactor(", "\n}"],
+  ["const OPENER_REG_IP = 12;", ";"],
+  ["const I01_LG = {", "};"],
+  ["const CHECK_FAMILIES = [", "\n];"],
+  ["function checkFamily(", "\n}"],
+  ["function pitcherI01Profile(", "\n}"],
+  ["function pitcherBT(", "\n}"],
+  ["const NRFI_TEMP_REF = 73.7;", "const ENV_W_WIND = 1.00;"],
+  ["function weatherPark(", "\n}"],
+  ["const rate2 = (o)", ";"],
+  ["const awayPit0 = (o)", ";"],
+  ["const NRFI_LG_PA = (() => {", "const NRFI_PA_REG_H2H = 50;"],
   // The shipped calibration seed, read rather than retyped. desk-nrfi-backtest
   // had it hardcoded in two places as +0.050 — wrong magnitude AND wrong sign
   // against the -0.048 in app.jsx — so its "shipped seed applied to each path"
@@ -62,13 +85,14 @@ const model = [
   // paths on that basis. Exactly the drift the header of this file warns about,
   // caught only because the fitted c moved and the printed comparison stopped
   // making sense.
-  slice("const NRFI_CALIB_SEED = {", "};"),
-  slice("function paRates(", "\n}"),
-  slice("function matchupPA(", "\n}"),
-  slice("function advanceBaseOut(", "\n}"),
-  slice("function simHalfNoRun(", "\n}"),
-  slice("function nrfiEvaluate(", "\n}"),
-].join("\n");
+  ["const NRFI_CALIB_SEED = {", "};"],
+  ["function paRates(", "\n}"],
+  ["function matchupPA(", "\n}"],
+  ["function advanceBaseOut(", "\n}"],
+  ["function simHalfNoRun(", "\n}"],
+  ["function nrfiEvaluate(", "\n}"],
+];
+const model = MODEL_SLICES.map(([a, b]) => slice(a, b)).join("\n");
 // The regression constants come out with the rest of the model, not as literals
 // here. They were in scope all along (the NRFI_LG_PA slice above ends on the
 // NRFI_PA_REG_H2H declaration) but were never destructured, so both fetchers
@@ -588,16 +612,41 @@ function scoreBothPaths(ctx, lg) {
 // `overrides` replaces the ladder constants by name, e.g. {NRFI_BET_MIN: 53}.
 // Substitution is on the literal declaration in app.jsx, so a rename here fails
 // loudly rather than silently sweeping the shipped numbers.
+/* Third element is the FINGERPRINT SCOPE, and the distinction is load-bearing.
+ *
+ * A cache like nrfi-tout-vs-model.json stores what the MODEL produced — pNRFI,
+ * aligned, confidence, and the two thin-arm flags — and nothing the ladder
+ * decided; consumers apply the ladder and the calibration themselves at read
+ * time. Verified, not assumed: ev.pNRFI is raw at app.jsx:7067 and every
+ * applyCalibration call site (8523, 8689, 9413) is downstream of the cache.
+ *
+ * So folding the ladder constants into modelSig over-fingerprints. Raising
+ * NRFI_BET_MIN invalidated a 1282-game cache whose contents provably could not
+ * have changed, forcing a multi-hour rebuild to answer a question about the
+ * ladder — and a guard expensive enough to route around is a guard that gets
+ * routed around. Meanwhile the direction that actually matters, a change to the
+ * scoring model itself, still invalidates.
+ *
+ * "cache"  — text that can change the numbers a harness stores. Anything
+ *            ambiguous belongs here; under-fingerprinting fails silently and
+ *            over-fingerprinting only costs time.
+ * "ladder" — text that only INTERPRETS stored numbers. Safe to change without
+ *            rebuilding, reported separately so a run still says which ladder
+ *            produced its verdicts.
+ *
+ * Order below is the original evaluation order and must stay that way; the
+ * scopes are for hashing only. */
 const VERDICT_SLICES = [
-  ["const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));", ";"],
-  ["const NRFI_STRONG_MIN = 63, NRFI_BET_MIN = 55, NRFI_LEAN_MIN = 52;", ";"],
-  ["const NRFI_TIER_STRONG = 57;", ";"],
-  ["const NRFI_THIN_STARTS = 5, NRFI_RELIEF_APPS = 15, NRFI_RELIEF_IP = 25;", ";"],
-  ["function nrfiThinArm(", "\n}"],
-  ["function nrfiReliefBacked(", "\n}"],
-  ["function nrfiTier(", "\n}"],
-  ["function applyCalibration(", "\n}"],
-  ["function nrfiVerdict(", "\n}"],
+  ["const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));", ";", "cache"],
+  [declMarker("NRFI_STRONG_MIN", "NRFI_BET_MIN", "NRFI_LEAN_MIN"), ";", "ladder"],
+  [declMarker("NRFI_TIER_STRONG"), ";", "ladder"],
+  // These feed nrfiThinArm, whose output IS cached as thinAway/thinHome.
+  [declMarker("NRFI_THIN_STARTS", "NRFI_RELIEF_APPS", "NRFI_RELIEF_IP"), ";", "cache"],
+  ["function nrfiThinArm(", "\n}", "cache"],
+  ["function nrfiReliefBacked(", "\n}", "ladder"],
+  ["function nrfiTier(", "\n}", "ladder"],
+  ["function applyCalibration(", "\n}", "ladder"],
+  ["function nrfiVerdict(", "\n}", "ladder"],
 ];
 function makeVerdict(overrides) {
   let bundle = VERDICT_SLICES.map(([a, b]) => slice(a, b)).join("\n");
@@ -630,13 +679,36 @@ const dataSlice = (() => {
   if (a < 0 || b < 0 || b <= a) throw new Error("could not slice the fetcher section for modelSig");
   return src.slice(a, b);
 })();
-const modelSig = require("crypto").createHash("sha1")
-  .update(model + VERDICT_SLICES.map(([a, b]) => slice(a, b)).join("\n") + dataSlice)
-  .digest("hex").slice(0, 12);
+const sigOf = (tag) => VERDICT_SLICES.filter((s) => s[2] === tag)
+  .map(([a, b]) => slice(a, b)).join("\n");
+/* Normalise line endings before hashing, or the fingerprint tracks the checkout
+ * rather than the code.
+ *
+ * These inputs are read straight off disk, and git on Windows rewrites LF to
+ * CRLF on checkout (core.autocrlf). So the same commit hashes differently on a
+ * Windows clone than on CI, and a plain `git checkout` can invalidate a
+ * 1282-game cache without a byte of logic having changed. Found the hard way: a
+ * refactor that provably left the model text byte-identical still moved the sig,
+ * and the entire difference was 459 carriage returns inside dataSlice.
+ *
+ * A fingerprint that reports a change nobody made is the same failure as one
+ * that misses a change somebody did. It just costs rebuilds instead of
+ * correctness, and rebuilds are what make people delete the guard. */
+const sha = (s) => require("crypto").createHash("sha1")
+  .update(String(s).replace(/\r\n/g, "\n")).digest("hex").slice(0, 12);
+// What produced the cached numbers. A cache carrying a different one is stale.
+const modelSig = sha(model + sigOf("cache") + dataSlice);
+// What interprets them. Report it; never gate a cache on it.
+const ladderSig = sha(sigOf("ladder"));
 
 module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP, makeVerdict,
   J, parseIp, memo, pitI01, teamOff, pitMeta, topOrder, travelRest, savant, mapLimit,
-  buildCtx, scoreBothPaths, C, modelSig,
+  buildCtx, scoreBothPaths, C, modelSig, ladderSig,
+  // The slice lists themselves, so a checker never has to regex them back out
+  // of this file's source. nrfi-slice-gap.js did exactly that and broke the
+  // moment VERDICT_SLICES grew a third element — a drift detector taken out by
+  // the drift it exists to detect. Importing them cannot go stale.
+  MODEL_SLICES, VERDICT_SLICES,
   // PIT_MODE and the counters are exported so a harness can PRINT which split
   // source it ran on. A backtest that does not say whether it rewound its inputs
   // is not reporting a result, and the difference between the two modes here is
