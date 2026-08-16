@@ -5353,11 +5353,42 @@ const _linescore = new Map(); // gamePk -> Promise<linescore>
 const _rolling = new Map();   // pid:season -> rolling NRFI windows
 const _rosterCache = new Map(); // teamId:season:sit:ppId -> batter PA rate array
 const _teamOffRolling = new Map(); // teamId:date -> rolling first-inning scored-in-1st windows
+const _teamGameDates = new Map(); // teamId:date -> Promise<sorted dates of completed team games>
 // Shared linescore fetch — stores the Promise so concurrent callers dedup.
 function getLinescore(gamePk) {
   if (!_linescore.has(gamePk))
     _linescore.set(gamePk, getJson("https://statsapi.mlb.com/api/v1/game/" + gamePk + "/linescore").catch(() => null));
   return _linescore.get(gamePk);
+}
+
+/* Dates of the team's completed games, oldest first, one entry PER GAME so a
+ * doubleheader counts twice. Feeds the "last N team games" windows on the
+ * pitcher strip — see pitcherRollingNRFI.
+ *
+ * 75 days back is deliberate: the widest window asked for is 50 team games, and
+ * a club plays ~0.85 games a day, so 75 days clears 50 with room for an All-Star
+ * break and a rainout stretch. `fields` trims the response from 227KB (a full
+ * season) to about 5KB, which is what makes one of these affordable per team.
+ * Stores the Promise so the two cards a team appears on share one fetch. */
+function teamGameDates(teamId, todayStr) {
+  if (teamId == null || !todayStr) return Promise.resolve([]);
+  const k = teamId + ":" + todayStr;
+  if (!_teamGameDates.has(k)) {
+    const start = new Date(new Date(todayStr + "T12:00:00Z").getTime() - 75 * 86400000)
+      .toISOString().slice(0, 10);
+    _teamGameDates.set(k, getJson(
+      "https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=" + teamId +
+      "&startDate=" + start + "&endDate=" + todayStr + "&gameType=R" +
+      "&fields=dates,date,games,gamePk,status,abstractGameState"
+    ).then((j) => {
+      const out = [];
+      (j.dates || []).forEach((d) => (d.games || []).forEach((g) => {
+        if (g.status && g.status.abstractGameState === "Final") out.push(d.date);
+      }));
+      return out.sort();
+    }).catch(() => []));
+  }
+  return _teamGameDates.get(k);
 }
 
 /* ---- live first-inning call ----------------------------------------------
@@ -6268,14 +6299,17 @@ async function pitcherMeta(pid, season) {
 // Fetches the pitcher's game log to get start gamePks, then pulls each linescore
 // to check whether the first inning was scoreless. Shared linescore cache ensures
 // games appearing for both pitchers are only fetched once per page load.
-async function pitcherRollingNRFI(pid, season) {
+async function pitcherRollingNRFI(pid, season, teamId, todayStr) {
   if (pid == null) return null;
-  const k = pid + ":" + season;
+  const k = pid + ":" + season + ":" + teamId + ":" + todayStr;
   if (_rolling.has(k)) return _rolling.get(k);
   let val = null;
   try {
-    const gl = await getJson("https://statsapi.mlb.com/api/v1/people/" + pid +
-      "/stats?stats=gameLog&group=pitching&season=" + season);
+    const [gl, teamDates] = await Promise.all([
+      getJson("https://statsapi.mlb.com/api/v1/people/" + pid +
+        "/stats?stats=gameLog&group=pitching&season=" + season),
+      teamGameDates(teamId, todayStr),
+    ]);
     const splits = (gl.stats && gl.stats[0] && gl.stats[0].splits) || [];
     // Only actual starts; extract gamePk and home/away flag.
     const items = splits.filter((s) => Number(s.stat && s.stat.gamesStarted) === 1)
@@ -6301,27 +6335,43 @@ async function pitcherRollingNRFI(pid, season) {
         const pct = (arr) => arr.length ? Math.round(arr.filter(Boolean).length / arr.length * 100) : null;
         const rps = (arr) => arr.length ? Math.round(arr.reduce((s, v) => s + v.runs, 0) / arr.length * 100) / 100 : null;
         const split = (subset) => subset.length >= 5 ? { pct: pct(subset.map(v => v.clean)), n: subset.length, runsPerStart: rps(subset) } : null;
-        /* DAY windows, for the board strip only — deliberately NOT the same thing
-         * as the START windows below. NRFIKINGKY's card reads "L30 · 5g": five
-         * starts inside thirty days, a calendar window. `l30` here is the last
-         * thirty STARTS. pitcherTrendFactor and pitcherVenueFactor read l30/l10/l5,
-         * so repurposing them would silently move the model; these are additive
-         * and display-only.
+        /* TEAM-GAME windows, for the board strip only — deliberately NOT the same
+         * thing as the START windows below. `l30` there is the last thirty STARTS;
+         * pitcherTrendFactor and pitcherVenueFactor read l30/l10/l5, so repurposing
+         * them would silently move the model. These are additive and display-only.
+         *
+         * "L30" here means the last thirty games THE TEAM has played. That is not
+         * a guess — it was decoded off NRFIKINGKY's own card and verified: for Woo
+         * and Brown on 2026-08-16 all eight cells (SZN/L50/L30/L10, pct and n)
+         * reproduce exactly under this definition and under no other. Days were the
+         * previous reading here and they are wrong: Woo has an 11-day gap in July,
+         * so 50 DAYS is 7 starts where 50 TEAM GAMES is 9 — a two-start disagreement
+         * on a card that otherwise matched his cell for cell.
+         *
+         * Team games are also the better window on their own merits: they hold ~5-6
+         * starts for any healthy rotation regular regardless of off-days, rainouts
+         * or the All-Star break, where a day window swings 5 to 7 on schedule shape
+         * alone. Stable n is the whole point of showing n.
+         *
+         * A start made for a PREVIOUS club still counts against the current club's
+         * schedule after a trade. The window is "recent form", not a team stat, and
+         * the alternative — dropping those starts — loses real innings.
          *
          * n rides along on every window and is shown on the card, because n IS the
          * story. At the measured k=87.6 (scripts/nrfi-pitcherbt-rebuild.js) a
          * 2-start window is ~2% reliable, so a "100%" cell there is sampling dust
          * — true first-inning skill only spans about 64-77%. The strip mutes thin
          * cells instead of colouring them, so the eye cannot read noise as form. */
-        const dayWin = (days) => {
-          const cut = Date.now() - days * 864e5;
-          const sub = valid.filter((v) => v.date && Date.parse(v.date + "T12:00:00Z") >= cut);
+        const gameWin = (n) => {
+          if (!teamDates.length) return { pct: null, n: 0, runsPerStart: null };
+          const cutDate = teamDates[Math.max(0, teamDates.length - n)];
+          const sub = valid.filter((v) => v.date && v.date >= cutDate);
           return { pct: sub.length ? pct(sub.map((v) => v.clean)) : null, n: sub.length,
             runsPerStart: sub.length ? rps(sub) : null };
         };
         val = {
           windows: [{ key: "SZN", pct: pct(cleans), n: valid.length, runsPerStart: rps(valid) }]
-            .concat([50, 30, 20, 14, 10, 7].map((d) => Object.assign({ key: "L" + d }, dayWin(d)))),
+            .concat([50, 30, 20, 10].map((d) => Object.assign({ key: "L" + d }, gameWin(d)))),
           szn: { pct: pct(cleans),             n: valid.length,                runsPerStart: rps(valid) },
           l30: { pct: pct(cleans.slice(-30)),   n: Math.min(valid.length, 30), runsPerStart: rps(valid.slice(-30)) },
           l10: { pct: pct(cleans.slice(-10)),   n: Math.min(valid.length, 10), runsPerStart: rps(valid.slice(-10)) },
@@ -8636,16 +8686,27 @@ function nrfiWhy(r) {
   const forN = [], vsN = [];
   const pp = r.pitProfiles || {};
 
-  // The two arms. L30 clean-first-inning rate is the single largest input to
-  // the model, so it leads whichever way it points. Same >=6-start floor the
-  // starter panel uses before it trusts a rolling window over the regressed
-  // rate — a 1-start L30 is not a rate and must not become a sentence.
+  /* The two arms. Clean-first-inning rate is the single largest input to the
+   * model, so it leads whichever way it points.
+   *
+   * This reads the L50 cell OFF THE STRIP — the last fifty team games, the same
+   * window the card draws — and not rolling.l30. rolling.l30 is the last thirty
+   * STARTS, and nobody reaches thirty starts before September, so it silently
+   * resolved to the whole season for every pitcher on the board: the sentence
+   * said "recent" and meant "season", while the big number beside it said
+   * something else. L50 is genuinely recent, carries ~9-10 starts for a rotation
+   * regular, and is a cell the reader can see.
+   *
+   * The >=6-start floor is the same one the starter panel uses before it trusts
+   * a rolling window over the regressed rate — a 1-start window is not a rate
+   * and must not become a sentence. Below it, fall back to the season figure. */
   for (const [prof, nm] of [[pp.away, r.awayPP], [pp.home, r.homePP]]) {
     if (!prof) continue;
     const rl = prof.rolling;
-    const ok = rl && rl.l30 && rl.l30.pct != null && (rl.l30.n || 0) >= 6;
-    const pct = ok ? rl.l30.pct : prof.cleanPct;
-    const n = ok ? rl.l30.n : prof.sample;
+    const w50 = rl && (rl.windows || []).find((w) => w.key === "L50");
+    const ok = w50 && w50.pct != null && (w50.n || 0) >= 6;
+    const pct = ok ? w50.pct : prof.cleanPct;
+    const n = ok ? w50.n : prof.sample;
     if (pct == null) continue;
     const who = nm || prof.name || "Starter";
     const tail = " — " + Math.round(pct) + "% of " + (n || 0) + " starts";
@@ -8759,8 +8820,8 @@ async function scanNrfi(onProgress, dateOverride) {
         pitcherFirstInning(homePP && homePP.id, season),
         pitcherMeta(awayPP && awayPP.id, season),
         pitcherMeta(homePP && homePP.id, season),
-        pitcherRollingNRFI(awayPP && awayPP.id, season),
-        pitcherRollingNRFI(homePP && homePP.id, season),
+        pitcherRollingNRFI(awayPP && awayPP.id, season, away && away.team && away.team.id, date),
+        pitcherRollingNRFI(homePP && homePP.id, season, home && home.team && home.team.id, date),
         teamOffenseSplits(away && away.team && away.team.id, season),
         teamOffenseSplits(home && home.team && home.team.id, season),
         travelRest(away && away.team && away.team.id, date, g.venue && g.venue.id),
@@ -9243,8 +9304,15 @@ function DSCell({ w }) {
   const thin = w.n < 3, semi = w.n >= 3 && w.n < 5;
   const color = w.pct == null || thin ? "var(--dim)"
     : w.pct >= 75 ? "var(--moss)" : w.pct >= 60 ? "var(--amber)" : "var(--rose)";
+  const span = w.key === "SZN" ? "the full season"
+    : "the last " + w.key.slice(1) + " games his TEAM has played";
   return (
-    <div style={{ flex: "0 0 auto", minWidth: 46, textAlign: "center", padding: "4px 6px",
+    <div title={"Clean 1st innings in " + span + ": " + w.n + " start" +
+      (w.n === 1 ? "" : "s") + (w.pct == null ? "" : ", " + w.pct + "% scoreless") +
+      (w.runsPerStart != null ? ", " + w.runsPerStart + " runs allowed per start" : "") +
+      (thin ? "\n\nTHIN: under 3 starts is sampling dust, not form — greyed out for that reason."
+        : semi ? "\n\nThin sample — dimmed." : "")}
+      style={{ cursor: "help", flex: "0 0 auto", minWidth: 46, textAlign: "center", padding: "4px 6px",
       background: "rgba(255,255,255,0.03)", borderRadius: 6, opacity: semi ? 0.72 : 1 }}>
       <div style={{ fontSize: 8, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.06em" }}>{w.key}</div>
       <div style={{ fontSize: 12, fontWeight: 800, color }}>{w.pct == null ? "—" : w.pct + "%"}</div>
@@ -9269,7 +9337,12 @@ function DSArm({ label, prof }) {
       <div style={{ fontSize: 26, fontWeight: 800, color: bigColor, lineHeight: 1.1 }}>
         {big == null ? "—" : big + "%"}
       </div>
-      <div style={{ fontSize: 9, color: "var(--dim)" }}>
+      <div title={"Big number = clean 1st-inning rate over the last 30 games this team has played" +
+        (l30 && l30.n ? " (" + l30.n + " start" + (l30.n === 1 ? "" : "s") + ")" : "") +
+        ". GS = starts on the season." +
+        "\n\nWindows are TEAM GAMES, not days — that holds the start count steady through " +
+        "off-days and the All-Star break, and it is the same definition the tout boards use."}
+        style={{ cursor: "help", fontSize: 9, color: "var(--dim)" }}>
         NRFI L30 · {szn ? szn.n : 0}GS
       </div>
       {/* K-BB% on batters faced, first-inning split. League 1st-inn is ~11%, so
@@ -9289,7 +9362,8 @@ function DSArm({ label, prof }) {
         </div>
       )}
       {/* Horizontally scrollable, like his — the strip runs past the card edge. */}
-      <div style={{ display: "flex", gap: 4, marginTop: 6, overflowX: "auto", paddingBottom: 2 }}>
+      <div title="Clean 1st-inning rate by window. L50/L30/L20/L10 count TEAM GAMES, not days."
+        style={{ display: "flex", gap: 4, marginTop: 6, overflowX: "auto", paddingBottom: 2 }}>
         {wins.length ? wins.map((w) => <DSCell key={w.key} w={w} />)
           : <div style={{ fontSize: 10, color: "var(--dim)" }}>no game log</div>}
       </div>
@@ -10359,7 +10433,21 @@ function FirstInning() {
               const headlineC = headline >= 65 ? "var(--moss)" : headline >= 50 ? "var(--amber)" : "var(--rose)";
               const kbb = p.k9 != null && p.bb9 != null ? (p.k9 - p.bb9).toFixed(1) : null;
               const pClr = (v) => v >= 65 ? "var(--moss)" : v >= 50 ? "var(--fg)" : v >= 38 ? "var(--amber)" : "var(--rose)";
-              const windows = rl ? [{ label: "SZN", ...rl.szn }, { label: "L30", ...rl.l30 }, { label: "L10", ...rl.l10 }, { label: "L5", ...(rl.l5 || {}) }] : [];
+              /* START windows — last N STARTS, which is what pitcherTrendFactor and
+               * pitcherVenueFactor actually read, so this panel shows the model its
+               * own inputs. The strip up top counts TEAM GAMES and will not agree
+               * with these; labelling both "L30" without saying so is how a reader
+               * concludes the card contradicts itself. Hence "30 STARTS" here.
+               *
+               * Note 30 starts is nobody's recent form before September — it is the
+               * season for every arm on the board, and the panel says so rather than
+               * pretending otherwise. */
+              const windows = rl ? [
+                { label: "SZN", ...rl.szn, span: "the full season" },
+                { label: "30 STARTS", ...rl.l30, span: "his last 30 starts" },
+                { label: "10 STARTS", ...rl.l10, span: "his last 10 starts" },
+                { label: "5 STARTS", ...(rl.l5 || {}), span: "his last 5 starts" },
+              ] : [];
               const bt = pitcherBT(name);
               // Derive tier: prefer the table; fall back to the live rate.
               // The fallback has to be regressed first. `headline` is an observed
@@ -10441,15 +10529,15 @@ function FirstInning() {
                     </div>
                   </div>
                   {headline != null && (
-                    <div title={"Last 30 starts: kept the 1st inning scoreless " + headline + "% of the time (" + headlineN + " games). Green = elite, amber = average, red = struggles."} style={{ cursor: "help", marginBottom: 8 }}>
+                    <div title={"Over his last 30 STARTS — which before September is his whole season — he kept the 1st inning scoreless " + headline + "% of the time (" + headlineN + " starts). Green = elite, amber = average, red = struggles."} style={{ cursor: "help", marginBottom: 8 }}>
                       <div style={{ fontWeight: 800, fontSize: 34, color: headlineC, lineHeight: 1 }}>{headline}%</div>
-                      <div style={{ fontSize: 10, color: "var(--dim)", marginTop: 2 }}>clean 1st inning · L30 · {headlineN} starts</div>
+                      <div style={{ fontSize: 10, color: "var(--dim)", marginTop: 2 }}>clean 1st inning · last {headlineN} starts</div>
                     </div>
                   )}
                   {windows.length > 0 && (
                     <div className="pit-windows" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 3, marginBottom: 9 }}>
                       {windows.map((w) => (
-                        <div key={w.label} title={{ SZN: "Full season clean 1st inning rate", L30: "Last 30 starts clean %", L10: "Last 10 starts clean % — recent form", L5: "Last 5 starts clean % — sharpest recent signal (noisy at small n)" }[w.label] + " — " + (w.pct != null ? w.pct + "% clean in " + w.n + " starts" + (w.runsPerStart != null ? ", avg " + w.runsPerStart.toFixed(2) + " runs allowed in 1st" : "") : "no data")} style={{ cursor: "help", textAlign: "center", background: w.label === "L5" ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.04)", borderRadius: 6, padding: "4px 0", border: w.label === "L5" ? "1px solid rgba(255,255,255,0.1)" : "none" }}>
+                        <div key={w.label} title={"Clean 1st-inning rate over " + w.span + " — " + (w.pct != null ? w.pct + "% clean in " + w.n + " starts" + (w.runsPerStart != null ? ", avg " + w.runsPerStart.toFixed(2) + " runs allowed in 1st" : "") : "no data") + (w.label === "5 STARTS" ? "\n\nSharpest recent signal, and the noisiest — five starts is not a rate." : "") + "\n\nThese count STARTS. The window strip at the top of the card counts TEAM GAMES, so the two will not agree."} style={{ cursor: "help", textAlign: "center", background: w.label === "5 STARTS" ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.04)", borderRadius: 6, padding: "4px 0", border: w.label === "5 STARTS" ? "1px solid rgba(255,255,255,0.1)" : "none" }}>
                           <div style={{ fontSize: 9, color: "var(--dim)", marginBottom: 1 }}>{w.label}</div>
                           <div style={{ fontWeight: 700, fontSize: 12, color: w.pct != null ? pClr(w.pct) : "var(--dim)" }}>{w.pct != null ? w.pct + "%" : "—"}</div>
                           <div style={{ fontSize: 9, color: "var(--dim)", opacity: 0.7 }}>{w.n != null ? w.n + "g" : ""}{w.runsPerStart != null ? " · " + w.runsPerStart.toFixed(2) + "R" : ""}</div>
