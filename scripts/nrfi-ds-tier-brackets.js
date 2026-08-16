@@ -63,6 +63,50 @@ const SCREENSHOT = [
   { g: "MIA@ATL", ds: 62.8, tier: "YELLOW" },
 ];
 
+/* His own site, nrfi-edge.replit.app/free, read 2026-08-16. This is the first
+ * observation that did not come through chat, and it is the only one whose
+ * provenance is his product rather than his posting habit.
+ *
+ * It re-observes MIL@LAD at DS 64.7 GREEN — already in POSTED above, and NOT
+ * added twice — but it independently confirms the pair from a second surface,
+ * and it confirms card B of nrfi-ds-decode.js down to the cell: Henderson 91%
+ * SZN / 100% L30 on 5GS / 11 starts, Skubal 67% / 83% on 6GS / 18 starts. Those
+ * were read off a screenshot; these were read out of his own DOM. They agree.
+ *
+ * THE STRUCTURAL FINDING, which is worth more than the confirmation.
+ *
+ * The page is headed "THE #3-RANKED PLAY OFF TODAY'S BOARD · MEMBERS GET ALL
+ * THREE". So the app emits exactly THREE ranked picks per day — his "I have a
+ * number system that ranks it and spits out top 3" is a literal description of
+ * the product, not a figure of speech.
+ *
+ * That resolves the "absolute bar + variable count" question the SELECTION note
+ * below raises, and it resolves it differently than assumed. The COUNT IS FIXED
+ * AT THREE. What varies is how many of the three he actually bets — 13 legs over
+ * 14 days against 3 published per day is well under half of them, and "Tough
+ * board today. Only playing MIL@LAD" is him taking one of three, not his app
+ * emitting one. So the ranker and the bar are separate stages:
+ *
+ *   rank the slate -> take the top 3 -> bet the ones that clear the bar
+ *
+ * Our ladder collapses those two into one verdict per game, which is why it can
+ * never say "today, fewer". The fix is not a threshold change, it is the missing
+ * stage: rank first, truncate to a fixed shortlist, then apply the level bar to
+ * the shortlist. A game that would be a BET on a thin slate should not be one
+ * when three better games are on the board, and right now nothing in the desk
+ * expresses that.
+ *
+ * The free card also shows FEWER windows than his in-app card: SZN and L30 with
+ * the start count, plus total starts. The four-window view (SZN/L50/L30/L10) in
+ * nrfi-ds-decode.js is the members' card. Nothing here says which set the DS is
+ * computed from, and this page is not evidence that it uses only two. */
+const FREE_PAGE = {
+  date: "2026-08-16", game: "MIL@LAD", ds: 64.7, tier: "GREEN", rank: 3,
+  nrfiPrice: -147, picksPerDay: 3,
+  away: { name: "Logan Henderson", szn: 91, l30: 100, l30gs: 5, starts: 11 },
+  home: { name: "Tarik Skubal", szn: 67, l30: 83, l30gs: 6, starts: 18 },
+};
+
 // Ordered best to worst. The whole method is that this order is the truth.
 const ORDER = ["ELITE", "GREEN", "YELLOW", "RED"];
 
@@ -174,3 +218,24 @@ console.log("  of them ELITE                " + elite + " (" + (100 * elite / po
 console.log("  lowest DS he ever posted     " + Math.min(...POSTED.map((p) => p.ds)).toFixed(1) +
   "  -> nothing below the GREEN cut is ever played, so the yellow/red");
 console.log("                                  cut is CENSORED by his posting habit, not merely unmeasured");
+
+/* The denominator the play rate should be read against, now that the free page
+ * has supplied it. Without picksPerDay the 13 legs looked like the whole output;
+ * they are not, they are the part of a fixed shortlist that cleared the bar. */
+const days = 14, shortlist = FREE_PAGE.picksPerDay * days;
+console.log("\nSHORTLIST vs PLAYS  (from " + FREE_PAGE.date + " " + "nrfi-edge.replit.app/free" + ")\n");
+console.log("  picks his app emits per day  " + FREE_PAGE.picksPerDay + "  (\"members get all three\") -> " +
+  shortlist + " over " + days + " days");
+console.log("  legs he actually posted      " + posted + "  (" + (100 * posted / shortlist).toFixed(0) +
+  "% of the shortlist)");
+console.log("  -> the COUNT is fixed and the BAR is what varies. Two stages, and the desk has only one:");
+console.log("     rank the slate -> truncate to a fixed shortlist -> bet what clears the level bar.");
+console.log("     Our ladder emits a verdict per game, so it cannot express \"good, but third best today\".");
+// Cross-check the free card against the screenshot decode, so a future edit to
+// either source has to keep them consistent rather than quietly diverging.
+console.log("\n  free-card cells vs the card-B screenshot in nrfi-ds-decode.js:");
+console.log("    " + FREE_PAGE.away.name.padEnd(16) + "SZN " + FREE_PAGE.away.szn + "%  L30 " +
+  FREE_PAGE.away.l30 + "% (" + FREE_PAGE.away.l30gs + "GS)  " + FREE_PAGE.away.starts + " starts");
+console.log("    " + FREE_PAGE.home.name.padEnd(16) + "SZN " + FREE_PAGE.home.szn + "%  L30 " +
+  FREE_PAGE.home.l30 + "% (" + FREE_PAGE.home.l30gs + "GS)  " + FREE_PAGE.home.starts + " starts");
+console.log("    decode card B has 91/100 on 11/5 and 67/83 on 18/6 — agrees on every cell.");
