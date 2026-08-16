@@ -2311,7 +2311,10 @@ function App() {
         <header className="cd-head">
           <div>
             <div className="eyebrow">Kalshi · Polymarket</div>
-            <h1 className="cd-title">DigitalDemon's <span>Desk</span></h1>
+            {/* The span is the accent colour, so it takes the word the name is
+                actually about. Matches what the callout already says out loud
+                on the air: "Digital Demons N-R-F-I". */}
+            <h1 className="cd-title">Digital Demons <span>NRFI</span></h1>
             <p className="help" style={{ maxWidth: 460 }}>
               I predict the outcomes of Kalshi and Polymarket events — games, totals, commodities, anything listed — and grade every prediction against what actually happens.
             </p>

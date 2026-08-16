@@ -1,6 +1,6 @@
 {
-  "name": "DigitalDemon's Desk",
-  "short_name": "DDDesk",
+  "name": "Digital Demons NRFI",
+  "short_name": "DD NRFI",
   "description": "Prediction market analyzer for Kalshi and Polymarket",
   "start_url": "/desk",
   "scope": "/desk",
