@@ -122,9 +122,9 @@ const memo = (k, fn) => cache.has(k) ? cache.get(k) : cache.set(k, fn()).get(k);
  */
 const PIT_MODE = process.env.NRFI_LEAKY === "1" ? "leaky" : "point-in-time";
 pitI01.stats = { pit: 0, miss: 0, api: 0 };
-let pitIndex = null;
-function pitcherIndex() {
-  if (pitIndex) return pitIndex;
+let lfGames = null;
+function leakfreeGames() {
+  if (lfGames) return lfGames;
   const gf = path.join(__dirname, "nrfi-leakfree-games.json");
   if (!fs.existsSync(gf)) {
     throw new Error("point-in-time splits need nrfi-leakfree-games.json — run " +
@@ -136,6 +136,25 @@ function pitcherIndex() {
     throw new Error("nrfi-leakfree-games.json predates the hpRuns/apRuns fields — " +
       "re-run node scripts/nrfi-leakfree.js --refresh");
   }
+  return (lfGames = games);
+}
+// Both indexes walk the same per-game log, so they share one prefix scan: sum
+// the runs on every entry for this season strictly before `asOf`. The log is
+// date-sorted, so the first non-prior entry ends it.
+function priorRuns(log, se, asOf) {
+  let runs = 0, n = 0;
+  for (const e of log) {
+    if (e.season !== se) continue;
+    if (!(e.date < asOf)) break;
+    runs += e.runs; n++;
+  }
+  return { runs, n };
+}
+const byDateAsc = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+let pitIndex = null;
+function pitcherIndex() {
+  if (pitIndex) return pitIndex;
+  const games = leakfreeGames();
   pitIndex = new Map();
   const push = (id, date, season, runs) => {
     if (id == null) return;
@@ -153,8 +172,40 @@ function pitcherIndex() {
   // Sorted by date so the prefix scan is a walk-forward rather than a filter
   // over an arbitrary order, which is what lets the scan stop at the first
   // non-prior start instead of reading the whole log.
-  for (const log of pitIndex.values()) log.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  for (const log of pitIndex.values()) log.sort(byDateAsc);
   return pitIndex;
+}
+/* Point-in-time TEAM first-inning offence, out of the same cache.
+ *
+ * The pitcher index reads the log as "runs this arm ALLOWED". The same two
+ * numbers read the other way are "runs this lineup SCORED": the away side bats
+ * against the home starter, so hpRuns is the AWAY team's first inning, and
+ * apRuns is the HOME team's. That is the entire mapping, and getting it
+ * backwards would invert every offence in the model while still producing a
+ * plausible-looking rate, so it is spelled out rather than inferred.
+ *
+ * Only `rate` and `sample` are rewound. opsVsR/opsVsL stay whole-season: the
+ * cache has no handedness and no OPS, and inventing a substitute estimator
+ * would confound "rewound" with "measured a different way" in any A/B — the
+ * same reason pitI01's ERA is scaled rather than recomputed. So the offence
+ * term is now clean and the platoon adjustment on top of it is not.
+ */
+let teamIndex = null;
+function teamOffIndex() {
+  if (teamIndex) return teamIndex;
+  teamIndex = new Map();
+  const push = (id, date, season, runs) => {
+    if (id == null) return;
+    const k = String(id);
+    let a = teamIndex.get(k); if (!a) teamIndex.set(k, a = []);
+    a.push({ date, season, runs });
+  };
+  for (const g of leakfreeGames()) {
+    push(g.away, g.date, g.season, g.hpRuns);
+    push(g.home, g.date, g.season, g.apRuns);
+  }
+  for (const log of teamIndex.values()) log.sort(byDateAsc);
+  return teamIndex;
 }
 const pitI01Api = (id, se) => memo("p" + id + se, async () => {
   try { const d = await J(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=statSplits&group=pitching&sitCodes=i01&season=${se}`);
@@ -166,12 +217,7 @@ function pitI01(id, se, asOf) {
   if (PIT_MODE === "leaky" || !asOf) { pitI01.stats.api++; return pitI01Api(id, se); }
   const log = pitcherIndex().get(String(id));
   if (!log) { pitI01.stats.miss++; return Promise.resolve(null); }
-  let runs = 0, n = 0;
-  for (const e of log) {
-    if (e.season !== se) continue;
-    if (!(e.date < asOf)) break;   // sorted, so the first non-prior ends the scan
-    runs += e.runs; n++;
-  }
+  const { runs, n } = priorRuns(log, se, asOf);
   if (!n) { pitI01.stats.miss++; return Promise.resolve(null); }
   pitI01.stats.pit++;
   /* First-inning ERA, rewound by the same ratio as the rate.
@@ -196,12 +242,30 @@ function pitI01(id, se, asOf) {
     era: api && api.era != null && fullRate ? api.era * (rate / fullRate) : (api ? api.era : null),
   })).catch(() => ({ rate, sample: n, era: null }));
 }
-const teamOff = (id, se) => id == null ? Promise.resolve(null) : memo("t" + id + se, async () => {
+const teamOffApi = (id, se) => memo("t" + id + se, async () => {
   try { const d = await J(`https://statsapi.mlb.com/api/v1/teams/${id}/stats?stats=statSplits&group=hitting&sitCodes=i01,vr,vl&season=${se}`);
     const sp = d.stats?.[0]?.splits || []; const f = (re) => sp.find((x) => re.test(x.split?.description || ""))?.stat;
     const i01 = f(/first inning/i), vr = f(/right/i), vl = f(/left/i); if (!i01 || !i01.gamesPlayed) return null;
     return { rate: (+i01.runs || 0) / i01.gamesPlayed, sample: i01.gamesPlayed, opsVsR: vr?.ops != null ? +vr.ops : null, opsVsL: vl?.ops != null ? +vl.ops : null }; } catch { return null; }
 });
+teamOff.stats = { pit: 0, miss: 0, api: 0 };
+function teamOff(id, se, asOf) {
+  if (id == null) return Promise.resolve(null);
+  if (PIT_MODE === "leaky" || !asOf) { teamOff.stats.api++; return teamOffApi(id, se); }
+  const log = teamOffIndex().get(String(id));
+  if (!log) { teamOff.stats.miss++; return Promise.resolve(null); }
+  const { runs, n } = priorRuns(log, se, asOf);
+  if (!n) { teamOff.stats.miss++; return Promise.resolve(null); }
+  teamOff.stats.pit++;
+  // Same no-silent-fallback rule as pitI01: a team the index cannot vouch for
+  // returns null and gets regressed to the league mean, rather than quietly
+  // getting the season-to-date number back. The platoon OPS still comes from
+  // the season call — see teamOffIndex for why it is not rewound with it.
+  return teamOffApi(id, se).then((api) => ({
+    rate: runs / n, sample: n,
+    opsVsR: api ? api.opsVsR : null, opsVsL: api ? api.opsVsL : null,
+  })).catch(() => ({ rate: runs / n, sample: n, opsVsR: null, opsVsL: null }));
+}
 const pitMeta = (id, se) => id == null ? Promise.resolve({ hand: null, form: null, seasonEra: null, gs: null, g: null, ip: null, allow: null, id: null }) : memo("m" + id + se, async () => {
   let hand = null, form = null, seasonEra = null, gs = null, g = null, ip = null, allow = null;
   try { const [p, gl] = await Promise.all([
@@ -280,9 +344,10 @@ async function buildCtx(g, date, se, peri) {
   if (!ap?.id || !hp?.id) return null;
   const lu = g.lineups || {};
   const [awayPit, homePit, awayMeta, homeMeta, awayOff, homeOff, awayTravel, homeTravel] = await Promise.all([
-    // `date` is what rewinds the split: pitI01 counts only starts before it.
+    // `date` is what rewinds the splits: pitI01 and teamOff count only games
+    // before it. pitMeta and topOrder still take season aggregates.
     pitI01(ap.id, se, date), pitI01(hp.id, se, date), pitMeta(ap.id, se), pitMeta(hp.id, se),
-    teamOff(a.team.id, se), teamOff(h.team.id, se), travelRest(a.team.id, date, g.venue?.id), travelRest(h.team.id, date, g.venue?.id)]);
+    teamOff(a.team.id, se, date), teamOff(h.team.id, se, date), travelRest(a.team.id, date, g.venue?.id), travelRest(h.team.id, date, g.venue?.id)]);
   const [awayLineup, homeLineup] = await Promise.all([topOrder(lu.awayPlayers, se, homeMeta.hand, homeMeta.id), topOrder(lu.homePlayers, se, awayMeta.hand, awayMeta.id)]);
   const hpUmp = (g.officials || []).find((o) => o.officialType === "Home Plate");
   return { awayName: a.team.name, homeName: h.team.name, awayPP: ap.fullName, homePP: hp.fullName,
@@ -341,8 +406,24 @@ function makeVerdict(overrides) {
 // cache built before that change would still have passed the guard and reported
 // consensus numbers from a model that no longer exists. This covers every line
 // that is actually sliced, so any of them moving invalidates the cache.
+//
+// It also has to cover THIS file's fetchers, not just app.jsx's math. Rewinding
+// teamOff to point-in-time changed what every cached score was computed from
+// while touching no sliced line in app.jsx, so the fingerprint would not have
+// moved and the sweep cache built minutes earlier would still have passed the
+// guard — reporting hit rates from inputs the model no longer uses. A model is
+// its math AND the data it is handed; a fingerprint over half of that is a
+// fingerprint that lets the other half change in silence.
+const dataSlice = (() => {
+  const src = fs.readFileSync(__filename, "utf8");
+  const a = src.indexOf("// ---- data (Node fetchers");
+  const b = src.indexOf("async function buildCtx(");
+  if (a < 0 || b < 0 || b <= a) throw new Error("could not slice the fetcher section for modelSig");
+  return src.slice(a, b);
+})();
 const modelSig = require("crypto").createHash("sha1")
-  .update(model + VERDICT_SLICES.map(([a, b]) => slice(a, b)).join("\n")).digest("hex").slice(0, 12);
+  .update(model + VERDICT_SLICES.map(([a, b]) => slice(a, b)).join("\n") + dataSlice)
+  .digest("hex").slice(0, 12);
 
 module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP, makeVerdict,
   J, parseIp, memo, pitI01, teamOff, pitMeta, topOrder, travelRest, savant, mapLimit,
@@ -351,4 +432,4 @@ module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP, makeVer
   // source it ran on. A backtest that does not say whether it rewound its inputs
   // is not reporting a result, and the difference between the two modes here is
   // larger than most of the effects these scripts are built to measure.
-  PIT_MODE, pitStats: () => ({ ...pitI01.stats }) };
+  PIT_MODE, pitStats: () => ({ ...pitI01.stats, off: { ...teamOff.stats } }) };

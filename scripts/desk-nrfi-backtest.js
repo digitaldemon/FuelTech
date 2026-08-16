@@ -4,34 +4,45 @@
 //
 //   node scripts/desk-nrfi-backtest.js [days]     (default 14)
 //
-// PITCHER SPLITS ARE NOW POINT-IN-TIME. This header used to say the splits were
-// current-season with "mild look-ahead leakage". The leakage was not mild, and
-// the word did real damage — it read as a footnote while every number below
-// inherited it. Measured on one 407-game window, same games, split source the
-// only difference (NRFI_LEAKY=1 restores the old behaviour), 96.6% of arms
-// rewound off prior starts:
+// PITCHER SPLITS AND TEAM OFFENCE ARE NOW POINT-IN-TIME. This header used to say
+// the splits were current-season with "mild look-ahead leakage". The leakage was
+// not mild, and the word did real damage — it read as a footnote while every
+// number below inherited it. Measured over 558 games, SAME games in both
+// columns, split source the only difference (NRFI_LEAKY=1 restores the old
+// behaviour), with 1077 arms and 1114 lineups rewound off prior games and zero
+// falling back to a season aggregate:
 //
 //                     leaky    point-in-time    base rate
-//     Brier           .2368        .2422          .2491
-//     AUC             .6512        .5954
-//     pick-side acc   62.5%        58.9%
-//     prediction sd    5.6pp        5.5pp
+//     Brier           .2383        .2436          .2495
+//     AUC             .6395        .5881
+//     pick-side acc   61.0%        57.1%
+//     prediction sd    5.8pp        5.6pp
 //
-// The leak was 44% of the model's apparent skill over the base rate (.0123 ->
-// .0069) and 5.6 points of AUC. And that 62.5% is, to the decimal, the BET rung
-// nrfi-ladder-sweep.js has been reporting — so the sweep's headline was the
-// leak reading itself back.
+// The leak was 47% of the model's apparent skill over the base rate (.0112 ->
+// .0059) and 5.1 points of AUC. Rewinding team offence on top of the pitcher
+// splits cost a further 1.8pp of pick-side accuracy, all of it leak.
 //
-// Note the prediction sd barely moves. An earlier draft of this table claimed
-// the leak manufactured a quarter of the spread; that was measured through an
-// index that matched no arms at all, which nulled every starter to the league
-// mean and collapsed sd for an unrelated reason. The leak inflates ACCURACY,
-// not confidence.
+// Do NOT compare these figures against the previous draft of this table
+// (.2368/.6512/62.5% leaky, .2422/.5954/58.9% clean). That was a different,
+// smaller window. Only the within-run comparison is paired; across runs the
+// window changes and the difference stops meaning anything. The one number
+// worth carrying forward is that the old leaky pick-side accuracy, 62.5%, was
+// to the decimal what nrfi-ladder-sweep.js reported for its BET rung — the
+// sweep's headline was the leak reading itself back. On the clean rebuild that
+// rung reads 60.2%.
+//
+// Note the prediction sd barely moves. An earlier draft claimed the leak
+// manufactured a quarter of the spread; that was measured through an index that
+// matched no arms at all, which nulled every starter to the league mean and
+// collapsed sd for an unrelated reason. The leak inflates ACCURACY, not
+// confidence.
 //
 // STILL LEAKING, so this is not yet a clean walk-forward: pitMeta's
-// seasonEra/ip/allow, teamOff, topOrder's batter OBP and savant's Statcast are
-// all whole-season pulls. pitI01 was rewound first because it is the term
-// measured to leak (nrfi-pitreg-fit.js) and it feeds pitBase at full weight.
+// seasonEra/ip/allow, topOrder's batter OBP, savant's Statcast, and the
+// opsVsR/opsVsL platoon split inside teamOff are all whole-season pulls.
+// pitI01 was rewound first because it is the term measured to leak
+// (nrfi-pitreg-fit.js) and it feeds pitBase at full weight; teamOff followed
+// because the same cache already held the runs, keyed by team.
 // CLV on live picks remains the cleanest test available.
 const fs = require("fs");
 const path = require("path");
@@ -92,8 +103,9 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
   // declare this is not reporting a result: the two modes differ by more Brier
   // than most of the effects these scripts exist to measure.
   const ps = pitStats();
-  console.log(`\nPITCHER SPLITS: ${PIT_MODE}` +
-    `   (rewound ${ps.pit}, no prior starts ${ps.miss}, season-aggregate ${ps.api})`);
+  console.log(`\nSPLITS: ${PIT_MODE}` +
+    `\n  pitcher 1st-inn  rewound ${ps.pit}, no prior starts ${ps.miss}, season-aggregate ${ps.api}` +
+    `\n  team offence     rewound ${ps.off.pit}, no prior games ${ps.off.miss}, season-aggregate ${ps.off.api}`);
   if (PIT_MODE === "leaky") console.log("  !! NRFI_LEAKY=1 — season-to-date splits contain the scored game. Control only.");
   else if (ps.miss > ps.pit) console.log("  !! more arms had no prior starts than were rewound — early-window sample, read with care.");
   const cl = (x) => C(x, 1e-6, 1 - 1e-6);
@@ -127,7 +139,33 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
     const picks = rows.filter((r) => Math.abs(get(r) - 0.5) >= 0.03);
     const pickAcc = picks.length ? picks.filter((r) => (get(r) >= 0.5) === (r.actual === 1)).length / picks.length : 0;
     const shrink = Math.min(1, m / 100);
-    const c = C((logit(cl(actualRate)) - logit(cl(meanPred))) * shrink, -0.6, 0.6);
+    // Solve for the shift the same way the LIVE path does, rather than
+    // differencing logits of means.
+    //
+    // c is applied per game, in logit space, to each prediction. The difference
+    // lg(actual) - lg(meanPred) only equals that if logit were linear, and it is
+    // not: it is concave above 0.5 and convex below, so the shortcut always
+    // overshoots toward the middle — by ~0.27pp on a realistic spread of desk
+    // picks and ~0.91pp on a wide one. nrfiCalibration in app.jsx was moved to a
+    // Newton solve for exactly this reason, and leaving the SEED on the old
+    // shortcut meant the two halves of the same calibration were derived
+    // differently: the seed a game inherits on day one disagreed with the number
+    // the live fit would give it on day two, with no model change in between.
+    // Same construction on both sides, so the handover is continuous.
+    const solveShift = (preds, target) => {
+      let c0 = 0;
+      for (let i = 0; i < 60; i++) {
+        let mm = 0, d = 0;
+        for (const p of preds) { const q = unlogit(logit(cl(p)) + c0); mm += q; d += q * (1 - q); }
+        mm /= preds.length; d /= preds.length;
+        if (!(d > 1e-9)) break;          // fully saturated: no shift moves the mean
+        const step = (target - mm) / d;
+        c0 += step;
+        if (Math.abs(step) < 1e-10) break;
+      }
+      return Number.isFinite(c0) ? c0 : 0;
+    };
+    const c = C(solveShift(rows.map(get), cl(actualRate)) * shrink, -0.6, 0.6);
     // Brier after the shift this path's own data implies. If a path's Brier is
     // bad only because it is off-level, recentring fixes it and the gap closes;
     // if the gap survives recentring, the path genuinely discriminates worse.
@@ -270,7 +308,79 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
   show("lambda, full window", metrics(samples, L));
   console.log("\n  reliability:"); reliability(samples, L);
 
+  /* Is an intercept-only calibration enough?
+   *
+   * The shipped calibration is a pure shift: it moves every prediction the same
+   * distance in logit space, so it can fix the LEVEL and nothing else. If the
+   * model is also over-confident — predicting 65% on games that go 58% — that is
+   * a SLOPE defect, and no value of c repairs it. A shift applied to an
+   * over-confident model just moves the over-confidence somewhere else.
+   *
+   * So fit the full two-parameter Platt map, sigmoid(a*logit(p) + b), by
+   * Newton-Raphson on the log-likelihood, and read `a`. a≈1 means the spread is
+   * honest and the shift is the right tool. a<1 means predictions are too
+   * extreme and the ladder's thresholds are being crossed by games that have not
+   * earned it — which is a betting problem, not a cosmetic one, because the
+   * thresholds are absolute.
+   *
+   * Reported, not applied. Switching the live calibration to two parameters is a
+   * change to what gets bet, and it needs its own out-of-sample test before it
+   * ships; `a` is fit on the same games it is evaluated on here, so it is an
+   * upper bound on how much slope correction would help.
+   */
+  function plattFit(rows, get) {
+    let a = 1, b = 0;
+    for (let it = 0; it < 100; it++) {
+      let g1 = 0, g2 = 0, h11 = 0, h12 = 0, h22 = 0;
+      for (const r of rows) {
+        const x = logit(cl(get(r))), q = unlogit(a * x + b), w = q * (1 - q), e = r.actual - q;
+        g1 += e * x; g2 += e;
+        h11 += w * x * x; h12 += w * x; h22 += w;
+      }
+      const det = h11 * h22 - h12 * h12;
+      if (!(Math.abs(det) > 1e-12)) break;
+      const da = (g1 * h22 - g2 * h12) / det, db = (g2 * h11 - g1 * h12) / det;
+      a += da; b += db;
+      if (Math.abs(da) < 1e-10 && Math.abs(db) < 1e-10) break;
+    }
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    // Standard error on the slope, so "a is below 1" can be told apart from
+    // "a wandered below 1 on 200 games", which on this sample size it usually is.
+    let h11 = 0, h12 = 0, h22 = 0;
+    for (const r of rows) {
+      const x = logit(cl(get(r))), q = unlogit(a * x + b), w = q * (1 - q);
+      h11 += w * x * x; h12 += w * x; h22 += w;
+    }
+    const det = h11 * h22 - h12 * h12;
+    const seA = det > 0 ? Math.sqrt(h22 / det) : null;
+    const brier = rows.reduce((s, r) => s + (unlogit(a * logit(cl(get(r))) + b) - r.actual) ** 2, 0) / rows.length;
+    return { a, b, seA, brier };
+  }
   const shipped = metrics(samples, P);
+  const platt = plattFit(samples, P);
+  console.log("\n============ IS A SHIFT ENOUGH? (slope check) ============");
+  if (!platt) console.log("  Platt fit did not converge — no slope reading.");
+  else {
+    const z = platt.seA ? (platt.a - 1) / platt.seA : null;
+    console.log(`  intercept-only   c=${shipped.c.toFixed(3)}   Brier ${shipped.brierCal.toFixed(4)}`);
+    console.log(`  full Platt       a=${platt.a.toFixed(3)}${platt.seA ? " +/- " + platt.seA.toFixed(3) : ""}` +
+      ` b=${platt.b.toFixed(3)}   Brier ${platt.brier.toFixed(4)}`);
+    console.log(`  slope vs 1       ${z == null ? "n/a" : (z >= 0 ? "+" : "") + z.toFixed(2) + " SE"}` +
+      `   Brier gained by the slope ${(shipped.brierCal - platt.brier).toFixed(5)}`);
+    if (z != null && Math.abs(z) < 2) {
+      console.log("  -> slope is within noise of 1. The shift is the right tool; a second");
+      console.log("     parameter would be fitting this sample, not a defect.");
+    } else if (platt.a < 1) {
+      console.log("  -> OVER-CONFIDENT: predictions are too extreme, and an intercept-only");
+      console.log("     calibration cannot fix it. Games are crossing absolute ladder");
+      console.log("     thresholds on spread they have not earned. Needs its own");
+      console.log("     out-of-sample test before the live calibration changes.");
+    } else {
+      console.log("  -> UNDER-CONFIDENT: predictions are too timid. The model is leaving");
+      console.log("     edge on the table rather than manufacturing it.");
+    }
+  }
+
   const seed = { c: Math.round(shipped.c * 1000) / 1000, n, active: n >= 25 };
   console.log("\ncalibration seed for the SHIPPED mix (NRFI_CALIB_SEED):");
   console.log("  " + JSON.stringify(seed));
@@ -279,8 +389,14 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
   console.log("  cannot serve both and the seed should be made path-aware.");
   fs.writeFileSync(path.join(__dirname, "nrfi-backtest.json"), JSON.stringify({
     ...seed, at: new Date().toISOString(), days, season: se,
-    shipped, lambdaAll: metrics(samples, L),
+    pitMode: PIT_MODE, pitStats: ps,
+    shipped, lambdaAll: metrics(samples, L), platt,
     paired: simRows.length ? { sim: metrics(simRows, P), lambda: metrics(simRows, L) } : null,
+    // The per-game rows the seed was fit on. Without them the seed is a number
+    // with a provenance story attached, and every re-derivation (a slope check,
+    // a reliability curve, a bucketed fit) needs another 20-minute API walk to
+    // ask a question of data that was already in hand.
+    rows: samples.map((s) => ({ k: s.key, p: +s.pModel.toFixed(4), l: +s.pLam.toFixed(4), a: s.actual, m: s.method })),
   }, null, 2));
   console.log("  (written to scripts/nrfi-backtest.json)");
 })();
