@@ -8621,7 +8621,13 @@ function nrfiWhy(r) {
 
   if (r.parkEnv && r.parkEnv.factor != null) {
     const f = r.parkEnv.factor;
-    const note = r.parkEnv.note && r.parkEnv.note !== "neutral" ? " (" + r.parkEnv.note + ")" : "";
+    /* The weather note carries its own parenthetical gloss — "Out To RF (out to
+     * a corner — helps offense)" — which nests inside this one and made the park
+     * line the longest thing on a card built to be short. Keep the reading,
+     * drop the explanation; the park badge in the details still hovers it. */
+    const raw = r.parkEnv.note && r.parkEnv.note !== "neutral"
+      ? r.parkEnv.note.replace(/\s*\([^)]*\)/g, "").trim() : "";
+    const note = raw ? " (" + raw + ")" : "";
     if (f <= 0.98) forN.push("Park and weather suppress scoring here" + note);
     else if (f >= 1.02) vsN.push("Park and weather inflate scoring here" + note);
   }
