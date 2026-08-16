@@ -2,23 +2,30 @@
 //
 //   node scripts/nrfi-pitreg-fit.js [replicates]
 //
-// NRFI_PIT_REG = 12 (app.jsx:5239) is the regression weight in
+// NRFI_PIT_REG is the regression weight in
 //
 //     nrfiRegress(rate, sample, reg) = (rate*sample + 0.52*reg) / (sample + reg)
 //
-// which sets the pitcher's baseline lambda at app.jsx:6688-6689. It is not a
-// display knob: it feeds the probability that prices the wager. At reg = 12 a
-// pitcher with 20 starts keeps 20/32 = 63% of his own observed rate.
+// which sets the pitcher's baseline lambda. It is not a display knob: it feeds
+// the probability that prices the wager. The script reads the shipped value out
+// of app.jsx and prints it — do not retype it into this header, which is how
+// the paragraph that used to sit here came to describe a value of 12 long after
+// the constant had been measured and moved to 75.
 //
-// That number was never measured. The reason to doubt it: the same data says a
-// starter's clean-first-inning SHARE has a beta-binomial concentration of ~88
-// starts (scripts/nrfi-pitcherbt-rebuild.js), i.e. a 20-start sample is only
-// ~19% reliable. If the run RATE behaves anything like the clean share, keeping
-// 63% of it is trusting the arm four times harder than the evidence supports.
+// THE ORIGINAL DOUBT, kept because it is what motivated the test. At the old
+// reg = 12 a pitcher with 20 starts kept 20/32 = 63% of his own observed rate,
+// and that number had never been measured. The same data says a starter's
+// clean-first-inning SHARE has a beta-binomial concentration of ~88 starts
+// (scripts/nrfi-pitcherbt-rebuild.js), i.e. a 20-start sample is only ~19%
+// reliable — so 63% looked like trusting the arm four times harder than the
+// evidence supported. Those are not the same statistic (a rate over dispersed
+// counts can carry more signal per start than a bit does), so the clean-share k
+// was a reason to test, not an answer.
 //
-// Those are not the same statistic, though — a rate over dispersed counts can
-// carry more signal per start than a bit does, so the clean-share k is a reason
-// to test, not an answer. This is the test.
+// THE ANSWER, and it vindicated the doubt: the held-out optimum is ~70-80, not
+// 12. A 20-start arm keeps 21% of his own rate, close to the ~19% the
+// clean-share concentration predicted. 75 ships and sits inside the bootstrap
+// CI. This is that test.
 //
 // METHOD. Split each arm's starts at random into halves A and B. Predict every
 // held-out start in B with the shrunk estimate from A, and score squared error
