@@ -139,9 +139,20 @@ const yellows = CARDS.filter((c) => c.tier === "YELLOW").map((c) => c.ds);
 console.log("  GREEN observed at  " + greens.join(", "));
 console.log("  YELLOW observed at " + yellows.join(", "));
 console.log("  -> green cutoff is in (" + Math.max(...yellows).toFixed(1) + ", " +
-  Math.min(...greens).toFixed(1) + "]; app.jsx ships " +
-  ((Math.max(...yellows) + Math.min(...greens)) / 2).toFixed(0) + ", the midpoint");
+  Math.min(...greens).toFixed(1) + "] ON THESE THREE CARDS ONLY");
 console.log("  -> RED is unobserved. The 55 in DS_TIER_DEFAULTS is a guess, not a reading.");
+/* SUPERSEDED — do not quote the interval above as the current bracket.
+ *
+ * These three screenshots were the whole evidence base when this script was
+ * written. They are not any more: he posts his board as plain text in chat, and
+ * the full channel yields 13 more labelled pairs. That data tightens green to
+ * (60.0, 64.1] and reveals a fourth tier, ELITE, above GREEN — which no card
+ * here shows, so the "GREEN is the top band" reading implicit above is wrong.
+ *
+ * The three cards remain the only source for YELLOW and are still load-bearing
+ * for the badge-is-level-not-edge finding, which is why this script stays. */
+console.log("  -> SUPERSEDED by scripts/nrfi-ds-tier-brackets.js: 15 observations,");
+console.log("     green tightens to (60.0, 64.1], and a fourth tier ELITE exists above GREEN.");
 
 console.log("\nedge (DS - BE) per card, for the record:");
 for (const c of CARDS) {
