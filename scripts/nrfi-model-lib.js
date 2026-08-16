@@ -780,14 +780,48 @@ function makeVerdict(overrides) {
 // guard — reporting hit rates from inputs the model no longer uses. A model is
 // its math AND the data it is handed; a fingerprint over half of that is a
 // fingerprint that lets the other half change in silence.
+/* This region ends at VERDICT_SLICES, and it used to end at buildCtx — which
+ * left the single most score-determining function in this file outside the
+ * fingerprint.
+ *
+ * The paragraph above says a model is its math AND the data it is handed, and
+ * cites rewinding teamOff as the change that moved every cached number without
+ * moving a sliced line in app.jsx. buildCtx is where that handing-over
+ * happens: it picks which fetchers run, passes `date` to rewind pitI01/pitMeta
+ * /teamOff (and pointedly does NOT pass it to topOrder), chooses the arguments
+ * topOrder splits on, and hardcodes umpFactor to 1. Measured: the old end
+ * marker cut the region at byte 41085 of 53081, so buildCtx and scoreBothPaths
+ * — 12KB including every one of those decisions — were excluded. Editing any
+ * of it changed every score a cache held while modelSig sat still, and a stale
+ * cache that still passes its own guard is the exact silent failure this
+ * fingerprint exists to prevent.
+ *
+ * It stops BEFORE the VERDICT_SLICES literal on purpose. That array carries the
+ * ladder markers, and folding them in here would put ladder-only edits back
+ * into modelSig — the over-fingerprinting that the scope tags were added to
+ * stop. Comments in the enclosed range are blanked, so the prose between the
+ * two markers costs nothing. */
 const dataSlice = (() => {
   const self = readSrc(__filename);
   const a = self.indexOf("// ---- data (Node fetchers");
-  const b = self.indexOf("async function buildCtx(");
+  const b = self.indexOf("const VERDICT_SLICES = [");
   if (a < 0 || b < 0 || b <= a) throw new Error("could not slice the fetcher section for modelSig");
   // Blanked twin of THIS file, same offsets — see blankComments. This section
   // is 52% prose, so hashing it raw made every note written here a rebuild.
-  return blankComments(self, "nrfi-model-lib.js").slice(a, b);
+  const region = blankComments(self, "nrfi-model-lib.js").slice(a, b);
+  /* Name the things that must be inside, rather than trusting the markers.
+   * Both bounds are ordinary source text that a refactor can move or rename,
+   * and a region that silently shrinks back past buildCtx would restore the
+   * hole without failing anything. Under-fingerprinting is the failure that
+   * cannot be noticed from the outside, so it gets checked from the inside. */
+  for (const must of ["async function buildCtx(", "function scoreBothPaths(", "const topOrder =", "const travelRest ="]) {
+    if (!region.includes(must)) {
+      throw new Error("modelSig's data region no longer contains " + JSON.stringify(must) + ". " +
+        "Something moved the markers and the fingerprint has stopped covering code that decides " +
+        "every cached score. Fix the bounds; do not delete this check.");
+    }
+  }
+  return region;
 })();
 const sigOf = (tag) => VERDICT_SLICES.filter((s) => s[2] === tag)
   .map(([a, b]) => sliceBlank(a, b)).join("\n");

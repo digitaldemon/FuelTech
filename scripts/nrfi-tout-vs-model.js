@@ -46,7 +46,32 @@ const CACHE = path.join(__dirname, "nrfi-tout-vs-model.json");
   let dates, slates, byDate;
   if (useCache) {
     const c = JSON.parse(fs.readFileSync(CACHE, "utf8"));
-    process.stderr.write(`loaded cached scores from ${c.at} (model ${c.simW == null ? "?" : "NRFI_SIM_W=" + c.simW})\n`);
+    /* ENFORCE the fingerprint, do not merely record it.
+     *
+     * This wrote modelSig into the cache from the start and never read it back,
+     * which is a guard in name only: --cached would re-cut an old model's scores
+     * under a new model's banner and print conclusions about code that never
+     * produced them. The comment above ("re-run whenever the model changes") was
+     * doing the enforcing, and a comment cannot.
+     *
+     * Found live: extending modelSig to cover buildCtx moved the sig from
+     * 956697bbc201 to e85504eb719e, and this path would have gone on serving the
+     * old cache without a word. --stale is available for the case where the
+     * mismatch is understood and the analysis is about something else, because a
+     * guard with no escape hatch gets deleted rather than respected. */
+    if (c.modelSig && c.modelSig !== modelSig) {
+      const msg = `cache was built by model ${c.modelSig}, this is ${modelSig}`;
+      if (!args.includes("--stale")) {
+        console.error(`\nSTALE CACHE: ${msg}.`);
+        console.error("Its scores came from different code, so every number below would describe");
+        console.error("a model that is not the one in your working tree.");
+        console.error("  rebuild:            node scripts/nrfi-tout-vs-model.js " + id);
+        console.error("  or accept the risk: node scripts/nrfi-tout-vs-model.js " + id + " --cached --stale");
+        process.exit(1);
+      }
+      process.stderr.write(`!! --stale: ${msg}. Numbers below describe the OLD model.\n`);
+    }
+    process.stderr.write(`loaded cached scores from ${c.at} (model ${c.simW == null ? "?" : "NRFI_SIM_W=" + c.simW}, sig ${c.modelSig || "none recorded"})\n`);
     dates = c.dates; slates = new Map(c.slates); byDate = new Map(c.byDate);
   } else {
     ({ dates, slates, byDate } = await collect(id, maxDates, se));
