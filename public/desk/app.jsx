@@ -5593,6 +5593,29 @@ function pickVoice(s) {
   }
   return pool.find((v) => v.default) || pool[0] || null;
 }
+/* Delivery speed, and it has to depend on the voice.
+ *
+ * The original 1.02 was set because 1.1 clipped the ends of words — but that was
+ * measured on the NEURAL voices, which read more slowly and more naturally than
+ * the formant ones, and it was then applied to every voice. Microsoft Mark, the
+ * top of VOICE_RANK and what actually plays on the machine this is used from, is
+ * a local SAPI5 formant voice that takes 1.1 cleanly. It was paying for a defect
+ * it does not have.
+ *
+ * So: 1.1 for the formant voices, and the neural family stays at 1.02, which is
+ * the only rate actually verified not to clip on them. Do not split the
+ * difference on spec-sheet reasoning — 1.02 and 1.1 are both measured, anything
+ * between them is a guess.
+ *
+ * Naming is how Edge marks its neural voices ("... Online (Natural) - English"),
+ * and Google's are network voices in the same boat. Anything unrecognised is
+ * treated as neural, because that is the side where being wrong is audible. */
+const SAY_RATE_FORMANT = 1.1, SAY_RATE_NEURAL = 1.02;
+function voiceRate(v) {
+  const n = String((v && v.name) || "");
+  if (/Microsoft (Mark|David|Zira)/i.test(n)) return SAY_RATE_FORMANT;
+  return SAY_RATE_NEURAL;
+}
 /* Dropping the backlog is right; dropping the batch was the bug.
  *
  * This used to be `if (urgent || s.pending) s.cancel()` before every line. A
@@ -5669,9 +5692,7 @@ function _sayDrain(s) {
   _sayOn = true;
   const u = new window.SpeechSynthesisUtterance(text);
   if (_voice) { u.voice = _voice; u.lang = _voice.lang || "en-US"; }
-  // 1.1 clipped the ends of words on the neural voices, which read more slowly
-  // and more naturally than the formant ones. Just above conversational.
-  u.rate = 1.02; u.pitch = 1; u.volume = 1;
+  u.rate = voiceRate(_voice); u.pitch = 1; u.volume = 1;
   const gen = ++_sayGen;
   const done = () => {
     // A late event from a cancelled or superseded utterance must not touch the

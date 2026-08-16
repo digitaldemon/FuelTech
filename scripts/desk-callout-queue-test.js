@@ -55,13 +55,14 @@ function makeSynth() {
 const harness = [
   "let _voice = null, _voiceTried = false;",
   "function pickVoice() { return null; }",
+  slice("const SAY_RATE_FORMANT", "\n}"),             // voiceRate
   // Markers deliberately avoid the tunable VALUES — an earlier version ended a
   // slice on "const SAY_STALE_MS = 12000;" and broke the moment that was retuned.
   slice("const SAY_MAX = 3;", "const _sayQ = [];"),   // both caps + the queue
   slice("let _sayOn = false", "\n}"),                 // _sayGen decl + _sayDrain
   slice("function speak(text, urgent, at)", "\n}"),
   slice("function speakStop()", "\n}"),
-  "return { speak, speakStop, state: () => ({ on: _sayOn, depth: _sayQ.length, gen: _sayGen }) };",
+  "return { speak, speakStop, voiceRate, state: () => ({ on: _sayOn, depth: _sayQ.length, gen: _sayGen }) };",
 ].join("\n");
 
 let fails = 0, passes = 0;
@@ -198,6 +199,24 @@ console.log("\nwatchdog re-arms are capped so a stuck engine still recovers");
   while (fired < 12 && synth.spoken.length === 1) { if (!fireGuard()) break; fired++; }
   check("queue recovers despite speaking stuck true", synth.spoken[1] === "two", synth.spoken.join("|"));
   check("gave the voice several chances first", fired > 1, "fired " + fired);
+}
+
+console.log("\nrate is faster only on voices verified to take it");
+{
+  const { api } = fresh();
+  const r = api.voiceRate;
+  // The voice this is actually listened to on. VOICE_RANK puts it first, and it
+  // is a local formant voice, so it gets the fast rate.
+  check("Microsoft Mark runs fast", r({ name: "Microsoft Mark - English (United States)" }) === 1.1);
+  check("Microsoft David runs fast", r({ name: "Microsoft David Desktop - English (United States)" }) === 1.1);
+  // Edge's neural men, where 1.1 was measured to clip word ends.
+  check("Edge neural stays at the verified rate",
+    r({ name: "Microsoft Andrew Online (Natural) - English (United States)" }) === 1.02);
+  check("Google network voice stays slow", r({ name: "Google UK English Male" }) === 1.02);
+  // Unknown and unresolved voices take the cautious side: a clipped call is
+  // worse than a slightly slow one.
+  check("unknown voice stays slow", r({ name: "Some Vendor Voice" }) === 1.02);
+  check("no voice resolved yet stays slow", r(null) === 1.02);
 }
 
 console.log(`\n${passes} passed, ${fails} failed`);

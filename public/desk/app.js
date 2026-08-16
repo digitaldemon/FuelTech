@@ -1153,7 +1153,23 @@ const VOICE_RANK=[// Chosen by ear, on this machine, against the alternatives pl
 // avoid — David, the 1998 answering machine.
 "Google UK English Male","Microsoft David"];let _voice=null,_voiceTried=false;function pickVoice(s){// getVoices() is empty until the engine enumerates, and fires voiceschanged
 // when it is ready — so a null result must NOT be cached as "no voice".
-const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.filter(v=>/^en/i.test(v.lang||""));const pool=en.length?en:all;for(const want of VOICE_RANK){const hit=pool.find(v=>String(v.name||"").includes(want));if(hit)return hit;}return pool.find(v=>v.default)||pool[0]||null;}/* Dropping the backlog is right; dropping the batch was the bug.
+const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.filter(v=>/^en/i.test(v.lang||""));const pool=en.length?en:all;for(const want of VOICE_RANK){const hit=pool.find(v=>String(v.name||"").includes(want));if(hit)return hit;}return pool.find(v=>v.default)||pool[0]||null;}/* Delivery speed, and it has to depend on the voice.
+ *
+ * The original 1.02 was set because 1.1 clipped the ends of words — but that was
+ * measured on the NEURAL voices, which read more slowly and more naturally than
+ * the formant ones, and it was then applied to every voice. Microsoft Mark, the
+ * top of VOICE_RANK and what actually plays on the machine this is used from, is
+ * a local SAPI5 formant voice that takes 1.1 cleanly. It was paying for a defect
+ * it does not have.
+ *
+ * So: 1.1 for the formant voices, and the neural family stays at 1.02, which is
+ * the only rate actually verified not to clip on them. Do not split the
+ * difference on spec-sheet reasoning — 1.02 and 1.1 are both measured, anything
+ * between them is a guess.
+ *
+ * Naming is how Edge marks its neural voices ("... Online (Natural) - English"),
+ * and Google's are network voices in the same boat. Anything unrecognised is
+ * treated as neural, because that is the side where being wrong is audible. */const SAY_RATE_FORMANT=1.1,SAY_RATE_NEURAL=1.02;function voiceRate(v){const n=String(v&&v.name||"");if(/Microsoft (Mark|David|Zira)/i.test(n))return SAY_RATE_FORMANT;return SAY_RATE_NEURAL;}/* Dropping the backlog is right; dropping the batch was the bug.
  *
  * This used to be `if (urgent || s.pending) s.cancel()` before every line. A
  * poll that delivered three new pitches called speak() three times in a tight
@@ -1209,9 +1225,7 @@ const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.f
  * revoke an utterance's events — which is exactly what cancel and stop need. */let _sayOn=false,_sayGuard=null,_sayGen=0;function _sayDrain(s){if(_sayOn)return;let item;// Skip anything that went stale while it waited, and keep skipping: after a
 // freeze the whole queue can be stale, and stopping at the first live line is
 // the point.
-for(;;){item=_sayQ.shift();if(item==null)return;if(!(item.at>0)||Date.now()-item.at<=SAY_STALE_MS)break;}const text=item.text;if(text==null)return;_sayOn=true;const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}// 1.1 clipped the ends of words on the neural voices, which read more slowly
-// and more naturally than the formant ones. Just above conversational.
-u.rate=1.02;u.pitch=1;u.volume=1;const gen=++_sayGen;const done=()=>{// A late event from a cancelled or superseded utterance must not touch the
+for(;;){item=_sayQ.shift();if(item==null)return;if(!(item.at>0)||Date.now()-item.at<=SAY_STALE_MS)break;}const text=item.text;if(text==null)return;_sayOn=true;const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}u.rate=voiceRate(_voice);u.pitch=1;u.volume=1;const gen=++_sayGen;const done=()=>{// A late event from a cancelled or superseded utterance must not touch the
 // latch, the watchdog or the queue — all three now belong to whatever is
 // speaking instead.
 if(gen!==_sayGen||!_sayOn)return;_sayOn=false;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayDrain(s);};u.onend=done;// An utterance that errors (or that Chrome silently drops, which it does after
