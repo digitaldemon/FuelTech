@@ -9515,13 +9515,32 @@ function WhyBlock({ why, isBet }) {
  * carry. No bundled art, no licence question, no build step — and if the host
  * ever 404s the <img> hides itself and the row closes up around it rather than
  * leaving a broken-image glyph on a card that is meant to look composed. */
+/* Deliberately NOT loading="lazy". Measured on the live board: with lazy set,
+ * these never load at all — currentSrc stays empty and complete stays false
+ * even with the element scrolled to the middle of the viewport, so every card
+ * carried two blank 30px holes. Setting loading="eager" on the very same
+ * element makes it decode in 3ms off disk cache. Lazy was the wrong tool here
+ * regardless: there are ~15 of these on a slate, they are 2-5KB SVGs, and they
+ * are the thing the eye lands on first.
+ *
+ * On a genuine load failure fall back to the abbreviation rather than to
+ * nothing, so the card keeps its shape instead of collapsing asymmetrically. */
 function TeamLogo({ id, abbr, size }) {
   const [dead, setDead] = useState(false);
-  if (id == null || dead) return null;
+  if (id == null) return null;
+  if (dead) {
+    return (
+      <span className="mono" title={abbr || ""} style={{
+        width: size, height: size, flexShrink: 0, display: "flex", alignItems: "center",
+        justifyContent: "center", fontSize: size <= 24 ? 8 : 9, fontWeight: 700,
+        color: "var(--dim)", border: "1px solid var(--slate-600)", borderRadius: 6,
+      }}>{(abbr || "").slice(0, 3)}</span>
+    );
+  }
   return (
     <img src={"https://www.mlbstatic.com/team-logos/" + id + ".svg"}
       alt={abbr || ""} title={abbr || ""} width={size} height={size}
-      loading="lazy" onError={() => setDead(true)}
+      loading="eager" decoding="async" onError={() => setDead(true)}
       style={{ width: size, height: size, objectFit: "contain", flexShrink: 0 }} />
   );
 }
