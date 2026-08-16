@@ -1151,11 +1151,46 @@ const VOICE_RANK=[// Chosen by ear, on this machine, against the alternatives pl
 "Microsoft Mark",// Edge's neural men, for a machine without Mark. Named individually because a
 // bare "Natural" substring matches Edge's whole neural family and the first hit
 // in it is usually Ava or Emma.
-"Andrew","Brian","Guy","Christopher","Eric",// Then the best remaining man, then the browser default this list exists to
+"Andrew","Brian","Guy","Christopher","Eric",// Apple's American men, for the phone. Every name above this line exists on
+// Windows and on NOTHING else — so on an iPhone the whole rank used to miss and
+// the pick fell through to the default, which on iOS 16+ is Samantha. The call
+// was a man on the desk and a woman in the user's pocket, describing the same
+// inning. These four are the en-US male voices WebKit exposes: Aaron is the one
+// present on a stock iPhone, Alex and Fred are macOS, Tom is the older iOS
+// Vocalizer man. Ordered by how they read, not by how they rate on paper.
+"Aaron","Alex","Tom","Fred",// Then the best remaining man, then the browser default this list exists to
 // avoid — David, the 1998 answering machine.
-"Google UK English Male","Microsoft David"];let _voice=null,_voiceTried=false;function pickVoice(s){// getVoices() is empty until the engine enumerates, and fires voiceschanged
+//
+// ANDROID IS NOT SOLVED BY THIS LIST AND CANNOT BE. Chrome on Android
+// enumerates whatever the system TTS engine offers, and the Google engine names
+// its voices for locale only — "English United States", "Google US English" —
+// with no gender in the string and no attribute carrying it. There is nothing
+// to match on. Android therefore lands in the fallback below, which is why that
+// fallback now has to be better than "first thing in the list".
+"Google UK English Male","Microsoft David"];/* Names that are unambiguously women, used ONLY to break ties in the fallback.
+ *
+ * This is deliberately a small denylist of specific voices rather than any
+ * attempt to infer gender, because inference is wrong often enough to be worse
+ * than nothing. It never overrides VOICE_RANK — a named voice above always wins.
+ * It exists for the one case the rank cannot reach: a platform whose voice names
+ * carry no gender at all, where the alternative is `pool[0]` and pool[0] is
+ * frequently the very voice this is meant to avoid. */const VOICE_AVOID=/\b(Samantha|Ava|Emma|Zira|Susan|Karen|Moira|Tessa|Fiona|Victoria|Allison|Nicky|Serena|Aria|Jenny|Michelle|Female)\b/i;let _voice=null,_voiceTried=false;function pickVoice(s){// getVoices() is empty until the engine enumerates, and fires voiceschanged
 // when it is ready — so a null result must NOT be cached as "no voice".
-const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.filter(v=>/^en/i.test(v.lang||""));const pool=en.length?en:all;for(const want of VOICE_RANK){const hit=pool.find(v=>String(v.name||"").includes(want));if(hit)return hit;}return pool.find(v=>v.default)||pool[0]||null;}/* Delivery speed, and it has to depend on the voice.
+const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.filter(v=>/^en/i.test(v.lang||""));const pool=en.length?en:all;for(const want of VOICE_RANK){const hit=pool.find(v=>String(v.name||"").includes(want));if(hit)return hit;}/* Fallback, for a platform no name in the rank reaches — in practice Android.
+   *
+   * The old line was `pool.find(v => v.default) || pool[0]`, and both halves of
+   * it pick a woman on the platforms that get here: iOS defaults to Samantha,
+   * and an alphabetical pool[0] is a coin flip. Narrowing beats ordering, so
+   * this filters twice and only then falls back, each step skipped if it would
+   * empty the pool:
+   *
+   *   en-US over en-anything, because the desk plays an American voice and an
+   *   accent swap is the single most audible way for the two to stop matching.
+   *   Then drop the named women. Neither filter can PICK a man — nothing in the
+   *   string says so — but together they cut the odds of landing on one of the
+   *   handful of voices we can positively identify as not matching the desk.
+   *
+   * Then, and only then, the browser default. Same last resort as before. */const narrow=(list,f)=>{const k=list.filter(f);return k.length?k:list;};let cand=narrow(pool,v=>/^en[-_]us$/i.test(String(v.lang||"").replace("_","-")));cand=narrow(cand,v=>!VOICE_AVOID.test(String(v.name||"")));return cand.find(v=>v.default)||cand[0]||pool[0]||null;}/* Delivery speed, and it has to depend on the voice.
  *
  * The original 1.02 was set because 1.1 clipped the ends of words — but that was
  * measured on the NEURAL voices, which read more slowly and more naturally than
@@ -1171,7 +1206,15 @@ const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.f
  *
  * Naming is how Edge marks its neural voices ("... Online (Natural) - English"),
  * and Google's are network voices in the same boat. Anything unrecognised is
- * treated as neural, because that is the side where being wrong is audible. */const SAY_RATE_FORMANT=1.1,SAY_RATE_NEURAL=1.02;function voiceRate(v){const n=String(v&&v.name||"");if(/Microsoft (Mark|David|Zira)/i.test(n))return SAY_RATE_FORMANT;return SAY_RATE_NEURAL;}/* Dropping the backlog is right; dropping the batch was the bug.
+ * treated as neural, because that is the side where being wrong is audible.
+ *
+ * THE MOBILE VOICES ARE DELIBERATELY NOT LISTED HERE. Aaron, Alex, Tom and Fred
+ * fall through to 1.02 by the unrecognised-is-neural rule above, which means the
+ * phone reads about 8% slower than Mark does on the desk. That is a real gap in
+ * "the voices match" and it is left in on purpose: Fred in particular is a
+ * formant synth that almost certainly takes 1.1, but nobody has played it back
+ * to check, and the whole point of the two constants is that both were measured.
+ * Add a voice here after listening to it clip or not clip, not before. */const SAY_RATE_FORMANT=1.1,SAY_RATE_NEURAL=1.02;function voiceRate(v){const n=String(v&&v.name||"");if(/Microsoft (Mark|David|Zira)/i.test(n))return SAY_RATE_FORMANT;return SAY_RATE_NEURAL;}/* Dropping the backlog is right; dropping the batch was the bug.
  *
  * This used to be `if (urgent || s.pending) s.cancel()` before every line. A
  * poll that delivered three new pitches called speak() three times in a tight

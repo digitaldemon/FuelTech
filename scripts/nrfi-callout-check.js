@@ -269,7 +269,12 @@ const check = (ok, what, detail) => {
    * male voices individually rather than trust enumeration order, so the thing
    * worth pinning is the OUTCOME — a man — not the list. */
   console.log("\nvoice");
-  const vs = (names) => ({ getVoices: () => names.map((n) => ({ name: n, lang: "en-US" })) });
+  // A fixture entry is either a bare name (en-US, not default) or a full voice
+  // object. The mobile sets need both fields: WebKit marks Samantha `default`,
+  // and Android's whole problem is that the only thing separating its voices is
+  // `lang`, so a fixture that flattened lang to en-US could not express it.
+  const vs = (names) => ({ getVoices: () => names.map((n) =>
+    (typeof n === "string" ? { name: n, lang: "en-US" } : { lang: "en-US", ...n })) });
   const CHROME_WIN = ["Microsoft David - English (United States)", "Microsoft Mark - English (United States)",
     "Microsoft Zira - English (United States)", "Google US English", "Google UK English Female",
     "Google UK English Male"];
@@ -295,6 +300,50 @@ const check = (ok, what, detail) => {
   check(c.pickVoice({ getVoices: () => [] }) === null,
     "an unenumerated voice list returns null rather than caching a wrong choice",
     "pickVoice committed to a voice before the engine had enumerated.");
+
+  /* ---- the same voice on the phone as on the desk ----
+   * Every name in VOICE_RANK above the Apple block exists on Windows and on
+   * nothing else, so on an iPhone the rank used to miss outright and the pick
+   * fell through to the browser default — Samantha. The desk called the inning
+   * in a man's voice and the phone called it in a woman's. An IDENTICAL voice
+   * is not reachable (Microsoft Mark does not ship on iOS or Android), so what
+   * these pin is the achievable thing: same character, American and male, on
+   * every platform that names its voices well enough to allow it. */
+  const IOS = [{ name: "Samantha", lang: "en-US", default: true }, "Aaron", "Nicky",
+    { name: "Daniel", lang: "en-GB" }, { name: "Karen", lang: "en-AU" },
+    { name: "Moira", lang: "en-IE" }, { name: "Rishi", lang: "en-IN" }];
+  check(/Aaron/.test(c.pickVoice(vs(IOS)).name),
+    "on iOS the American man is chosen over the default (Samantha)",
+    "picked " + c.pickVoice(vs(IOS)).name + " on iOS — the phone is calling the game " +
+    "in a different voice from the desk.");
+  const MACOS = [{ name: "Samantha", lang: "en-US", default: true }, "Alex", "Fred", "Victoria",
+    { name: "Daniel", lang: "en-GB" }];
+  check(/Alex/.test(c.pickVoice(vs(MACOS)).name),
+    "on macOS Alex is chosen ahead of Fred and the default",
+    "picked " + c.pickVoice(vs(MACOS)).name + " on macOS.");
+  /* Android names its voices for locale only — there is no gender anywhere in
+   * the string or the object, so no rank entry can reach it and no check here
+   * can honestly assert a man. What the fallback CAN do is refuse to swap the
+   * accent, which is the most audible half of the mismatch, so that is what is
+   * pinned. If this ever fails it means the en-US narrowing stopped working. */
+  const ANDROID = [{ name: "English United Kingdom", lang: "en-GB", default: true },
+    { name: "English Australia", lang: "en-AU" }, { name: "English United States", lang: "en-US" },
+    { name: "English India", lang: "en-IN" }];
+  check(/United States/.test(c.pickVoice(vs(ANDROID)).name),
+    "on Android an American voice is chosen even though en-GB is the default",
+    "picked " + c.pickVoice(vs(ANDROID)).name + " on Android — the call would change accent " +
+    "between desk and phone.");
+  // The denylist must never outrank a named voice: Mark wins on a set that also
+  // contains a woman the fallback would have skipped for a different reason.
+  check(/Microsoft Mark/.test(c.pickVoice(vs([{ name: "Samantha", lang: "en-US", default: true },
+    "Microsoft Mark - English (United States)"])).name),
+    "VOICE_RANK still outranks the fallback's female denylist",
+    "the fallback is running ahead of the rank.");
+  // A pool of nothing but voices on the denylist must still return one. The
+  // filter narrows; it is not allowed to empty the pool and go silent.
+  check(c.pickVoice(vs(["Samantha", "Victoria"])) !== null,
+    "a voice set containing only denylisted names still returns a voice",
+    "the fallback filtered the pool to empty and the callout would go silent.");
 
   console.log("\n" + "=".repeat(78));
   if (fails) { console.log(fails + " check(s) FAILED"); process.exit(1); }
