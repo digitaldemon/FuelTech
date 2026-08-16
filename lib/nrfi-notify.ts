@@ -139,6 +139,48 @@ async function deliver(
 const shouldMark = (d: { delivered: number; errors: string[] }) =>
   d.delivered > 0 || d.errors.length === 0;
 
+/* Commit ids to a dedup set WITHOUT clobbering a concurrent run's ids.
+ *
+ * This is the same duplicate-storm failure `deliver` above fixed, at a
+ * different layer, and the shape is a plain lost update. The old code read the
+ * set at the top of the notify function, then wrote `[...notified, ...sent]`
+ * at the bottom — so the read-modify-write window spanned the ENTIRE delivery
+ * loop: every pick, every channel, every network round trip to Telegram,
+ * Twilio and Resend. Seconds, not milliseconds.
+ *
+ * Two callers overlap in that window by design. app/api/desk/nrfi/route.ts
+ * fires runNrfiNotify() from POST without awaiting it, and the GET route is a
+ * Vercel cron on a 10-minute tick. Interleave them and the second write is
+ * computed from a snapshot taken before the first one landed:
+ *
+ *   POST reads [A] ─── sends B ──────────── writes [A,B]
+ *   cron reads [A] ────────── sends C ───────────────── writes [A,C]
+ *
+ * B is now missing from the set, so the next tick re-sends a card the user has
+ * already been alerted on — a phone buzz for a pick they are already holding.
+ *
+ * Re-reading immediately before the write cuts the window from the whole
+ * delivery loop to a single round trip, and merging instead of overwriting
+ * means whatever landed in between survives. This does NOT make the update
+ * atomic — desk_store is plain read/write with no CAS (lib/desk.ts), so a true
+ * fix is a jsonb `||` append done server-side in the ON CONFLICT clause. That
+ * is a one-line SQL change, but it is unverifiable from here without database
+ * credentials, and shipping untested SQL into the alert path to close a
+ * millisecond window is the worse trade.
+ *
+ * The cap is safe rather than arbitrary: a pick can only be re-notified if it
+ * is still in `nrfi_record`, and that is capped at 1000 newest-first by the
+ * POST route. Ids are appended in the order picks are created, so keeping the
+ * newest 3000 covers the entire re-notifiable window three times over. Without
+ * it the set grew forever and was fully read and rewritten on every 10-minute
+ * tick for the life of the deployment. */
+const DEDUP_CAP = 3000;
+async function commitNotified(key: string, ids: string[]): Promise<void> {
+  const latest = await readStore<string[]>(key, []);
+  const merged = [...new Set([...latest, ...ids])];
+  await writeStore(key, merged.slice(-DEDUP_CAP));
+}
+
 // ── Message builders ───────────────────────────────────────────────────────────
 function pitLine(p: PitcherProfile | undefined, name: string | undefined): string {
   if (!p) return name ?? "TBD";
@@ -350,7 +392,7 @@ export async function runLineupNotify(): Promise<{ sent: number; errors: string[
   }
 
   if (sent.length) {
-    await writeStore("nrfi_lineup_notified", [...lineupNotified, ...sent]);
+    await commitNotified("nrfi_lineup_notified", sent);
   }
 
   return { sent: sent.length, errors };
@@ -394,7 +436,7 @@ export async function runNrfiNotify(
   // deliberately ignores the dedup set on the way in, so writing to it on the
   // way out would silence the real alert for that game.
   if (sent.length && !opts?.force) {
-    await writeStore("nrfi_notified", [...notified, ...sent]);
+    await commitNotified("nrfi_notified", sent);
   }
 
   return { sent: sent.length, errors };
