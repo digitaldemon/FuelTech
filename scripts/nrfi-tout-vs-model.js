@@ -24,7 +24,7 @@
 // backtest uses, so this measures the shipped model rather than a copy of it.
 const fs = require("fs");
 const path = require("path");
-const { J, savant, mapLimit, buildCtx, scoreBothPaths, makeVerdict, modelSig } = require("./nrfi-model-lib");
+const { J, savant, mapLimit, buildCtx, scoreBothPaths, makeVerdict, modelSig, PIT_MODE, pitStats } = require("./nrfi-model-lib");
 const { gradeSeller } = require("./nrfi-tout-grade");
 const { nrfiThinArm: thinArm } = makeVerdict();
 
@@ -122,7 +122,14 @@ async function collect(id, maxDates, se) {
   }
   const simW = (require("fs").readFileSync(require("path").join(__dirname, "..", "public", "desk", "app.jsx"), "utf8")
     .match(/const NRFI_SIM_W = ([\d.]+);/) || [])[1] || null;
+  // Record WHICH pitcher-split source scored these games. modelSig fingerprints
+  // the model's constants, so it caught the rewind only because that landed with
+  // other changes — a cache rebuilt under NRFI_LEAKY=1 hashes identically to a
+  // clean one and would have printed leaked hit rates with nothing to show for
+  // it. The mode is a property of the run, not of the model, so it has to be
+  // written down separately.
   fs.writeFileSync(CACHE, JSON.stringify({ at: new Date().toISOString(), season: se, simW, modelSig,
+    pitMode: PIT_MODE, pitStats: pitStats(),
     dates, slates: [...slates], byDate: [...byDate] }));
   process.stderr.write(`  cached to ${CACHE}\n`);
   return { dates, slates, byDate };
@@ -201,9 +208,15 @@ function report(dates, slates, joined) {
   // information that genuinely existed by then. So if our top-1 edge is large
   // in April and collapses by August, the edge is leakage. If it holds roughly
   // flat, leakage is not what is producing it.
-  console.log("\n=========== LEAKAGE CHECK: our top-1 by month ===========");
-  console.log("Scores use current-season splits, so early games are scored with the most");
-  console.log("hindsight. An edge that decays toward the end of the season is an artifact.");
+  console.log("\n=========== TOP-1 BY MONTH (NOT a leakage check) ===========");
+  console.log("This used to claim that a flat month-over-month edge rules out look-ahead.");
+  console.log("It does not, and the claim is withdrawn. The test is confounded in both");
+  console.log("directions at once: contamination FALLS through a season (a scored game is");
+  console.log("1/n of its own season-to-date line — ~1/3 in April, ~1/25 by September) while");
+  console.log("genuine skill RISES as starts accumulate and the priors regress less. The");
+  console.log("monthly edge is their sum, so reading it as evidence about either component");
+  console.log("is invalid. It is printed because it is a real seasonality profile, and so");
+  console.log("the next person to think of this finds the result instead of rerunning it.");
   const months = [...new Set(dates.map((d) => d.slice(0, 7)))].sort();
   const monthRows = [];
   for (const m of months) {
@@ -228,11 +241,17 @@ function report(dates, slates, joined) {
     const early = monthRows.slice(0, half), late = monthRows.slice(-half);
     const eE = mean(early.map((r) => r.top1 - r.base)), lE = mean(late.map((r) => r.top1 - r.base));
     console.log(`\n  early-season edge ${(eE * 100).toFixed(1)} pts   late-season edge ${(lE * 100).toFixed(1)} pts`);
-    if (eE - lE > 0.10) console.log("  -> decays sharply. Treat the top-N hit rate as inflated by hindsight.");
-    else if (eE - lE > 0.04) console.log("  -> some decay. The top-N hit rate is optimistic but not entirely artifact.");
-    else console.log("  -> roughly flat. Leakage is not what is producing the top-N edge.");
-    console.log("  Either way this is NOT a walk-forward test, and his record IS. Live CLV");
-    console.log("  on our own picks is the only clean comparison; this only sizes the gap.");
+    console.log(`  splits source: ${PIT_MODE}` + (PIT_MODE === "point-in-time"
+      ? " — pitcher 1st-inning lines are rewound to the scored date."
+      : " — !! NRFI_LEAKY=1, these scores contain the games being scored."));
+    console.log("  Other inputs are NOT rewound (pitMeta season ERA/IP, team offence,");
+    console.log("  top-of-order OBP, Statcast), so residual look-ahead remains. The test that");
+    console.log("  DOES settle leakage is the toggle A/B in nrfi-pitreg-fit.js: a clean fit has");
+    console.log("  an interior optimum, a leaky one is minimised at zero regression with error");
+    console.log("  rising monotonically in the weight — a curve that rewards trusting an input");
+    console.log("  more the further you go is measuring how much of the answer it was handed.");
+    console.log("  And this is still NOT a walk-forward test, while his record IS. Live CLV on");
+    console.log("  our own picks is the only clean comparison; this only sizes the gap.");
   }
 
   // ---- 4. Verdict ----

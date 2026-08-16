@@ -25,6 +25,13 @@
 //      counts at high thresholds especially.
 //
 // Read the hit rates, treat the volumes as ceilings.
+//
+// Pitcher first-inning splits are rewound to the scored date and the guard below
+// refuses a cache that is not. Other inputs are NOT yet rewound — pitMeta's
+// season ERA/IP, team offence, top-of-order OBP and the Statcast pull are all
+// still season aggregates, so a residue of look-ahead remains and the hit rates
+// here are still optimistic. Directionally the ladder comparison survives it
+// (every rung is scored through the same inputs); the absolute levels do not.
 const fs = require("fs");
 const path = require("path");
 const { makeVerdict } = require("./nrfi-model-lib");
@@ -66,6 +73,21 @@ if (cache.modelSig !== modelSig) {
   console.error("These scores are from a different model. Rebuild: node scripts/nrfi-tout-vs-model.js 318949");
   process.exit(1);
 }
+// modelSig does NOT cover this. It fingerprints the model's constants, and the
+// pitcher-split source is a property of the run: a cache rebuilt with
+// NRFI_LEAKY=1 hashes identically to a clean one. That distinction is worth more
+// than everything else on this page — the leaky path scores 62.5% pick-side
+// against 58.9% clean, and 62.5% is, to the decimal, what the BET rung of this
+// sweep used to report. The headline was reading the leak back to itself.
+if (cache.pitMode !== "point-in-time") {
+  console.error(`LEAKED CACHE: built ${cache.at} with pitcher splits in "${cache.pitMode || "unrecorded"}" mode.`);
+  console.error("Season-to-date splits contain the game being scored, so every hit rate, ROI and unit");
+  console.error("count below would be inflated. Rebuild: node scripts/nrfi-tout-vs-model.js 318949");
+  process.exit(1);
+}
+const cps = cache.pitStats || {};
+console.log(`cache: ${cache.at} · model ${cache.modelSig} · splits ${cache.pitMode}` +
+  (cps.pit != null ? ` (rewound ${cps.pit}, no prior starts ${cps.miss})` : ""));
 
 // Shipped calibration. It is a monotone logit shift, so it cannot reorder games,
 // but it DOES move them across absolute thresholds — which is the whole subject
