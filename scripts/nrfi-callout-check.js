@@ -112,6 +112,38 @@ const check = (ok, what, detail) => {
     count: { balls: 1, strikes: 0 }, pitchData: { startSpeed: 0 } }) || ""),
     "an untracked pitch (startSpeed 0) is called without a bogus velocity",
     "a zero/none velocity leaked into the spoken line.");
+
+  /* ---- the two-strike foul, i.e. "the voice repeats itself" ----
+   * A foul with two strikes is the only pitch that changes nothing: same call,
+   * same count, and usually the same velocity bucket. Two in a row therefore
+   * produced a byte-identical sentence three seconds apart. Measured at roughly
+   * one occurrence per three 1st innings by scripts/nrfi-callout-dupe.js. */
+  const foul = (strikes, seq, mph) => c.pitchCallout({ isPitch: true,
+    details: { call: { code: "F", description: "Foul" } },
+    count: { balls: 3, strikes }, pitchData: { startSpeed: mph || 94 } }, seq);
+  check(foul(2, 0) !== foul(2, 1),
+    "two consecutive two-strike fouls do not produce the same sentence",
+    "both fouls came out as " + JSON.stringify(foul(2, 0)) + " — the repeat is back.");
+  check(!/three and two/.test(foul(2, 0) || ""),
+    "a two-strike foul does not restate a count it cannot have changed",
+    "the unchanged count is still being read out: " + foul(2, 0));
+  // The helper pins balls at 3, so a one-strike foul is 3-1 after the pitch.
+  check(/three and one/.test(foul(1, 0) || ""),
+    "a foul that DOES move the count still reads the count out",
+    "a sub-two-strike foul lost its count: " + foul(1, 0));
+  check(/^foul\.$/.test(String(foul(2, 0)).replace(/^\d+, /, "")),
+    "the first foul of an at-bat is still the plain word",
+    "the first foul was dressed up: " + foul(2, 0));
+  // A marathon at-bat must not run off the end of the phrase list.
+  check(foul(2, 99) && !/undefined/.test(foul(2, 99)),
+    "a 100-foul at-bat still produces a line",
+    "the foul phrasing ran past the end of its list: " + foul(2, 99));
+  // A foul tip is strike three and a foul bunt with two strikes is an out. Both
+  // END the at-bat, so neither may be softened into "still alive".
+  check(/foul tip/.test(String(c.pitchCallout({ isPitch: true,
+    details: { call: { code: "T", description: "Foul Tip" } }, count: { balls: 3, strikes: 3 } }, 4))),
+    "a foul tip keeps its own words — it is strike three, not another foul",
+    "a foul tip was rotated into the foul phrasing and reads as a live at-bat.");
   // The batter is named once per at-bat. Every pitch would be nagging; none at
   // all leaves an unattributable stream of counts.
   const named = c.firstInningPitches({ liveData: { plays: { allPlays: [{

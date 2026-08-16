@@ -219,5 +219,43 @@ console.log("\nrate is faster only on voices verified to take it");
   check("no voice resolved yet stays slow", r(null) === 1.02);
 }
 
+console.log("\nthe same line is never spoken twice in a row");
+{
+  const { synth, api } = fresh();
+  api.speak("94, foul. three and two.", false);
+  api.speak("94, foul. three and two.", false);
+  check("an identical follow-up line is refused", synth.spoken.length === 1, synth.spoken.join("|"));
+  check("nothing was queued behind it", api.state().depth === 0, "depth " + api.state().depth);
+  // Refused, not banned. The same words later in the inning are a different
+  // pitch and must still be called.
+  api.speak("95, ball. three and two.", false);
+  synth.finish();
+  api.speak("94, foul. three and two.", false);
+  synth.finish();
+  check("the same words later are spoken again",
+    synth.spoken.join("|") === "94, foul. three and two.|95, ball. three and two.|94, foul. three and two.",
+    synth.spoken.join("|"));
+}
+
+console.log("\na settle may repeat — it is the ticket resolving");
+{
+  const { synth, api } = fresh();
+  // Two games settling the same way seconds apart is legitimate, and a settle is
+  // the one line strictly worse to miss than to hear twice.
+  api.speak("A run scores. That is Y-R-F-I.", true);
+  api.speak("A run scores. That is Y-R-F-I.", true);
+  check("urgent lines are exempt from the guard", synth.spoken.length === 2, synth.spoken.join("|"));
+}
+
+console.log("\nstopping clears the repeat guard");
+{
+  const { synth, api } = fresh();
+  api.speak("MIA at CIN. First inning. Desk is on NRFI.", false);
+  api.speakStop();
+  // Switching focus away and straight back has to re-introduce the game.
+  api.speak("MIA at CIN. First inning. Desk is on NRFI.", false);
+  check("the intro can be re-announced after a stop", synth.spoken.length === 2, synth.spoken.join("|"));
+}
+
 console.log(`\n${passes} passed, ${fails} failed`);
 process.exitCode = fails ? 1 : 0;

@@ -1069,7 +1069,30 @@ const cut=d.slice(0,150);const stop=Math.max(cut.lastIndexOf(". "),cut.lastIndex
  */const COUNT_WORD=["oh","one","two","three","four"];// "In play, out(s)" as a pitch call is worse than saying nothing — the play's
 // own description follows a beat later and says what actually happened. The
 // pitches worth calling are the ones that only move the count.
-const PITCH_SKIP={X:1,D:1,E:1};function pitchCallout(ev){if(!ev||!ev.isPitch)return null;const call=ev.details&&ev.details.call||{};if(PITCH_SKIP[call.code])return null;// "Swinging Strike (Blocked)" — the qualifier is a scorer's distinction, not
+const PITCH_SKIP={X:1,D:1,E:1};/* Fouls, and why they are the one pitch that needs its own wording.
+ *
+ * Every other call changes the count, so its line differs from the line before
+ * it by construction. A foul with two strikes changes NOTHING — same velocity
+ * bucket, same call, same count — so two of them in a row came out as the same
+ * sentence twice, three seconds apart. Measured on six real 1st innings
+ * (scripts/nrfi-callout-dupe.js): two back-to-back identical lines, both of them
+ * "94, foul. three and two.", i.e. about one every three games.
+ *
+ * That is the "voice repeating itself" report, and it is not a de-duplication
+ * failure — the two pitches are genuinely distinct events that both deserve to
+ * be called. The dedupe was right and the WORDS were wrong.
+ *
+ * So a foul that leaves the count alone gets rotated phrasing, indexed by how
+ * many fouls the at-bat has already had. Indexed, not random: the same feed must
+ * produce the same call every poll, or the replay harness cannot pin it. The
+ * phrases are what a broadcaster actually says on a long at-bat, and the last
+ * one repeats for a marathon — by the eighth foul the listener is being told the
+ * batter is fighting, which is the true content, and "still alive" twice in a
+ * row is fine because seven other lines separate them.
+ *
+ * The count is dropped on these too. A two-strike foul cannot move the count, so
+ * restating it says nothing; the count comes back the moment the pitch is one
+ * that could change it. */const FOUL_WORD=["foul","fouled away","fouls it off","foul again","fights another one off","still alive"];function pitchCallout(ev,foulSeq){if(!ev||!ev.isPitch)return null;const call=ev.details&&ev.details.call||{};if(PITCH_SKIP[call.code])return null;// "Swinging Strike (Blocked)" — the qualifier is a scorer's distinction, not
 // something a broadcaster says, and it is the kind of aside that makes a
 // synthesised line sound like a form being read out.
 const what=String(call.description||ev.details.description||"").replace(/\s*\([^)]*\)/g,"").trim();if(!what)return null;// Velocity is the one number that makes a pitch call sound like a broadcast
@@ -1080,9 +1103,19 @@ const mph=ev.pitchData&&ev.pitchData.startSpeed;const velo=typeof mph==="number"
 // play callout is about to announce the walk or the punchout anyway. A hit
 // batsman is the same case and does not announce itself in the count: the feed
 // charges it as a ball, so it comes out as a live count on a finished at-bat.
-const done=c.balls>=4||c.strikes>=3||call.code==="H";const count=done||typeof c.balls!=="number"||typeof c.strikes!=="number"?"":" "+COUNT_WORD[c.balls]+" and "+COUNT_WORD[c.strikes]+".";return velo+what.toLowerCase().replace(/\.$/,"")+"."+count;}function firstInningPitches(feed){const all=feed&&feed.liveData&&feed.liveData.plays&&feed.liveData.plays.allPlays||[];const out=[];for(const p of all){if(!p.about||p.about.inning!==1)continue;// "Luis García Jr." already ends the sentence; appending another full stop
+// A foul with two strikes already on the batter: the count after equals the
+// count before, so this pitch moved nothing. Foul tips and foul bunts are
+// excluded on purpose — a foul tip caught is strike three and a foul bunt with
+// two strikes is an out, so both END the at-bat and are worth their own words.
+const heldCount=/^foul$/i.test(what)&&c.strikes>=2&&c.balls<4;const done=c.balls>=4||c.strikes>=3||call.code==="H";const count=done||heldCount||typeof c.balls!=="number"||typeof c.strikes!=="number"?"":" "+COUNT_WORD[c.balls]+" and "+COUNT_WORD[c.strikes]+".";const said=heldCount?FOUL_WORD[Math.min(foulSeq|0,FOUL_WORD.length-1)]:what.toLowerCase().replace(/\.$/,"");return velo+said+"."+count;}function firstInningPitches(feed){const all=feed&&feed.liveData&&feed.liveData.plays&&feed.liveData.plays.allPlays||[];const out=[];for(const p of all){if(!p.about||p.about.inning!==1)continue;// "Luis García Jr." already ends the sentence; appending another full stop
 // gives "Jr.." and the synthesiser reads the extra one as a longer pause.
-const batter=String(p.matchup&&p.matchup.batter&&p.matchup.batter.fullName||"").replace(/\.$/,"");let first=true;const evs=p.playEvents||[];for(let i=0;i<evs.length;i++){const ev=evs[i];const text=pitchCallout(ev);if(!text)continue;const t=Date.parse(ev.endTime||"");out.push({// playId is a GUID the feed keeps stable across polls; the index pair is
+const batter=String(p.matchup&&p.matchup.batter&&p.matchup.batter.fullName||"").replace(/\.$/,"");let first=true;const evs=p.playEvents||[];// Fouls are counted per at-bat and the count is derived from the events
+// themselves, so it is identical on every poll of the same at-bat. Deriving
+// it from anything the poll carries between ticks would make the wording
+// depend on when the callout attached.
+let fouls=0;for(let i=0;i<evs.length;i++){const ev=evs[i];const text=pitchCallout(ev,fouls);// Counted after the call is built, so the first two-strike foul of an
+// at-bat is FOUL_WORD[0] ("foul") — the plain word, as before.
+if(/^foul$/i.test(String(((ev.details||{}).call||{}).description||"").replace(/\s*\([^)]*\)/g,"").trim())&&(ev.count||{}).strikes>=2)fouls++;if(!text)continue;const t=Date.parse(ev.endTime||"");out.push({// playId is a GUID the feed keeps stable across polls; the index pair is
 // only a fallback for the occasional event delivered without one.
 id:ev.playId||p.atBatIndex+":"+i,// Naming the batter once per at-bat is what keeps a string of counts
 // from turning into an unattributable stream of numbers.
@@ -1267,7 +1300,10 @@ const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.f
  * A generation counter closes it: every utterance captures the value it was
  * created with, and any event arriving for a generation that is no longer
  * current is a ghost and is ignored. Bumping the counter is therefore how you
- * revoke an utterance's events — which is exactly what cancel and stop need. */let _sayOn=false,_sayGuard=null,_sayGen=0;function _sayDrain(s){if(_sayOn)return;let item;// Skip anything that went stale while it waited, and keep skipping: after a
+ * revoke an utterance's events — which is exactly what cancel and stop need. */let _sayOn=false,_sayGuard=null,_sayGen=0;// The last line accepted into the queue, for the back-to-back guard in speak().
+// Tracked here rather than read off _sayQ because the queue is usually EMPTY at
+// the moment the duplicate arrives — the first copy is already being spoken.
+let _sayLast=null;function _sayDrain(s){if(_sayOn)return;let item;// Skip anything that went stale while it waited, and keep skipping: after a
 // freeze the whole queue can be stale, and stopping at the first live line is
 // the point.
 for(;;){item=_sayQ.shift();if(item==null)return;if(!(item.at>0)||Date.now()-item.at<=SAY_STALE_MS)break;}const text=item.text;if(text==null)return;_sayOn=true;const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}u.rate=voiceRate(_voice);u.pitch=1;u.volume=1;const gen=++_sayGen;const done=()=>{// A late event from a cancelled or superseded utterance must not touch the
@@ -1300,14 +1336,33 @@ if(s.paused)s.resume();}/* `at` is the event's own timestamp — when the pitch 
 if(!_voice&&!_voiceTried&&s.addEventListener){_voiceTried=true;s.addEventListener("voiceschanged",()=>{_voice=pickVoice(s);},{once:true});}}if(urgent){_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;// Revoke the outgoing utterance's events BEFORE cancelling, so the end event
 // cancel is about to fire arrives as a ghost and cannot reach into the
 // settle line that is about to start.
-_sayGen++;s.cancel();}_sayQ.push({text,at:typeof at==="number"&&isFinite(at)?at:0});// Trim from the FRONT: the stale lines are the ones not worth saying.
+_sayGen++;s.cancel();}/* Backstop: never say the same thing twice in a row.
+   *
+   * The measured cause of the repeat report was the two-strike foul, and that is
+   * fixed where it belongs — in the words, not here. This exists because that was
+   * ONE cause found by looking, and the failure it produces (a line that lands
+   * three seconds after an identical line) is both the most audible thing the
+   * call can do wrong and the cheapest to rule out globally.
+   *
+   * Safe to make unconditional for running commentary, because a legitimate
+   * back-to-back identical line barely exists: every count-changing pitch differs
+   * from the one before it in the count it reads out, fouls now rotate their
+   * wording, and two consecutive plays with a byte-identical description would
+   * need the same batter doing the same thing twice. So this can essentially only
+   * fire on a defect.
+   *
+   * `urgent` is exempt and must stay exempt. A settle is the ticket resolving,
+   * and two games settling the same way seconds apart produce identical text
+   * legitimately — that is the one line worth hearing twice. */if(!urgent&&text===_sayLast)return;_sayLast=text;_sayQ.push({text,at:typeof at==="number"&&isFinite(at)?at:0});// Trim from the FRONT: the stale lines are the ones not worth saying.
 while(_sayQ.length>SAY_MAX)_sayQ.shift();_sayDrain(s);}// Stopping the callout has to clear the queue too, or the lines already buffered
 // keep arriving after the switch is off.
 function speakStop(){const s=typeof window!=="undefined"&&window.speechSynthesis;_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;// Same revocation as the urgent path. Toggling the callout off and straight
 // back on is the case that needs it: without the bump, the end event from the
 // utterance cancelled here can land after the first line of the new session
 // has started and drain the queue out from under it.
-_sayGen++;if(s)s.cancel();}async function pitcherFirstInning(pid,season){if(pid==null)return null;const k=pid+":"+season;if(_pitI01.has(k))return _pitI01.get(k);let val=null;try{const d=await getJson("https://statsapi.mlb.com/api/v1/people/"+pid+"/stats?stats=statSplits&group=pitching&sitCodes=i01&season="+season);const st=d.stats&&d.stats[0]&&d.stats[0].splits&&d.stats[0].splits[0]&&d.stats[0].splits[0].stat;if(st&&st.gamesPlayed){const bf=Number(st.battersFaced||0);const ip=st.inningsPitched!=null?parseIp(st.inningsPitched):null;const k9=ip&&ip>0?Number(st.strikeOuts||0)*9/ip:null;const bb9=ip&&ip>0?Number(st.baseOnBalls||0)*9/ip:null;const hr9=ip&&ip>0?Number(st.homeRuns||0)*9/ip:null;val={rate:Number(st.runs||0)/st.gamesPlayed,sample:st.gamesPlayed,// numOrNull, not Number. MLB returns "-.--" for a pitcher with no
+_sayGen++;// A stop ends the session, so the next line is not a repeat of anything —
+// switching games and switching back must be able to re-announce the intro.
+_sayLast=null;if(s)s.cancel();}async function pitcherFirstInning(pid,season){if(pid==null)return null;const k=pid+":"+season;if(_pitI01.has(k))return _pitI01.get(k);let val=null;try{const d=await getJson("https://statsapi.mlb.com/api/v1/people/"+pid+"/stats?stats=statSplits&group=pitching&sitCodes=i01&season="+season);const st=d.stats&&d.stats[0]&&d.stats[0].splits&&d.stats[0].splits[0]&&d.stats[0].splits[0].stat;if(st&&st.gamesPlayed){const bf=Number(st.battersFaced||0);const ip=st.inningsPitched!=null?parseIp(st.inningsPitched):null;const k9=ip&&ip>0?Number(st.strikeOuts||0)*9/ip:null;const bb9=ip&&ip>0?Number(st.baseOnBalls||0)*9/ip:null;const hr9=ip&&ip>0?Number(st.homeRuns||0)*9/ip:null;val={rate:Number(st.runs||0)/st.gamesPlayed,sample:st.gamesPlayed,// numOrNull, not Number. MLB returns "-.--" for a pitcher with no
 // recorded innings and "INF" for one who has allowed runs without
 // retiring anybody, and Number() turns both into NaN — which is not
 // null, so every `x != null` guard downstream waves it through. That is
@@ -2564,7 +2619,18 @@ if(loud)speak(p.text,false,p.ts);}// Runs are read against the play before, so a
 // game actually being listened to.
 const tag=loud?"":named+". ";for(let i=st.n;i<live.plays.length;i++){const line=playCallout(live.plays[i]);const runs=playRuns(live.plays[i],live.plays[i-1]);const verdict=". "+(runs===1?"A run scores":runs+" runs score")+". That is Y-R-F-I — "+(side==="YRFI"?mine?"you are a winner":"the desk had it":mine?"that ticket is dead":"the desk was wrong")+".";// A settle is never stale — it is the ticket resolving, and it stays
 // worth hearing however late it arrives. Running commentary is not.
-if(runs>0){speak(tag+(loud&&line?line+verdict:verdict.slice(2)),true);st.settled=true;}else if(loud&&line)speak(line,false,Date.now()-playAgeMs(live.plays[i]));}st.n=live.plays.length;if(!st.settled&&live.past1){speak(tag+"First inning is clean in "+r.home+". N-R-F-I — "+(side==="NRFI"?mine?"you are a winner":"that is a winner":mine?"that ticket is dead":"the desk was wrong")+".",true);st.settled=true;}spoken.current.set(r.gamePk,st);}async function tick(){// A slow round trip must not stack ticks on top of each other; skipping is
+if(runs>0){speak(tag+(loud&&line?line+verdict:verdict.slice(2)),true);st.settled=true;}else if(loud&&line)speak(line,false,Date.now()-playAgeMs(live.plays[i]));}// Math.max, for the same reason the attach above uses it: this pointer is
+// only ever allowed to move forward. A bare assignment trusts the feed to
+// be monotonic, and firstInningPlays keeps only COMPLETE plays — so a play
+// under review, which statsapi can flip back to incomplete while the crew
+// looks at it, takes the list backwards. The next poll then re-announces
+// everything after the rewind point. Reviews in the 1st are not rare; one
+// of the six innings the dupe harness replays has a challenged pitch in it.
+//
+// Losing the reverted play is the right trade. If the review changes the
+// call the play comes back with a NEW description and a higher index, so it
+// still gets announced; if it does not, the listener has already heard it.
+st.n=Math.max(st.n,live.plays.length);if(!st.settled&&live.past1){speak(tag+"First inning is clean in "+r.home+". N-R-F-I — "+(side==="NRFI"?mine?"you are a winner":"that is a winner":mine?"that ticket is dead":"the desk was wrong")+".",true);st.settled=true;}spoken.current.set(r.gamePk,st);}async function tick(){// A slow round trip must not stack ticks on top of each other; skipping is
 // correct because the next poll is 2.5s away and reads the same state.
 if(inFlight)return;inFlight=true;try{await Promise.all(tracked().map(pollGame));}finally{inFlight=false;}}tick();const id=setInterval(tick,CALLOUT_POLL_MS);return()=>{stopped=true;clearInterval(id);};// Positions load asynchronously and usually land AFTER the board does, so
 // they have to be in the dep list — otherwise the effect closes over an
