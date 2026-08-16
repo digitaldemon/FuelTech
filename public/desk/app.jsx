@@ -13168,3 +13168,9 @@ function Ledger({ ledger, setLedger, fw }) {
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 window.__deskMounted = true; // boot watchdog in index.html stands down
+/* Both watchdog latches are one-shot guards against looping on a failure, so a
+ * successful boot has to release them — otherwise the FIRST recovery in a tab
+ * spends the only attempt each repair gets, and a genuine failure later in the
+ * same session (the session lapsing mid-evening is the common one) skips
+ * straight to the give-up message. sessionStorage, so this is per tab. */
+try { sessionStorage.removeItem("cdheal"); sessionStorage.removeItem("cdauth"); } catch { /* blocked */ }

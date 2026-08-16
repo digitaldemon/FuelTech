@@ -53,13 +53,31 @@
       if (b) b.textContent = "Startup error: " + (e.message || (e.target && e.target.src) || "unknown") +
         " — screenshot this.";
     }, true);
-    // Watchdog: if the app hasn't mounted in 8 seconds, self-heal once
-    // (clear the app's local cache and reload — a stale cache from an old
-    // build is the usual culprit), then say what to do instead of hanging.
+    // Watchdog: if the app hasn't mounted in 8 seconds, work out WHY before
+    // reaching for a fix, because the two causes want opposite repairs.
+    //
+    // The console on this machine has three separate loads that died with
+    // "SyntaxError: Unexpected token '<'" on react.production.min.js,
+    // react-dom and app.js at once — every script tag failing identically.
+    // That is not a corrupt cache. A script tag returning HTML under a .js URL
+    // means the request was answered by the LOGIN PAGE: the desk is auth-gated,
+    // and once the session lapses every asset request redirects to it. The page
+    // then sits dead on the boot line with the callout button never rendered,
+    // which is the "audio stopped working" report — nothing is wrong with the
+    // audio, the app never started.
+    //
+    // The old self-heal made that worse. It cleared localStorage and reloaded,
+    // which fetches the login page again, and then told the user to wipe Safari
+    // website data and re-add the home-screen icon — destructive advice, aimed
+    // at the wrong cause, and it cannot work because signing out is not
+    // something a cache purge fixes.
+    //
+    // So: probe the asset first. An HTML body under a .js URL is a signed-out
+    // session and the repair is to go and sign in. Anything else is the stale
+    // cache the original heal was written for, and that path is unchanged.
     (function () {
       window.__deskMounted = false;
-      setTimeout(function () {
-        if (window.__deskMounted) return;
+      function stale() {
         try {
           if (!sessionStorage.getItem("cdheal")) {
             sessionStorage.setItem("cdheal", "1");
@@ -74,6 +92,31 @@
         if (b) b.textContent = "Still stuck after two tries — your phone is holding an old cached copy. " +
           "Fix: iPhone Settings > Apps > Safari > Advanced > Website Data > search 'fueltechaipro' > delete it, " +
           "then remove and re-add the home-screen icon.";
+      }
+      setTimeout(function () {
+        if (window.__deskMounted) return;
+        // no-store so this asks the network rather than re-reading whatever the
+        // failed load already put in the HTTP cache.
+        fetch("/desk/app.js?boot=" + Date.now(), { cache: "no-store" })
+          .then(function (r) { return r.text(); })
+          .then(function (t) {
+            // A JS bundle never starts with a tag. If this one does, the login
+            // page answered for it.
+            if (!/^\s*</.test(t)) { stale(); return; }
+            var b = document.getElementById("boot");
+            if (b) b.textContent = "Signed out — sending you to the login page…";
+            // Guarded so a login that does not take cannot bounce forever.
+            try {
+              if (sessionStorage.getItem("cdauth")) {
+                if (b) b.textContent = "Signed out, and signing back in did not stick. " +
+                  "Open fueltechaipro.com/login directly and sign in there.";
+                return;
+              }
+              sessionStorage.setItem("cdauth", "1");
+            } catch (err) { /* storage blocked — one attempt, no guard */ }
+            location.href = "/login?next=%2Fdesk";
+          })
+          .catch(function () { stale(); });   // genuinely offline: old path
       }, 8000);
     })();
   </script>
