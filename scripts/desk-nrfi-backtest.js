@@ -4,16 +4,41 @@
 //
 //   node scripts/desk-nrfi-backtest.js [days]     (default 14)
 //
-// CAVEAT: split stats are current-season (not point-in-time), so there is mild
-// look-ahead leakage. This measures the model's discriminative power + overall
-// calibration, not a clean walk-forward. Good enough to set the calibration
-// prior and sanity-check the weights; CLV on live picks is the cleaner test.
+// PITCHER SPLITS ARE NOW POINT-IN-TIME. This header used to say the splits were
+// current-season with "mild look-ahead leakage". The leakage was not mild, and
+// the word did real damage — it read as a footnote while every number below
+// inherited it. Measured on one 407-game window, same games, split source the
+// only difference (NRFI_LEAKY=1 restores the old behaviour), 96.6% of arms
+// rewound off prior starts:
+//
+//                     leaky    point-in-time    base rate
+//     Brier           .2368        .2422          .2491
+//     AUC             .6512        .5954
+//     pick-side acc   62.5%        58.9%
+//     prediction sd    5.6pp        5.5pp
+//
+// The leak was 44% of the model's apparent skill over the base rate (.0123 ->
+// .0069) and 5.6 points of AUC. And that 62.5% is, to the decimal, the BET rung
+// nrfi-ladder-sweep.js has been reporting — so the sweep's headline was the
+// leak reading itself back.
+//
+// Note the prediction sd barely moves. An earlier draft of this table claimed
+// the leak manufactured a quarter of the spread; that was measured through an
+// index that matched no arms at all, which nulled every starter to the league
+// mean and collapsed sd for an unrelated reason. The leak inflates ACCURACY,
+// not confidence.
+//
+// STILL LEAKING, so this is not yet a clean walk-forward: pitMeta's
+// seasonEra/ip/allow, teamOff, topOrder's batter OBP and savant's Statcast are
+// all whole-season pulls. pitI01 was rewound first because it is the term
+// measured to leak (nrfi-pitreg-fit.js) and it feeds pitBase at full weight.
+// CLV on live picks remains the cleanest test available.
 const fs = require("fs");
 const path = require("path");
 // The model loader and the MLB fetchers now live in nrfi-model-lib.js so that
 // every analysis script scores games through one code path. See that file for
 // why a second copy is worse than an import.
-const { J, savant, mapLimit, buildCtx, scoreBothPaths, C } = require("./nrfi-model-lib");
+const { J, savant, mapLimit, buildCtx, scoreBothPaths, C, PIT_MODE, pitStats } = require("./nrfi-model-lib");
 const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-x));
 
 (async () => {
@@ -63,6 +88,14 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
   }
   const n = samples.length;
   if (!n) { console.log("No samples."); return; }
+  // Say which split source produced every number below. A backtest that does not
+  // declare this is not reporting a result: the two modes differ by more Brier
+  // than most of the effects these scripts exist to measure.
+  const ps = pitStats();
+  console.log(`\nPITCHER SPLITS: ${PIT_MODE}` +
+    `   (rewound ${ps.pit}, no prior starts ${ps.miss}, season-aggregate ${ps.api})`);
+  if (PIT_MODE === "leaky") console.log("  !! NRFI_LEAKY=1 — season-to-date splits contain the scored game. Control only.");
+  else if (ps.miss > ps.pit) console.log("  !! more arms had no prior starts than were rewound — early-window sample, read with care.");
   const cl = (x) => C(x, 1e-6, 1 - 1e-6);
 
   // AUC via the rank identity (Mann-Whitney U). Brier and log-loss both mix

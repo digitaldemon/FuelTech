@@ -139,6 +139,16 @@ async function scan() {
           // Away bats vs the HOME starter; home bats vs the AWAY starter.
           hpClean: ar === 0 ? 1 : 0,
           apClean: hr === 0 ? 1 : 0,
+          // The RUN COUNTS, not just the clean flag. This model only needs the
+          // binary, but nrfi-model-lib.js rebuilds point-in-time pitcher splits
+          // out of this cache and nrfiRegress works in runs per start, so
+          // throwing the count away here forced a downstream join against
+          // nrfi-pitcherbt-starts.json — a file with no pitcher id in it, which
+          // meant resolving arms by name or by guessing from the schedule. The
+          // number is already in hand at this line; keeping it removes the whole
+          // identity problem, because ap/hp here ARE the ids.
+          hpRuns: ar,
+          apRuns: hr,
           nrfi: ar === 0 && hr === 0 ? 1 : 0,
         });
       }

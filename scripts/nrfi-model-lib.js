@@ -70,11 +70,132 @@ const parseIp = (ip) => { const m = String(ip == null ? "0" : ip).split("."); re
 const cache = new Map();
 const memo = (k, fn) => cache.has(k) ? cache.get(k) : cache.set(k, fn()).get(k);
 
-const pitI01 = (id, se) => id == null ? Promise.resolve(null) : memo("p" + id + se, async () => {
+/* ---- POINT-IN-TIME PITCHER SPLITS ----
+ *
+ * THE LEAK THIS FIXES. The call below asks the API for a starter's first-inning
+ * line for a whole SEASON. Scoring a game from May with it hands the model a
+ * rate that already contains that game's own result, plus every start after it.
+ * An arm shelled in the 1st that afternoon reads worse in the line the model
+ * sees, so the model "predicts" a run it was told about.
+ *
+ * It is not a small effect and it is not hypothetical. nrfi-pitreg-fit.js
+ * toggles exactly this field and finds the optimal regression weight collapse
+ * from 75 (clean, interior minimum) to 0 (leaky, minimum at the boundary with
+ * MSE rising monotonically in the weight). A curve that rewards trusting an
+ * input more the further you go is not measuring prediction; it is measuring how
+ * much of the answer you let through. Everything downstream inherited it —
+ * nrfi-ladder-sweep.js reported the BET rung at 62.5% against a 49.9% base rate,
+ * which is the leak, not a model.
+ *
+ * THE FIX. nrfi-leakfree-games.json carries, per game, the two starters' MLB ids
+ * and the runs each allowed in the 1st, with a date and a season. That is a
+ * dated log per arm, so the season-to-date line can be rebuilt from starts
+ * STRICTLY BEFORE the scored date — precisely what the live model sees at pick
+ * time. 14,009 games across six seasons.
+ *
+ * The first attempt built this from nrfi-pitcherbt-starts.json instead, and it
+ * is worth recording why that failed. That file has no pitcher id — its `arms`
+ * is a plain ARRAY of {name, log}. Keying an index by the array position and
+ * then looking arms up by MLB person id silently matched nothing: every arm
+ * returned null, every starter fell back to the league mean, and the run still
+ * produced a full set of plausible numbers with a BETTER-looking Brier, because
+ * a model with no pitcher information is also a model with no leak. It was
+ * caught only by a counter that printed "rewound 0". Resolving ids by
+ * intersecting each arm's opponents was tried next and left 80+ arms ambiguous.
+ * Both were fixes layered on a file that lacks the key; the run counts were
+ * already sitting in leakfree's scan and being discarded, so the fix was to
+ * stop discarding them.
+ *
+ * THE COUNTERS BELOW ARE LOAD-BEARING. A join that matches nothing looks exactly
+ * like a clean run.
+ *
+ * WHAT IT DOES NOT FIX, and these still leak: pitMeta's seasonEra/ip/allow,
+ * teamOff, topOrder's batter OBP and savant's Statcast are all still whole-season
+ * pulls. pitI01 is done first because it is the one measured to leak, and it
+ * feeds pitBase at full weight — the dominant term in the model. Do not read a
+ * clean result here as a clean harness.
+ *
+ * NO SILENT FALLBACK. An arm missing from the index returns null, so nrfiRegress
+ * sends it to the league mean. Falling back to the API would quietly restore the
+ * leak for exactly the arms the index cannot vouch for, and the numbers would
+ * still look like numbers. Misses are counted and the harness reports them.
+ */
+const PIT_MODE = process.env.NRFI_LEAKY === "1" ? "leaky" : "point-in-time";
+pitI01.stats = { pit: 0, miss: 0, api: 0 };
+let pitIndex = null;
+function pitcherIndex() {
+  if (pitIndex) return pitIndex;
+  const gf = path.join(__dirname, "nrfi-leakfree-games.json");
+  if (!fs.existsSync(gf)) {
+    throw new Error("point-in-time splits need nrfi-leakfree-games.json — run " +
+      "node scripts/nrfi-leakfree.js --refresh, or set NRFI_LEAKY=1 to score " +
+      "with the season-to-date leak left in");
+  }
+  const games = JSON.parse(fs.readFileSync(gf, "utf8")).games;
+  if (!games.length || games[0].hpRuns == null) {
+    throw new Error("nrfi-leakfree-games.json predates the hpRuns/apRuns fields — " +
+      "re-run node scripts/nrfi-leakfree.js --refresh");
+  }
+  pitIndex = new Map();
+  const push = (id, date, season, runs) => {
+    if (id == null) return;
+    const k = String(id);
+    let a = pitIndex.get(k); if (!a) pitIndex.set(k, a = []);
+    a.push({ date, season, runs });
+  };
+  for (const g of games) {
+    // hpRuns is what the HOME starter allowed (the away side batted), and
+    // apRuns what the AWAY starter allowed. Crossing these silently inverts
+    // every arm in the model, so it is spelled out rather than inferred.
+    push(g.hp, g.date, g.season, g.hpRuns);
+    push(g.ap, g.date, g.season, g.apRuns);
+  }
+  // Sorted by date so the prefix scan is a walk-forward rather than a filter
+  // over an arbitrary order, which is what lets the scan stop at the first
+  // non-prior start instead of reading the whole log.
+  for (const log of pitIndex.values()) log.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return pitIndex;
+}
+const pitI01Api = (id, se) => memo("p" + id + se, async () => {
   try { const d = await J(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=statSplits&group=pitching&sitCodes=i01&season=${se}`);
     const s = d.stats?.[0]?.splits?.[0]?.stat; if (!s || !s.gamesPlayed) return null;
     return { rate: (+s.runs || 0) / s.gamesPlayed, sample: s.gamesPlayed, era: s.era != null ? +s.era : null }; } catch { return null; }
 });
+function pitI01(id, se, asOf) {
+  if (id == null) return Promise.resolve(null);
+  if (PIT_MODE === "leaky" || !asOf) { pitI01.stats.api++; return pitI01Api(id, se); }
+  const log = pitcherIndex().get(String(id));
+  if (!log) { pitI01.stats.miss++; return Promise.resolve(null); }
+  let runs = 0, n = 0;
+  for (const e of log) {
+    if (e.season !== se) continue;
+    if (!(e.date < asOf)) break;   // sorted, so the first non-prior ends the scan
+    runs += e.runs; n++;
+  }
+  if (!n) { pitI01.stats.miss++; return Promise.resolve(null); }
+  pitI01.stats.pit++;
+  /* First-inning ERA, rewound by the same ratio as the rate.
+   *
+   * The log carries runs, not earned runs or first-inning IP, so a point-in-time
+   * ERA cannot be computed directly. Substituting a different estimator (say
+   * rate*9) would confound "rewound" with "measured a new way" in any A/B, so
+   * instead the season ERA is scaled by how far the point-in-time rate sits from
+   * the season rate. Identical construction, moved backwards in time.
+   *
+   * This is a partial fix and it is honest about which part: the season ERA it
+   * scales is still a whole-season number. It feeds openerFactor at weight 0.5
+   * inside a [0.9, 1.12] clamp, so the residue is second-order next to the rate,
+   * which drives pitBase directly. Returning null instead would silence
+   * openerFactor entirely and that is a bigger distortion than the leak it
+   * removes. */
+  const full = log.filter((e) => e.season === se);
+  const fullRate = full.length ? full.reduce((s, e) => s + e.runs, 0) / full.length : null;
+  const rate = runs / n;
+  return pitI01Api(id, se).then((api) => ({
+    rate, sample: n,
+    era: api && api.era != null && fullRate ? api.era * (rate / fullRate) : (api ? api.era : null),
+  })).catch(() => ({ rate, sample: n, era: null }));
+}
 const teamOff = (id, se) => id == null ? Promise.resolve(null) : memo("t" + id + se, async () => {
   try { const d = await J(`https://statsapi.mlb.com/api/v1/teams/${id}/stats?stats=statSplits&group=hitting&sitCodes=i01,vr,vl&season=${se}`);
     const sp = d.stats?.[0]?.splits || []; const f = (re) => sp.find((x) => re.test(x.split?.description || ""))?.stat;
@@ -159,7 +280,8 @@ async function buildCtx(g, date, se, peri) {
   if (!ap?.id || !hp?.id) return null;
   const lu = g.lineups || {};
   const [awayPit, homePit, awayMeta, homeMeta, awayOff, homeOff, awayTravel, homeTravel] = await Promise.all([
-    pitI01(ap.id, se), pitI01(hp.id, se), pitMeta(ap.id, se), pitMeta(hp.id, se),
+    // `date` is what rewinds the split: pitI01 counts only starts before it.
+    pitI01(ap.id, se, date), pitI01(hp.id, se, date), pitMeta(ap.id, se), pitMeta(hp.id, se),
     teamOff(a.team.id, se), teamOff(h.team.id, se), travelRest(a.team.id, date, g.venue?.id), travelRest(h.team.id, date, g.venue?.id)]);
   const [awayLineup, homeLineup] = await Promise.all([topOrder(lu.awayPlayers, se, homeMeta.hand, homeMeta.id), topOrder(lu.homePlayers, se, awayMeta.hand, awayMeta.id)]);
   const hpUmp = (g.officials || []).find((o) => o.officialType === "Home Plate");
@@ -224,4 +346,9 @@ const modelSig = require("crypto").createHash("sha1")
 
 module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP, makeVerdict,
   J, parseIp, memo, pitI01, teamOff, pitMeta, topOrder, travelRest, savant, mapLimit,
-  buildCtx, scoreBothPaths, C, modelSig };
+  buildCtx, scoreBothPaths, C, modelSig,
+  // PIT_MODE and the counters are exported so a harness can PRINT which split
+  // source it ran on. A backtest that does not say whether it rewound its inputs
+  // is not reporting a result, and the difference between the two modes here is
+  // larger than most of the effects these scripts are built to measure.
+  PIT_MODE, pitStats: () => ({ ...pitI01.stats }) };
