@@ -6005,6 +6005,16 @@ async function pitcherFirstInning(pid, season) {
         k9, bb9, hr9, innings: ip,
         krate: bf ? Number(st.strikeOuts || 0) / bf : null,
         obpA: bf ? (Number(st.hits || 0) + Number(st.baseOnBalls || 0) + Number(st.hitByPitch || 0)) / bf : null,
+        /* K-BB as a share of batters faced, which is the form his card prints and
+         * a different statistic from the K/9 - BB/9 already on the badge row.
+         * Per-9 rates are per OUT, so a pitcher who allows baserunners inflates
+         * his own denominator and both rates drift together; per-batter does not
+         * have that problem and is the one that travels between pitchers. Kept on
+         * the i01 split like everything else here, so it is first-inning K-BB%,
+         * not season — which is the number that should drive a first-inning bet.
+         * Plain BB, not BB+HBP: that is the conventional definition. */
+        kbbPct: bf ? 100 * (Number(st.strikeOuts || 0) - Number(st.baseOnBalls || 0)) / bf : null,
+        bf,
         hits: Number(st.hits || 0), bb: Number(st.baseOnBalls || 0),
         k: Number(st.strikeOuts || 0), hr: Number(st.homeRuns || 0) };
     }
@@ -7897,6 +7907,7 @@ function pitcherI01Profile(pit, seasonEra, rolling, peri) {
   ].filter(Boolean);
   return { grade, gradeColor, score, cleanPct, summary: parts.join("  ·  "), vsNote, rolling: rolling || null,
     leaks: nrfiLeaks(terms), k9: pit.k9 ?? null, bb9: pit.bb9 ?? null, whip: pit.whip ?? null,
+    kbbPct: pit.kbbPct ?? null, bf: pit.bf ?? null,
     hr9: pit.hr9 ?? null, rate: pit.rate ?? null, sample: pit.sample,
     fstrike: peri ? (peri.fstrike ?? null) : null, whiff: peri ? (peri.whiff ?? null) : null };
 }
@@ -8939,6 +8950,35 @@ function dsAmerican(pct) {
   return p >= 0.5 ? "-" + Math.round(100 * p / (1 - p)) : "+" + Math.round(100 * (1 - p) / p);
 }
 
+/* American odds -> implied probability (0-100), the inverse of dsAmerican.
+ *
+ * This is the VIG-INCLUDED number and it is meant to be. The break-even on the
+ * card is the price you actually have to beat at the book you are actually
+ * betting, not a de-vigged fair line — removing the juice here would flatter
+ * every edge on the board by two or three points. -110 is 52.4%, and 52.4% is
+ * what NRFI has to clear for that bet to be worth making. */
+function dsImplied(american) {
+  const a = Number(american);
+  if (!Number.isFinite(a) || a === 0 || Math.abs(a) < 100) return null;
+  return a < 0 ? 100 * (-a) / (-a + 100) : 100 * 100 / (a + 100);
+}
+
+/* Manual price override, per game, kept in localStorage.
+ *
+ * Kalshi is the only book we read automatically, and it is frequently not where
+ * the bet actually goes — his own chat is full of shopping ("Dodgers brewers
+ * game was at +102 this morning on FanDuel"). Without this the break-even, the
+ * edge and the tier badge are all computed against a price nobody is taking.
+ * Stored as the AMERICAN price on the NRFI side, because that is what a book
+ * shows and what you would type in without converting anything. */
+const PRICE_OV_KEY = "nrfi.priceOverride";
+function loadPriceOv() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PRICE_OV_KEY) || "null");
+    return raw && typeof raw === "object" ? raw : {};
+  } catch { return {}; }
+}
+
 // Tiers on the DS level. Deliberately NOT on the edge — see the header comment;
 // his DS 60.0 / +8.5 edge card is YELLOW while DS 64.7 / +5.2 is GREEN.
 function dsTier(ds, th) {
@@ -8986,6 +9026,22 @@ function DSArm({ label, prof }) {
       <div style={{ fontSize: 9, color: "var(--dim)" }}>
         NRFI L30 · {szn ? szn.n : 0}GS
       </div>
+      {/* K-BB% on batters faced, first-inning split. League 1st-inn is ~11%, so
+        * single digits is a contact pitcher and the mid-teens is a bat-misser.
+        * Greyed under 30 batters faced for the same reason the window cells grey
+        * out thin samples: a rate off 20 hitters is not a reading. */}
+      {prof && prof.kbbPct != null && (
+        <div title={"K-BB% = (strikeouts - walks) / batters faced, 1st inning only" +
+          (prof.bf != null ? ", on " + prof.bf + " batters faced" : "") +
+          ". League 1st-inn average is roughly 11%. Higher = misses bats and does not walk people = better for NRFI." +
+          (prof.bf != null && prof.bf < 30 ? "\n\nTHIN: under 30 batters faced, treat as noise." : "")}
+          style={{ cursor: "help", fontSize: 9, marginTop: 2,
+            color: prof.bf != null && prof.bf < 30 ? "var(--dim)"
+              : prof.kbbPct >= 15 ? "var(--moss)" : prof.kbbPct < 6 ? "var(--rose)" : "var(--dim)",
+            opacity: prof.bf != null && prof.bf < 30 ? 0.5 : 1 }}>
+          K-BB {prof.kbbPct.toFixed(1)}%
+        </div>
+      )}
       {/* Horizontally scrollable, like his — the strip runs past the card edge. */}
       <div style={{ display: "flex", gap: 4, marginTop: 6, overflowX: "auto", paddingBottom: 2 }}>
         {wins.length ? wins.map((w) => <DSCell key={w.key} w={w} />)
@@ -8995,12 +9051,77 @@ function DSArm({ label, prof }) {
   );
 }
 
-function DSHeader({ r, leadDS, thresholds }) {
+/* TEAM 1ST-INN RATES, lifted out of the badge row and onto the card proper.
+ *
+ * This is the same reading that used to sit in a pill below the fold, with the
+ * same L10-vs-prior trend logic — it was not rewritten, it was moved, because
+ * the two starters and the two offences are the four inputs to a first-inning
+ * bet and three of them were above the fold while the fourth was not.
+ *
+ * The trend arrow is the part worth keeping and the part his card does not have:
+ * a season rate actively misleads a team on a streak. The Yankees carried 41%
+ * SZN into one of these cards while sitting on twelve straight scoreless firsts,
+ * and that only showed on hover. When the recent window disagrees, it goes on
+ * the card. */
+function DSTeamRates({ r }) {
+  if (r.awayYrfiPct == null && r.homeYrfiPct == null) return null;
+  const sides = [["away", r.awayAbbr || r.away, r.awayYrfiPct, r.awayOffL10],
+    ["home", r.homeAbbr || r.home, r.homeYrfiPct, r.homeOffL10]];
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ fontSize: 8, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>
+        TEAM 1ST-INN RATES (YRFI%)
+      </div>
+      <div style={{ display: "flex", gap: 14, marginTop: 3, flexWrap: "wrap" }}>
+        {sides.map(([side, abbr, pct, l10]) => {
+          if (pct == null) return null;
+          // Measure the streak against the games it is NOT part of, the same
+          // baseline the model uses — szn contains the L10, so comparing to szn
+          // shows a fraction of the real move.
+          const base = l10 ? (l10.priorRate != null ? l10.priorRate : l10.sznRate) : null;
+          const delta = l10 && base != null ? l10.rate - base : null;
+          const hot = delta != null && Math.abs(delta) >= 0.20;
+          const arrowClr = hot ? (delta > 0 ? "var(--rose)" : "var(--moss)") : null;
+          const tip = abbr + " 1st-inn SZN: " + pct + "% of games score" +
+            (l10 ? "\nL10: " + Math.round(l10.rate * 100) + "% (" + l10.n + "g)" +
+              (l10.avgRuns != null ? " · " + l10.avgRuns.toFixed(2) + " R/g" : "") +
+              (l10.priorRate != null
+                ? "\nvs the " + l10.priorN + " games before that: " + Math.round(l10.priorRate * 100) + "%"
+                : "") +
+              (delta != null ? "\ndelta " + (delta > 0 ? "+" : "") + Math.round(delta * 100) + "pp" : "")
+              : "") +
+            "\n\nHigher = this offence scores in the 1st more often = worse for NRFI.";
+          return (
+            <span key={side} title={tip} style={{ cursor: "help", fontSize: 11, display: "inline-flex", gap: 5 }}>
+              <span style={{ color: "var(--dim)" }}>{abbr}</span>
+              <span style={{ fontWeight: 700, color: pct >= 38 ? "var(--rose)" : pct <= 25 ? "var(--moss)" : "var(--bone)" }}>
+                {pct}%
+              </span>
+              {hot && (
+                <span style={{ color: arrowClr, fontWeight: 700 }}>
+                  {(delta > 0 ? "↑" : "↓") + " L10 " + Math.round(l10.rate * 100) + "%"}
+                </span>
+              )}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DSHeader({ r, leadDS, thresholds, priceOv, onSavePrice }) {
   const pp = r.pitProfiles || {};
   // DS is P(NRFI) on our calibrated number, pre market-blend, so DS vs BE stays a
   // genuine model-against-market comparison rather than the market against itself.
   const ds = r.pCal != null ? r.pCal * 100 : null;
-  const be = r.market ? r.market.marketNRFI : null;
+  /* A saved override REPLACES the Kalshi break-even rather than sitting beside
+   * it. Showing both would be worse than showing either: the edge is a single
+   * number and it has to be against the price you can actually get. When an
+   * override is live the readout says so, so a stale hand-typed price can never
+   * masquerade as a live market quote. */
+  const ovBe = dsImplied(priceOv);
+  const be = ovBe != null ? ovBe : (r.market ? r.market.marketNRFI : null);
   const edge = ds != null && be != null ? ds - be : null;
   const tier = dsTier(ds, thresholds);
   const behind = leadDS != null && ds != null ? leadDS - ds : null;
@@ -9030,9 +9151,56 @@ function DSHeader({ r, leadDS, thresholds }) {
             "N " + dsAmerican(be) + " · Y " + dsAmerican(100 - be) + " · BE " + be.toFixed(1) + "%"
           )}
           {edge != null && (edge >= 0 ? "  ·  +" : "  ·  ") + edge.toFixed(1) + " edge"}
+          {ovBe != null && (
+            <span title={"Break-even is coming from your typed price (" + priceOv +
+              "), not from Kalshi" + (r.market ? " (Kalshi has " + r.market.marketNRFI.toFixed(1) + "%)" : "") +
+              ". Clear the field and save to go back to the live market."}
+              style={{ cursor: "help", color: "var(--violet)", fontWeight: 700 }}> · MANUAL</span>
+          )}
         </span>
+        <DSPriceOverride value={priceOv} onSave={(v) => onSavePrice(r.gamePk, v)} />
       </div>
+      <DSTeamRates r={r} />
     </div>
+  );
+}
+
+/* The price box itself. Local state while typing, committed on blur or Enter,
+ * so a half-typed "-1" is never read as -1 and never repaints the whole slate
+ * mid-keystroke. Empty commits as null, which clears the override — that is the
+ * only way back to the live market and it has to be obvious. */
+function DSPriceOverride({ value, onSave }) {
+  const [txt, setTxt] = useState(value == null ? "" : String(value));
+  const [focused, setFocused] = useState(false);
+  // Follow the stored value when it changes underneath us (slate refresh, or a
+  // clear from elsewhere), but never yank the field out from under the cursor.
+  useEffect(() => { if (!focused) setTxt(value == null ? "" : String(value)); }, [value, focused]);
+  const commit = () => {
+    const t = txt.trim();
+    if (!t) { onSave(null); return; }
+    const n = Number(t);
+    // Under 100 is not an American price on either side; reject rather than
+    // store a number dsImplied will only refuse to use.
+    if (!Number.isFinite(n) || Math.abs(n) < 100) { setTxt(value == null ? "" : String(value)); return; }
+    onSave(Math.round(n));
+  };
+  return (
+    <input
+      value={txt}
+      onChange={(e) => setTxt(e.target.value)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => { setFocused(false); commit(); }}
+      onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { setTxt(value == null ? "" : String(value)); e.target.blur(); } }}
+      placeholder="price"
+      title={"Type the American price you can actually get on NRFI (e.g. -115, +102) and press Enter.\n\n" +
+        "Kalshi is the only book read automatically and it is often not where the bet goes. " +
+        "A saved price replaces the break-even, the edge and the tier badge for this game.\n\n" +
+        "Clear the box and press Enter to go back to the live market."}
+      style={{ width: 52, fontSize: 10, padding: "1px 4px", background: "transparent", cursor: "text",
+        color: value != null ? "var(--violet)" : "var(--dim)",
+        border: "1px solid " + (value != null ? "var(--violet)" : "rgba(255,255,255,0.12)"),
+        borderRadius: 4, fontFamily: "inherit", textAlign: "center" }}
+    />
   );
 }
 
@@ -9081,6 +9249,18 @@ function FirstInning() {
   function saveDsTh(next) {
     setDsTh(next);
     try { localStorage.setItem("nrfi.ds.tiers", JSON.stringify(next)); } catch { /* private mode */ }
+  }
+
+  /* Hand-typed prices, keyed by gamePk, same in-state-and-in-storage pattern as
+   * the tiers above and for the same reason: the edge and the badge have to move
+   * the moment you type the price you actually got. */
+  const [priceOv, setPriceOv] = useState(loadPriceOv);
+  function savePriceOv(gamePk, american) {
+    const next = { ...priceOv };
+    if (american == null) delete next[String(gamePk)];
+    else next[String(gamePk)] = american;
+    setPriceOv(next);
+    try { localStorage.setItem(PRICE_OV_KEY, JSON.stringify(next)); } catch { /* private mode */ }
   }
 
   async function loadRecord() {
@@ -9720,7 +9900,8 @@ function FirstInning() {
               </span>
             )}
           </div>
-          <DSHeader r={r} leadDS={leadDS} thresholds={dsTh} />
+          <DSHeader r={r} leadDS={leadDS} thresholds={dsTh}
+            priceOv={priceOv[String(r.gamePk)]} onSavePrice={savePriceOv} />
           <div style={{ fontSize: 11, color: "var(--dim)" }}>{r.away} @ {r.home}</div>
         </div>
 
@@ -10003,51 +10184,11 @@ function FirstInning() {
 
         {/* ── 1st-inn offense + badges row ── */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 10 }}>
-          {(r.awayYrfiPct != null || r.homeYrfiPct != null) && (
-            <div title="How often each team scores a run in the 1st inning this season. Red = high-scoring offense (bad for NRFI), green = low-scoring (good for NRFI). Arrow = L10 trend vs season avg. Hover individual team for avgRuns detail." style={{ cursor: "help", display: "inline-flex", gap: 8, alignItems: "center", padding: "3px 10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, fontSize: 11 }}>
-              <span style={{ color: "var(--dim)", fontSize: 10, fontWeight: 700 }}>1ST-INN</span>
-              {[["away", r.awayAbbr || r.away, r.awayYrfiPct, r.awayOffL10],
-                ["home", r.homeAbbr || r.home, r.homeYrfiPct, r.homeOffL10]].map(([side, abbr, pct, l10], i) => {
-                if (pct == null) return null;
-                // Measure the streak against the games it is NOT part of, the same
-                // baseline the model uses. Falls back to the whole window only when
-                // there is too little left over to be a baseline.
-                const base = l10 ? (l10.priorRate != null ? l10.priorRate : l10.sznRate) : null;
-                const delta = l10 && base != null ? l10.rate - base : null;
-                const hot = delta != null && Math.abs(delta) >= 0.20;
-                const arrow = hot ? (delta > 0 ? " ↑" : " ↓") : "";
-                const arrowClr = hot ? (delta > 0 ? "var(--rose)" : "var(--moss)") : null;
-                // A team on a genuine first-inning streak has a season number that
-                // actively misleads: the Yankees carried 41% SZN into this card
-                // while sitting on twelve straight scoreless firsts, and the only
-                // place that showed was a hover. If the recent window disagrees
-                // with the season, the recent window goes on the card.
-                const show = hot && l10 != null;
-                const tip = abbr + " 1st-inn SZN: " + pct + "% of games score" +
-                  (l10 ? "\nL10: " + Math.round(l10.rate * 100) + "% (" + l10.n + "g)" +
-                    (l10.avgRuns != null ? " · " + l10.avgRuns.toFixed(2) + " R/g" : "") +
-                    (l10.priorRate != null
-                      ? "\nvs the " + l10.priorN + " games before that: " + Math.round(l10.priorRate * 100) + "%"
-                      : "") +
-                    (delta != null ? "\ndelta " + (delta > 0 ? "+" : "") + Math.round(delta * 100) + "pp" : "")
-                    : "");
-                return (
-                  <React.Fragment key={side}>
-                    {i === 1 && r.awayYrfiPct != null && <span style={{ color: "var(--dim)" }}>·</span>}
-                    <span title={tip} style={{ cursor: "help", color: pct >= 38 ? "var(--rose)" : pct <= 25 ? "var(--moss)" : "var(--dim)", fontWeight: 600 }}>
-                      {abbr} {pct}%
-                      {arrow && <span style={{ color: arrowClr }}>{arrow}</span>}
-                      {show && (
-                        <span style={{ color: arrowClr, fontWeight: 700 }}>
-                          {" L10 " + Math.round(l10.rate * 100) + "%"}
-                        </span>
-                      )}
-                    </span>
-                  </React.Fragment>
-                );
-              })}
-            </div>
-          )}
+          {/* The 1ST-INN pill that used to live here now renders as DSTeamRates,
+              directly under the dual-score bar. Same reading, same L10-vs-prior trend
+              logic; only the position changed. The two starters and the two offences
+              are the four inputs to a first-inning bet and three of them were above
+              the fold while the fourth was down here among the badges. */}
           {!r.lineupPosted && (
             <span title="Official starting lineups haven't been posted yet. The model is using projected batting orders, which are less accurate than the real lineup. Check back closer to game time." style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", background: "rgba(230,160,0,0.1)", border: "1px solid rgba(230,160,0,0.4)", borderRadius: 20, fontSize: 11, fontWeight: 700, color: "var(--amber)" }}>⚠ LINEUPS PENDING</span>
           )}
