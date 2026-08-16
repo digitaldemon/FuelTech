@@ -151,6 +151,14 @@ const memo = (k, fn) => cache.has(k) ? cache.get(k) : cache.set(k, fn()).get(k);
  * pulls, all on the offence side. Do not read a clean result here as a clean
  * harness; read it as "the pitcher side is clean".
  *
+ * BOUNDED RATHER THAN REWOUND: the two biggest of those. Neither has an honest
+ * point-in-time version — there is no per-game log for a vs-pitcher line, and a
+ * hitting gameLog does not split by the opposing pitcher's hand — so each has an
+ * ablation toggle instead, and running the backtest both ways brackets the
+ * truth. NRFI_NO_H2H=1 costs 0.0011 of AUC; NRFI_NO_LINEUP_OBP=1 costs 0.0021.
+ * Both are inside the run-to-run drift, so both rewinds were measured not to be
+ * worth building rather than skipped. Details at each toggle below.
+ *
  * NO SILENT FALLBACK. An arm missing from the index returns null, so nrfiRegress
  * sends it to the league mean. Falling back to the API would quietly restore the
  * leak for exactly the arms the index cannot vouch for, and the numbers would
@@ -162,6 +170,49 @@ const PIT_MODE = process.env.NRFI_LEAKY === "1" ? "leaky" : "point-in-time";
 // metadata, so any artifact written by a run has to carry the mode that
 // produced it or the next reader inherits the same trap.
 const H2H_MODE = process.env.NRFI_NO_H2H === "1" ? "off (ablation)" : "season (leaks)";
+/* The top-of-order OBP factor, ablatable for the same reason h2h is.
+ *
+ * A hitting gameLog does not split by the opposing pitcher's hand, and topOrder
+ * asks for sitCodes=[vl]/[vr], so there is no per-game log to sum into a
+ * point-in-time vs-hand OBP. Same shape of problem as h2h: no honest rewind
+ * exists, so bound it instead of guessing.
+ *
+ * This ablates the FACTOR only and deliberately leaves `obp` and `batters`
+ * alone. `obp` is read at two places in app.jsx purely as a null check — a
+ * -0.12 confidence penalty and the lineupPosted flag — so blanking it would
+ * move confidence and tier assignment as well, and the run would no longer be
+ * measuring the one thing it set out to measure. `batters` is already ablated
+ * independently by the lambda path in scoreBothPaths.
+ *
+ * Worth bounding rather than assuming: lineup.factor carries coefficient 1.0 in
+ * offMult, the largest in that expression, so unlike h2h it is a priori
+ * load-bearing.
+ *
+ * MEASURED, 559 games, the two runs back to back so they share an API snapshot:
+ *
+ *              Brier    AUC     pick-side
+ *   with OBP   .2449   .5775    55.9%
+ *   ablated    .2452   .5754    56.2%
+ *
+ * The bracket is 0.0021 of AUC wide, and the ablation is very slightly BETTER
+ * on pick-side accuracy. Tier hit rates barely move (SIM BET 59% -> 57%, STRONG
+ * 61% -> 61%) on near-identical volume. Two conclusions, and the second is the
+ * useful one:
+ *
+ *   1. The remaining top-of-order leak cannot be materially inflating the
+ *      shipped numbers. 0.0021 AUC is inside the ~0.5pp of run-to-run drift
+ *      that nrfi-ladder-sweep.js documents.
+ *   2. THE topOrder REWIND IS NOT WORTH BUILDING. The largest coefficient in
+ *      offMult buys about nothing while being allowed to see the game it is
+ *      predicting; a clean version of it can only buy less. That would have
+ *      been hours of work against handedness splits a hitting gameLog cannot
+ *      reconstruct, to chase an effect this bracket says is not there.
+ *
+ * Same verdict h2h got, arrived at the same way. Do not re-litigate either
+ * without re-running the pair — and re-run the pair, do not compare against the
+ * numbers above, because the offence-side inputs drift as games finalise.
+ */
+const OBP_MODE = process.env.NRFI_NO_LINEUP_OBP === "1" ? "factor forced to 1 (ablation)" : "season (leaks)";
 pitI01.stats = { pit: 0, miss: 0, api: 0 };
 let lfGames = null;
 function leakfreeGames() {
@@ -457,7 +508,8 @@ const topOrder = async (players, se, oppHand, oppPitcherId) => {
         } catch { /* H2H unavailable */ }
       }
       const hasB = batters.some(Boolean);
-      if (den > 0) { const obp = num / den; return { factor: C(obp / LG_OBP, 0.82, 1.24), obp, batters: hasB ? batters : null, note: "1-3 OBP " + obp.toFixed(3) }; }
+      if (den > 0) { const obp = num / den; const ablate = process.env.NRFI_NO_LINEUP_OBP === "1";
+        return { factor: ablate ? 1 : C(obp / LG_OBP, 0.82, 1.24), obp, batters: hasB ? batters : null, note: "1-3 OBP " + obp.toFixed(3) }; }
       if (hasB) return { factor: 1, obp: null, batters, note: "lineup posted" };
     } catch { /* neutral */ } return { factor: 1, obp: null, note: "lineup n/a", batters: null };
   });
@@ -589,6 +641,6 @@ module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP, makeVer
   // source it ran on. A backtest that does not say whether it rewound its inputs
   // is not reporting a result, and the difference between the two modes here is
   // larger than most of the effects these scripts are built to measure.
-  PIT_MODE, H2H_MODE,
-  pitStats: () => ({ ...pitI01.stats, off: { ...teamOff.stats }, meta: { ...pitMeta.stats }, h2h: H2H_MODE }),
+  PIT_MODE, H2H_MODE, OBP_MODE,
+  pitStats: () => ({ ...pitI01.stats, off: { ...teamOff.stats }, meta: { ...pitMeta.stats }, h2h: H2H_MODE, obp: OBP_MODE }),
   sumPitLog, GLOG_REG, NRFI_CALIB_SEED, NRFI_PA_REG_PIT, NRFI_PA_REG_H2H };

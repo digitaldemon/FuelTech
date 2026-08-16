@@ -103,10 +103,41 @@
 // within-noise cuts both ways, and one 45-day window should not retire a live
 // feature — but it should not be defended as load-bearing either.
 //
+// THE TOP-OF-ORDER OBP LEAK IS BOUNDED THE SAME WAY, AND IT SETTLES WHETHER THE
+// OFFENCE REWIND IS WORTH BUILDING. topOrder asks for sitCodes=[vl]/[vr], and a
+// hitting gameLog does not split by the opposing pitcher's hand, so there is no
+// point-in-time vs-hand OBP to sum. NRFI_NO_LINEUP_OBP=1 forces the factor to 1
+// and leaves `obp` and `batters` alone — `obp` is read live only as a null check
+// (a -0.12 confidence penalty and the lineupPosted flag), so blanking it would
+// move tier assignment too and the run would stop measuring the one thing it was
+// set up to measure. 559 games, both runs back to back on one API snapshot:
+//
+//                    OBP on (leaking)   OBP off (ablated)
+//     Brier               .2449               .2452
+//     AUC                 .5775               .5754
+//     pick-side acc       55.9%               56.2%
+//
+// A 0.0021 bracket, with the ablation slightly AHEAD on pick-side, and tier hit
+// rates that barely move (SIM BET 59% -> 57%, STRONG 61% -> 61%) on near-
+// identical volume. lineup.factor carries coefficient 1.0 in offMult, the
+// largest term in it, so this was the one remaining leak with a real prior on
+// mattering — and it does not. The topOrder rewind is therefore not worth
+// building: the term buys about nothing while allowed to see the game it is
+// predicting, and a clean version can only buy less.
+//
+// Both brackets sit inside the ~0.5pp of run-to-run drift documented in
+// nrfi-ladder-sweep.js. Re-run the pair before re-litigating either; do not
+// diff against the tables above, because the offence-side inputs move as games
+// finalise.
+//
 // STILL LEAKING, so this is not yet a clean walk-forward: topOrder's batter OBP
 // and per-PA rates, savant's Statcast, and the opsVsR/opsVsL platoon split
 // inside teamOff are all whole-season pulls. Everything still leaking is now on
-// the OFFENCE side; the pitcher side is clean.
+// the OFFENCE side; the pitcher side is clean. The two largest of those leaks —
+// h2h and top-of-order OBP — are bounded above by ablation rather than removed,
+// at 0.0011 and 0.0021 of AUC. What is left unbounded is per-PA batter rates
+// (which the paired sim-vs-lambda comparison already shows to be a dead heat),
+// Statcast, and platoon OPS.
 // CLV on live picks remains the cleanest test available.
 const fs = require("fs");
 const path = require("path");
@@ -179,7 +210,8 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
     `\n  team offence     rewound ${ps.off.pit}, no prior games ${ps.off.miss}, season-aggregate ${ps.off.api}` +
     `\n  starter szn line rewound ${ps.meta.pit}, no prior starts ${ps.meta.miss}, season-aggregate ${ps.meta.api}` +
     `\n  batter-vs-pitcher h2h  ${ps.h2h}` +
-    `\n  STILL WHOLE-SEASON: lineup OBP and per-PA rates, Statcast, platoon OPS.`);
+    `\n  top-of-order OBP       ${ps.obp}` +
+    `\n  STILL WHOLE-SEASON: lineup per-PA rates, Statcast, platoon OPS.`);
   if (PIT_MODE === "leaky") console.log("  !! NRFI_LEAKY=1 — season-to-date splits contain the scored game. Control only.");
   else if (ps.miss > ps.pit) console.log("  !! more arms had no prior starts than were rewound — early-window sample, read with care.");
   const cl = (x) => C(x, 1e-6, 1 - 1e-6);
