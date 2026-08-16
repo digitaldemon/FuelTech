@@ -30,33 +30,50 @@
 //
 // ==================== WHAT IT FOUND, 2026-08-15 ====================
 //
-// The leak hypothesis FAILED its own test, and that is the result.
+// THE LEAK IS REAL. Brier over 1273 shared games: base .25000, leak-free .24911,
+// backtest .24186 — the backtest model beats the base rate by 9x what the
+// leak-free model does.
 //
-// Brier over 1273 shared games: base .25000, leak-free .24911, backtest .24186.
-// The backtest model beats the base rate by 9x what the leak-free model does,
-// which is what raised the suspicion in the first place.
+// READ THE DECAY TEST BELOW WITH THE CORRECTION THAT FOLLOWS. On first run it
+// showed Brier skill RISING through the season (1.0 -> 1.5 -> 4.9 -> 3.7%),
+// which looks like the opposite of contamination, and it was briefly written up
+// here as exonerating the harness. That inference was wrong and the mistake is
+// worth keeping, because it is an easy one to repeat.
 //
-// But the seasonal-decay test below exonerates the named mechanism. If the
-// advantage came from season-to-date stats, April games (whose "season to date"
-// is almost entirely future) would score far better than September ones. They do
-// the OPPOSITE — Brier skill runs 1.0% -> 1.5% -> 4.9% -> 3.7% across the
-// season. And the leak-free model, which cannot leak by construction, shows the
-// SAME rising shape (-0.4% -> -1.4% -> 0.8% -> 0.5%). That shared gradient is
-// just stats maturing: in April every arm is regressed to the league mean and
-// there is nothing to know yet.
+// Two forces run in OPPOSITE directions across a season:
 //
-// So the gap is most likely real, and attributable to the inputs the leak-free
-// model deliberately does not have — lineups, umpire, weather, Statcast whiff,
-// K-BB. That model was built to be minimal, and the honest reading is that
-// pitcher rates + park + team offence is a weak model, not that the desk's is a
-// fraudulent one.
+//   contamination share   falls.  The leaked field is season-to-date, so the
+//                         scored game is 1/n of its own predictor: ~1/3 of an
+//                         arm's line in April, ~1/25 by September.
+//   genuine signal        rises.  More starts means less regression to the
+//                         league mean and more real information.
 //
-// WHAT THIS DOES NOT SHOW. It rules out one mechanism, not all of them. A leak
-// with no seasonal shape — a stat that is same-day rather than season-to-date —
-// would pass this test untouched. The header caveat on desk-nrfi-backtest.js
-// should stay until someone rebuilds those splits point-in-time and reruns.
-// Column 5 of the rung table is still the uncomfortable number: on the games the
-// backtest model calls at 64.8%, the leak-free model says 51.9%.
+// The quarterly numbers measure the SUM. Reading a positive sum as evidence
+// about one component is invalid — a decaying leak hidden under faster-growing
+// real signal produces exactly the observed shape. The test cannot separate
+// them and should never have been treated as decisive.
+//
+// WHAT IS DECISIVE is nrfi-pitreg-fit.js, which reproduces the leak on purpose
+// on the same field, with the same arms, holding everything else fixed:
+//
+//     reg      clean MSE    leaky MSE
+//       0      1.104736     0.935557   <== leaky best
+//      75      1.012614     0.991   ~  <== clean best
+//     300      1.013917     1.007614
+//
+// The clean curve has an interior minimum at 75. The leaky curve is minimised at
+// reg=0 and rises MONOTONICALLY with the weight. That is the signature of
+// contamination and nothing else: the less you regress a rate that already
+// contains today's result, the more of the answer you let through. It is a
+// controlled A/B on one variable, which the seasonal gradient is not.
+//
+// CONSEQUENCE. nrfi-ladder-sweep.js inherits this cache, so its 62.5% BET rung
+// and its ROI and units columns are inflated by an unknown amount and must not
+// be sized on. Column 5 of the rung table below is the number to sit with: on
+// the games the backtest model calls at 64.8%, a model that cannot see the
+// outcome says 51.9%.
+//
+// The fix is not a constant. It is rebuilding scanNrfi's splits point-in-time.
 const fs = require("fs");
 const path = require("path");
 
@@ -207,11 +224,15 @@ if (dated.length >= 400) {
       `   ${bl.toFixed(5)} (skill ${((1 - bl / b0) * 100).toFixed(1)}%)   ${bf.toFixed(5)} (skill ${((1 - bf / b0) * 100).toFixed(1)}%)`);
   }
   console.log(`\n  leaky skill, first quarter ${(skill[0] * 100).toFixed(1)}%  ->  last quarter ${(skill[Q - 1] * 100).toFixed(1)}%`);
-  console.log(skill[0] > skill[Q - 1] + 0.02
-    ? "  DECAYS. That is the signature of season-to-date contamination, not of a\n" +
-      "  better feature set — nothing about lineups or umpires gets worse in September."
-    : "  No decay. The season-to-date leak does not explain the gap on this sample;\n" +
-      "  the advantage has to be attributed to the richer inputs or to something else.");
+  console.log("\n  THIS TEST IS CONFOUNDED AND CANNOT SETTLE ANYTHING — see the header.");
+  console.log("  Contamination share FALLS through a season (the scored game is 1/n of its");
+  console.log("  own season-to-date line) while genuine signal RISES (less regression as");
+  console.log("  starts accumulate). The quarters measure the sum of the two, so neither");
+  console.log("  direction is evidence about either one. It is printed because it was run");
+  console.log("  and briefly believed, and because deleting it would invite a rerun.");
+  console.log("  The controlled test is nrfi-pitreg-fit.js: same field, leak toggled,");
+  console.log("  everything else held fixed. Its leaky curve is minimised at reg=0 and");
+  console.log("  rises monotonically — that is the leak, and it is not ambiguous.");
 }
 
 // Spread is the tell: a model that has seen the outcome can afford to be
