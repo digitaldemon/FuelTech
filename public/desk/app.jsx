@@ -8836,7 +8836,7 @@ function NrfiCalendar({ rec, bankroll, riskLevel }) {
  * BE 57.6 -> YELLOW at +1.5). The third kills that: DS 60.0 vs BE 51.5% is an
  * edge of +8.5 and still YELLOW. So:
  *
- *   badge  = threshold on DS ITSELF   (green lands between 60.0 and 64.7)
+ *   badge  = threshold on DS ITSELF   (bracketed below, from his own postings)
  *   rank   = ordered by EDGE, DS - BE (on both screenshots the card above has a
  *            larger edge and a smaller DS; MIL @ LAD carries "#3" while showing
  *            the best DS on screen)
@@ -8862,17 +8862,44 @@ function NrfiCalendar({ rec, bankroll, riskLevel }) {
  * separated (ours - raw +0.0253, 95% [-0.0176, +0.0657]). Our advantage here is
  * calibration, not discrimination. Nothing on this card should imply otherwise.
  */
-// Thresholds on the DS LEVEL, not on the edge. Green is bracketed by observation
-// to (60.0, 64.7]; 62 is the midpoint of that bracket and is a guess inside a
-// measured interval, not a fitted value. Red below 55 is unobserved — his three
-// published cards contain no red — so it is a placeholder that should be moved
-// the moment a red card is seen rather than defended.
-const DS_TIER_DEFAULTS = { green: 62, yellow: 55 };
+/* Thresholds on the DS LEVEL, not on the edge.
+ *
+ * These are no longer read off screenshots. He posts his board as PLAIN TEXT in
+ * the JuiceReel main chat ("SD@CLE: DS 71.1 → ELITE"), and the whole channel —
+ * 2026-08-03 through 2026-08-16, scrolled to "No earlier messages" — yields 13
+ * distinct labelled pairs. Sorting them is the entire calibration:
+ *
+ *   ELITE   68.3 68.9 69.1 69.7 69.8 70.5 71.1 72.6      min 68.3
+ *   GREEN   64.1 64.7 66.4 67.7 67.8                     max 67.8
+ *   YELLOW  59.1 60.0                        (screenshots) max 60.0
+ *
+ * A tier cut must lie strictly between the top of one band and the bottom of the
+ * next, so the observations alone bracket it — no fitting, no midpoint guessing:
+ *
+ *   ELITE  cut in (67.8, 68.3]   width 0.5   -> 68
+ *   GREEN  cut in (60.0, 64.1]   width 4.1   -> 62 (midpoint, still a guess)
+ *
+ * The ELITE bracket is half a point wide, so 68 is very close to known. The GREEN
+ * bracket is four points wide and 62 remains a guess inside a measured interval.
+ * Do not quote them with equal confidence. RED below 55 is still unobserved — no
+ * card or posting of his has ever shown one — so it is a placeholder to be moved
+ * when a red appears, not defended.
+ *
+ * ELITE is not cosmetic. "Tough board today. Only playing MIL@LAD: DS 68.3 →
+ * ELITE" is him dropping to ELITE-only when the slate is thin, which is a
+ * SELECTION rule we did not previously model — and selection is exactly where
+ * scripts/nrfi-tout-bottom-half.js concluded his edge lives.
+ */
+const DS_TIER_DEFAULTS = { elite: 68, green: 62, yellow: 55 };
 
 function dsThresholds() {
   try {
     const raw = JSON.parse(localStorage.getItem("nrfi.ds.tiers") || "null");
-    if (raw && Number.isFinite(raw.green) && Number.isFinite(raw.yellow)) return raw;
+    if (raw && Number.isFinite(raw.green) && Number.isFinite(raw.yellow)) {
+      // Stored before ELITE existed: keep the user's own green/yellow rather than
+      // discarding their tuning, and fill the new band from the default.
+      return Number.isFinite(raw.elite) ? raw : { ...raw, elite: DS_TIER_DEFAULTS.elite };
+    }
   } catch { /* fall through to defaults */ }
   return DS_TIER_DEFAULTS;
 }
@@ -8888,6 +8915,7 @@ function dsAmerican(pct) {
 // his DS 60.0 / +8.5 edge card is YELLOW while DS 64.7 / +5.2 is GREEN.
 function dsTier(ds, th) {
   if (ds == null) return { label: "NO DS", color: "var(--dim)" };
+  if (ds >= th.elite) return { label: "ELITE", color: "var(--cyan)" };
   if (ds >= th.green) return { label: "GREEN", color: "var(--moss)" };
   if (ds >= th.yellow) return { label: "YELLOW", color: "var(--amber)" };
   return { label: "RED", color: "var(--rose)" };
@@ -10313,20 +10341,24 @@ function FirstInning() {
         {importMsg && <span style={{ fontSize: 12, color: importMsg.ok ? "var(--moss)" : "var(--rose)" }}>{importMsg.text}</span>}
       </div>
       {/* ── Dual Score tiers ──
-          The two cutoffs are the only hand-set numbers on the DS card, and they
-          are not equally well known: green is bracketed by observation, red is
-          not observed at all. The control says which is which, because a number
+          The three cutoffs are the only hand-set numbers on the DS card, and they
+          are NOT equally well known — elite is bracketed to half a point, green to
+          four, red not at all. The control says which is which, because a number
           you can edit reads as a number someone measured unless it tells you
           otherwise. Live counts sit next to the inputs so moving a cutoff shows
           its consequence on today's slate rather than on a remembered one. */}
       {(() => {
-        const counts = { GREEN: 0, YELLOW: 0, RED: 0, "NO DS": 0 };
+        const counts = { ELITE: 0, GREEN: 0, YELLOW: 0, RED: 0, "NO DS": 0 };
         for (const r of validRows) counts[dsTier(dsOf(r), dsTh).label]++;
-        const isDefault = dsTh.green === DS_TIER_DEFAULTS.green && dsTh.yellow === DS_TIER_DEFAULTS.yellow;
-        // Clamp on commit, not on keystroke: green must stay above yellow or the
-        // yellow band vanishes and every card jumps two tiers at once.
-        const setGreen = (v) => saveDsTh({ green: Math.min(95, Math.max(dsTh.yellow + 0.5, v)), yellow: dsTh.yellow });
-        const setYellow = (v) => saveDsTh({ green: dsTh.green, yellow: Math.max(5, Math.min(dsTh.green - 0.5, v)) });
+        const isDefault = dsTh.elite === DS_TIER_DEFAULTS.elite &&
+          dsTh.green === DS_TIER_DEFAULTS.green && dsTh.yellow === DS_TIER_DEFAULTS.yellow;
+        /* Clamp on commit, not on keystroke, and clamp against BOTH neighbours:
+         * the bands have to stay ordered elite > green > yellow or one of them
+         * collapses to nothing and every card on the slate jumps two tiers at
+         * once. Each setter pins the other two and moves only its own edge. */
+        const setElite = (v) => saveDsTh({ ...dsTh, elite: Math.min(99, Math.max(dsTh.green + 0.5, v)) });
+        const setGreen = (v) => saveDsTh({ ...dsTh, green: Math.max(dsTh.yellow + 0.5, Math.min(dsTh.elite - 0.5, v)) });
+        const setYellow = (v) => saveDsTh({ ...dsTh, yellow: Math.max(5, Math.min(dsTh.green - 0.5, v)) });
         const num = (label, val, onSet, color, title) => (
           <span style={{ display: "flex", alignItems: "center", gap: 5 }} title={title}>
             <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color }}>{label}</span>
@@ -10343,13 +10375,16 @@ function FirstInning() {
             margin: "0 0 8px", padding: "7px 10px", background: "rgba(255,255,255,0.03)",
             border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8 }}>
             <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: "var(--dim)" }}>DUAL SCORE TIERS</span>
+            {num("ELITE ≥", dsTh.elite, setElite, "var(--cyan)",
+              "BEST-KNOWN CUTOFF. From the 13 boards he posted as text in chat between 2026-08-03 and 2026-08-16: his lowest ELITE is 68.3 and his highest GREEN is 67.8, so the cut lies in (67.8, 68.3] — half a point wide. 68 is very close to known. He also drops to ELITE-only when the slate is thin (\"Tough board today. Only playing MIL@LAD: DS 68.3 → ELITE\").")}
             {num("GREEN ≥", dsTh.green, setGreen, "var(--moss)",
-              "Measured bracket: his published cards show GREEN at DS 64.7 and YELLOW at 60.0 and 59.1, so the real cutoff is somewhere in (60.0, 64.7]. 62 is the midpoint of that interval — a guess inside a measured range, not a fitted value.")}
+              "Bracketed but LOOSELY. His lowest GREEN is 64.1 and his highest YELLOW is 60.0, so the cut lies in (60.0, 64.1] — four points wide. 62 is the midpoint of that interval: a guess inside a measured range, not a fitted value. Do not quote it with the same confidence as the elite cutoff.")}
             {num("YELLOW ≥", dsTh.yellow, setYellow, "var(--amber)",
-              "UNOBSERVED. None of his three published cards is red, so nothing brackets this cutoff. 55 is a placeholder — move it the moment a red card is seen rather than defending it.")}
+              "UNOBSERVED. Nothing he has ever published — card or posted board — is red, so nothing brackets this cutoff at all. 55 is a placeholder; move it the moment a red is seen rather than defending it.")}
             <span style={{ fontSize: 11, color: "var(--dim)", fontVariantNumeric: "tabular-nums" }}
               title="How today's board splits at the cutoffs above. Held games and settled games are not counted — they are not decisions.">
-              today: <span style={{ color: "var(--moss)" }}>{counts.GREEN} green</span>
+              today: <span style={{ color: "var(--cyan)" }}>{counts.ELITE} elite</span>
+              {" · "}<span style={{ color: "var(--moss)" }}>{counts.GREEN} green</span>
               {" · "}<span style={{ color: "var(--amber)" }}>{counts.YELLOW} yellow</span>
               {" · "}<span style={{ color: "var(--rose)" }}>{counts.RED} red</span>
               {counts["NO DS"] > 0 ? " · " + counts["NO DS"] + " no DS" : ""}
@@ -10357,7 +10392,8 @@ function FirstInning() {
             {!isDefault && (
               <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: "2px 7px" }}
                 onClick={() => saveDsTh({ ...DS_TIER_DEFAULTS })}
-                title={"Back to " + DS_TIER_DEFAULTS.green + " / " + DS_TIER_DEFAULTS.yellow}>Reset</button>
+                title={"Back to " + DS_TIER_DEFAULTS.elite + " / " + DS_TIER_DEFAULTS.green +
+                  " / " + DS_TIER_DEFAULTS.yellow}>Reset</button>
             )}
             <span style={{ fontSize: 10, color: "var(--dim)" }}
               title="The badge is a threshold on the DS level. It is NOT the edge over the break-even price — his DS 60.0 against BE 51.5% is an +8.5pt edge and still YELLOW, while DS 64.7 at +5.2 is GREEN. The board's #N badge is what carries the edge ordering.">
