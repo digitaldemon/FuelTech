@@ -5627,7 +5627,24 @@ const SAY_MAX = 3;
  * this bounds its AGE, which is the thing that was actually wrong. */
 const SAY_STALE_MS = 12000;
 const _sayQ = [];
-let _sayOn = false, _sayGuard = null;
+/* _sayGen identifies the utterance the queue currently believes is speaking.
+ *
+ * `done` is wired to three things — onend, onerror and the watchdog — and until
+ * this existed it had no way to tell WHICH utterance had fired it. That is not
+ * hypothetical, because s.cancel() delivers the cancelled utterance's end event
+ * asynchronously, i.e. after the replacement has already started. The settle
+ * path walks straight into it: a run scores, speak(..., urgent) clears the
+ * queue, cancels, and starts the settle line; the cancelled line's end event
+ * then lands, `done` sees a latch that is set (it belongs to the settle now)
+ * and dutifully clears it, kills the settle's watchdog, and drains the next
+ * item on top of a line that is still being spoken. The one utterance that must
+ * survive intact is the one this corrupts.
+ *
+ * A generation counter closes it: every utterance captures the value it was
+ * created with, and any event arriving for a generation that is no longer
+ * current is a ghost and is ignored. Bumping the counter is therefore how you
+ * revoke an utterance's events — which is exactly what cancel and stop need. */
+let _sayOn = false, _sayGuard = null, _sayGen = 0;
 function _sayDrain(s) {
   if (_sayOn) return;
   let item;
@@ -5647,8 +5664,12 @@ function _sayDrain(s) {
   // 1.1 clipped the ends of words on the neural voices, which read more slowly
   // and more naturally than the formant ones. Just above conversational.
   u.rate = 1.02; u.pitch = 1; u.volume = 1;
+  const gen = ++_sayGen;
   const done = () => {
-    if (!_sayOn) return;
+    // A late event from a cancelled or superseded utterance must not touch the
+    // latch, the watchdog or the queue — all three now belong to whatever is
+    // speaking instead.
+    if (gen !== _sayGen || !_sayOn) return;
     _sayOn = false;
     if (_sayGuard) { clearTimeout(_sayGuard); _sayGuard = null; }
     _sayDrain(s);
@@ -5684,6 +5705,10 @@ function speak(text, urgent, at) {
     _sayQ.length = 0;
     if (_sayGuard) { clearTimeout(_sayGuard); _sayGuard = null; }
     _sayOn = false;
+    // Revoke the outgoing utterance's events BEFORE cancelling, so the end event
+    // cancel is about to fire arrives as a ghost and cannot reach into the
+    // settle line that is about to start.
+    _sayGen++;
     s.cancel();
   }
   _sayQ.push({ text, at: typeof at === "number" && isFinite(at) ? at : 0 });
@@ -5698,6 +5723,11 @@ function speakStop() {
   _sayQ.length = 0;
   if (_sayGuard) { clearTimeout(_sayGuard); _sayGuard = null; }
   _sayOn = false;
+  // Same revocation as the urgent path. Toggling the callout off and straight
+  // back on is the case that needs it: without the bump, the end event from the
+  // utterance cancelled here can land after the first line of the new session
+  // has started and drain the queue out from under it.
+  _sayGen++;
   if (s) s.cancel();
 }
 

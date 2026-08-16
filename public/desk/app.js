@@ -1182,12 +1182,31 @@ const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.f
  * So staleness is carried on the event timestamp. A pitch thrown 40 seconds ago
  * is dropped at drain time no matter how it got here, which re-anchors the call
  * to the live edge by itself on every wake-up. SAY_MAX still bounds the queue;
- * this bounds its AGE, which is the thing that was actually wrong. */const SAY_STALE_MS=12000;const _sayQ=[];let _sayOn=false,_sayGuard=null;function _sayDrain(s){if(_sayOn)return;let item;// Skip anything that went stale while it waited, and keep skipping: after a
+ * this bounds its AGE, which is the thing that was actually wrong. */const SAY_STALE_MS=12000;const _sayQ=[];/* _sayGen identifies the utterance the queue currently believes is speaking.
+ *
+ * `done` is wired to three things — onend, onerror and the watchdog — and until
+ * this existed it had no way to tell WHICH utterance had fired it. That is not
+ * hypothetical, because s.cancel() delivers the cancelled utterance's end event
+ * asynchronously, i.e. after the replacement has already started. The settle
+ * path walks straight into it: a run scores, speak(..., urgent) clears the
+ * queue, cancels, and starts the settle line; the cancelled line's end event
+ * then lands, `done` sees a latch that is set (it belongs to the settle now)
+ * and dutifully clears it, kills the settle's watchdog, and drains the next
+ * item on top of a line that is still being spoken. The one utterance that must
+ * survive intact is the one this corrupts.
+ *
+ * A generation counter closes it: every utterance captures the value it was
+ * created with, and any event arriving for a generation that is no longer
+ * current is a ghost and is ignored. Bumping the counter is therefore how you
+ * revoke an utterance's events — which is exactly what cancel and stop need. */let _sayOn=false,_sayGuard=null,_sayGen=0;function _sayDrain(s){if(_sayOn)return;let item;// Skip anything that went stale while it waited, and keep skipping: after a
 // freeze the whole queue can be stale, and stopping at the first live line is
 // the point.
 for(;;){item=_sayQ.shift();if(item==null)return;if(!(item.at>0)||Date.now()-item.at<=SAY_STALE_MS)break;}const text=item.text;if(text==null)return;_sayOn=true;const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}// 1.1 clipped the ends of words on the neural voices, which read more slowly
 // and more naturally than the formant ones. Just above conversational.
-u.rate=1.02;u.pitch=1;u.volume=1;const done=()=>{if(!_sayOn)return;_sayOn=false;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayDrain(s);};u.onend=done;// An utterance that errors (or that Chrome silently drops, which it does after
+u.rate=1.02;u.pitch=1;u.volume=1;const gen=++_sayGen;const done=()=>{// A late event from a cancelled or superseded utterance must not touch the
+// latch, the watchdog or the queue — all three now belong to whatever is
+// speaking instead.
+if(gen!==_sayGen||!_sayOn)return;_sayOn=false;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayDrain(s);};u.onend=done;// An utterance that errors (or that Chrome silently drops, which it does after
 // a cancel) never fires end, and without this the latch stays set and the
 // callout goes silent for the rest of the inning — the same failure the
 // s.paused nudge below was added to work around. Budget generously: ~90ms per
@@ -1197,10 +1216,17 @@ u.onerror=done;_sayGuard=setTimeout(done,1000+text.length*90);s.speak(u);// Chro
 if(s.paused)s.resume();}/* `at` is the event's own timestamp — when the pitch was thrown or the play
  * ended — not when this was called. Omit it for lines that are true whenever
  * they are said (the intro, a settle): those are never stale. */function speak(text,urgent,at){const s=typeof window!=="undefined"&&window.speechSynthesis;if(!s||!text)return;if(!_voice){_voice=pickVoice(s);// Ask once for a re-resolve when the engine finishes enumerating.
-if(!_voice&&!_voiceTried&&s.addEventListener){_voiceTried=true;s.addEventListener("voiceschanged",()=>{_voice=pickVoice(s);},{once:true});}}if(urgent){_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;s.cancel();}_sayQ.push({text,at:typeof at==="number"&&isFinite(at)?at:0});// Trim from the FRONT: the stale lines are the ones not worth saying.
+if(!_voice&&!_voiceTried&&s.addEventListener){_voiceTried=true;s.addEventListener("voiceschanged",()=>{_voice=pickVoice(s);},{once:true});}}if(urgent){_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;// Revoke the outgoing utterance's events BEFORE cancelling, so the end event
+// cancel is about to fire arrives as a ghost and cannot reach into the
+// settle line that is about to start.
+_sayGen++;s.cancel();}_sayQ.push({text,at:typeof at==="number"&&isFinite(at)?at:0});// Trim from the FRONT: the stale lines are the ones not worth saying.
 while(_sayQ.length>SAY_MAX)_sayQ.shift();_sayDrain(s);}// Stopping the callout has to clear the queue too, or the lines already buffered
 // keep arriving after the switch is off.
-function speakStop(){const s=typeof window!=="undefined"&&window.speechSynthesis;_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;if(s)s.cancel();}async function pitcherFirstInning(pid,season){if(pid==null)return null;const k=pid+":"+season;if(_pitI01.has(k))return _pitI01.get(k);let val=null;try{const d=await getJson("https://statsapi.mlb.com/api/v1/people/"+pid+"/stats?stats=statSplits&group=pitching&sitCodes=i01&season="+season);const st=d.stats&&d.stats[0]&&d.stats[0].splits&&d.stats[0].splits[0]&&d.stats[0].splits[0].stat;if(st&&st.gamesPlayed){const bf=Number(st.battersFaced||0);const ip=st.inningsPitched!=null?parseIp(st.inningsPitched):null;const k9=ip&&ip>0?Number(st.strikeOuts||0)*9/ip:null;const bb9=ip&&ip>0?Number(st.baseOnBalls||0)*9/ip:null;const hr9=ip&&ip>0?Number(st.homeRuns||0)*9/ip:null;val={rate:Number(st.runs||0)/st.gamesPlayed,sample:st.gamesPlayed,era:st.era!=null?Number(st.era):null,whip:st.whip!=null?Number(st.whip):null,k9,bb9,hr9,innings:ip,krate:bf?Number(st.strikeOuts||0)/bf:null,obpA:bf?(Number(st.hits||0)+Number(st.baseOnBalls||0)+Number(st.hitByPitch||0))/bf:null,hits:Number(st.hits||0),bb:Number(st.baseOnBalls||0),k:Number(st.strikeOuts||0),hr:Number(st.homeRuns||0)};}}catch{/* leave null */}_pitI01.set(k,val);return val;}// One call gets 1st-inning offense AND platoon splits (OPS vs LHP/RHP).
+function speakStop(){const s=typeof window!=="undefined"&&window.speechSynthesis;_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;// Same revocation as the urgent path. Toggling the callout off and straight
+// back on is the case that needs it: without the bump, the end event from the
+// utterance cancelled here can land after the first line of the new session
+// has started and drain the queue out from under it.
+_sayGen++;if(s)s.cancel();}async function pitcherFirstInning(pid,season){if(pid==null)return null;const k=pid+":"+season;if(_pitI01.has(k))return _pitI01.get(k);let val=null;try{const d=await getJson("https://statsapi.mlb.com/api/v1/people/"+pid+"/stats?stats=statSplits&group=pitching&sitCodes=i01&season="+season);const st=d.stats&&d.stats[0]&&d.stats[0].splits&&d.stats[0].splits[0]&&d.stats[0].splits[0].stat;if(st&&st.gamesPlayed){const bf=Number(st.battersFaced||0);const ip=st.inningsPitched!=null?parseIp(st.inningsPitched):null;const k9=ip&&ip>0?Number(st.strikeOuts||0)*9/ip:null;const bb9=ip&&ip>0?Number(st.baseOnBalls||0)*9/ip:null;const hr9=ip&&ip>0?Number(st.homeRuns||0)*9/ip:null;val={rate:Number(st.runs||0)/st.gamesPlayed,sample:st.gamesPlayed,era:st.era!=null?Number(st.era):null,whip:st.whip!=null?Number(st.whip):null,k9,bb9,hr9,innings:ip,krate:bf?Number(st.strikeOuts||0)/bf:null,obpA:bf?(Number(st.hits||0)+Number(st.baseOnBalls||0)+Number(st.hitByPitch||0))/bf:null,hits:Number(st.hits||0),bb:Number(st.baseOnBalls||0),k:Number(st.strikeOuts||0),hr:Number(st.homeRuns||0)};}}catch{/* leave null */}_pitI01.set(k,val);return val;}// One call gets 1st-inning offense AND platoon splits (OPS vs LHP/RHP).
 async function teamOffenseSplits(teamId,season){if(teamId==null)return null;const k=teamId+":"+season;if(_teamI01.has(k))return _teamI01.get(k);let val=null;try{const d=await getJson("https://statsapi.mlb.com/api/v1/teams/"+teamId+"/stats?stats=statSplits&group=hitting&sitCodes=i01,vr,vl&season="+season);const splits=d.stats&&d.stats[0]&&d.stats[0].splits||[];const find=re=>{const s=splits.find(x=>re.test(x.split&&x.split.description||""));return s&&s.stat;};const i01=find(/first inning/i),vr=find(/right/i),vl=find(/left/i);if(i01&&i01.gamesPlayed){const pa=Number(i01.plateAppearances||0);val={rate:Number(i01.runs||0)/i01.gamesPlayed,sample:i01.gamesPlayed,opsVsR:vr&&vr.ops!=null?Number(vr.ops):null,opsVsL:vl&&vl.ops!=null?Number(vl.ops):null,kRate:pa>0?Number(i01.strikeOuts||0)/pa:null,kSample:pa};}}catch{/* leave null */}_teamI01.set(k,val);return val;}// Starter handedness (people) + recent form (last-3-start ERA from gameLog).
 const _pitMeta=new Map();// MLB hands back era/inningsPitched as STRINGS, and uses "-.--" (no innings) and
 // "INF" (runs allowed, no outs) as sentinels. Number() turns both into NaN, and
