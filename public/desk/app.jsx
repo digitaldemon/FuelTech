@@ -249,6 +249,11 @@ details.fold > summary:hover { color:var(--bone); }
              0 0 34px -8px rgba(116,203,148,.30), 0 8px 26px rgba(0,0,0,.42); }
 .pick.t-strong { border-left-color:var(--moss); }
 .pick.t-lean { border-left-color:var(--amber); }
+/* --crest is the club-mark box, read by TeamLogo. It lives HERE and not in the
+   card's inline style because the breakpoints below have to be able to step it
+   down, and an inline custom property outranks a stylesheet one — setting it
+   inline would have silently pinned every viewport to the desktop size. */
+.card-mid { --crest:46px; }
 .tierbox { text-align:center; flex:0 0 auto; min-width:76px; padding:8px 10px; border-radius:11px;
   border:1px solid; font-family:'JetBrains Mono',monospace; background:rgba(0,0,0,.18); }
 .tierbox .pct { font-size:20px; font-weight:700; display:block; line-height:1.02;
@@ -430,10 +435,14 @@ table.tbl tbody tr:hover td { background:rgba(255,255,255,.025); }
   /* On a phone the verdict bar has no dead space to fill, so the logos and the
      headstone stop being decoration and start being a squeeze. Drop the epitaph
      text first and keep the marks; the bar is still readable at 360px. */
-  .card-mid { gap:7px !important; }
+  .card-mid { gap:7px !important; --crest:36px; }
   .card-mid .rip { display:none; }
 }
 @media (max-width:380px) {
+  /* 36 + 34 + 36 of marks plus two gaps is 113px of the 360px row, and the
+     verdict label needs the rest. Last step down before the crests would have
+     to go entirely. */
+  .card-mid { --crest:30px; }
   .cd-title { font-size:18px; }
   .tabs button { font-size:11px; padding:5px 7px; }
   .cmp-row { grid-template-columns:1fr; gap:4px; }
@@ -9300,12 +9309,29 @@ function NrfiCalendar({ rec, bankroll, riskLevel }) {
  *   band     our cut     share of slate     NRFI hit rate
  *   ELITE      >= 62           4.5%             69.0%
  *   GREEN    58.5-62          14.9%             56.0%
- *   YELLOW     54-58.5        32.0%             51.8%
- *   RED         < 54          48.6%             45.3%   (base rate 50.0%)
+ *   YELLOW     50-58.5        59.2%             50.6%
+ *   RED         < 50          21.4%             40.4%   (base rate 50.0%)
  *
  * GREEN-or-better is 19.4%, matching his 19.0% almost exactly, and the hit rate
  * falls monotonically across all four bands. Those rates are IN-SAMPLE on cached
  * p and are optimistic — they order the bands, they do not size the edge.
+ *
+ * THE YELLOW/RED CUT IS THE ONE WITH NO EVIDENCE BEHIND IT, and it was 54 until
+ * a complaint exposed what that meant. Selectivity cannot set it: he has never
+ * once published a RED card, so his own yellow/red boundary is CENSORED by his
+ * posting habit rather than merely unobserved, and there is nothing on his side
+ * of the scale to match to. At 54 our RED covered 48.6% of the slate, which is
+ * not a badge — it is a second name for "below average", and it painted games
+ * RED that his board calls YELLOW (SEA @ HOU, 2026-08-16: his 59.1, our 51.5).
+ *
+ * 50 is the only cut on this scale that means something without an observation.
+ * DS is P(clean 1st inning), so DS < 50 is the model preferring YRFI outright —
+ * which is what RED should say and what nothing above 50 can say. It also holds
+ * up when measured: the band order stays monotone, YELLOW lands on the base
+ * rate (50.6% — correctly "no signal"), and RED sharpens from 45.3% to 40.4%.
+ * Going further to 48 breaks the meaning rather than the order, pushing YELLOW
+ * itself below base. See scripts/nrfi-ds-tier-match.js, which runs this check
+ * across candidate cuts and is the thing to re-run before moving it again.
  *
  * His absolute 68/62 are not lost: scripts/nrfi-ds-tier-brackets.js keeps every
  * observation and re-derives them. They document HIS system. These document OURS.
@@ -9315,15 +9341,39 @@ function NrfiCalendar({ rec, bankroll, riskLevel }) {
  * SELECTION rule we did not previously model, and selection is exactly where
  * scripts/nrfi-tout-bottom-half.js concluded his edge lives.
  */
-const DS_TIER_DEFAULTS = { elite: 62, green: 58.5, yellow: 54 };
+const DS_TIER_DEFAULTS = { elite: 62, green: 58.5, yellow: 50 };
 
 function dsThresholds() {
   try {
     const raw = JSON.parse(localStorage.getItem("nrfi.ds.tiers") || "null");
     if (raw && Number.isFinite(raw.green) && Number.isFinite(raw.yellow)) {
-      // Stored before ELITE existed: keep the user's own green/yellow rather than
-      // discarding their tuning, and fill the new band from the default.
-      return Number.isFinite(raw.elite) ? raw : { ...raw, elite: DS_TIER_DEFAULTS.elite };
+      if (Number.isFinite(raw.elite)) return raw;
+      /* Stored before ELITE existed (commit 929fd29 shipped { green, yellow }
+       * only). The old migration filled elite straight from DS_TIER_DEFAULTS,
+       * which COLLAPSED THE GREEN BAND for anyone whose saved green was at or
+       * above the new elite floor: the author's own board was found holding
+       * {"green":62,"yellow":55}, so elite and green were both 62 and no game
+       * could ever be badged GREEN — everything green showed as ELITE.
+       *
+       * The repair turns on a question the old code never asked: was this ever
+       * TUNED? 929fd29's defaults were exactly { green: 62, yellow: 55 }, and
+       * the key is only ever written by the sliders or by Reset, so a stored
+       * object equal to those defaults is a Reset press, not a preference. Do
+       * not preserve it — preserving it is what pinned a stale ladder to a board
+       * whose owner had never chosen a number on it. Fall through to today's
+       * defaults, which is what the user would get by pressing Reset anyway. */
+      const OLD_DEFAULTS = { green: 62, yellow: 55 };
+      if (raw.green === OLD_DEFAULTS.green && raw.yellow === OLD_DEFAULTS.yellow) {
+        return DS_TIER_DEFAULTS;
+      }
+      /* Genuinely tuned. Read the old value for what it MEANT: back then GREEN
+       * was the top band, so a saved green said "the top tier starts here" — and
+       * the top tier is now ELITE. Promote it, and put green the same distance
+       * below elite that the defaults use, so the tuning survives instead of
+       * being silently reinterpreted. yellow keeps its stored value; it is the
+       * same boundary it always was. */
+      const gap = DS_TIER_DEFAULTS.elite - DS_TIER_DEFAULTS.green;
+      return { elite: raw.green, green: raw.green - gap, yellow: raw.yellow };
     }
   } catch { /* fall through to defaults */ }
   return DS_TIER_DEFAULTS;
@@ -9576,10 +9626,18 @@ function WhyBlock({ why, isBet }) {
 function TeamLogo({ id, abbr, size }) {
   const [dead, setDead] = useState(false);
   if (id == null) return null;
+  /* The box is `size` unless an ancestor sets --crest, which lets the crest
+   * shrink at a breakpoint without this component learning anything about
+   * viewports. All of this app's responsive work lives in one media block, so a
+   * JS matchMedia hook for a single number would be a second mechanism doing
+   * the same job. `size` stays a NUMBER either way — it is still the width and
+   * height ATTRIBUTE, so the box is reserved at the right ratio before the SVG
+   * decodes, and it is still what the fallback chip measures its type against. */
+  const box = "var(--crest, " + size + "px)";
   if (dead) {
     return (
       <span className="mono" title={abbr || ""} style={{
-        width: size, height: size, flexShrink: 0, display: "flex", alignItems: "center",
+        width: box, height: box, flexShrink: 0, display: "flex", alignItems: "center",
         justifyContent: "center", fontSize: size <= 24 ? 8 : 9, fontWeight: 700,
         color: "var(--dim)", border: "1px solid var(--slate-600)", borderRadius: 6,
       }}>{(abbr || "").slice(0, 3)}</span>
@@ -9602,7 +9660,7 @@ function TeamLogo({ id, abbr, size }) {
     <img src={"https://www.mlbstatic.com/team-logos/team-cap-on-dark/" + id + ".svg"}
       alt={abbr || ""} title={abbr || ""} width={size} height={size}
       loading="eager" decoding="async" onError={() => setDead(true)}
-      style={{ width: size, height: size, objectFit: "contain", flexShrink: 0 }} />
+      style={{ width: box, height: box, objectFit: "contain", flexShrink: 0 }} />
   );
 }
 
@@ -10491,9 +10549,16 @@ function FirstInning() {
                between. Club marks either side of the headstone read as the
                matchup and give the bar a centre of gravity. `flex: 1` moved off
                the label block and onto this one so the growth happens HERE and
-               the label stays snug against its own text. ── */}
+               the label stays snug against its own text.
+
+               Crest size is --crest, set in the stylesheet so the breakpoints
+               can reach it. At 30 the marks sat UNDER the 34x38 headstone and
+               read as ornament hung off it; at 46 they clear it and the matchup
+               becomes the thing the eye lands on, which is the whole reason
+               they are here. The bar only grows ~8px, not 16, because the
+               headstone was previously the tallest thing in it. ── */}
           <div className="card-mid" style={{ flex: 1, display: "flex", alignItems: "center",
-            justifyContent: "center", gap: 12, minWidth: 0 }}>
+            justifyContent: "center", gap: 14, minWidth: 0 }}>
             <TeamLogo id={r.awayId} abbr={r.awayAbbr || r.away} size={30} />
             <GraveMotif call={r.call} isBet={r.v.isBet} strength={r.v.strength} />
             <TeamLogo id={r.homeId} abbr={r.homeAbbr || r.home} size={30} />
