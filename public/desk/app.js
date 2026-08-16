@@ -970,8 +970,38 @@ const NRFI_LG_P0=0.72;// league P(no run in a half-inning) -> ~52% NRFI
    nominal backtest units fall with it. Those units were partly the leak.
 
    Re-run the fit before moving this. The curve is flat between about 50 and 150,
-   so anything in that range is defensible and precision beyond that is fake. */const NRFI_PIT_REG=75;const NRFI_OFF_REG=6;// regression games for a team's 1st-inning offense
-/* Lineup-strength baseline. This is NOT league OBP, and the difference is the
+   so anything in that range is defensible and precision beyond that is fake. */const NRFI_PIT_REG=75;/* Regression weight on a team's own 1st-inning runs per game (app.jsx:6721-6722).
+   Was 6, which at ~110 games played kept 95% of the team's observed rate.
+
+   Measured by scripts/nrfi-offreg-fit.js over 4,279 games / 8,558 team-games
+   (2025+2026). Three methods, none of which finds a signal to keep:
+
+     - Walk-forward, each game predicted from only the games before it within
+       the season: held-out error falls monotonically out to the end of a grid
+       that runs to 3000. Bootstrap CI over team-seasons [400, 3000]. The
+       optimum does not turn, so it is a floor, not an estimate.
+     - Variance decomposition: observed spread across 60 team-seasons is 0.0834
+       runs/game against a sampling noise floor of 0.0875. The observed spread
+       is NARROWER than noise alone predicts — there is no true spread left to
+       measure.
+     - Odd/even split-half: r = 0.053, 95% CI [-0.206, 0.313]. Spearman-Brown
+       reliability of a full season 0.101, which implies k = 1267 at n=143.
+
+   That last figure is derived without reference to the MSE curve and lands
+   inside its CI, so the two corroborate rather than restate each other. 1200 is
+   that estimate rounded; anything from ~400 up is equivalent in effect, and the
+   rounding is deliberate because precision here would be invented. For contrast
+   the same arithmetic on STARTERS found a real if small effect (Spearman-Brown
+   0.262), which is why NRFI_PIT_REG is 75 and not this.
+
+   THIS DOES NOT REMOVE TEAM OFFENSE FROM THE MODEL. The baseline is multiplied
+   by offMult (app.jsx:6868-6869), so lineup OBP, venue split, team K%, travel
+   and rolling form all still separate the teams. What is being dropped is the
+   raw season first-inning rate, which measures roughly four plate appearances a
+   game against a different pitcher each time and turns out to be noise.
+
+   A leaky backtest will fight this: the same fit with the scored game left in
+   its own history puts the optimum at 0, exactly as in the pitcher case. */const NRFI_OFF_REG=1200;/* Lineup-strength baseline. This is NOT league OBP, and the difference is the
  * whole point. The numerator it divides is a 0.5/0.3/0.2-weighted OBP of the
  * posted 1-2-3 hitters — a population selected precisely because it gets on
  * base. It was 0.318, the all-hitters league OBP, which made the ratio "top of
@@ -1749,7 +1779,23 @@ let conf=1;const thin=p=>!p||(p.sample||0)<6;if(thin(ctx.awayPit))conf-=0.2;if(t
 // tighter is reading sampling noise as a change in stuff. Short windows
 // are rejected outright rather than scaled, since a 6 IP window carries
 // a ~3.7 K/9 SE and can't distinguish anything worth voting on.
-const MIN_RECENT_IP=12,K9_REPORT=2.0,K9_VOTE=3.0;const mk=(m,name)=>{if(!m||m.recentK9==null||m.seasonK9==null||m.seasonK9<3)return null;if((m.recentIp||0)<MIN_RECENT_IP)return null;const delta=m.recentK9-m.seasonK9;const pct=Math.round(Math.abs(delta)/m.seasonK9*100);if(Math.abs(delta)<K9_REPORT)return null;return{name,delta,pct,note:name+" K/9 L3 "+m.recentK9.toFixed(1)+(delta>0?" ↑":" ↓")+pct+"% vs SZN "+m.seasonK9.toFixed(1)+" ("+m.recentIp.toFixed(1)+" IP)"};};const aw=mk(ctx.awayMeta,ctx.awayPP),hm=mk(ctx.homeMeta,ctx.homePP);if(!aw&&!hm)return null;const notes=[aw?.note,hm?.note].filter(Boolean);const deltas=[aw?.delta,hm?.delta].filter(d=>d!=null);const avgDelta=deltas.reduce((s,d)=>s+d,0)/deltas.length;return{label:"Pitcher K9 trend (L3 vs SZN)",detail:notes.join(" · "),lean:avgDelta>=K9_VOTE?"nrfi":avgDelta<=-K9_VOTE?"yrfi":"neutral"};})(),{label:"Clean opener vs slow starter",detail:ctx.homePP+": "+homeOpen.note+" · "+ctx.awayPP+": "+awayOpen.note,lean:facLean((awayOpen.f+homeOpen.f)/2)},{label:"1st-inning offense",detail:ctx.awayName+" "+rate2(ctx.awayOff)+" R · "+ctx.homeName+" "+rate2(ctx.homeOff)+" R",lean:lean((awayOffBase+homeOffBase)/2,0.6,0.44)},(()=>{const aR=ctx.awayOffRolling,hR=ctx.homeOffRolling;const aL10=aR&&aR.l10&&aR.l10.n>=5?aR.l10.rate:null;const hL10=hR&&hR.l10&&hR.l10.n>=5?hR.l10.rate:null;if(aL10==null&&hL10==null)return null;const fmt=r=>r!=null?Math.round(r*100)+"%":"—";const notes=[];if(aL10!=null){const szn=aR.szn&&aR.szn.rate!=null?aR.szn.rate:null;const d=szn!=null?aL10-szn:null;const arrow=d==null?"":d>=0.12?" ↑hot":d<=-0.12?" ↓cold":"";const rgTag=aR.l10&&aR.l10.avgRuns!=null?"  "+aR.l10.avgRuns.toFixed(2)+"R/g":"";const aL5=aR.l5&&aR.l5.n>=3?aR.l5.rate:null;const l5tag=aL5!=null?"  L5 "+Math.round(aL5*100)+"%":"";notes.push(ctx.awayName+" L10 "+fmt(aL10)+arrow+(szn!=null?" (SZN "+fmt(szn)+")":"")+rgTag+l5tag);}if(hL10!=null){const szn=hR.szn&&hR.szn.rate!=null?hR.szn.rate:null;const d=szn!=null?hL10-szn:null;const arrow=d==null?"":d>=0.12?" ↑hot":d<=-0.12?" ↓cold":"";const rgTag=hR.l10&&hR.l10.avgRuns!=null?"  "+hR.l10.avgRuns.toFixed(2)+"R/g":"";const hL5=hR.l5&&hR.l5.n>=3?hR.l5.rate:null;const l5tag=hL5!=null?"  L5 "+Math.round(hL5*100)+"%":"";notes.push(ctx.homeName+" L10 "+fmt(hL10)+arrow+(szn!=null?" (SZN "+fmt(szn)+")":"")+rgTag+l5tag);}// This demanded that BOTH offences sit 12pp or more off their own season
+const MIN_RECENT_IP=12,K9_REPORT=2.0,K9_VOTE=3.0;const mk=(m,name)=>{if(!m||m.recentK9==null||m.seasonK9==null||m.seasonK9<3)return null;if((m.recentIp||0)<MIN_RECENT_IP)return null;const delta=m.recentK9-m.seasonK9;const pct=Math.round(Math.abs(delta)/m.seasonK9*100);if(Math.abs(delta)<K9_REPORT)return null;return{name,delta,pct,note:name+" K/9 L3 "+m.recentK9.toFixed(1)+(delta>0?" ↑":" ↓")+pct+"% vs SZN "+m.seasonK9.toFixed(1)+" ("+m.recentIp.toFixed(1)+" IP)"};};const aw=mk(ctx.awayMeta,ctx.awayPP),hm=mk(ctx.homeMeta,ctx.homePP);if(!aw&&!hm)return null;const notes=[aw?.note,hm?.note].filter(Boolean);const deltas=[aw?.delta,hm?.delta].filter(d=>d!=null);const avgDelta=deltas.reduce((s,d)=>s+d,0)/deltas.length;return{label:"Pitcher K9 trend (L3 vs SZN)",detail:notes.join(" · "),lean:avgDelta>=K9_VOTE?"nrfi":avgDelta<=-K9_VOTE?"yrfi":"neutral"};})(),{label:"Clean opener vs slow starter",detail:ctx.homePP+": "+homeOpen.note+" · "+ctx.awayPP+": "+awayOpen.note,lean:facLean((awayOpen.f+homeOpen.f)/2)},// Informational, and deliberately not a vote — same treatment as "Pitcher
+// season load" and "Day game", for a stronger reason than either.
+//
+// This voted on (awayOffBase + homeOffBase)/2 against 0.60/0.44. Once
+// NRFI_OFF_REG was measured at 1200 those baselines span only about 0.502 to
+// 0.539 across the whole league, so neither threshold can ever be reached
+// and the row would have gone on displaying a vote it could no longer cast.
+// Leaving it as `lean(...)` would have been a silently dead check rather
+// than an honest neutral one.
+//
+// The deeper reason is why NRFI_OFF_REG moved at all: a team's own season
+// first-inning rate has no measured signal (odd/even split-half r = 0.053,
+// CI [-0.206, 0.313]; observed team spread narrower than the noise floor).
+// A check voting on it was voting on noise. The rates are still shown
+// because they are what a reader wants to see, and team offense still moves
+// the number through offMult — lineup OBP, venue, K% and form.
+{label:"1st-inning offense",detail:ctx.awayName+" "+rate2(ctx.awayOff)+" R · "+ctx.homeName+" "+rate2(ctx.homeOff)+" R"+" — season rate, shown for context; no measured signal (see NRFI_OFF_REG)",lean:"neutral"},(()=>{const aR=ctx.awayOffRolling,hR=ctx.homeOffRolling;const aL10=aR&&aR.l10&&aR.l10.n>=5?aR.l10.rate:null;const hL10=hR&&hR.l10&&hR.l10.n>=5?hR.l10.rate:null;if(aL10==null&&hL10==null)return null;const fmt=r=>r!=null?Math.round(r*100)+"%":"—";const notes=[];if(aL10!=null){const szn=aR.szn&&aR.szn.rate!=null?aR.szn.rate:null;const d=szn!=null?aL10-szn:null;const arrow=d==null?"":d>=0.12?" ↑hot":d<=-0.12?" ↓cold":"";const rgTag=aR.l10&&aR.l10.avgRuns!=null?"  "+aR.l10.avgRuns.toFixed(2)+"R/g":"";const aL5=aR.l5&&aR.l5.n>=3?aR.l5.rate:null;const l5tag=aL5!=null?"  L5 "+Math.round(aL5*100)+"%":"";notes.push(ctx.awayName+" L10 "+fmt(aL10)+arrow+(szn!=null?" (SZN "+fmt(szn)+")":"")+rgTag+l5tag);}if(hL10!=null){const szn=hR.szn&&hR.szn.rate!=null?hR.szn.rate:null;const d=szn!=null?hL10-szn:null;const arrow=d==null?"":d>=0.12?" ↑hot":d<=-0.12?" ↓cold":"";const rgTag=hR.l10&&hR.l10.avgRuns!=null?"  "+hR.l10.avgRuns.toFixed(2)+"R/g":"";const hL5=hR.l5&&hR.l5.n>=3?hR.l5.rate:null;const l5tag=hL5!=null?"  L5 "+Math.round(hL5*100)+"%":"";notes.push(ctx.homeName+" L10 "+fmt(hL10)+arrow+(szn!=null?" (SZN "+fmt(szn)+")":"")+rgTag+l5tag);}// This demanded that BOTH offences sit 12pp or more off their own season
 // rate in the same direction. Measured 2026-08-15: 3 of 30 clubs were that
 // cold and 5 that hot, so the conjunction covers ~3.8% of games — 0.6 of a
 // 15-game slate, and it voted on none of them.
