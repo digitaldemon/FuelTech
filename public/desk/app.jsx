@@ -7246,6 +7246,16 @@ function nrfiEvaluate(ctx) {
       // is under the line. That is the ordinary mid-season state, so this fired
       // NRFI on 14 of 15 live games: a constant, not a signal. Symmetric band,
       // and the tired-team side has to be more than routine to count.
+      //
+      // THE SYMMETRIC BAND DID NOT FIX IT. Measured over 415 games (30 slates,
+      // scripts/nrfi-check-votes.js): 89 votes cast, all 89 NRFI, not one YRFI.
+      // Symmetric in form only — travelFactor is built from rest days and it
+      // reaches 1.045 on a pair about as often as never, so the upper arm is
+      // decorative and the check is still the constant it was rewritten to stop
+      // being. Left as-is deliberately: removing it or moving the band changes
+      // the environment family's tally and therefore the bet slate, and no
+      // measurement here supports a specific replacement. This note is so the
+      // next reader does not take the paragraph above as evidence it was cured.
       lean: (ctx.awayTravel.factor * ctx.homeTravel.factor) <= 0.955 ? "nrfi"
         : (ctx.awayTravel.factor * ctx.homeTravel.factor) >= 1.045 ? "yrfi" : "neutral" },
     // Informational, and deliberately not a vote — same reason as Day game below.
