@@ -11329,7 +11329,23 @@ function FirstInning() {
               // AudioContext that keeps the poll alive once the tab goes behind
               // something else. Keepalive first — it is the cheaper failure if
               // the browser refuses one of them.
-              if (next) { sayKeepAlive(true); speak("Digital Demons N-R-F-I Live. On the air."); }
+              //
+              // "This is live coverage" and not "Live." — the shorter line was
+              // read out as the VERB, rhyming with "give", because "live" is a
+              // homograph and the synthesiser picks between the two readings by
+              // part of speech. Sentence-final after a noun phrase, its tagger
+              // called it a verb, and the station ID came out "Digital Demons
+              // N-R-F-I liv". There is no phoneme override to reach for:
+              // speechSynthesis takes plain text and Chrome's neural voices
+              // ignore SSML, so the only lever is the grammar of the sentence.
+              // A copula in front of it ("is live") removes the verb reading
+              // outright — nothing can be both the main verb and its own
+              // complement — and the noun behind it makes the adjective reading
+              // the only parse left. Respelling it "lyve" would be the other
+              // option and is worse: it is per-voice guesswork and it looks
+              // like a typo to the next reader. Keep a copula in front of the
+              // word if this line is ever reworded.
+              if (next) { sayKeepAlive(true); speak("Digital Demons N-R-F-I. This is live coverage, on the air."); }
               else { sayKeepAlive(false); speakStop(); }
               setCallout(next);
             }}

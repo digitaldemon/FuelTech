@@ -3411,7 +3411,23 @@ const deltaAbs=Math.abs(delta);const improving=delta>0;const color=deltaAbs>=0.1
 // AudioContext that keeps the poll alive once the tab goes behind
 // something else. Keepalive first — it is the cheaper failure if
 // the browser refuses one of them.
-if(next){sayKeepAlive(true);speak("Digital Demons N-R-F-I Live. On the air.");}else{sayKeepAlive(false);speakStop();}setCallout(next);},title:voiceBlocked?"Your browser blocked audio for this page. Tap this button again to allow it — "+"speech has to start from a tap, and the desk will stay silent until it does.":"Digital Demons NRFI Live — the desk's own first-inning broadcast. Calls every game on the board "+"that has a call or a position, pitch by pitch, then the NRFI result. "+"Built off the MLB play feed, not a broadcast: league game audio is licensed per-subscriber and cannot be embedded here.\n\n"+// The call is late and always will be. Saying so is the difference between
+//
+// "This is live coverage" and not "Live." — the shorter line was
+// read out as the VERB, rhyming with "give", because "live" is a
+// homograph and the synthesiser picks between the two readings by
+// part of speech. Sentence-final after a noun phrase, its tagger
+// called it a verb, and the station ID came out "Digital Demons
+// N-R-F-I liv". There is no phoneme override to reach for:
+// speechSynthesis takes plain text and Chrome's neural voices
+// ignore SSML, so the only lever is the grammar of the sentence.
+// A copula in front of it ("is live") removes the verb reading
+// outright — nothing can be both the main verb and its own
+// complement — and the noun behind it makes the adjective reading
+// the only parse left. Respelling it "lyve" would be the other
+// option and is worse: it is per-voice guesswork and it looks
+// like a typo to the next reader. Keep a copula in front of the
+// word if this line is ever reworded.
+if(next){sayKeepAlive(true);speak("Digital Demons N-R-F-I. This is live coverage, on the air.");}else{sayKeepAlive(false);speakStop();}setCallout(next);},title:voiceBlocked?"Your browser blocked audio for this page. Tap this button again to allow it — "+"speech has to start from a tap, and the desk will stay silent until it does.":"Digital Demons NRFI Live — the desk's own first-inning broadcast. Calls every game on the board "+"that has a call or a position, pitch by pitch, then the NRFI result. "+"Built off the MLB play feed, not a broadcast: league game audio is licensed per-subscriber and cannot be embedded here.\n\n"+// The call is late and always will be. Saying so is the difference between
 // a listener hearing a 25s-old pitch and concluding the feature is broken,
 // and hearing it and knowing that is as live as the data goes.
 "RUNS ABOUT 25 SECONDS BEHIND THE PARK. statsapi does not publish a pitch when it lands — "+"measured 14 to 26 seconds after the fact, median 25. That lag is the feed's and no amount of "+"polling recovers it, so treat this as a delayed call, not a live one. Anything much later than "+"that is dropped rather than read out stale.",style:voiceBlocked&&callout?{color:"var(--rust, #c0632f)",borderColor:"var(--rust, #c0632f)"}:callout?{color:"var(--moss)",borderColor:"var(--moss)"}:undefined},voiceBlocked&&callout?"🔇 Blocked by browser · tap to allow":callout?"🔊 Digital Demons NRFI Live · on":"🔈 Digital Demons NRFI Live"),callout&&calloutGames.length>1&&/*#__PURE__*/React.createElement("span",{style:{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}},/*#__PURE__*/React.createElement("span",{style:{fontSize:11,color:"var(--dim)"}},"Listening to"),[{pk:null,label:"All"}].concat(calloutGames.map(r=>({pk:r.gamePk,label:(r.awayAbbr||r.away)+"@"+(r.homeAbbr||r.home)}))).map(g=>/*#__PURE__*/React.createElement("button",{key:String(g.pk),className:"btn btn-ghost btn-sm",onClick:()=>setFocus(g.pk),title:g.pk===null?"Call every game at once. On an overlapping slate they talk over each other.":"Call only this game. Others stay muted, but a run or a clean inning is still announced by name.",style:{fontSize:11,padding:"2px 7px",...(focus===g.pk?{color:"var(--moss)",borderColor:"var(--moss)"}:null)}},g.label))),importMsg&&/*#__PURE__*/React.createElement("span",{style:{fontSize:12,color:importMsg.ok?"var(--moss)":"var(--rose)"}},importMsg.text)),(()=>{const counts={ELITE:0,GREEN:0,YELLOW:0,RED:0,"NO DS":0};for(const r of validRows)counts[dsTier(dsOf(r),dsTh).label]++;const isDefault=dsTh.elite===DS_TIER_DEFAULTS.elite&&dsTh.green===DS_TIER_DEFAULTS.green&&dsTh.yellow===DS_TIER_DEFAULTS.yellow;/* Clamp on commit, not on keystroke, and clamp against BOTH neighbours:
