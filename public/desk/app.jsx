@@ -6940,6 +6940,12 @@ function nrfiEvaluate(ctx) {
   //   unidentifiable; see homeOffAdvantage.
   // offVenue: team-specific home/road 1st-inn scoring gap, weight 0.3 (partial overlap with homeAdv).
   // kRate: team 1st-inn K% vs league avg — high K = contact scarce = NRFI lean. Weight 0.35.
+  // offTrend, offVenue and kRate are the offence-side members of the same group
+  // of five that no backtest could see until 2026-08-16 (kRate for its own
+  // reason: teamOffApi never read plateAppearances/strikeOuts off a response it
+  // had already fetched). Their weights are hand-chosen and the first paired A/B
+  // that could measure them cannot separate the group from off. Full numbers in
+  // the correction above pitMult; do not cite these three as fitted either.
   const offMult = (lineup, travel, offTrend, homeAdv, venue, kRate) =>
     nClamp(1 + (lineup.factor - 1) * 1.0 + (travel.factor - 1) * 0.6 + (offTrend.f - 1) * 0.5 + (homeAdv.f - 1) * 1.0 + (venue.f - 1) * 0.3 + (kRate.f - 1) * 0.35, 0.80, 1.30);
   // Offense home field: the measured split, applied at the offense entry only.
@@ -6951,7 +6957,30 @@ function nrfiEvaluate(ctx) {
   // Pitcher-specific venue split: captures individual home/road performance gaps beyond the average.
   const awayVenue = pitcherVenueFactor(ctx.awayRolling, false); // away pitcher pitching on road
   const homeVenue = pitcherVenueFactor(ctx.homeRolling, true);  // home pitcher pitching at home
-  // Weights tuned from 4,015-game backtest (logistic regression on normalized features):
+  // Weights tuned from 4,015-game backtest (logistic regression on normalized
+  // features) — TRUE OF THE FIRST FOUR BULLETS ONLY. It is not true of trend or
+  // venue, and it was written as if it covered them.
+  //
+  // Until 2026-08-16 buildCtx never set ctx.awayRolling/homeRolling, and every
+  // factor reading them opens with `if (!rolling) return { f: 1 }`. So trend and
+  // venue returned dead neutral on every game that backtest ever scored. Their
+  // weights could not have been fitted there; no regression can put a coefficient
+  // on a constant column. They were chosen by hand and the header above absorbed
+  // them. See scripts/nrfi-ctx-parity.js, which now fails if it recurs.
+  //
+  // MEASURED, once the harness could compute them at all (30 days, 409 games,
+  // scripts/nrfi-backtest-ab.js, paired by gamePk, resampled by date):
+  //
+  //     turning trend+venue+offTrend+offVenue+kRate OFF vs ON
+  //       Brier  +0.00007 (t +0.19)   AUC  -0.0024 (t -0.54)
+  //       12 side flips, ON right on 5/12
+  //
+  // Indistinguishable from off. Read that as UNMEASURED, not as disproved: the
+  // smallest gap this test could resolve was 0.00075 Brier / 0.0088 AUC, and the
+  // terms do move 99.8% of games by 0.60 pts on average. They are kept because a
+  // t of -0.54 is not a reason to remove anything either. Do not quote these
+  // weights as backtested until something separates them from zero.
+  //
   // - skill (K%, BB%, barrel, GB): dominant after pitBase — keep at 1.0
   // - form (FIP/ERA L3): LR coeff -0.018 = counterproductive once pitBase
   //   controlled. Carried at 0.10 for a while, then REMOVED — pitMult below has
@@ -6961,11 +6990,13 @@ function nrfiEvaluate(ctx) {
   // - load (season IP): small but logical → 0.7
   // - rest: gone entirely. It had sat here as a `_rest` parameter at weight 0
   //   while still being computed and voted on; see the note where restFactor was.
-  // - trend (L10 vs SZN clean %): hot/cold streak captured here, weight 0.30
+  // - trend (L10 vs SZN clean %): hot/cold streak captured here, weight 0.30.
+  //   HAND-CHOSEN, not fitted — see the correction at the top of this block.
   // - homeAdv: REMOVED. It multiplied the same half's lambda as the offense-side
   //   home factor, so the two were one fact fitted twice; the measured split now
   //   lives entirely in homeOffAdvantage.
-  // - venue: pitcher-specific home/road split beyond average, weight 0.5 (smaller sample)
+  // - venue: pitcher-specific home/road split beyond average, weight 0.5 (smaller
+  //   sample). HAND-CHOSEN, not fitted — see the correction at the top of this block.
   const pitMult = (skill, opener, openG, load, trend, venue) =>
     nClamp(1 + (skill.f - 1) * 1.0 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30 + (venue.f - 1) * 0.5, 0.78, 1.25);
   const awayOffKRate = offKrateFactor(ctx.awayOff);

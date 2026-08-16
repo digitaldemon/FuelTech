@@ -145,7 +145,23 @@ const path = require("path");
 // every analysis script scores games through one code path. See that file for
 // why a second copy is worse than an import.
 const { J, savant, mapLimit, buildCtx, scoreBothPaths, C, PIT_MODE, pitStats,
-  NRFI_CALIB_SEED } = require("./nrfi-model-lib");
+  NRFI_CALIB_SEED, ABLATIONS } = require("./nrfi-model-lib");
+/* Where this run's artifact goes, and why it is not always the same file.
+ *
+ * An ablation run scores the same games with a term switched off and writes a
+ * calibration seed fit on those numbers. Writing that to nrfi-backtest.json
+ * would leave the shipped seed's file holding a seed for a model that is not
+ * shipped, with nothing in the filename to say so — and the next reader has no
+ * reason to doubt it. modelSig distinguishes the two inside the cache (see
+ * nrfi-model-lib), but a sig only helps someone who checks it, and this file is
+ * read by hand more often than by script.
+ *
+ * Default runs keep the exact old path, so nothing that reads
+ * nrfi-backtest.json has to change.
+ */
+const OUT = ABLATIONS
+  ? `nrfi-backtest.ablate-${ABLATIONS.replace(/[^a-z0-9]+/gi, "-")}.json`
+  : "nrfi-backtest.json";
 // Read from app.jsx through the model slice, never retyped here. This was
 // hardcoded as `0.050` in two places while app.jsx shipped -0.048: wrong
 // magnitude and wrong SIGN, so the "shipped seed applied to each path" section
@@ -175,7 +191,14 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
       const inn1 = g.linescore.innings[0];
       const runs = (+(inn1.away?.runs || 0)) + (+(inn1.home?.runs || 0));
       if (ev.pNRFI == null || evLam.pNRFI == null) return null;
-      return { pModel: ev.pNRFI, pLam: evLam.pNRFI, method: ev.method,
+      // gamePk alongside the readable key, because the readable key is NOT
+      // unique: both ends of a doubleheader share a date and both teams. Seven
+      // of them in a 30-day window, and each pair carries different starters and
+      // often a different result. Anything joining two artifacts on `k` alone
+      // silently pairs game 1's probability with game 2's outcome — which is
+      // exactly how nrfi-backtest-ab.js first tripped, reporting a "stale
+      // artifact" for two runs made ten seconds apart.
+      return { pModel: ev.pNRFI, pLam: evLam.pNRFI, method: ev.method, id: g.gamePk,
         actual: runs === 0 ? 1 : 0, key: date + " " + a.team.abbreviation + "@" + h.team.abbreviation };
     });
     for (const r of rows) if (r) samples.push(r);
@@ -492,16 +515,17 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
   console.log("  NOTE: this is a blended fit over two paths with different biases.");
   console.log("  If the paired section shows their implied c's far apart, one seed");
   console.log("  cannot serve both and the seed should be made path-aware.");
-  fs.writeFileSync(path.join(__dirname, "nrfi-backtest.json"), JSON.stringify({
+  fs.writeFileSync(path.join(__dirname, OUT), JSON.stringify({
     ...seed, at: new Date().toISOString(), days, season: se,
-    pitMode: PIT_MODE, pitStats: ps,
+    pitMode: PIT_MODE, pitStats: ps, ablations: ABLATIONS || null,
     shipped, lambdaAll: metrics(samples, L), platt,
     paired: simRows.length ? { sim: metrics(simRows, P), lambda: metrics(simRows, L) } : null,
     // The per-game rows the seed was fit on. Without them the seed is a number
     // with a provenance story attached, and every re-derivation (a slope check,
     // a reliability curve, a bucketed fit) needs another 20-minute API walk to
     // ask a question of data that was already in hand.
-    rows: samples.map((s) => ({ k: s.key, p: +s.pModel.toFixed(4), l: +s.pLam.toFixed(4), a: s.actual, m: s.method })),
+    rows: samples.map((s) => ({ id: s.id, k: s.key, p: +s.pModel.toFixed(4), l: +s.pLam.toFixed(4), a: s.actual, m: s.method })),
   }, null, 2));
-  console.log("  (written to scripts/nrfi-backtest.json)");
+  console.log("  (written to scripts/" + OUT + ")" +
+    (ABLATIONS ? "  -- ABLATED RUN (" + ABLATIONS + "), not a shipped seed" : ""));
 })();
