@@ -93,10 +93,20 @@ if (cache.modelSig !== modelSig) {
 // than a note asking people to be careful.
 //
 // What SURVIVED all of it is the part that matters: the rungs stay monotone,
-// STRONG 63.6% > BET 57.5% > LEAN 54.4% > PASS 51.5% against a 54.3% break-even.
+// STRONG 63.6% > BET 58.0% > LEAN 53.8% > PASS 52.0% against a 54.3% break-even.
 // The model really does order games; it just orders them by less than the leaky
 // harness claimed. LEAN sitting a hair under break-even while BET sits above it
 // is the ladder cutting in close to the right place.
+//
+// THIS SWEEP IS NOT BIT-REPRODUCIBLE, and you should size your confidence
+// accordingly. Two rebuilds fifteen minutes apart, with no semantic change to
+// the model between them, moved the BET rung from 57.5% to 58.0% and the season
+// total from 23.0 units to 26.3. The cause is that the offence-side inputs are
+// still live season pulls (top-of-order OBP and per-PA rates, Statcast, platoon
+// OPS), so their values drift as games finalise and the API updates. Nothing is
+// wrong; it means roughly half a point of hit rate is measurement noise, and a
+// candidate ladder that leads by less than that has not been shown to lead at
+// all. Do not read the units column to three significant figures.
 if (cache.pitMode !== "point-in-time") {
   console.error(`LEAKED CACHE: built ${cache.at} with pitcher splits in "${cache.pitMode || "unrecorded"}" mode.`);
   console.error("Season-to-date splits contain the game being scored, so every hit rate, ROI and unit");
