@@ -54,6 +54,13 @@ const POSTED = [
 const SCREENSHOT = [
   { g: "card A", ds: 60.0, tier: "YELLOW" },
   { g: "card C", ds: 59.1, tier: "YELLOW" },
+  /* MIA@ATL, 7:15 PM Truist, ranked #2, N -102 / Y -125 / BE 50.5%. This one is
+   * worth more than the other two put together: at 62.8 it is the highest YELLOW
+   * ever seen and it cuts the green bracket from 4.1 points wide to 1.3. It also
+   * retires 62 as a candidate for his green cut — 62 would paint this card GREEN
+   * and he prints YELLOW. Note the edge is +12.3 over break-even and still not
+   * green, which is the badge-is-level-not-edge finding at its most extreme. */
+  { g: "MIA@ATL", ds: 62.8, tier: "YELLOW" },
 ];
 
 // Ordered best to worst. The whole method is that this order is the truth.
@@ -102,7 +109,7 @@ for (let i = 0; i < ORDER.length - 1; i++) {
    * observations pick the interval, they do not pick a point inside it. So print
    * the admissible set rather than a single number, and show which one we ship.
    * Printing one "derived" value here would invent a precision nothing supports:
-   * for the green cut, 61 62 63 and 64 are indistinguishable on this evidence. */
+   * for the green cut, 63 and 64 are indistinguishable on this evidence. */
   const ok = [];
   for (let c = Math.floor(lo.max) + 1; c <= hi.min; c++) if (c > lo.max) ok.push(c);
   console.log("  " + (ORDER[i] + "/" + ORDER[i + 1]).padEnd(13) +
@@ -115,7 +122,7 @@ for (let i = 0; i < ORDER.length - 1; i++) {
 
 /* THESE CUTOFFS DESCRIBE HIS SCALE AND MUST NOT BE SHIPPED AS OURS.
  *
- * The obvious next move is to drop 68/62 into DS_TIER_DEFAULTS. It was tried and
+ * The obvious next move is to drop 68/63 into DS_TIER_DEFAULTS. It was tried and
  * it is wrong, because the board's DS is our calibrated probability (pCal * 100),
  * not his rating. Over the 1283 games in nrfi-tout-vs-model.json our p runs
  * 37.9 .. 67.2 with a median of 54.2, while his plays FLOOR at 64.1. Applying his
@@ -130,7 +137,7 @@ for (let i = 0; i < ORDER.length - 1; i++) {
  * a 0-100 rating and he says so ("it's dual score out of 100 for both arms").
  * Comparing them by value is a category error. What transfers is SELECTIVITY,
  * and app.jsx sets its cuts where OUR distribution is as selective as he is. */
-const SHIPPED_HIS_SCALE = { elite: 68, green: 62, yellow: 55 };
+const SHIPPED_HIS_SCALE = { elite: 68, green: 63, yellow: 55 };
 console.log("\nSELF-CONSISTENCY OF THE DERIVED CUTOFFS (on HIS scale)\n");
 const tierOf = (ds) => ds >= SHIPPED_HIS_SCALE.elite ? "ELITE"
   : ds >= SHIPPED_HIS_SCALE.green ? "GREEN"
@@ -141,7 +148,7 @@ for (const o of all) {
   if (got !== o.tier) { console.log("  MISMATCH " + o.g + " DS " + o.ds + ": he says " + o.tier + ", these cuts say " + got); miss++; }
 }
 console.log("  " + (all.length - miss) + "/" + all.length + " of his published badges reproduced" +
-  (miss === 0 ? " by 68 / 62 / 55 — internally consistent" : ""));
+  (miss === 0 ? " by 68 / 63 / 55 — internally consistent" : ""));
 console.log("\n  app.jsx does NOT ship these. It ships 62 / 58.5 / 54, set on our own");
 console.log("  calibrated-p scale to match his 19% play rate. See DS_TIER_DEFAULTS.");
 
