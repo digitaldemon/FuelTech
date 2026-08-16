@@ -8886,7 +8886,16 @@ function FirstInning() {
   const heldSides = calloutHeld(openPositions);
   const isHeld = (r) => !!calloutHeldSide(r, heldSides);
   const held = enriched.filter(isHeld).sort(byConf);
-  const validRows = enriched.filter((r) => !r.v.thinPass && !isHeld(r));
+  // Once the first inning is over the game is no longer a decision — the four
+  // sections below are a shopping list, and a settled game is not something you
+  // can still bet. It stayed on the board for hours after the answer was known,
+  // pushing the games you can still act on off the screen. Held positions are
+  // deliberately exempt: openPositions comes from Kalshi, so a contract still
+  // listed there has not paid out yet and pinning it is the point of the block
+  // above. Grading and the record are unaffected — nrfiCalibration and the
+  // profit tracker read `rec`, never the rendered cards.
+  const decided = (r) => r.inning1runs != null && (r.currentInning > 1 || r.final);
+  const validRows = enriched.filter((r) => !r.v.thinPass && !isHeld(r) && !decided(r));
   const betNRFI = validRows.filter((r) => r.v.isBet && r.call === "NRFI").sort(byConf);
   const betYRFI = validRows.filter((r) => r.v.isBet && r.call === "YRFI").sort(byConf);
   const leans = validRows.filter((r) => r.v.strength === "LEAN").sort(byConf);
@@ -8897,7 +8906,7 @@ function FirstInning() {
 
   const card = (r) => {
     const isOpen = !!open[r.gamePk];
-    const graded = r.inning1runs != null && (r.currentInning > 1 || r.final);
+    const graded = decided(r);
     const openPos = r.market && openPositions && !openPositions.error
       ? (openPositions.positions || []).find((p) => p.ticker === r.market.ticker)
       : null;
