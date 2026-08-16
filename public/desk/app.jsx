@@ -7545,7 +7545,31 @@ function kellyNRFI(pModel, yesPrice, call) {
 // refactor that silently raised the BET floor by ten points and dropped real
 // picks to LEAN. Do not retune these without a backtest; a threshold move is a
 // betting decision, not a cleanup.
-const NRFI_STRONG_MIN = 63, NRFI_BET_MIN = 55, NRFI_LEAN_MIN = 52;
+//
+// BET floor raised 55 -> 57 on 2026-08-15, by walk-forward test, not by sweep.
+// scripts/nrfi-ladder-sweep.js liked a three-knob "65/57/53" best on all 1282
+// cached games, but that is the maximum of seven candidates scored on the sample
+// that chose them, which is biased upward by construction. scripts/
+// nrfi-ladder-split.js re-ran it chronologically — choose on the early slates,
+// score on later ones never seen — at cuts 0.5/0.6/0.7. Two things came out:
+//
+//   1. STRONG and LEAN earn nothing. "65/57/53" and "57 alone" played the
+//      IDENTICAL bets in every test half (136/104/79, same rate, same units).
+//      The whole effect was the BET floor, so only the BET floor moves here.
+//   2. Read the DISJOINT band, not the nested ladder. Rates rising with the cut
+//      is partly arithmetic — drop a pool's worst games and the rest must look
+//      better. The honest question is whether the games this raise DROPS were
+//      losers. They were: the 55-57 band went 52.7/52.6/50.9% across the three
+//      test halves against a 54.3% break-even at -119. But the 55-59 and 55-60
+//      bands sit ABOVE break-even (+2.2 to +3.3pp), so cutting higher than 58
+//      throws away profitable volume — which is exactly what the nested table
+//      made look best, and why it could not be trusted.
+//
+// Expected effect: ~4.7 plays/day at 58.4% becomes ~2.7/day at 67.3%. Volume is
+// roughly halved on purpose. The caveats, stated because they are load-bearing:
+// one season, and the three test halves are nested inside each other, so this is
+// about one measurement (z~1.1), not three independent ones.
+const NRFI_STRONG_MIN = 63, NRFI_BET_MIN = 57, NRFI_LEAN_MIN = 52;
 // The badge is a heat scale, not a verdict, so it carries one extra mid-band cut
 // that has no counterpart on the ladder.
 const NRFI_TIER_STRONG = 57;
