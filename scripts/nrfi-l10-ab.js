@@ -5,9 +5,11 @@
 // the new one. Same data, both code paths — the only difference measured is the
 // code, which is the only way to tell a fix from live-data drift.
 const { loadDeskModel } = require("./nrfi-model-load");
+const { installLocalApi } = require("./nrfi-local-api");
 const c = loadDeskModel();
 const realFetch = global.fetch;
-c.fetch = (u, o) => (String(u).startsWith("/") ? Promise.reject(new Error("local api")) : realFetch(u, o));
+// Serves /api/desk/savant for real and refuses the rest loudly; see nrfi-local-api.js
+const localApi = installLocalApi(c);
 
 // Verbatim pre-fix body. Frozen witness — do not tidy.
 function oldFactor(rolling) {

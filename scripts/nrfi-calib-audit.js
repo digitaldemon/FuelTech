@@ -1,11 +1,22 @@
 // Is the SHIPPED model calibrated? Measured against finished slates.
 //
-// NRFI_CALIB_SEED (c = +0.050, n = 4015, "backtest-v5") was fit on the
-// simplified lambda-model in app/api/desk/nrfi/backtest/route.ts, not on the
-// evaluator that ships. It is applied as a flat logit shift to every prediction,
-// so if its sign or size is wrong the whole board is pushed off the base rate --
-// and the verdict ladder is a set of fixed thresholds, so a systematic push
-// moves picks across BET/LEAN/PASS lines for no reason connected to the game.
+// NRFI_CALIB_SEED is applied as a flat logit shift to every prediction, so if
+// its sign or size is wrong the whole board is pushed off the base rate -- and
+// the verdict ladder is a set of fixed thresholds, so a systematic push moves
+// picks across BET/LEAN/PASS lines for no reason connected to the game. The
+// value is READ from app.jsx below (c.read("NRFI_CALIB_SEED")), never retyped;
+// this header used to describe it as "+0.050, n = 4015, backtest-v5" long after
+// the shipped seed had become -0.063 on 558 games, which is the same drift that
+// once had desk-nrfi-backtest.js correcting predictions in the wrong direction.
+//
+// THIS SCRIPT WAS NOT SCORING THE SHIPPED MODEL UNTIL 2026-08-15, despite the
+// first line of this file. It carried the same relative-URL fetch stub as eight
+// other analysis scripts, so /api/desk/savant failed, ctx.awayPeri/homePeri came
+// back null, and pitchSkillFactor returned exactly 1.00 on every game. That
+// factor is the single largest source of movement in the model (~37% of it), so
+// every calibration verdict this file produced before that date was fit to a
+// model missing its dominant pitcher term. Statcast now arrives for real through
+// nrfi-local-api.js. Treat any recorded number from an earlier run as void.
 //
 // LEAKAGE, STATED UP FRONT: scanNrfi's pitcher and team feeds are season-to-date
 // and are not rewound, so a scan of a past date sees stats that include that
@@ -17,11 +28,13 @@
 // where leakage is smallest.
 const path = require("path");
 const { loadDeskModel } = require("./nrfi-model-load");
+const { installLocalApi } = require("./nrfi-local-api");
 
 const DAYS = Number(process.argv[2] || 10);
 const c = loadDeskModel();
 const realFetch = global.fetch;
-c.fetch = (u, o) => (String(u).startsWith("/") ? Promise.reject(new Error("local api")) : realFetch(u, o));
+// Serves /api/desk/savant for real and refuses the rest loudly; see nrfi-local-api.js
+const localApi = installLocalApi(c);
 
 const iso = (d) => d.toISOString().slice(0, 10);
 const lg = (p) => Math.log(p / (1 - p));
@@ -102,4 +115,10 @@ const pct = (x) => (x * 100).toFixed(1) + "%";
   console.log("  AUC (leakage-inflated):   " + auc.toFixed(4) + "   (0.5 = coin flip)");
   console.log("\n  spread: " + pct(sorted[0].p) + " .. " + pct(sorted[n - 1].p) +
     "   sd " + Math.sqrt(rows.reduce((s, r) => s + Math.pow(r.p - meanP, 2), 0) / n).toFixed(4));
+  // Printed unconditionally: a reader has to be able to tell which inputs the
+  // model was actually handed. Empty when everything was reachable.
+  const note = localApi.note();
+  if (note) console.log(note);
+  console.log("\n  Statcast peripherals: " + (localApi.served().includes("/api/desk/savant")
+    ? "LIVE (pitchSkillFactor exercised)" : "!! NOT SERVED — skill term is pinned at 1.00, verdict is void"));
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -2,9 +2,11 @@
 // Runs against completed games, where the truth is knowable: the number of runs
 // the callout would have announced must equal the line score's 1st-inning total.
 const { loadDeskModel } = require("./nrfi-model-load");
+const { installLocalApi } = require("./nrfi-local-api");
 const c = loadDeskModel();
 const realFetch = global.fetch;
-c.fetch = (u, o) => (String(u).startsWith("/") ? Promise.reject(new Error("local api")) : realFetch(u, o));
+// Serves /api/desk/savant for real and refuses the rest loudly; see nrfi-local-api.js
+const localApi = installLocalApi(c);
 
 const date = process.argv[2] || new Date(Date.now() - 36e5 * 30).toISOString().slice(0, 10);
 let fails = 0;

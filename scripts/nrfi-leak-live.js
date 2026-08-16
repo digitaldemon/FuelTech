@@ -1,8 +1,10 @@
 // Print the leak the card will show, for today's real starters.
 const { loadDeskModel } = require("./nrfi-model-load");
+const { installLocalApi } = require("./nrfi-local-api");
 const c = loadDeskModel();
 const realFetch = global.fetch;
-c.fetch = (u, o) => (String(u).startsWith("/") ? Promise.reject(new Error("local api")) : realFetch(u, o));
+// Serves /api/desk/savant for real and refuses the rest loudly; see nrfi-local-api.js
+const localApi = installLocalApi(c);
 
 (async () => {
   const rows = await c.scanNrfi();

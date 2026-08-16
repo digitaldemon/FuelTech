@@ -13,13 +13,15 @@
 //   git show <sha>:public/desk/app.js > .ab-before.js
 const path = require("path");
 const { loadDeskModel } = require("./nrfi-model-load");
+const { installLocalApi } = require("./nrfi-local-api");
 
 const BUNDLES = [["before", process.argv[2] || path.join(__dirname, "..", ".ab-before.js")],
                  ["shipped", path.join(__dirname, "..", "public", "desk", "app.js")]];
 
 function attach(c) {
   const realFetch = global.fetch;
-  c.fetch = (u, o) => (String(u).startsWith("/") ? Promise.reject(new Error("local api")) : realFetch(u, o));
+  // Serves /api/desk/savant for real and refuses the rest loudly; see nrfi-local-api.js
+  const localApi = installLocalApi(c);
   return c;
 }
 
