@@ -33,6 +33,9 @@ const KNOWN_GLOBALS = new Set([
   "decodeURIComponent", "encodeURI", "decodeURI", "atob", "btoa", "alert",
   "performance", "process", "module", "require", "exports", "self", "EventSource",
   "WebSocket", "Notification", "MutationObserver", "IntersectionObserver",
+  // Worker drives the callout metronome; a hidden tab throttles a main-thread
+  // setInterval to one wake per minute and leaves Worker timers alone.
+  "Worker", "AudioContext", "webkitAudioContext", "SpeechSynthesisUtterance",
   // Vendored UMD globals + React hooks pulled off the React namespace.
   "React", "ReactDOM", "useState", "useEffect", "useRef", "useMemo",
   "useCallback", "useContext", "useReducer", "useLayoutEffect", "Fragment",

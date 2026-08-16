@@ -1142,7 +1142,30 @@ const CALLOUT_FIELDS="gameData,status,abstractGameState,liveData,linescore,curre
 // cut bucketed the buster to 10s, which silently capped freshness at 10s.
 const r=await fetch(url,{cache:"no-store"});if(r.ok)f=await r.json();}catch{/* fall through to the proxy */}if(!f){try{f=await getJson(px(url));}catch{return null;}}const ls=f.liveData&&f.liveData.linescore||{};return{plays:firstInningPlays(f),pitches:firstInningPitches(f),inning:ls.currentInning||0,half:String(ls.inningState||""),// The inning is over once play has moved past it — not when outs hit 3,
 // which is briefly true mid-changeover in the feed.
-past1:(ls.currentInning||0)>1||String(f.gameData&&f.gameData.status&&f.gameData.status.abstractGameState||"").toLowerCase()==="final"};}// A play's endTime is when it actually finished, so the callout can tell a play
+past1:(ls.currentInning||0)>1||String(f.gameData&&f.gameData.status&&f.gameData.status.abstractGameState||"").toLowerCase()==="final"};}/* The callout metronome, driven from a Worker rather than the main thread.
+ *
+ * MEASURED with the desk tab hidden for 130 seconds: a main-thread
+ * setInterval(1200) fired 8 times with a max gap of 60,009ms — Chrome's
+ * intensive throttling grants a hidden tab one timer wake per MINUTE. The
+ * identical interval inside a Worker fired 109 times, max gap 1,215ms against a
+ * nominal 1,200. Worker timers are exempt from intensive throttling, and the
+ * message events they post are not timer tasks, so the main thread runs the
+ * poll on arrival even while the tab is hidden. That is the proof this works:
+ * the receiving handler ran 109 times on a throttled main thread.
+ *
+ * This — not the interval — is where the callout's controllable latency lived.
+ * Also measured, against seven live games: statsapi first publishes a pitch a
+ * median 21.1s after that pitch ends (317 pitch events, polled at 250ms, direct
+ * fetch, 103ms round trip, min age 11.1s). So the feed floor is ~21s and the
+ * interval adds interval/2 ≈ 600ms on top of it. Halving the interval buys
+ * 300ms of 21,600. Not being frozen for a minute buys up to 59 seconds. Faster
+ * polling is not the lever; staying awake is.
+ *
+ * The Worker is a metronome and nothing more — it posts a tick, the main thread
+ * does the fetching. Moving the fetch in too would be a far larger change for
+ * no gain, because the fetch was never what got throttled. */function calloutMetronome(ms,onTick){let w=null,id=null;try{const url=URL.createObjectURL(new Blob(["setInterval(function(){postMessage(0)},"+ms+")"],{type:"text/javascript"}));w=new Worker(url);URL.revokeObjectURL(url);w.onmessage=()=>onTick();}catch{/* No Worker, or a CSP that refuses blob: workers. Falling back to the main
+     * thread is the OLD behaviour — correct, just throttled while hidden — so
+     * the callout degrades rather than going silent. */w=null;id=setInterval(onTick,ms);}return()=>{if(w)w.terminate();if(id)clearInterval(id);};}// A play's endTime is when it actually finished, so the callout can tell a play
 // that just happened from one it is only now seeing — the difference between
 // live and a recap.
 function playAgeMs(p){const t=p&&p.about&&p.about.endTime?Date.parse(p.about.endTime):NaN;return isFinite(t)?Date.now()-t:Infinity;}/* Which games the callout follows, and on whose side. Lifted out of the polling
@@ -2938,14 +2961,20 @@ const kelly=market&&!started?kellyNRFI(pFinal,market.yesPrice,call):null;const t
    * round trip each put the last game seconds behind the first), on a 2.5s
    * interval, against the 8KB field-projected feed rather than the 537KB one.
    * statsapi itself publishes a play within a second or two of it ending, so
-   * this tracks the park about as closely as a data feed can. *//* 1200ms. The poll interval is pure additive lag — a pitch lands uniformly
-   * inside the gap, so the interval costs half itself on average before the
-   * callout has even seen the event, and 2.5s of that dominated everything else
-   * in the path. The cost of halving it is request rate, and that is bounded in
-   * a way that matters here: this effect only runs while the callout is ON, and
-   * only against games actually in the 1st inning, so it is a handful of 8KB
-   * field-projected requests, not the whole board. inFlight already absorbs a
-   * round trip that outlasts the interval by skipping rather than stacking. */const CALLOUT_POLL_MS=1200;// Anything older than this was over before the callout saw it. Reading it out
+   * this tracks the park about as closely as a data feed can. *//* 1200ms, and LOWERING THIS IS NOT THE WAY TO MAKE THE CALLOUT FASTER.
+   *
+   * The interval is pure additive lag — a pitch lands uniformly inside the gap,
+   * so it costs interval/2 on average — which is why this came down from 2.5s.
+   * But it is now a rounding error against the feed. Measured against seven
+   * live games at a 250ms poll (4.8x faster than this) with a direct fetch and
+   * a 103ms round trip: statsapi first publishes a pitch a MEDIAN 21.1 SECONDS
+   * after that pitch ends, minimum 11.1s over 317 pitch events. The publication
+   * lag is MLB's and no polling rate touches it.
+   *
+   * So the honest budget is ~21,000ms of feed plus ~600ms of this. Halving the
+   * interval saves 300ms of 21,600 and doubles the request rate for it. The
+   * lever that actually mattered was the metronome being frozen by background
+   * throttling — see calloutMetronome, which was worth up to 59 seconds. */const CALLOUT_POLL_MS=1200;// Anything older than this was over before the callout saw it. Reading it out
 // now would put the voice behind the game and keep it there for the rest of
 // the inning — the backlog never drains, it just delays everything after it.
 const CALLOUT_STALE_MS=45000;const[callout,setCallout]=useState(false);/* The browser refusing to speak is the one callout failure a listener cannot
@@ -3025,13 +3054,13 @@ if(runs>0){speak(tag+(loud&&line?line+verdict:verdict.slice(2)),true);st.settled
 // still gets announced; if it does not, the listener has already heard it.
 st.n=Math.max(st.n,live.plays.length);if(!st.settled&&live.past1){speak(tag+"First inning is clean in "+r.home+". N-R-F-I — "+(side==="NRFI"?mine?"you are a winner":"that is a winner":mine?"that ticket is dead":"the desk was wrong")+".",true);st.settled=true;}spoken.current.set(r.gamePk,st);}async function tick(){// A slow round trip must not stack ticks on top of each other; skipping is
 // correct because the next poll is 2.5s away and reads the same state.
-if(inFlight)return;inFlight=true;try{await Promise.all(tracked().map(pollGame));}finally{inFlight=false;}}tick();const id=setInterval(tick,CALLOUT_POLL_MS);/* Foregrounding the tab re-anchors the call immediately instead of waiting
-     * out whatever is left of a throttled interval. The keepalive above removes
-     * the 60-second stall but not all background throttling — gaps of 20s still
-     * happen with it running — so the moment the tab is visible again is the
-     * moment the poll is cheapest and most useful, and it should not be spent
-     * waiting. Every other polling loop in this file already does this; the
-     * callout, the one loop where latency is the entire product, did not. */const onVis=()=>{if(!document.hidden)tick();};document.addEventListener("visibilitychange",onVis);return()=>{stopped=true;clearInterval(id);document.removeEventListener("visibilitychange",onVis);};// Positions load asynchronously and usually land AFTER the board does, so
+if(inFlight)return;inFlight=true;try{await Promise.all(tracked().map(pollGame));}finally{inFlight=false;}}tick();const stopMetronome=calloutMetronome(CALLOUT_POLL_MS,tick);/* Foregrounding the tab re-anchors the call immediately rather than waiting
+     * out the rest of an interval. This mattered enormously when the metronome
+     * was a main-thread setInterval and a hidden tab got one wake a minute; with
+     * the Worker driving it the interval no longer stretches, so this is now a
+     * cheap belt-and-braces rather than the difference between a live call and a
+     * recap. Kept because a visible tab is exactly when the poll is most useful,
+     * and every other polling loop in this file already does it. */const onVis=()=>{if(!document.hidden)tick();};document.addEventListener("visibilitychange",onVis);return()=>{stopped=true;stopMetronome();document.removeEventListener("visibilitychange",onVis);};// Positions load asynchronously and usually land AFTER the board does, so
 // they have to be in the dep list — otherwise the effect closes over an
 // empty position set and never picks the held games up.
 //
