@@ -10,11 +10,87 @@
 // of a slice list that stopped matching the model.
 const fs = require("fs");
 const path = require("path");
-const src = fs.readFileSync(path.join(__dirname, "..", "public", "desk", "app.jsx"), "utf8");
+/* Line endings are normalised HERE, at the read, not at the hash.
+ *
+ * They used to be normalised inside sha(), which was enough while the only
+ * consumer was a hash. It stopped being enough the moment comment stripping
+ * (below) needed byte offsets: babel reports offsets into the text IT parsed,
+ * so the text being parsed and the text being sliced have to be the same
+ * bytes. Normalising once at the read makes every offset in this file mean the
+ * same thing. LF vs CRLF is invisible to the eval in makeVerdict either way. */
+const readSrc = (p) => fs.readFileSync(p, "utf8").replace(/\r\n/g, "\n");
+const src = readSrc(path.join(__dirname, "..", "public", "desk", "app.jsx"));
 function slice(a, b) {
   const i = src.indexOf(a); if (i < 0) throw new Error("start marker not found: " + a);
   const j = src.indexOf(b, i); if (j < 0) throw new Error("end marker not found after: " + a);
   return src.slice(i, j + b.length);
+}
+/* Comment-blanked twin of a source file, for fingerprinting only.
+ *
+ * WHY: modelSig hashed raw slice text, so it hashed prose. Measured, not
+ * assumed — the bundle at 89bb97f vs 3ba5f22 hashed to 7b2ae5916044 vs
+ * 65ce303d42db, but with comments removed both came to 2bf2de1d343f. The
+ * entire difference was a comment I had just written. Raw bundle 79,862 bytes,
+ * 46,485 with prose removed: 42% of what the guard was watching could not
+ * change a single cached number. A pure documentation commit invalidated a
+ * 95-slate cache and cost a multi-hour rebuild, and a guard expensive enough
+ * to route around is a guard that gets routed around.
+ *
+ * HOW, and why not a regex: a hand-rolled stripper has to get strings,
+ * template literals, regex literals and division-vs-regex ambiguity right, and
+ * when it gets one wrong it eats code — which is UNDER-fingerprinting, the
+ * failure that is silent and wrong rather than loud and slow. So the ranges
+ * come from babel's own parse of the whole file. @babel/standalone is already
+ * a dependency (it is what desk-build.js runs on), so this adds nothing to
+ * package.json.
+ *
+ * The twin is the SAME LENGTH as the original — comment bytes are overwritten
+ * with a sentinel rather than deleted, and newlines inside block comments are
+ * left alone. That is what lets every existing indexOf offset keep working:
+ * markers are located in `src` and the identical range is read out of
+ * `srcBlank`. The length assertion below is not decoration; if it ever fails,
+ * every slice is silently reading the wrong bytes. */
+/* A sentinel, not a space, and built at runtime so no raw NUL byte ever sits
+ * in this file — one does make grep call the whole file binary.
+ *
+ * It has to be distinguishable from ordinary whitespace because sigText()
+ * below drops lines that are nothing BUT removed comment. Blanking to spaces
+ * would leave a whitespace-only line behind for every comment line, so
+ * REFLOWING a paragraph — three lines becoming four — would still move the
+ * fingerprint, which is most of what this change exists to stop. A line that
+ * holds a sentinel is by construction a line that held a comment, so it
+ * cannot be the interior of a template literal, which is the one place where
+ * dropping a whitespace-only line would change what the code means. */
+const BLANK = String.fromCharCode(0);
+const blankComments = (txt, what) => {
+  const parser = require("@babel/standalone").packages.parser;
+  let ast;
+  try {
+    ast = parser.parse(txt, { sourceType: "unambiguous", plugins: ["jsx"] });
+  } catch (e) {
+    throw new Error("modelSig cannot strip comments from " + what + ": babel failed to parse it (" +
+      e.message + "). Fix the syntax; do not fall back to hashing raw text, because " +
+      "a silent fallback turns every later prose edit back into a cache rebuild.");
+  }
+  const cs = ast.comments || [];
+  if (!cs.length) {
+    throw new Error("modelSig found zero comments in " + what + " — this file is heavily commented, " +
+      "so zero means the parse returned something other than what was read, not that the prose is gone.");
+  }
+  const out = txt.split("");
+  for (const c of cs) {
+    for (let k = c.start; k < c.end; k++) if (out[k] !== "\n") out[k] = BLANK;
+  }
+  const blanked = out.join("");
+  if (blanked.length !== txt.length) throw new Error("comment blanking changed the length of " + what);
+  return blanked;
+};
+const srcBlank = blankComments(src, "app.jsx");
+// Same markers, same offsets, prose removed.
+function sliceBlank(a, b) {
+  const i = src.indexOf(a); if (i < 0) throw new Error("start marker not found: " + a);
+  const j = src.indexOf(b, i); if (j < 0) throw new Error("end marker not found after: " + a);
+  return srcBlank.slice(i, j + b.length);
 }
 /* Marker for a numeric const declaration, matched by NAME rather than by value.
  *
@@ -673,31 +749,74 @@ function makeVerdict(overrides) {
 // its math AND the data it is handed; a fingerprint over half of that is a
 // fingerprint that lets the other half change in silence.
 const dataSlice = (() => {
-  const src = fs.readFileSync(__filename, "utf8");
-  const a = src.indexOf("// ---- data (Node fetchers");
-  const b = src.indexOf("async function buildCtx(");
+  const self = readSrc(__filename);
+  const a = self.indexOf("// ---- data (Node fetchers");
+  const b = self.indexOf("async function buildCtx(");
   if (a < 0 || b < 0 || b <= a) throw new Error("could not slice the fetcher section for modelSig");
-  return src.slice(a, b);
+  // Blanked twin of THIS file, same offsets — see blankComments. This section
+  // is 52% prose, so hashing it raw made every note written here a rebuild.
+  return blankComments(self, "nrfi-model-lib.js").slice(a, b);
 })();
 const sigOf = (tag) => VERDICT_SLICES.filter((s) => s[2] === tag)
-  .map(([a, b]) => slice(a, b)).join("\n");
-/* Normalise line endings before hashing, or the fingerprint tracks the checkout
- * rather than the code.
+  .map(([a, b]) => sliceBlank(a, b)).join("\n");
+/* What actually gets hashed: code, with the prose and the layout taken out.
  *
- * These inputs are read straight off disk, and git on Windows rewrites LF to
- * CRLF on checkout (core.autocrlf). So the same commit hashes differently on a
- * Windows clone than on CI, and a plain `git checkout` can invalidate a
- * 1282-game cache without a byte of logic having changed. Found the hard way: a
- * refactor that provably left the model text byte-identical still moved the sig,
- * and the entire difference was 459 carriage returns inside dataSlice.
+ * Line endings first. These inputs are read off disk, and git on Windows
+ * rewrites LF to CRLF on checkout (core.autocrlf), so the same commit hashed
+ * differently on a Windows clone than on CI and a plain `git checkout` could
+ * invalidate a 1282-game cache without a byte of logic having changed. Found
+ * the hard way: a refactor that provably left the model text byte-identical
+ * still moved the sig, and the entire difference was 459 carriage returns
+ * inside dataSlice. That normalisation now happens at the read (readSrc), so
+ * the repeat here is only for safety on any string that skipped it.
+ *
+ * Then the comment residue. Comment bytes have already been overwritten with
+ * BLANK sentinels by blankComments; this is where they actually leave:
+ *   - a line that is only sentinels and whitespace was a whole-line comment,
+ *     so it goes entirely, which is what makes reflowing a paragraph free;
+ *   - a run of sentinels mid-line was a trailing or inline comment, so it
+ *     collapses to one space, which keeps `a/*c*\/b` from becoming `ab`;
+ *   - leading and trailing whitespace goes, so re-indenting is free too.
+ * Newlines between surviving lines are kept, because ASI is real and
+ * `return\n5` does not mean `return 5`.
  *
  * A fingerprint that reports a change nobody made is the same failure as one
  * that misses a change somebody did. It just costs rebuilds instead of
  * correctness, and rebuilds are what make people delete the guard. */
+const sigText = (s) => String(s).replace(/\r\n/g, "\n").split("\n")
+  .map((l) => l.replace(new RegExp(BLANK + "+", "g"), " ").trim())
+  .filter((l) => l !== "")
+  .join("\n");
 const sha = (s) => require("crypto").createHash("sha1")
-  .update(String(s).replace(/\r\n/g, "\n")).digest("hex").slice(0, 12);
+  .update(sigText(s)).digest("hex").slice(0, 12);
+// Same slices as `model`, prose removed. `model` itself stays raw because it
+// is eval'd for the real constants; only the fingerprint reads the twin.
+const modelBlank = MODEL_SLICES.map(([a, b]) => sliceBlank(a, b)).join("\n");
+/* Proof, at load time, that the stripping is doing something and not eating
+ * code. Cheap enough to run always, and it is the only thing standing between
+ * "comments are excluded" and "comments are excluded, probably".
+ *
+ * The direction matters: if this stripper ever swallowed real code the guard
+ * would go quiet about changes that do matter, which is the silent failure.
+ * So assert both halves — that prose actually left, and that every identifier
+ * the model is made of is still present to be hashed. */
+(() => {
+  const raw = MODEL_SLICES.map(([a, b]) => slice(a, b)).join("\n");
+  const cut = raw.length - modelBlank.replace(new RegExp(BLANK, "g"), "").length;
+  if (cut <= 0) {
+    throw new Error("modelSig comment stripping removed nothing from the model bundle — " +
+      "blankComments is not reaching these slices, and the fingerprint is back to hashing prose.");
+  }
+  const names = ["nrfiEvaluate", "PITCHER_BT", "NRFI_SIM_W", "weatherPark", "pitcherI01Profile"];
+  const missing = names.filter((n) => !modelBlank.includes(n));
+  if (missing.length) {
+    throw new Error("modelSig comment stripping removed CODE, not just comments — " +
+      missing.join(", ") + " vanished from the stripped bundle. This under-fingerprints, " +
+      "which fails silently. Do not relax this check.");
+  }
+})();
 // What produced the cached numbers. A cache carrying a different one is stale.
-const modelSig = sha(model + sigOf("cache") + dataSlice);
+const modelSig = sha(modelBlank + sigOf("cache") + dataSlice);
 // What interprets them. Report it; never gate a cache on it.
 const ladderSig = sha(sigOf("ladder"));
 
