@@ -1205,7 +1205,16 @@ function playRuns(p,prev){const s=p.result||{},q=prev&&prev.result||{};const now
 // velocity that makes it sound like a broadcast rather than a scoreboard.
 const CALLOUT_FIELDS="gameData,status,abstractGameState,liveData,linescore,currentInning,"+"inningState,plays,allPlays,about,inning,isComplete,endTime,result,description,awayScore,homeScore,"+// pitch level: the events inside each at-bat, the call on each one, the count
 // it produced, its velocity, and who is hitting.
-"playEvents,isPitch,playId,atBatIndex,details,call,code,count,balls,strikes,"+"pitchData,startSpeed,matchup,batter,fullName";/* A poll with no deadline is not a poll, it is a way to stop polling.
+"playEvents,isPitch,playId,atBatIndex,details,call,code,count,balls,strikes,"+"pitchData,startSpeed,matchup,batter,fullName,"+/* The on-screen diamond: outs and who is standing where. `balls`/`strikes`
+   * were already on this list for the pitch calls and the projection filters by
+   * LEAF NAME, so linescore.balls and linescore.strikes arrive free — only
+   * `outs` and the `offense` subtree are new here. Measured cost of the four
+   * added names on a completed game: under 200 bytes.
+   *
+   * Read off the linescore rather than reconstructed from allPlays, and that is
+   * not laziness: the count DURING an at-bat exists nowhere in allPlays until
+   * the at-bat completes, so a diamond built from the play list would sit on
+   * 0-0 through every pitch and then jump. The linescore is the live edge. */"offense,first,second,third,outs";/* A poll with no deadline is not a poll, it is a way to stop polling.
  *
  * fetch() has no default timeout. A statsapi request that never answers — a
  * dropped connection on a phone waking from sleep, a stalled TLS handshake —
@@ -1219,7 +1228,10 @@ const CALLOUT_FIELDS="gameData,status,abstractGameState,liveData,linescore,curre
  * for the same state, so a request still outstanding at 6s has already been
  * superseded five times over. The one thing to be careful of is the proxy
  * fallback below — it gets its own budget rather than sharing this one, or a
- * slow direct leg would leave the fallback no time to succeed. */const CALLOUT_FETCH_MS=6000;function calloutSignal(){if(typeof AbortController==="undefined")return{signal:undefined,done:()=>{}};const c=new AbortController();const t=setTimeout(()=>c.abort(),CALLOUT_FETCH_MS);return{signal:c.signal,done:()=>clearTimeout(t)};}async function fetchFirstInning(gamePk){const url="https://statsapi.mlb.com/api/v1.1/game/"+gamePk+"/feed/live?fields="+CALLOUT_FIELDS+"&_="+Date.now();let f=null;const a=calloutSignal();try{// no-store, not just a cache-buster: statsapi sends cache headers and the
+ * slow direct leg would leave the fallback no time to succeed. */const CALLOUT_FETCH_MS=6000;function calloutSignal(){if(typeof AbortController==="undefined")return{signal:undefined,done:()=>{}};const c=new AbortController();const t=setTimeout(()=>c.abort(),CALLOUT_FETCH_MS);return{signal:c.signal,done:()=>clearTimeout(t)};}// See the note at the call site. Names are compared rather than ids because the
+// field projection carries fullName for every player leaf already; adding `id`
+// to it for this one check would enlarge every poll on the board.
+function calloutBatter(off){const b=off&&off.batter&&off.batter.fullName||"";if(!b)return"";for(const k of["first","second","third"]){if(off[k]&&off[k].fullName===b)return"";}return b;}async function fetchFirstInning(gamePk){const url="https://statsapi.mlb.com/api/v1.1/game/"+gamePk+"/feed/live?fields="+CALLOUT_FIELDS+"&_="+Date.now();let f=null;const a=calloutSignal();try{// no-store, not just a cache-buster: statsapi sends cache headers and the
 // browser will happily serve a stale body to a URL it has seen. An earlier
 // cut bucketed the buster to 10s, which silently capped freshness at 10s.
 const r=await fetch(url,{cache:"no-store",signal:a.signal});if(r.ok)f=await r.json();}catch{/* fall through to the proxy */}finally{a.done();}// Own budget, own abort. getJson is not used here because it has no deadline
@@ -1229,7 +1241,44 @@ if(!f){const b=calloutSignal();try{const r=await fetch(px(url),{cache:"no-store"
 // the callout treat a game that had not begun as a live 1st inning.
 inning:abst==="Preview"?0:ls.currentInning||0,half:abst==="Preview"?"":String(ls.inningState||""),// The inning is over once play has moved past it — not when outs hit 3,
 // which is briefly true mid-changeover in the feed.
-past1:(ls.currentInning||0)>1||abst.toLowerCase()==="final"};}/* The callout metronome, driven from a Worker rather than the main thread.
+past1:(ls.currentInning||0)>1||abst.toLowerCase()==="final",/* Count, outs and base state for the diamond. Null before first pitch for
+     * the same reason `inning` is zeroed there: MLB serves a linescore shell on
+     * a Preview game, and 0-0 with the bases empty is indistinguishable from a
+     * real 0-0 — the display would claim to be watching a game that has not
+     * started.
+     *
+     * Occupancy is presence, not truthiness of a value: statsapi OMITS
+     * offense.first entirely when first base is empty rather than sending null,
+     * so there is no empty-but-present case to guard against. Verified against
+     * the feed — a play with a runner carries the base object, one without has
+     * no such key at all. */state:abst==="Preview"?null:{balls:ls.balls||0,strikes:ls.strikes||0,outs:ls.outs||0,on1:!!(ls.offense&&ls.offense.first),on2:!!(ls.offense&&ls.offense.second),on3:!!(ls.offense&&ls.offense.third),/* A man cannot be batting and standing on second, and for about one tick
+       * after a hit statsapi says he is. Observed in the 1st at Seattle:
+       *
+       *   {"batter":{"fullName":"Dominic Canzone"},
+       *    "second":{"fullName":"Dominic Canzone"}}
+       *
+       * The base state advances first and `batter` trails by a poll or two.
+       * Bases are the half of this the bet turns on, so they win the conflict
+       * and the name is dropped until the feed catches up — the diamond loses a
+       * line for a second rather than naming the wrong man at the plate. */batter:calloutBatter(ls.offense)}};}/* The count and the bases, drawn.
+ *
+ * The callout says what just happened; this says where the game stands, which
+ * is the thing a listener reconstructs in their head from the last four calls
+ * and gets wrong. Two runners on with one out is the state that decides an
+ * NRFI, and nothing in the audio states it outright.
+ *
+ * COLOUR CARRIES THE BET, not the baseball. Occupied bases are amber because a
+ * runner is a threat to the position; recorded outs are moss because an out is
+ * progress toward a clean inning. That is the opposite of a broadcast
+ * scoreboard, where outs are the bad news — this desk is on NRFI far more often
+ * than not, and a reader glancing at it should see green-is-good.
+ *
+ * Deliberately not a live-updating <canvas> or an animation: it re-renders on
+ * state CHANGE only (see the publisher in the poll), which during a first
+ * inning is roughly once per pitch, not once per 1.2s tick. */function CalloutDiamond({label,half,st}){// rotate(45) on a square gives the base; drawing four rotated rects is
+// cheaper to read than four hand-computed diamond paths.
+const base=(cx,cy,on)=>/*#__PURE__*/React.createElement("rect",{x:cx-7.5,y:cy-7.5,width:15,height:15,transform:"rotate(45 "+cx+" "+cy+")",fill:on?"var(--amber)":"rgba(255,255,255,0.05)",stroke:on?"var(--amber)":"rgba(255,255,255,0.22)",strokeWidth:2});const on=[st.on1&&"1st",st.on2&&"2nd",st.on3&&"3rd"].filter(Boolean);// One sentence of the same facts, for a screen reader and for the hover.
+const spoken=(half?half+" 1st, ":"")+st.balls+" and "+st.strikes+", "+st.outs+(st.outs===1?" out, ":" out, ")+(on.length?"runners on "+on.join(" and "):"bases empty")+(st.batter?", "+st.batter+" batting":"");return/*#__PURE__*/React.createElement("div",{title:label+" — "+spoken,"aria-label":label+" — "+spoken,role:"img",style:{display:"flex",alignItems:"center",gap:9,padding:"6px 10px 6px 6px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10}},/*#__PURE__*/React.createElement("svg",{viewBox:"0 0 100 100",width:54,height:54,style:{flex:"0 0 auto"}},/*#__PURE__*/React.createElement("polygon",{points:"50,84 79,55 50,26 21,55",fill:"rgba(116,203,148,0.06)",stroke:"rgba(255,255,255,0.13)",strokeWidth:2}),base(79,55,st.on1),base(50,26,st.on2),base(21,55,st.on3),/*#__PURE__*/React.createElement("rect",{x:44.5,y:78.5,width:11,height:11,transform:"rotate(45 50 84)",fill:"rgba(255,255,255,0.09)",stroke:"rgba(255,255,255,0.20)",strokeWidth:2})),/*#__PURE__*/React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:2,minWidth:0}},/*#__PURE__*/React.createElement("div",{style:{fontSize:10,letterSpacing:"0.06em",color:"var(--dim)",fontFamily:"'JetBrains Mono',monospace",whiteSpace:"nowrap"}},label,half?" · "+half+" 1st":""),/*#__PURE__*/React.createElement("div",{style:{display:"flex",alignItems:"center",gap:8}},/*#__PURE__*/React.createElement("span",{style:{fontSize:19,fontWeight:700,lineHeight:1,color:"var(--bone)",fontVariantNumeric:"tabular-nums",fontFamily:"'JetBrains Mono',monospace"}},st.balls,"\u2013",st.strikes),/*#__PURE__*/React.createElement("span",{style:{display:"flex",gap:3}},[0,1].map(i=>/*#__PURE__*/React.createElement("span",{key:i,style:{width:7,height:7,borderRadius:"50%",display:"inline-block",background:i<st.outs?"var(--moss)":"rgba(255,255,255,0.13)"}}))),/*#__PURE__*/React.createElement("span",{style:{fontSize:9.5,color:"var(--dim)",letterSpacing:"0.06em"}},st.outs===1?"1 OUT":st.outs+" OUTS")),st.batter&&/*#__PURE__*/React.createElement("div",{style:{fontSize:11,color:"var(--dim)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:150}},st.batter)));}/* The callout metronome, driven from a Worker rather than the main thread.
  *
  * MEASURED with the desk tab hidden for 130 seconds: a main-thread
  * setInterval(1200) fired 8 times with a max gap of 60,009ms — Chrome's
@@ -3224,7 +3273,16 @@ const CALLOUT_STALE_MS=45000;const[callout,setCallout]=useState(false);/* The br
    * same catch-up rule that governs a fresh attach. And a settle is spoken from
    * any tracked game regardless of focus, named, because a run scoring is the
    * ticket resolving and it is two seconds of audio. */const[focus,setFocus]=useState(null);const focusRef=useRef(null);const spoken=useRef(new Map());// gamePk -> { n: plays announced, opened, settled }
-useEffect(()=>{if(!callout)return;const held=calloutHeld(openPositions);// Re-evaluated per tick rather than closed over, so a game entering the 1st
+/* gamePk -> live count/base state for the diamond. THE ONLY PIECE OF THE POLL
+   * THAT IS ALLOWED TO BE REACT STATE, and it is gated hard.
+   *
+   * The note above explains why positions live in a ref: a re-render on every
+   * tick across a 15-game board costs real money for a feature that draws
+   * nothing. The diamond does draw something, so it needs state — but the same
+   * argument still applies to the TICK. The publisher below compares a
+   * serialised key and returns the identical object when nothing moved, which
+   * React treats as a no-op, so this re-renders on state CHANGE (about one per
+   * pitch per tracked game) rather than at 1.2s x games. */const[liveState,setLiveState]=useState({});useEffect(()=>{if(!callout)return;const held=calloutHeld(openPositions);// Re-evaluated per tick rather than closed over, so a game entering the 1st
 // between renders is picked up on the next poll instead of the next render.
 const tracked=()=>enriched.filter(r=>calloutEligible(r,held));let stopped=false;/* In-flight is tracked PER GAME, and that is the difference between a live
      * call and a recap on a busy slate.
@@ -3245,7 +3303,21 @@ const tracked=()=>enriched.filter(r=>calloutEligible(r,held));let stopped=false;
      * that request. The deadline bounds that now, and this bounds the blast
      * radius to the one game that was slow. */const inFlight=new Set();async function pollGame(r){const st=spoken.current.get(r.gamePk)||{n:0,opened:false,settled:false};if(st.settled)return;// A game whose previous poll has not come back yet skips this tick on its
 // own account. Nothing else on the board waits for it.
-if(inFlight.has(r.gamePk))return;inFlight.add(r.gamePk);let live;try{live=await fetchFirstInning(r.gamePk);}finally{inFlight.delete(r.gamePk);}if(stopped||!live)return;// What is at stake here: the position if one is held, otherwise the call.
+if(inFlight.has(r.gamePk))return;inFlight.add(r.gamePk);let live;try{live=await fetchFirstInning(r.gamePk);}finally{inFlight.delete(r.gamePk);}if(stopped||!live)return;/* Publish the diamond BEFORE anything is spoken, and for every tracked
+       * game rather than the focused one — same rule the seen-sets follow. A
+       * muted game still shows its state, so switching focus to it lands on a
+       * board that is already current instead of blank until the next tick.
+       *
+       * Scoped to the 1st and dropped the moment play leaves it: the linescore
+       * this reads is whatever inning is CURRENT, so past the 1st it would go
+       * on happily drawing the 4th under a first-inning heading. `past1` is the
+       * same latch the settle uses.
+       *
+       * The key comparison is what keeps this off the render path. Returning
+       * the same object reference tells React nothing changed; building a new
+       * one on every tick would defeat the whole arrangement. */const dSt=live.inning===1&&!live.past1?live.state:null;const dKey=dSt?[dSt.balls,dSt.strikes,dSt.outs,dSt.on1,dSt.on2,dSt.on3,dSt.batter,live.half].join("|"):"";setLiveState(m=>{if((m[r.gamePk]?m[r.gamePk].key:"")===dKey)return m;const n={...m};if(!dKey)delete n[r.gamePk];// "Middle"/"End" are the changeover states — neither half is batting, so
+// labelling one would be wrong. Blank reads as "the 1st", which is true.
+else n[r.gamePk]={key:dKey,half:live.half==="Top"?"Top":live.half==="Bottom"?"Bot":"",...dSt};return n;});// What is at stake here: the position if one is held, otherwise the call.
 // Announcing the model's side on a game the user faded would be worse than
 // saying nothing.
 const mine=calloutHeldSide(r,held);const side=mine||r.call;const stake=mine?"You are on "+mine:"Desk is on "+r.call;// Focus mutes this game's running commentary. It does NOT stop the poll:
@@ -3327,7 +3399,12 @@ const calloutGames=useMemo(()=>{if(!callout)return[];const held=calloutHeld(open
 speakStop();// A switch is a fresh attach: clear `opened` so the new game re-introduces
 // itself and re-anchors to the live edge on the next tick, instead of
 // resuming mid-inning from wherever it had got to while muted.
-const st=focus&&spoken.current.get(focus);if(st&&!st.settled)st.opened=false;},[focus]);// A game that has settled or left the 1st stops being offered, so focus must
+const st=focus&&spoken.current.get(focus);if(st&&!st.settled)st.opened=false;},[focus]);/* Switching the callout off clears the diamonds. Deliberately NOT done in the
+   * poll effect's cleanup, which is the obvious place and the wrong one: that
+   * effect re-runs whenever any tracked game changes inning, so cleaning up
+   * there would blank every diamond on the board and leave it blank until the
+   * next tick repainted it — a visible flicker several times an inning, caused
+   * by a game the user is not even watching. */useEffect(()=>{if(!callout)setLiveState({});},[callout]);// A game that has settled or left the 1st stops being offered, so focus must
 // not strand the callout on it — that would mute the whole board silently.
 useEffect(()=>{if(focus&&callout&&!calloutGames.some(r=>r.gamePk===focus))setFocus(null);},[focus,callout,calloutGames]);// Correlated NRFI parlay pairs: two BET NRFI games with both pitchers graded B or higher.
 const nrfiBetRows=enriched.filter(r=>r.v&&r.v.isBet&&r.call==="NRFI");const parlayPairs=[];for(let i=0;i<nrfiBetRows.length-1;i++){for(let j=i+1;j<nrfiBetRows.length;j++){const a=nrfiBetRows[i],b=nrfiBetRows[j];const aMin=a.pitProfiles?Math.min(a.pitProfiles.away.score,a.pitProfiles.home.score):0;const bMin=b.pitProfiles?Math.min(b.pitProfiles.away.score,b.pitProfiles.home.score):0;if(aMin>=52&&bMin>=52&&(a.pMax+b.pMax)/2>=60){const combProb=(a.pFinal*b.pFinal*100).toFixed(1);parlayPairs.push({a,b,combProb});}}}// Closing-line value on graded picks: did the market move toward our side after we logged it?
@@ -3430,7 +3507,7 @@ const deltaAbs=Math.abs(delta);const improving=delta>0;const color=deltaAbs>=0.1
 if(next){sayKeepAlive(true);speak("Digital Demons N-R-F-I. This is live coverage, on the air.");}else{sayKeepAlive(false);speakStop();}setCallout(next);},title:voiceBlocked?"Your browser blocked audio for this page. Tap this button again to allow it — "+"speech has to start from a tap, and the desk will stay silent until it does.":"Digital Demons NRFI Live — the desk's own first-inning broadcast. Calls every game on the board "+"that has a call or a position, pitch by pitch, then the NRFI result. "+"Built off the MLB play feed, not a broadcast: league game audio is licensed per-subscriber and cannot be embedded here.\n\n"+// The call is late and always will be. Saying so is the difference between
 // a listener hearing a 25s-old pitch and concluding the feature is broken,
 // and hearing it and knowing that is as live as the data goes.
-"RUNS ABOUT 25 SECONDS BEHIND THE PARK. statsapi does not publish a pitch when it lands — "+"measured 14 to 26 seconds after the fact, median 25. That lag is the feed's and no amount of "+"polling recovers it, so treat this as a delayed call, not a live one. Anything much later than "+"that is dropped rather than read out stale.",style:voiceBlocked&&callout?{color:"var(--rust, #c0632f)",borderColor:"var(--rust, #c0632f)"}:callout?{color:"var(--moss)",borderColor:"var(--moss)"}:undefined},voiceBlocked&&callout?"🔇 Blocked by browser · tap to allow":callout?"🔊 Digital Demons NRFI Live · on":"🔈 Digital Demons NRFI Live"),callout&&calloutGames.length>1&&/*#__PURE__*/React.createElement("span",{style:{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}},/*#__PURE__*/React.createElement("span",{style:{fontSize:11,color:"var(--dim)"}},"Listening to"),[{pk:null,label:"All"}].concat(calloutGames.map(r=>({pk:r.gamePk,label:(r.awayAbbr||r.away)+"@"+(r.homeAbbr||r.home)}))).map(g=>/*#__PURE__*/React.createElement("button",{key:String(g.pk),className:"btn btn-ghost btn-sm",onClick:()=>setFocus(g.pk),title:g.pk===null?"Call every game at once. On an overlapping slate they talk over each other.":"Call only this game. Others stay muted, but a run or a clean inning is still announced by name.",style:{fontSize:11,padding:"2px 7px",...(focus===g.pk?{color:"var(--moss)",borderColor:"var(--moss)"}:null)}},g.label))),importMsg&&/*#__PURE__*/React.createElement("span",{style:{fontSize:12,color:importMsg.ok?"var(--moss)":"var(--rose)"}},importMsg.text)),(()=>{const counts={ELITE:0,GREEN:0,YELLOW:0,RED:0,"NO DS":0};for(const r of validRows)counts[dsTier(dsOf(r),dsTh).label]++;const isDefault=dsTh.elite===DS_TIER_DEFAULTS.elite&&dsTh.green===DS_TIER_DEFAULTS.green&&dsTh.yellow===DS_TIER_DEFAULTS.yellow;/* Clamp on commit, not on keystroke, and clamp against BOTH neighbours:
+"RUNS ABOUT 25 SECONDS BEHIND THE PARK. statsapi does not publish a pitch when it lands — "+"measured 14 to 26 seconds after the fact, median 25. That lag is the feed's and no amount of "+"polling recovers it, so treat this as a delayed call, not a live one. Anything much later than "+"that is dropped rather than read out stale.",style:voiceBlocked&&callout?{color:"var(--rust, #c0632f)",borderColor:"var(--rust, #c0632f)"}:callout?{color:"var(--moss)",borderColor:"var(--moss)"}:undefined},voiceBlocked&&callout?"🔇 Blocked by browser · tap to allow":callout?"🔊 Digital Demons NRFI Live · on":"🔈 Digital Demons NRFI Live"),callout&&calloutGames.length>1&&/*#__PURE__*/React.createElement("span",{style:{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}},/*#__PURE__*/React.createElement("span",{style:{fontSize:11,color:"var(--dim)"}},"Listening to"),[{pk:null,label:"All"}].concat(calloutGames.map(r=>({pk:r.gamePk,label:(r.awayAbbr||r.away)+"@"+(r.homeAbbr||r.home)}))).map(g=>/*#__PURE__*/React.createElement("button",{key:String(g.pk),className:"btn btn-ghost btn-sm",onClick:()=>setFocus(g.pk),title:g.pk===null?"Call every game at once. On an overlapping slate they talk over each other.":"Call only this game. Others stay muted, but a run or a clean inning is still announced by name.",style:{fontSize:11,padding:"2px 7px",...(focus===g.pk?{color:"var(--moss)",borderColor:"var(--moss)"}:null)}},g.label))),importMsg&&/*#__PURE__*/React.createElement("span",{style:{fontSize:12,color:importMsg.ok?"var(--moss)":"var(--rose)"}},importMsg.text)),callout&&(()=>{const shown=calloutGames.filter(r=>liveState[r.gamePk]&&(!focus||focus===r.gamePk));if(!shown.length)return null;return/*#__PURE__*/React.createElement("div",{style:{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}},shown.map(r=>/*#__PURE__*/React.createElement(CalloutDiamond,{key:r.gamePk,st:liveState[r.gamePk],half:liveState[r.gamePk].half,label:(r.awayAbbr||r.away)+" @ "+(r.homeAbbr||r.home)})));})(),(()=>{const counts={ELITE:0,GREEN:0,YELLOW:0,RED:0,"NO DS":0};for(const r of validRows)counts[dsTier(dsOf(r),dsTh).label]++;const isDefault=dsTh.elite===DS_TIER_DEFAULTS.elite&&dsTh.green===DS_TIER_DEFAULTS.green&&dsTh.yellow===DS_TIER_DEFAULTS.yellow;/* Clamp on commit, not on keystroke, and clamp against BOTH neighbours:
          * the bands have to stay ordered elite > green > yellow or one of them
          * collapses to nothing and every card on the slate jumps two tiers at
          * once. Each setter pins the other two and moves only its own edge. */const setElite=v=>saveDsTh({...dsTh,elite:Math.min(99,Math.max(dsTh.green+0.5,v))});const setGreen=v=>saveDsTh({...dsTh,green:Math.max(dsTh.yellow+0.5,Math.min(dsTh.elite-0.5,v))});const setYellow=v=>saveDsTh({...dsTh,yellow:Math.max(5,Math.min(dsTh.green-0.5,v))});const num=(label,val,onSet,color,title)=>/*#__PURE__*/React.createElement("span",{style:{display:"flex",alignItems:"center",gap:5},title:title},/*#__PURE__*/React.createElement("span",{style:{fontSize:10,fontWeight:700,letterSpacing:"0.08em",color}},label),/*#__PURE__*/React.createElement("input",{type:"number",step:"0.5",min:"5",max:"95",defaultValue:val,key:label+val,onBlur:e=>{const v=Number(e.target.value);if(Number.isFinite(v))onSet(v);},onKeyDown:e=>{if(e.key==="Enter")e.target.blur();},style:{width:58,fontSize:12,padding:"2px 5px",background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.12)",borderRadius:5,color:"var(--bone)",fontVariantNumeric:"tabular-nums"}}));return/*#__PURE__*/React.createElement("div",{style:{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",margin:"0 0 8px",padding:"7px 10px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:8}},/*#__PURE__*/React.createElement("span",{style:{fontSize:10,fontWeight:700,letterSpacing:"0.08em",color:"var(--dim)"}},"DUAL SCORE TIERS"),num("ELITE ≥",dsTh.elite,setElite,"var(--cyan)","Top 4.5% of the slate; 69.0% NRFI on 58 cached games. NOT his 68 — his DS is a 0-100 rating, ours is a calibrated probability that maxed at 67.2 over 1283 games, so his cutoff would fire zero times ever. This is set where OUR distribution is as selective as he is. He drops to ELITE-only on a thin board (\"Tough board today. Only playing MIL@LAD\")."),num("GREEN ≥",dsTh.green,setGreen,"var(--moss)","GREEN-or-better is 19.4% of the slate, matching his real 19.0% play rate (2.59 of 13.6 games a day). The band itself hits 56.0% on 191 cached games. This is a selectivity anchor, not a reading of his number — see scripts/nrfi-ds-tier-brackets.js for his own cutoffs on his own scale."),num("YELLOW ≥",dsTh.yellow,setYellow,"var(--amber)","Roughly our median p (54.2). Splits the half of the slate we are lukewarm on from the half we are against: yellow band 51.8%, red band 45.3%, base rate 50.0%. The weakest of the three cuts — nothing he publishes is ever red, so his behaviour cannot anchor it."),/*#__PURE__*/React.createElement("span",{style:{fontSize:11,color:"var(--dim)",fontVariantNumeric:"tabular-nums"},title:"How today's board splits at the cutoffs above. Held games and settled games are not counted \u2014 they are not decisions."},"today: ",/*#__PURE__*/React.createElement("span",{style:{color:"var(--cyan)"}},counts.ELITE," elite")," · ",/*#__PURE__*/React.createElement("span",{style:{color:"var(--moss)"}},counts.GREEN," green")," · ",/*#__PURE__*/React.createElement("span",{style:{color:"var(--amber)"}},counts.YELLOW," yellow")," · ",/*#__PURE__*/React.createElement("span",{style:{color:"var(--rose)"}},counts.RED," red"),counts["NO DS"]>0?" · "+counts["NO DS"]+" no DS":""),!isDefault&&/*#__PURE__*/React.createElement("button",{className:"btn btn-ghost btn-sm",style:{fontSize:11,padding:"2px 7px"},onClick:()=>saveDsTh({...DS_TIER_DEFAULTS}),title:"Back to "+DS_TIER_DEFAULTS.elite+" / "+DS_TIER_DEFAULTS.green+" / "+DS_TIER_DEFAULTS.yellow},"Reset"),/*#__PURE__*/React.createElement("span",{style:{fontSize:10,color:"var(--dim)"},title:"The badge is a threshold on the DS level. It is NOT the edge over the break-even price \u2014 his DS 60.0 against BE 51.5% is an +8.5pt edge and still YELLOW, while DS 64.7 at +5.2 is GREEN. The board's #N badge is what carries the edge ordering."},"badge = DS level, not edge"));})(),(()=>{const RISK_CFG={ghost:{mult:0.10,maxPct:0.02,label:"Ghost",drawdownEst:"2–4%",desc:"1/10 Kelly — minimal variance, use while learning."},conservative:{mult:0.25,maxPct:0.06,label:"Conservative",drawdownEst:"5–12%",desc:"1/4 Kelly — proven, sustainable long-term."},moderate:{mult:0.50,maxPct:0.12,label:"Moderate",drawdownEst:"10–22%",desc:"1/2 Kelly — industry standard, recommended."},standard:{mult:0.75,maxPct:0.18,label:"Standard",drawdownEst:"15–30%",desc:"3/4 Kelly — for experienced bettors."},aggressive:{mult:1.00,maxPct:0.25,label:"Aggressive",drawdownEst:"20–40%",desc:"Full Kelly — maximum theoretical growth rate."},turbo:{mult:1.50,maxPct:0.35,label:"Turbo",drawdownEst:"35–60%",desc:"1.5× Kelly — over-Kelly, elite slates only."},xtreme:{mult:2.00,maxPct:0.50,label:"Xtreme",drawdownEst:"50–80%",desc:"2× Kelly — high variance, strong edge required."},degen:{mult:3.00,maxPct:0.65,label:"Degen",drawdownEst:"70–95%",desc:"3× Kelly — ruin risk is significant."},yolo:{mult:5.00,maxPct:0.80,label:"YOLO",drawdownEst:"90–99%",desc:"5× Kelly — max over-bet, expect large swings."}};const SPEED_CFG={patient:{minProb:63,evMult:0.45,betsRec:"1–2",label:"Patient",desc:"STRONG picks only (≥63%)"},selective:{minProb:57,evMult:0.70,betsRec:"2–4",label:"Selective",desc:"BET + STRONG (≥57%)"},steady:{minProb:52,evMult:1.00,betsRec:"3–6",label:"Steady",desc:"All rated picks (≥52%)"},fast:{minProb:57,evMult:1.20,betsRec:"4–8",label:"Fast",desc:"All picks, maximize volume"},blitz:{minProb:50,evMult:1.45,betsRec:"all",label:"Blitz",desc:"Every game on slate"}};const rCfg=RISK_CFG[riskLevel]||RISK_CFG.moderate;const sCfg=SPEED_CFG[growthSpeed]||SPEED_CFG.steady;const riskMult=rCfg.mult;// P&L from settled Kalshi imports — informational context only

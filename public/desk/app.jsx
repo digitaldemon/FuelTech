@@ -5630,7 +5630,18 @@ const CALLOUT_FIELDS = "gameData,status,abstractGameState,liveData,linescore,cur
   // pitch level: the events inside each at-bat, the call on each one, the count
   // it produced, its velocity, and who is hitting.
   "playEvents,isPitch,playId,atBatIndex,details,call,code,count,balls,strikes," +
-  "pitchData,startSpeed,matchup,batter,fullName";
+  "pitchData,startSpeed,matchup,batter,fullName," +
+  /* The on-screen diamond: outs and who is standing where. `balls`/`strikes`
+   * were already on this list for the pitch calls and the projection filters by
+   * LEAF NAME, so linescore.balls and linescore.strikes arrive free — only
+   * `outs` and the `offense` subtree are new here. Measured cost of the four
+   * added names on a completed game: under 200 bytes.
+   *
+   * Read off the linescore rather than reconstructed from allPlays, and that is
+   * not laziness: the count DURING an at-bat exists nowhere in allPlays until
+   * the at-bat completes, so a diamond built from the play list would sit on
+   * 0-0 through every pitch and then jump. The linescore is the live edge. */
+  "offense,first,second,third,outs";
 /* A poll with no deadline is not a poll, it is a way to stop polling.
  *
  * fetch() has no default timeout. A statsapi request that never answers — a
@@ -5652,6 +5663,17 @@ function calloutSignal() {
   const c = new AbortController();
   const t = setTimeout(() => c.abort(), CALLOUT_FETCH_MS);
   return { signal: c.signal, done: () => clearTimeout(t) };
+}
+// See the note at the call site. Names are compared rather than ids because the
+// field projection carries fullName for every player leaf already; adding `id`
+// to it for this one check would enlarge every poll on the board.
+function calloutBatter(off) {
+  const b = (off && off.batter && off.batter.fullName) || "";
+  if (!b) return "";
+  for (const k of ["first", "second", "third"]) {
+    if (off[k] && off[k].fullName === b) return "";
+  }
+  return b;
 }
 async function fetchFirstInning(gamePk) {
   const url = "https://statsapi.mlb.com/api/v1.1/game/" + gamePk + "/feed/live?fields=" +
@@ -5689,7 +5711,115 @@ async function fetchFirstInning(gamePk) {
     // The inning is over once play has moved past it — not when outs hit 3,
     // which is briefly true mid-changeover in the feed.
     past1: (ls.currentInning || 0) > 1 || abst.toLowerCase() === "final",
+    /* Count, outs and base state for the diamond. Null before first pitch for
+     * the same reason `inning` is zeroed there: MLB serves a linescore shell on
+     * a Preview game, and 0-0 with the bases empty is indistinguishable from a
+     * real 0-0 — the display would claim to be watching a game that has not
+     * started.
+     *
+     * Occupancy is presence, not truthiness of a value: statsapi OMITS
+     * offense.first entirely when first base is empty rather than sending null,
+     * so there is no empty-but-present case to guard against. Verified against
+     * the feed — a play with a runner carries the base object, one without has
+     * no such key at all. */
+    state: abst === "Preview" ? null : {
+      balls: ls.balls || 0, strikes: ls.strikes || 0, outs: ls.outs || 0,
+      on1: !!(ls.offense && ls.offense.first),
+      on2: !!(ls.offense && ls.offense.second),
+      on3: !!(ls.offense && ls.offense.third),
+      /* A man cannot be batting and standing on second, and for about one tick
+       * after a hit statsapi says he is. Observed in the 1st at Seattle:
+       *
+       *   {"batter":{"fullName":"Dominic Canzone"},
+       *    "second":{"fullName":"Dominic Canzone"}}
+       *
+       * The base state advances first and `batter` trails by a poll or two.
+       * Bases are the half of this the bet turns on, so they win the conflict
+       * and the name is dropped until the feed catches up — the diamond loses a
+       * line for a second rather than naming the wrong man at the plate. */
+      batter: calloutBatter(ls.offense),
+    },
   };
+}
+/* The count and the bases, drawn.
+ *
+ * The callout says what just happened; this says where the game stands, which
+ * is the thing a listener reconstructs in their head from the last four calls
+ * and gets wrong. Two runners on with one out is the state that decides an
+ * NRFI, and nothing in the audio states it outright.
+ *
+ * COLOUR CARRIES THE BET, not the baseball. Occupied bases are amber because a
+ * runner is a threat to the position; recorded outs are moss because an out is
+ * progress toward a clean inning. That is the opposite of a broadcast
+ * scoreboard, where outs are the bad news — this desk is on NRFI far more often
+ * than not, and a reader glancing at it should see green-is-good.
+ *
+ * Deliberately not a live-updating <canvas> or an animation: it re-renders on
+ * state CHANGE only (see the publisher in the poll), which during a first
+ * inning is roughly once per pitch, not once per 1.2s tick. */
+function CalloutDiamond({ label, half, st }) {
+  // rotate(45) on a square gives the base; drawing four rotated rects is
+  // cheaper to read than four hand-computed diamond paths.
+  const base = (cx, cy, on) => (
+    <rect x={cx - 7.5} y={cy - 7.5} width={15} height={15}
+      transform={"rotate(45 " + cx + " " + cy + ")"}
+      fill={on ? "var(--amber)" : "rgba(255,255,255,0.05)"}
+      stroke={on ? "var(--amber)" : "rgba(255,255,255,0.22)"} strokeWidth={2} />
+  );
+  const on = [st.on1 && "1st", st.on2 && "2nd", st.on3 && "3rd"].filter(Boolean);
+  // One sentence of the same facts, for a screen reader and for the hover.
+  const spoken = (half ? half + " 1st, " : "") + st.balls + " and " + st.strikes + ", " +
+    st.outs + (st.outs === 1 ? " out, " : " out, ") +
+    (on.length ? "runners on " + on.join(" and ") : "bases empty") +
+    (st.batter ? ", " + st.batter + " batting" : "");
+  return (
+    <div title={label + " — " + spoken} aria-label={label + " — " + spoken} role="img"
+      style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 10px 6px 6px",
+        background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: 10 }}>
+      <svg viewBox="0 0 100 100" width={54} height={54} style={{ flex: "0 0 auto" }}>
+        <polygon points="50,84 79,55 50,26 21,55" fill="rgba(116,203,148,0.06)"
+          stroke="rgba(255,255,255,0.13)" strokeWidth={2} />
+        {base(79, 55, st.on1)}
+        {base(50, 26, st.on2)}
+        {base(21, 55, st.on3)}
+        {/* Home is a landmark and never lights: the batter is not a runner, and
+            a fourth glowing base would read as three men on plus one. */}
+        <rect x={44.5} y={78.5} width={11} height={11} transform="rotate(45 50 84)"
+          fill="rgba(255,255,255,0.09)" stroke="rgba(255,255,255,0.20)" strokeWidth={2} />
+      </svg>
+      <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+        <div style={{ fontSize: 10, letterSpacing: "0.06em", color: "var(--dim)",
+          fontFamily: "'JetBrains Mono',monospace", whiteSpace: "nowrap" }}>
+          {label}{half ? " · " + half + " 1st" : ""}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 19, fontWeight: 700, lineHeight: 1, color: "var(--bone)",
+            fontVariantNumeric: "tabular-nums", fontFamily: "'JetBrains Mono',monospace" }}>
+            {st.balls}–{st.strikes}
+          </span>
+          {/* Two dots, not three. A third out ends the half-inning, so a lit
+              third dot is a state this display is never shown in. */}
+          <span style={{ display: "flex", gap: 3 }}>
+            {[0, 1].map((i) => (
+              <span key={i} style={{ width: 7, height: 7, borderRadius: "50%",
+                display: "inline-block",
+                background: i < st.outs ? "var(--moss)" : "rgba(255,255,255,0.13)" }} />
+            ))}
+          </span>
+          <span style={{ fontSize: 9.5, color: "var(--dim)", letterSpacing: "0.06em" }}>
+            {st.outs === 1 ? "1 OUT" : st.outs + " OUTS"}
+          </span>
+        </div>
+        {st.batter && (
+          <div style={{ fontSize: 11, color: "var(--dim)", whiteSpace: "nowrap",
+            overflow: "hidden", textOverflow: "ellipsis", maxWidth: 150 }}>
+            {st.batter}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 /* The callout metronome, driven from a Worker rather than the main thread.
  *
@@ -10241,6 +10371,17 @@ function FirstInning() {
   const [focus, setFocus] = useState(null);
   const focusRef = useRef(null);
   const spoken = useRef(new Map()); // gamePk -> { n: plays announced, opened, settled }
+  /* gamePk -> live count/base state for the diamond. THE ONLY PIECE OF THE POLL
+   * THAT IS ALLOWED TO BE REACT STATE, and it is gated hard.
+   *
+   * The note above explains why positions live in a ref: a re-render on every
+   * tick across a 15-game board costs real money for a feature that draws
+   * nothing. The diamond does draw something, so it needs state — but the same
+   * argument still applies to the TICK. The publisher below compares a
+   * serialised key and returns the identical object when nothing moved, which
+   * React treats as a no-op, so this re-renders on state CHANGE (about one per
+   * pitch per tracked game) rather than at 1.2s x games. */
+  const [liveState, setLiveState] = useState({});
   useEffect(() => {
     if (!callout) return;
     const held = calloutHeld(openPositions);
@@ -10278,6 +10419,32 @@ function FirstInning() {
       try { live = await fetchFirstInning(r.gamePk); }
       finally { inFlight.delete(r.gamePk); }
       if (stopped || !live) return;
+      /* Publish the diamond BEFORE anything is spoken, and for every tracked
+       * game rather than the focused one — same rule the seen-sets follow. A
+       * muted game still shows its state, so switching focus to it lands on a
+       * board that is already current instead of blank until the next tick.
+       *
+       * Scoped to the 1st and dropped the moment play leaves it: the linescore
+       * this reads is whatever inning is CURRENT, so past the 1st it would go
+       * on happily drawing the 4th under a first-inning heading. `past1` is the
+       * same latch the settle uses.
+       *
+       * The key comparison is what keeps this off the render path. Returning
+       * the same object reference tells React nothing changed; building a new
+       * one on every tick would defeat the whole arrangement. */
+      const dSt = live.inning === 1 && !live.past1 ? live.state : null;
+      const dKey = dSt ? [dSt.balls, dSt.strikes, dSt.outs, dSt.on1, dSt.on2, dSt.on3,
+        dSt.batter, live.half].join("|") : "";
+      setLiveState((m) => {
+        if ((m[r.gamePk] ? m[r.gamePk].key : "") === dKey) return m;
+        const n = { ...m };
+        if (!dKey) delete n[r.gamePk];
+        // "Middle"/"End" are the changeover states — neither half is batting, so
+        // labelling one would be wrong. Blank reads as "the 1st", which is true.
+        else n[r.gamePk] = { key: dKey, half: live.half === "Top" ? "Top"
+          : live.half === "Bottom" ? "Bot" : "", ...dSt };
+        return n;
+      });
       // What is at stake here: the position if one is held, otherwise the call.
       // Announcing the model's side on a game the user faded would be worse than
       // saying nothing.
@@ -10429,6 +10596,14 @@ function FirstInning() {
     const st = focus && spoken.current.get(focus);
     if (st && !st.settled) st.opened = false;
   }, [focus]);
+
+  /* Switching the callout off clears the diamonds. Deliberately NOT done in the
+   * poll effect's cleanup, which is the obvious place and the wrong one: that
+   * effect re-runs whenever any tracked game changes inning, so cleaning up
+   * there would blank every diamond on the board and leave it blank until the
+   * next tick repainted it — a visible flicker several times an inning, caused
+   * by a game the user is not even watching. */
+  useEffect(() => { if (!callout) setLiveState({}); }, [callout]);
 
   // A game that has settled or left the 1st stops being offered, so focus must
   // not strand the callout on it — that would mute the whole board silently.
@@ -11394,6 +11569,32 @@ function FirstInning() {
         )}
         {importMsg && <span style={{ fontSize: 12, color: importMsg.ok ? "var(--moss)" : "var(--rose)" }}>{importMsg.text}</span>}
       </div>
+      {/* ── Live diamonds ──
+          Own row rather than trailing the controls: at five concurrent first
+          innings these are 200px each and would push the refresh button off a
+          phone.
+
+          Focus narrows this to one, because that is the game being spoken and
+          two boards disagreeing about "the count" is worse than one board. With
+          focus on All every tracked game shows, which is the only honest answer
+          when the voice is calling all of them.
+
+          Nothing renders before first pitch — fetchFirstInning returns a null
+          state on a Preview game precisely so an empty 0-0 diamond cannot
+          imply a game is under way. */}
+      {callout && (() => {
+        const shown = calloutGames.filter((r) => liveState[r.gamePk] && (!focus || focus === r.gamePk));
+        if (!shown.length) return null;
+        return (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            {shown.map((r) => (
+              <CalloutDiamond key={r.gamePk} st={liveState[r.gamePk]}
+                half={liveState[r.gamePk].half}
+                label={(r.awayAbbr || r.away) + " @ " + (r.homeAbbr || r.home)} />
+            ))}
+          </div>
+        );
+      })()}
       {/* ── Dual Score tiers ──
           The three cutoffs are the only hand-set numbers on the DS card, and they
           are NOT equally well known — elite is bracketed to half a point, green to
