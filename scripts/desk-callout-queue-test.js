@@ -161,11 +161,55 @@ console.log("\nstale lines are skipped at drain");
 {
   const { synth, api } = fresh();
   api.speak("current", false);
-  // Thrown 40s ago: past SAY_STALE_MS, must never be spoken.
-  api.speak("ancient", false, Date.now() - 40000);
+  // Thrown 90s ago: a freeze-sized gap, past SAY_STALE_MS, must never be spoken.
+  api.speak("ancient", false, Date.now() - 90000);
   api.speak("recent", false, Date.now());
   synth.finish();
   check("stale line dropped, fresh one spoken", synth.spoken[1] === "recent", synth.spoken.join("|"));
+}
+
+/* THE REGRESSION THAT SILENCED THE CALLOUT, pinned so it cannot come back.
+ *
+ * `at` is the pitch's time IN THE PARK, and statsapi publishes a pitch 12-26s
+ * after it is thrown (measured, four live games, 2026-08-16). A budget tuned as
+ * if `at` were "when we found out" therefore rejects every line the feed can
+ * ever deliver: the queue drains to empty without speaking, and the button reads
+ * "on" over silence. This asserts that ordinary feed lag is SPOKEN, which is the
+ * property that was broken — the case above only ever asserted the opposite. */
+console.log("\nnormal statsapi feed lag is not treated as stale");
+// fresh() installs global.window and global.setTimeout, so each case needs its
+// own scope — a nested fresh() would rewire the synth out from under the outer one.
+for (const lag of [11500, 19800, 25700]) {
+  const { synth, api } = fresh();
+  api.speak("pitch at " + lag + "ms", false, Date.now() - lag);
+  check("pitch " + (lag / 1000).toFixed(1) + "s behind the park is still called",
+    synth.spoken[0] === "pitch at " + lag + "ms", synth.spoken.join("|") || "(silence)");
+}
+{
+  // And the whole queue, not just the head: the failure mode was a total drain.
+  const { synth, api } = fresh();
+  api.speak("one", false, Date.now() - 20000);
+  api.speak("two", false, Date.now() - 20000);
+  synth.finish();
+  check("a queue of feed-lagged lines drains audibly, not silently",
+    synth.spoken.length === 2, synth.spoken.join("|") || "(silence)");
+}
+
+console.log("\nqueue wait is measured from enqueue, not from the pitch");
+{
+  const { synth, api } = fresh();
+  const realNow = Date.now;
+  api.speak("speaking", false);
+  // Enqueued now, but the drain happens 8s later — past SAY_WAIT_MS. This is the
+  // "waited behind two other utterances" case the tight budget is actually for,
+  // and it has to still fire now that the event clock is loose.
+  api.speak("waited too long", false, Date.now());
+  const t = realNow();
+  Date.now = () => t + 8000;
+  synth.finish();
+  Date.now = realNow;
+  check("line that sat in the queue too long is dropped",
+    synth.spoken.length === 1, synth.spoken.join("|"));
 }
 
 console.log("\ndepth cap keeps the newest lines");

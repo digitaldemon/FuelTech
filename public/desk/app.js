@@ -1301,13 +1301,42 @@ const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.f
  * to the live edge by itself on every wake-up. SAY_MAX still bounds the queue;
  * this bounds its AGE, which is the thing that was actually wrong.
  *
- * 6s, not 12s. A pitch comes about every 15-20s, and each spoken line runs 2-3s,
- * so a line that has been waiting 12s is two pitches behind and is describing
- * something the user can already see resolved on the board. Dropping it is not a
- * loss — the queue behind it is fresher, and skipping straight to that is the
- * whole mechanism by which the call re-anchors to live. The old value was set to
- * bound the hidden-tab freeze case, where anything under a minute was an
- * improvement; it was never tuned for how late a call can be and still be a call. */const SAY_STALE_MS=6000;const _sayQ=[];/* Why the callout is producing no sound, when the reason is the browser and not
+ * THERE ARE TWO CLOCKS HERE AND CONFLATING THEM SILENCED THE CALLOUT ENTIRELY.
+ *
+ * `at` is when the pitch was thrown IN THE PARK. It is not when we found out.
+ * statsapi does not publish a pitch the instant it lands — measured against four
+ * live games on 2026-08-16, the age of a pitch at the moment it FIRST appears in
+ * the feed ran 11.5s to 25.7s, median 19.8s, on a 100ms round trip. That lag is
+ * statsapi's, not ours, and no polling interval can recover it.
+ *
+ * A 6s budget on that clock is therefore not "drop lines that fell behind", it is
+ * "drop every line". Seven of seven measured pitches were already over budget
+ * before the queue ever saw them, so _sayDrain skipped the whole queue on every
+ * tick, `speaking` never went true, and the button sat lit reading "on" over
+ * total silence. Only urgent lines — settles, which pass no timestamp — survived.
+ * 12s was the same bug wearing a bigger number: six of those seven still failed.
+ *
+ * So the two clocks get two budgets, because they answer different questions.
+ *
+ *   SAY_STALE_MS  — event time. "Was this over before we saw it?" Set to agree
+ *                   with CALLOUT_STALE_MS, which is the value the mid-inning
+ *                   attach path already uses for exactly this judgement. Two
+ *                   gates on the same quantity holding different numbers is what
+ *                   opened the hole; now there is one number. Comfortably above
+ *                   the measured feed lag, so it fires on a real freeze (where
+ *                   the gap is a minute or more) and not on normal delivery.
+ *
+ *   SAY_WAIT_MS   — queue time, from the moment the line was enqueued. THIS is
+ *                   the "waiting behind two other utterances while the game moves
+ *                   on" case the 6s value was actually reaching for, and it can
+ *                   stay tight precisely because its clock starts when we learn
+ *                   the event rather than when the park produced it. A line that
+ *                   has sat here 6s is two spoken lines deep in a backlog and the
+ *                   queue behind it is fresher.
+ *
+ * A freeze trips both: the poll stops, nothing enqueues, and on wake every event
+ * is a minute old by event time and dropped by the first gate — which is the
+ * re-anchoring behaviour the original comment describes, now actually reachable. */const SAY_STALE_MS=45000;const SAY_WAIT_MS=6000;const _sayQ=[];/* Why the callout is producing no sound, when the reason is the browser and not
  * us. Null means nothing is known to be wrong.
  *
  * This exists because the honest failure was invisible. `u.onerror = done` treats
@@ -1344,7 +1373,11 @@ const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.f
 let _sayLast=null;function _sayDrain(s){if(_sayOn)return;let item;// Skip anything that went stale while it waited, and keep skipping: after a
 // freeze the whole queue can be stale, and stopping at the first live line is
 // the point.
-for(;;){item=_sayQ.shift();if(item==null)return;if(!(item.at>0)||Date.now()-item.at<=SAY_STALE_MS)break;}const text=item.text;if(text==null)return;_sayOn=true;const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}u.rate=voiceRate(_voice);u.pitch=1;u.volume=1;const gen=++_sayGen;const done=()=>{// A late event from a cancelled or superseded utterance must not touch the
+for(;;){item=_sayQ.shift();if(item==null)return;// Both gates, each on its own clock. `at` is 0 for lines that are true
+// whenever they are said (the intro, a settle) and those skip the event
+// gate; the wait gate still applies to them, because a settle that has been
+// stuck behind commentary for six seconds is behind the board either way.
+const staleEvent=item.at>0&&Date.now()-item.at>SAY_STALE_MS;const staleWait=Date.now()-item.qat>SAY_WAIT_MS;if(!staleEvent&&!staleWait)break;}const text=item.text;if(text==null)return;_sayOn=true;const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}u.rate=voiceRate(_voice);u.pitch=1;u.volume=1;const gen=++_sayGen;const done=()=>{// A late event from a cancelled or superseded utterance must not touch the
 // latch, the watchdog or the queue — all three now belong to whatever is
 // speaking instead.
 if(gen!==_sayGen||!_sayOn)return;_sayOn=false;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayDrain(s);};// A line that genuinely reached the speakers clears any standing complaint:
@@ -1402,7 +1435,10 @@ _sayGen++;s.cancel();}/* Backstop: never say the same thing twice in a row.
    *
    * `urgent` is exempt and must stay exempt. A settle is the ticket resolving,
    * and two games settling the same way seconds apart produce identical text
-   * legitimately — that is the one line worth hearing twice. */if(!urgent&&text===_sayLast)return;_sayLast=text;_sayQ.push({text,at:typeof at==="number"&&isFinite(at)?at:0});// Trim from the FRONT: the stale lines are the ones not worth saying.
+   * legitimately — that is the one line worth hearing twice. */if(!urgent&&text===_sayLast)return;_sayLast=text;// qat is the enqueue time, the clock SAY_WAIT_MS runs on. Recorded here rather
+// than derived at drain because "how long has this waited" is unanswerable once
+// the only timestamp on the item belongs to the park.
+_sayQ.push({text,at:typeof at==="number"&&isFinite(at)?at:0,qat:Date.now()});// Trim from the FRONT: the stale lines are the ones not worth saying.
 while(_sayQ.length>SAY_MAX)_sayQ.shift();_sayDrain(s);}// Stopping the callout has to clear the queue too, or the lines already buffered
 // keep arriving after the switch is off.
 function speakStop(){const s=typeof window!=="undefined"&&window.speechSynthesis;_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;// Same revocation as the urgent path. Toggling the callout off and straight
