@@ -44,16 +44,14 @@ const CSS = `
   --bone:#F0ECE3; --dim:#8E99B0;
   --amber:#FFC24D; --rose:#F2748A; --cyan:#79C2E6; --moss:#74CB94; --violet:#A895E8;
   --bg:rgba(0,0,0,.34); --fg:#F0ECE3;
-  /* Blooms sit ABOVE the vignette in this stack so the corner light survives
-   * the edge darkening instead of being smothered by it. */
+  position: relative;
+  /* isolate so .cd-lit's z-index:-1 resolves against THIS box: it must paint
+   * above .cd's own background but below .cd's content. Without a stacking
+   * context here a negative z-index escapes upward and hides behind the page. */
+  isolation: isolate;
   background:
-    radial-gradient(1000px 460px at 88% -12%, rgba(255,194,77,.10), transparent 62%),
-    radial-gradient(760px 420px at -12% 4%, rgba(121,194,230,.07), transparent 58%),
-    radial-gradient(900px 500px at 30% 108%, rgba(168,149,232,.055), transparent 60%),
-    radial-gradient(125% 95% at 50% 26%, transparent 42%, rgba(0,0,0,.62) 100%),
     repeating-linear-gradient(to bottom, rgba(255,255,255,.016) 0 1px, transparent 1px 5px),
     linear-gradient(178deg, var(--slate-800) 0%, var(--slate-900) 72%, #03050A 100%);
-  background-attachment: scroll, scroll, scroll, fixed, scroll, scroll;
   color: var(--bone);
   font-family: 'Inter Tight', system-ui, sans-serif;
   font-size: 15px;
@@ -61,6 +59,22 @@ const CSS = `
   min-height: 100vh;
   padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) calc(64px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
   -webkit-font-smoothing: antialiased;
+}
+/* Viewport-anchored stage light: three corner blooms with a vignette under
+ * them, so the edge darkening never smothers the corner glow.
+ *
+ * This is a fixed ELEMENT rather than background-attachment:fixed on .cd. A
+ * fixed background attachment forces a full-viewport repaint on every scroll
+ * frame, and a full slate runs several screens deep on a phone — which is the
+ * one device this board is actually read on. A fixed positioned box gets its
+ * own compositor layer instead and scrolls for free. */
+.cd::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(1000px 460px at 88% -12%, rgba(255,194,77,.10), transparent 62%),
+    radial-gradient(760px 420px at -12% 4%, rgba(121,194,230,.07), transparent 58%),
+    radial-gradient(900px 500px at 30% 108%, rgba(168,149,232,.055), transparent 60%),
+    radial-gradient(125% 95% at 50% 26%, transparent 42%, rgba(0,0,0,.62) 100%);
 }
 .cd * { box-sizing: border-box; }
 .cd-wrap { max-width: 880px; margin: 0 auto; }
