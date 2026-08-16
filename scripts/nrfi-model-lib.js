@@ -826,7 +826,16 @@ const travelRest = async (teamId, todayStr, venueId) => {
       const gs = []; (d.dates || []).forEach((dt) => (dt.games || []).forEach((g) => gs.push({ date: dt.date, g })));
       const prev = gs.filter((x) => x.date < todayStr).sort((a, b) => a.date.localeCompare(b.date)).pop();
       if (prev) { const rest = Math.round((d0 - new Date(prev.date + "T12:00:00Z")) / 864e5); const traveled = prev.g.venue?.id && venueId && prev.g.venue.id !== venueId;
-        if (rest <= 1 && traveled) return { factor: 0.93, note: "b2b+travel" }; if (rest <= 1) return { factor: 0.98, note: "b2b" }; if (rest >= 3) return { factor: 1.03, note: rest + "d rest" }; }
+        // 0.98 and 1.03 were guesses and both pointed the WRONG WAY; app.jsx set
+        // them to 1.00 in f738a33 and this copy never followed, so every backtest
+        // since has scored a model the desk does not ship. Measured in
+        // scripts/nrfi-travel-fit.js, walk-forward, bootstrapped by date:
+        // played-yesterday -1.11pp (t -1.64, MDE 1.35pp) and 3+ days rest +5.17pp
+        // (t 2.47, MDE 4.18pp) — positive is the NRFI direction, so a rested team
+        // scores LESS in the first while 1.03 was pushing it toward more offence.
+        // Only the b2b+travel arm keeps a non-neutral constant, and it keeps 0.93
+        // because it is the one arm the app still ships non-neutral.
+        if (rest <= 1 && traveled) return { factor: 0.93, note: "b2b+travel" }; if (rest <= 1) return { factor: 1, note: "b2b" }; if (rest >= 3) return { factor: 1, note: rest + "d rest" }; }
     } catch { /* neutral */ } return { factor: 1, note: "" };
   });
 };
