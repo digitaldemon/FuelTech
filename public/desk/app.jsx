@@ -8900,6 +8900,15 @@ function FirstInning() {
   const betYRFI = validRows.filter((r) => r.v.isBet && r.call === "YRFI").sort(byConf);
   const leans = validRows.filter((r) => r.v.strength === "LEAN").sort(byConf);
   const passes = validRows.filter((r) => r.v.strength === "PASS").sort(byConf);
+  // The games `decided` just took off the board, one line each. Hiding them was
+  // the point, but hiding them without a trace makes the slate look like it never
+  // happened — and the first thing you want once an inning settles is whether the
+  // desk was right. Graded the way the card grades: off the pick as it was LOGGED
+  // in `rec`, never the live recompute, so this strip and the Model record cannot
+  // disagree. No record means the desk never called the game (under the logging
+  // bar), which is neither a win nor a loss.
+  const settledToday = enriched.filter((r) => decided(r) && !isHeld(r) && !r.v.thinPass)
+    .sort((a, b) => (a.startUtc || "") < (b.startUtc || "") ? 1 : -1);
 
   const leanColor = (l) => (l === "nrfi" ? "var(--moss)" : l === "yrfi" ? "var(--rose)" : "var(--dim)");
   const leanLabel = (l) => (l === "nrfi" ? "NRFI lean" : l === "yrfi" ? "YRFI lean" : "neutral");
@@ -10117,6 +10126,40 @@ function FirstInning() {
       {sect("Bets — ranked by confidence", [...betNRFI, ...betYRFI].sort(byConf), "var(--moss)")}
       {sect("Leans", leans, "var(--amber)")}
       {sect("Pass", passes, "var(--dim)")}
+      {settledToday.length > 0 && (
+        <div className="panel" style={{ marginTop: 12 }}>
+          <p className="sect" style={{ margin: 0 }}>Settled today ({settledToday.length})</p>
+          <p style={{ fontSize: 11, color: "var(--dim)", margin: "4px 0 8px" }}>
+            First inning is over on these, so they come off the board above. Graded against the pick as it was
+            logged — a game with no call was under the logging bar and counts neither way.
+          </p>
+          {settledToday.map((r, i) => {
+            const recE = (rec || []).find((x) => x.id === "nrfi-" + r.gamePk);
+            const won = !recE ? null
+              : recE.result ? recE.result === "won"
+              : (recE.call === "NRFI") === (r.inning1runs === 0);
+            const runs = r.inning1runs;
+            return (
+              <div key={r.gamePk} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12,
+                padding: "5px 0", borderTop: i > 0 ? "1px solid rgba(120,130,150,.12)" : "none" }}>
+                <span style={{ width: 12, fontWeight: 700, color: won == null ? "var(--dim)" : won ? "var(--moss)" : "var(--rose)" }}>
+                  {won == null ? "·" : won ? "✓" : "✗"}
+                </span>
+                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {r.awayAbbr || r.away} @ {r.homeAbbr || r.home}
+                </span>
+                <span style={{ color: "var(--dim)", width: 92, textAlign: "right" }}>
+                  {recE ? recE.call + " " + Math.round(recE.prob || r.pMax) + "%" : "no call"}
+                </span>
+                <span style={{ width: 74, textAlign: "right", fontWeight: 600,
+                  color: runs === 0 ? "var(--moss)" : "var(--rose)" }}>
+                  {runs === 0 ? "NRFI" : runs + " run" + (runs === 1 ? "" : "s")}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
       {rec && rec.length > 0 && (
         <div className="panel" style={{ marginTop: 12 }}>
           <p className="sect" style={{ margin: "0 0 6px" }}>Daily Profit Tracker</p>
