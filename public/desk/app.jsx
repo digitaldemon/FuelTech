@@ -5656,9 +5656,27 @@ function pickVoice(s) {
   if (!all.length) return null;
   const en = all.filter((v) => /^en/i.test(v.lang || ""));
   const pool = en.length ? en : all;
+  /* localService is the one quality signal the API actually exposes, and on a
+   * phone it is the difference between a broadcast and a sat-nav.
+   *
+   * A local voice is synthesised on the device: small, instant, and on Android
+   * the stock local engine is the most robotic thing in this whole list. A
+   * network voice is the vendor's neural model, which is what "sounds human"
+   * means here. Nothing in the NAME distinguishes them — Android ships local and
+   * network voices under the same locale label — so the flag is the only way to
+   * tell, and until now it was ignored entirely.
+   *
+   * Used as a TIE-BREAK WITHIN a rank entry, never across entries. That
+   * distinction is the whole safety of this change: Microsoft Mark is a LOCAL
+   * formant voice that won an A/B against the smoother network man on the desk,
+   * and a preference that outranked the list would quietly overturn that
+   * measured result on spec-sheet reasoning — exactly what the note above it
+   * forbids. Rank still decides who; this only decides which copy of them. */
+  const better = (a, b) => (a.localService === b.localService ? a
+    : a.localService === false ? a : b);
   for (const want of VOICE_RANK) {
-    const hit = pool.find((v) => String(v.name || "").includes(want));
-    if (hit) return hit;
+    const hits = pool.filter((v) => String(v.name || "").includes(want));
+    if (hits.length) return hits.reduce(better);
   }
   /* Fallback, for a platform no name in the rank reaches — in practice Android.
    *
@@ -5674,10 +5692,19 @@ function pickVoice(s) {
    *   string says so — but together they cut the odds of landing on one of the
    *   handful of voices we can positively identify as not matching the desk.
    *
+   * Then the neural pass, which is the one that makes the phone sound human:
+   * Android's stock LOCAL voice is the robotic one and its network voice is the
+   * neural model, and since both carry the same locale-only name the
+   * localService flag is the only thing that separates them. This sits AFTER
+   * en-US and after the denylist because an accent swap and a gender swap are
+   * both more audible than a quality drop, and before `default` because the
+   * Android default is usually the local voice — which is the entire problem.
+   *
    * Then, and only then, the browser default. Same last resort as before. */
   const narrow = (list, f) => { const k = list.filter(f); return k.length ? k : list; };
   let cand = narrow(pool, (v) => /^en[-_]us$/i.test(String(v.lang || "").replace("_", "-")));
   cand = narrow(cand, (v) => !VOICE_AVOID.test(String(v.name || "")));
+  cand = narrow(cand, (v) => v.localService === false);
   return cand.find((v) => v.default) || cand[0] || pool[0] || null;
 }
 /* Delivery speed, and it has to depend on the voice.

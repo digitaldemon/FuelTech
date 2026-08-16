@@ -377,6 +377,38 @@ const check = (ok, what, detail) => {
     "a voice set containing only denylisted names still returns a voice",
     "the fallback filtered the pool to empty and the callout would go silent.");
 
+  /* ---- neural over robotic, where the API will say which is which ----
+   * localService is the only quality signal exposed. On Android the stock LOCAL
+   * voice is the robotic one and the network voice is the neural model, and both
+   * carry the same locale-only name — so the flag is the only way to tell them
+   * apart, and it used to be ignored entirely. */
+  const ANDROID2 = [
+    { name: "English United States", lang: "en-US", localService: true, default: true },
+    { name: "English United States", lang: "en-US", localService: false },
+    { name: "English United Kingdom", lang: "en-GB", localService: false }];
+  check(c.pickVoice(vs(ANDROID2)).localService === false,
+    "on Android the network (neural) voice is preferred over the robotic local one",
+    "the local voice won — the phone gets the sat-nav voice.");
+  // Two copies of a RANKED voice: the tie-break applies inside a rank entry too.
+  check(c.pickVoice(vs([{ name: "Aaron", lang: "en-US", localService: true },
+    { name: "Aaron", lang: "en-US", localService: false }])).localService === false,
+    "given two copies of the same ranked voice, the network one is chosen",
+    "picked the local copy of a voice that also exists as a network voice.");
+  /* THE REGRESSION THIS MUST NOT CAUSE. Microsoft Mark is a LOCAL formant voice
+   * that won a listening A/B against the smoother network man. Quality is a
+   * tie-break WITHIN a rank entry and must never reorder the rank itself, or
+   * this change quietly overturns a measured result on spec-sheet reasoning. */
+  check(/Microsoft Mark/.test(c.pickVoice(vs([
+    { name: "Microsoft Mark - English (United States)", lang: "en-US", localService: true },
+    { name: "Google UK English Male", lang: "en-GB", localService: false }])).name),
+    "a local voice that won its A/B still outranks a network voice below it",
+    "the network preference reordered VOICE_RANK and overturned the listening test.");
+  // Every fixture above this section omits localService entirely. Behaviour must
+  // be unchanged when the engine does not report it.
+  check(/Microsoft Mark/.test(c.pickVoice(vs(CHROME_WIN)).name),
+    "a voice list with no localService reported behaves exactly as before",
+    "the quality pass changed the pick on an engine that reports no quality flag.");
+
   console.log("\n" + "=".repeat(78));
   if (fails) { console.log(fails + " check(s) FAILED"); process.exit(1); }
   console.log("callout reads the live feed correctly");
