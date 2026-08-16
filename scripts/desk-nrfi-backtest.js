@@ -28,8 +28,9 @@
 // window changes and the difference stops meaning anything. The one number
 // worth carrying forward is that the old leaky pick-side accuracy, 62.5%, was
 // to the decimal what nrfi-ladder-sweep.js reported for its BET rung — the
-// sweep's headline was the leak reading itself back. On the clean rebuild that
-// rung reads 60.2%.
+// sweep's headline was the leak reading itself back. That rung read 60.2% once
+// pitI01 and teamOff were rewound, and reads 57.5% now that the starter's
+// season line is rewound and regressed too.
 //
 // Note the prediction sd barely moves. An earlier draft claimed the leak
 // manufactured a quarter of the spread; that was measured through an index that

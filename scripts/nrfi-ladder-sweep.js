@@ -79,6 +79,24 @@ if (cache.modelSig !== modelSig) {
 // than everything else on this page — the leaky path scores 62.5% pick-side
 // against 58.9% clean, and 62.5% is, to the decimal, what the BET rung of this
 // sweep used to report. The headline was reading the leak back to itself.
+//
+// How much that mattered, in this sweep's own units, as each input was rewound:
+//
+//     BET rung      played%    ROI      units    what was still leaking
+//     62.5%          ~62%    +19%       ~90      everything
+//     60.2%          60.7%   +11.7%     48.1     pitMeta, offence
+//     57.5%          57.7%    +6.2%     23.0     offence only
+//
+// Nothing about the model changed across those rows. Half the season's apparent
+// profit was the harness marking its own homework, and it took three separate
+// rewinds to find it — which is the argument for the pitMode guard below rather
+// than a note asking people to be careful.
+//
+// What SURVIVED all of it is the part that matters: the rungs stay monotone,
+// STRONG 63.6% > BET 57.5% > LEAN 54.4% > PASS 51.5% against a 54.3% break-even.
+// The model really does order games; it just orders them by less than the leaky
+// harness claimed. LEAN sitting a hair under break-even while BET sits above it
+// is the ladder cutting in close to the right place.
 if (cache.pitMode !== "point-in-time") {
   console.error(`LEAKED CACHE: built ${cache.at} with pitcher splits in "${cache.pitMode || "unrecorded"}" mode.`);
   console.error("Season-to-date splits contain the game being scored, so every hit rate, ROI and unit");
