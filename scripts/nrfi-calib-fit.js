@@ -98,15 +98,56 @@ console.log(`  implied shift         c = ${(lg(actual) - lg(meanP) >= 0 ? "+" : 
 // The seed is only worth moving if the data can distinguish it from what ships.
 // Bootstrap the fit so the answer is a band, not a point — a point estimate here
 // invites exactly the over-reading that the pitcher table already fell for.
+/* SEEDED, and that is not a style preference.
+ *
+ * This bootstrap ran on Math.random, and the shipped seed happens to sit within
+ * 0.0005 of the band's upper edge, so the in/out verdict was being decided by
+ * resampling noise. Measured on the 1,282-game cache: 40 runs of this script
+ * over the SAME rows printed INSIDE twice and OUTSIDE thirty-eight times, with
+ * the upper bound wandering -0.0734..-0.0602 around a seed of -0.063. The two
+ * branches said opposite things — "leave it" versus "the shipped shift shows
+ * the board in the wrong direction" — so running the tool twice produced
+ * contradictory advice about a live constant, and neither run mentioned that it
+ * was a coin flip.
+ *
+ * mulberry32 with a fixed seed: same cache in, same answer out, so a change in
+ * this report means a change in the data. */
 const B = 2000;
+const mulberry32 = (a) => () => {
+  a = (a + 0x6D2B79F5) | 0;
+  let t = Math.imul(a ^ (a >>> 15), 1 | a);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+const rnd = mulberry32(0x9E3779B9);
+/* Bootstrap the estimator that gets REPORTED, not a cousin of it.
+ *
+ * This resampled lg(actual)-lg(meanPred), the shortcut, while the headline
+ * numbers beside it are the max-likelihood and min-Brier fits — and app.jsx
+ * already notes the shortcut overshoots toward 50%. Comparing a shipped
+ * constant against a band built from a different estimator is how a boundary
+ * call goes wrong quietly. On this sample the two agree to 0.0017 (ML -0.1790
+ * vs shortcut -0.1773), so this changes no conclusion today, which is the
+ * reason to fix it while it is free. */
+const mlOf = (rs) => {
+  let c = 0;
+  for (let it = 0; it < 60; it++) {
+    let g = 0, h = 0;
+    for (const r of rs) {
+      const q = ul(lg(Math.min(0.98, Math.max(0.02, r.p))) + c);
+      g += r.y - q; h += q * (1 - q);
+    }
+    if (!(h > 1e-12)) break;
+    const step = g / h; c += step;
+    if (Math.abs(step) < 1e-10) break;
+  }
+  return c;
+};
 const boot = [];
 for (let b = 0; b < B; b++) {
   const idx = new Array(n);
-  for (let i = 0; i < n; i++) idx[i] = rows[(Math.random() * n) | 0];
-  let sy = 0, sp2 = 0;
-  for (const r of idx) { sy += r.y; sp2 += r.p; }
-  const a = sy / n, m = sp2 / n;
-  boot.push(lg(Math.min(0.999, Math.max(0.001, a))) - lg(m));
+  for (let i = 0; i < n; i++) idx[i] = rows[(rnd() * n) | 0];
+  boot.push(mlOf(idx));
 }
 boot.sort((a, b2) => a - b2);
 const bLo = boot[Math.floor(B * 0.025)], bHi = boot[Math.floor(B * 0.975)];
@@ -115,12 +156,28 @@ console.log("\n=================== c: SHIPPED vs FITTED ===================");
 console.log(`  shipped seed          c = ${SEED_C >= 0 ? "+" : ""}${SEED_C.toFixed(3)}  (n=${SEED_N}, ${(src.match(/source: "([^"]+)"/) || [])[1] || "?"})`);
 console.log(`  max-likelihood fit    c = ${cML >= 0 ? "+" : ""}${cML.toFixed(3)}`);
 console.log(`  min-Brier fit         c = ${cBrier >= 0 ? "+" : ""}${cBrier.toFixed(3)}`);
-console.log(`  bootstrap 95% CI      [${bLo >= 0 ? "+" : ""}${bLo.toFixed(3)}, ${bHi >= 0 ? "+" : ""}${bHi.toFixed(3)}]  (${B} resamples)`);
-const inside = SEED_C >= bLo && SEED_C <= bHi;
-console.log(`  => the shipped seed is ${inside ? "INSIDE" : "OUTSIDE"} the CI of the fit on this sample.`);
-console.log(inside
-  ? "     Changing it would swap one number inside the band for another. Leave it."
-  : "     This sample says the shipped shift shows the board in the wrong direction.");
+console.log(`  bootstrap 95% CI      [${bLo >= 0 ? "+" : ""}${bLo.toFixed(3)}, ${bHi >= 0 ? "+" : ""}${bHi.toFixed(3)}]  (${B} seeded resamples)`);
+/* Report WHERE the constant sits, not just whether it cleared a line.
+ *
+ * A binary in/out is the wrong output shape for this question: it is most
+ * likely to flip exactly when the constant is near an edge, which is exactly
+ * when someone is deciding whether to move it. The percentile is continuous,
+ * so a seed at the 2% mark reads as "barely inside" instead of "INSIDE". */
+const below = boot.filter((x) => x < SEED_C).length / B;
+const pctile = below * 100;
+const edge = Math.min(pctile, 100 - pctile);
+console.log(`  shipped seed sits at the ${pctile.toFixed(1)} percentile of that distribution`);
+if (edge < 5) {
+  console.log(`  => BOUNDARY CASE. The seed is ${edge.toFixed(1)}% from the tail, so "inside the 95%`);
+  console.log(`     band" is not a stable statement — before this bootstrap was seeded, repeat runs`);
+  console.log(`     on identical data flipped the call. Read it as: the sample leans toward a`);
+  console.log(`     ${cML < SEED_C ? "MORE" : "LESS"} negative shift than ships, but not decisively. More games, not a new constant.`);
+} else if (edge < 25) {
+  console.log(`  => the sample leans toward a ${cML < SEED_C ? "more" : "less"} negative shift, well short of decisive.`);
+  console.log(`     Changing it would swap one number inside the band for another. Leave it.`);
+} else {
+  console.log(`  => the shipped seed sits near the middle of the fit's own distribution. Nothing to do.`);
+}
 
 console.log("\n=================== SCORE ===================");
 console.log("                          Brier     log loss");
