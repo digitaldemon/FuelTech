@@ -171,6 +171,39 @@ report("PARK (venue)", decompose(halves, (r) => r.venue), true);
     r.tRest == null ? null : r.travel && r.tRest === 1 ? "traveled overnight" : "everything else"), true);
 }
 
+// --- Batting team offence --------------------------------------------------
+/* Explicitly re-tested, not assumed dead.
+ *
+ * nrfi-offreg-fit.js rejected team offence, but that ran on a season and a half,
+ * and park shows what that can hide: park's implied true spread rose from 1.10pp
+ * to 1.30pp when the sample went from 1.5 seasons to 6, because the noise term
+ * shrinks with n while the true term does not. A rejection at low power is not a
+ * finding, so the same term gets asked again with four times the data.
+ *
+ * Two versions, because they answer different questions. Team identity pooled
+ * across six years asks whether some franchises are persistently better at
+ * scoring in the first; team-season asks whether a given year's roster is,
+ * which is what would actually be usable in-season. The pooled version has more
+ * data per group but blurs across roster turnover. */
+{
+  const bat = (r) => (r.side === "home" ? r.away : r.home);
+  report("BATTING TEAM (offence, pooled over seasons)", decompose(halves, bat), true);
+  report("BATTING TEAM-SEASON (offence, that year's roster)",
+    decompose(halves, (r) => bat(r) + ":" + r.season), false);
+}
+
+// --- Home field ------------------------------------------------------------
+// Only two groups, but it is free to ask and it is the one split where a real
+// effect would be structural rather than a story: the home team bats second, so
+// its half of the first can be shaped by what already happened in the top.
+report("PITCHING SIDE (home arm vs away arm)", decompose(halves, (r) => r.side + " arm"), true);
+
+// --- Time of season --------------------------------------------------------
+// Cold April air does not carry, and pitchers are less stretched out. Those pull
+// in opposite directions, which is exactly why it is worth measuring rather than
+// reasoning about.
+report("MONTH", decompose(halves, (r) => r.date.slice(5, 7)), true);
+
 // ---------------------------------------------------------------------------
 // Park survived the noise floor, so now the question that actually decides
 // whether it belongs in the model: how much is left after it is shrunk by the
@@ -184,38 +217,158 @@ report("PARK (venue)", decompose(halves, (r) => r.venue), true);
 // dramatic its raw leaderboard looks.
 // ---------------------------------------------------------------------------
 {
+  const kOf = (d) => Math.round(lgClean * (1 - lgClean) / (d.trueSd ** 2));
   const park = decompose(halves, (r) => r.venue);
-  const KPARK = Math.round(lgClean * (1 - lgClean) / (park.trueSd ** 2));
-  console.log("=================== PARK, PROPERLY SHRUNK ===================");
-  console.log(`  k = p(1-p)/trueVar = ${(lgClean * (1 - lgClean)).toFixed(3)}/${(park.trueSd ** 2).toFixed(6)} = ${KPARK} half-innings`);
-  const perPark = Math.round(park.N / park.groups);
-  console.log(`  a venue accumulates ~${perPark} half-innings across this whole sample, so it is`);
-  console.log(`  worth ${pc(perPark / (perPark + KPARK))} of its own observed residual and ${pc(KPARK / (perPark + KPARK))} league average.\n`);
+  const bat = (r) => (r.side === "home" ? r.away : r.home);
+  const team = decompose(halves, bat);
+  const KPARK = kOf(park), KTEAM = kOf(team);
+  const weight = (d, k) => { const per = Math.round(d.N / d.groups); return `~${per} half-innings -> ${pc(per / (per + k))} own record`; };
 
-  // Walk forward: a game's park adjustment uses only earlier games at that park.
-  const acc = new Map();
+  console.log("=================== SHRINKAGE, DERIVED NOT TUNED ===================");
+  console.log("  k = per-observation noise variance / true variance, both already measured");
+  console.log("  above. It is not a free parameter, so it is not tuned here.\n");
+  console.log(`  park          k=${String(KPARK).padStart(4)}   ${weight(park, KPARK)}`);
+  console.log(`  batting team  k=${String(KTEAM).padStart(4)}   ${weight(team, KTEAM)}\n`);
+
+  /* Walk forward, adding one term at a time so each is charged only for what it
+   * contributes on top of the ones before it. Everything uses strictly earlier
+   * games, including the home/away split, which is accumulated rather than taken
+   * as a constant so it cannot borrow from the future either. */
   const clamp = (p) => Math.min(0.98, Math.max(0.02, p));
+  const acc = new Map(), tacc = new Map();
+  let hN = 0, hC = 0, aN = 0, aC = 0;
   const scored = [];
   for (let i = 0; i < halves.length; i += 2) {
     const H = halves[i], A = halves[i + 1];        // pushed home-arm then away-arm
     const v = acc.get(H.venue) || { n: 0, d: 0 };
     const adj = v.d / (v.n + KPARK);
+    // Side offset: how much cleaner a home arm runs than the league, and an away
+    // arm, from games already played. Needs a real sample before it says anything.
+    const sH = hN > 200 ? hC / hN - lgClean : 0;
+    const sA = aN > 200 ? aC / aN - lgClean : 0;
+    // Offence attaches to the arm FACING that team: the away team bats against
+    // the home arm, the home team against the away arm.
+    const tA = tacc.get(H.away) || { n: 0, d: 0 };   // away bats vs home arm
+    const tH = tacc.get(A.home) || { n: 0, d: 0 };   // home bats vs away arm
+    const oH = tA.d / (tA.n + KTEAM), oA = tH.d / (tH.n + KTEAM);
+    const mk = (h, a) => clamp(h) * clamp(a);
     scored.push({
       nrfi: H.obs && A.obs ? 1 : 0,
-      base: clamp(H.pred) * clamp(A.pred),
-      park: clamp(H.pred + adj) * clamp(A.pred + adj),
+      base: mk(H.pred, A.pred),
+      park: mk(H.pred + adj, A.pred + adj),
+      side: mk(H.pred + sH, A.pred + sA),
+      all: mk(H.pred + adj + sH + oH, A.pred + adj + sA + oA),
+      mat: H.prior >= 20 && A.prior >= 20,
     });
     acc.set(H.venue, { n: v.n + 2, d: v.d + (H.obs - H.pred) + (A.obs - A.pred) });
+    tacc.set(H.away, { n: tA.n + 1, d: tA.d + (H.obs - H.pred) });
+    tacc.set(A.home, { n: tH.n + 1, d: tH.d + (A.obs - A.pred) });
+    hN++; hC += H.obs; aN++; aC += A.obs;
   }
   const br = (f) => scored.reduce((s, r) => { const d = f(r) - r.nrfi; return s + d * d; }, 0) / scored.length;
-  console.log(`  over all ${scored.length} games, walk-forward:`);
-  console.log(`    pitcher arms only     ${br((r) => r.base).toFixed(5)}`);
-  console.log(`    arms + park           ${br((r) => r.park).toFixed(5)}`);
-  const delta = br((r) => r.base) - br((r) => r.park);
-  console.log(`    difference            ${(delta >= 0 ? "+" : "") + delta.toFixed(5)}   ` +
-    (delta > 0 ? "park helps" : "park hurts"));
-  const moved = scored.reduce((s, r) => s + Math.abs(r.park - r.base), 0) / scored.length;
-  console.log(`    mean |change| to P(NRFI)  ${(moved * 100).toFixed(2)}pp\n`);
+  const b0 = br((r) => r.base);
+  const row = (name, f) => {
+    const b = br(f), d = b0 - b;
+    const moved = scored.reduce((s, r) => s + Math.abs(f(r) - r.base), 0) / scored.length;
+    console.log(`    ${name.padEnd(24)} ${b.toFixed(5)}   ${((d >= 0 ? "+" : "") + d.toFixed(5)).padStart(9)}   ${(moved * 100).toFixed(2)}pp`);
+  };
+  console.log("=================== WALK-FORWARD, ONE TERM AT A TIME ===================");
+  console.log(`  over all ${scored.length} games`);
+  console.log("    model                       Brier   vs base   mean |move|");
+  row("pitcher arms only", (r) => r.base);
+  row("+ park", (r) => r.park);
+  row("+ home/away side", (r) => r.side);
+  row("+ park, side, offence", (r) => r.all);
+  /* Read that table carefully, because the obvious conclusion is wrong.
+   *
+   * The side term makes the model WORSE despite being the largest and cleanest
+   * effect measured anywhere in this file (2.20pp true spread against 0.38pp of
+   * noise). That is not a contradiction, it is the independence assumption
+   * failing, and the arithmetic shows it exactly:
+   *
+   *   correct marginals   0.729 * 0.684 = 49.9%
+   *   pooled mean squared 0.711^2       = 50.6%
+   *   actual NRFI                         50.7%
+   *
+   * Multiplying two CORRECT numbers gives the wrong answer, and multiplying two
+   * wrong ones gives the right answer. So P(both halves clean) is not the product
+   * of the halves — they are positively correlated, because game-level conditions
+   * (weather, the umpire's zone, the ball) push both the same way at once. The
+   * pooled mean was silently absorbing that correlation, and splitting it by side
+   * removed the compensation while adding nothing that discriminates between
+   * games: the side offset is the same every game.
+   *
+   * The fix is not to drop the term, it is to stop pretending the product is
+   * calibrated. A walk-forward logistic recalibration on logit(p) can absorb both
+   * the correlation and any residual bias, and unlike the raw product it is
+   * allowed to learn that the model's spread is too narrow or too wide. */
+  const lgt = (x) => Math.log(x / (1 - x));
+  function platt(rows) {
+    let a = 0, b = 1;
+    for (let it = 0; it < 60; it++) {
+      let g0 = 0, g1 = 0, h00 = 0, h01 = 0, h11 = 0;
+      for (const r of rows) {
+        const x = lgt(r.p), mu = 1 / (1 + Math.exp(-(a + b * x))), w = mu * (1 - mu), d = r.y - mu;
+        g0 += d; g1 += d * x; h00 += w; h01 += w * x; h11 += w * x * x;
+      }
+      const det = h00 * h11 - h01 * h01;
+      if (!(Math.abs(det) > 1e-12)) break;
+      a += (h11 * g0 - h01 * g1) / det;
+      b += (h00 * g1 - h01 * g0) / det;
+    }
+    return { a, b };
+  }
+  /* Refit every 250 games on everything before the current block, so a game is
+   * always scored by a calibration that has not seen it. The first block has no
+   * history and is left uncalibrated rather than guessed at. */
+  const STEP = 250, WARM = 1000;
+  const calibrated = (pick) => {
+    const out = [];
+    let cal = null;
+    for (let i = 0; i < scored.length; i++) {
+      if (i >= WARM && i % STEP === 0) {
+        cal = platt(scored.slice(0, i).map((r) => ({ p: pick(r), y: r.nrfi })));
+      }
+      const p = pick(r_at(i));
+      out.push(cal ? 1 / (1 + Math.exp(-(cal.a + cal.b * lgt(p)))) : p);
+    }
+    return out;
+  };
+  const r_at = (i) => scored[i];
+  const brV = (v) => v.reduce((s, x, i) => { const d = x - scored[i].nrfi; return s + d * d; }, 0) / v.length;
+  console.log("=================== WITH WALK-FORWARD CALIBRATION ===================");
+  console.log("    model                       Brier   vs raw");
+  for (const [name, pick] of [["pitcher arms only", (r) => r.base], ["+ park", (r) => r.park],
+    ["+ home/away side", (r) => r.side], ["+ park, side, offence", (r) => r.all]]) {
+    const raw = br(pick), c = brV(calibrated(pick));
+    console.log(`    ${name.padEnd(24)} ${c.toFixed(5)}   ${((raw - c >= 0 ? "+" : "") + (raw - c).toFixed(5)).padStart(9)}`);
+  }
+  /* Split by whether the model actually knew anything yet.
+   *
+   * A walk-forward model spends its first season saying the league mean, because
+   * every arm starts at zero prior starts and k=75 pins it there. Those games are
+   * not evidence about the model, they are evidence about the base rate, and
+   * pooling them drags every number toward "no better than 50.7%". The Kalshi
+   * window is entirely mature games, which is why it reads so much better. */
+  const mature = scored.filter((r) => r.mat);
+  const brM = (pick) => mature.reduce((s, r) => { const d = pick(r) - r.nrfi; return s + d * d; }, 0) / mature.length;
+  const mBase = mature.reduce((s, r) => s + r.nrfi, 0) / mature.length;
+  console.log("=================== MATURE GAMES ONLY (both arms 20+ prior starts) ===================");
+  console.log(`  ${mature.length} of ${scored.length} games, base rate ${pc(mBase)}`);
+  console.log(`    base rate                ${(mBase * (1 - mBase)).toFixed(5)}`);
+  for (const [name, pick] of [["pitcher arms only", (r) => r.base], ["+ park", (r) => r.park],
+    ["+ home/away side", (r) => r.side], ["+ park, side, offence", (r) => r.all]]) {
+    console.log(`    ${name.padEnd(24)} ${brM(pick).toFixed(5)}`);
+  }
+  const matCal = platt(mature.map((r) => ({ p: r.all, y: r.nrfi })));
+  console.log(`\n  calibration on mature games: logit(p') = ${matCal.a.toFixed(3)} + ${matCal.b.toFixed(3)}*logit(p)`);
+  console.log(`    calibrated               ${mature.reduce((s, r) => { const q = 1 / (1 + Math.exp(-(matCal.a + matCal.b * lgt(r.all)))); const d = q - r.nrfi; return s + d * d; }, 0) / mature.length}\n`);
+
+  const fin = platt(scored.map((r) => ({ p: r.all, y: r.nrfi })));
+  console.log(`\n  full-sample calibration of the complete model: logit(p') = ${fin.a.toFixed(3)} + ${fin.b.toFixed(3)}*logit(p)`);
+  console.log("  A slope above 1 would mean the model is too timid and its spread should be");
+  console.log("  stretched; below 1, too confident. The intercept is the correlation bias");
+  console.log("  the product cannot represent.\n");
 }
 
 console.log("=================== WHAT THIS MEANS ===================");

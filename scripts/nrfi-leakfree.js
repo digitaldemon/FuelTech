@@ -37,11 +37,13 @@
 // groups minus the binomial noise a 4-batter sample generates — and only park
 // came out the far side:
 //
+//   home vs away arm     true spread 2.20pp   kept (see the warning below)
+//   batting team offence true spread 1.78pp   kept
 //   park                 true spread 1.30pp   kept
+//   month                        0.08pp       rejected
 //   pitcher rest         nothing above noise  rejected
 //   batting team rest    nothing above noise  rejected
 //   travel               nothing above noise  rejected
-//   team offence         nothing above noise  rejected (nrfi-offreg-fit.js)
 //
 // Rest and travel are the ones worth naming, because they are the terms a
 // handicapper would reach for first and both are flat here — and where they do
@@ -49,10 +51,32 @@
 // scored slightly LESS). Adding them would be adding noise with a narrative
 // attached.
 //
-// Park is kept honestly, not enthusiastically: it is real (the leaderboard puts
-// Coors and Sacramento at the run-friendly end and T-Mobile at the clean end,
-// which is the correct answer) but small once shrunk properly, worth about
-// +0.00009 Brier and 0.65pp of movement in P(NRFI).
+// Team offence is in now and was NOT before. nrfi-offreg-fit.js rejected it on a
+// season and a half; at six seasons it clears the floor comfortably. A rejection
+// taken at low power is not a finding, and the leaderboard confirms the term is
+// real rather than fitted: the Dodgers score most in the first, the Marlins
+// least.
+//
+// Park is kept honestly, not enthusiastically. It is real (Coors and Sacramento
+// at the run-friendly end, T-Mobile at the clean end) but small once shrunk, and
+// it buys accuracy without buying edge — adding it RAISED standalone accuracy
+// and LOWERED the model's joint coefficient against the price, because the
+// market already knows about Coors.
+//
+// THE WARNING. The home/away split is the largest and cleanest effect measured
+// anywhere here, and adding it as marginals made the model WORSE. That is the
+// independence assumption failing:
+//
+//   correct marginals    0.729 * 0.684 = 49.9%
+//   pooled mean squared  0.711^2       = 50.6%
+//   actual NRFI                          50.7%
+//
+// Multiplying two right numbers lands further from the truth than multiplying
+// two wrong ones, because the halves are positively correlated — weather, ball
+// and umpire push both the same way — and the pooled mean was quietly absorbing
+// that. So the product is calibrated (walk-forward Platt) rather than trusted,
+// and the fitted slope near 0.66 says the raw product is about 1.5x more
+// confident than it deserves to be.
 //
 // If this beats the price, there is real signal and scanNrfi's job is to
 // recover it without cheating. If it does not, the +19% in nrfi-vs-kalshi.js
@@ -83,6 +107,10 @@ const K = 75;           // NRFI_PIT_REG, walk-forward fit
  * there if the seasons change; do not hand-tune it here, because the whole point
  * of the number is that it is not a free parameter. */
 const KPARK = 1216;
+// Batting-team offence, same derivation (true spread 1.78pp). Rejected on 1.5
+// seasons by nrfi-offreg-fit.js and re-measured here at six: a rejection at low
+// power is not a finding.
+const KTEAM = 646;
 const pc = (x) => (x * 100).toFixed(1) + "%";
 const lg = (x) => Math.log(x / (1 - x));
 const clamp = (p) => Math.min(0.98, Math.max(0.02, p));
@@ -143,7 +171,8 @@ async function scan() {
   // does each park's adjustment.
   const arm = new Map();
   const get = (id) => arm.get(id) || { n: 0, c: 0 };
-  const pk = new Map();
+  const pk = new Map(), tm = new Map();
+  let hN = 0, hC = 0, aN = 0, aC = 0;
   const rated = [];
   for (const g of games) {
     const a = get(g.ap), h = get(g.hp);
@@ -154,11 +183,72 @@ async function scan() {
     // pitching is not credited for it.
     const v = pk.get(g.venue) || { n: 0, d: 0 };
     const adj = v.d / (v.n + KPARK);
-    rated.push({ ...g, pa, ph, adj, p: clamp(clamp(pa + adj) * clamp(ph + adj)), priorA: a.n, priorH: h.n });
+    // Home starters run ~4.5pp cleaner than away starters — the largest and
+    // cleanest effect in nrfi-park-rest.js (2.20pp true spread, 0.38pp noise).
+    // Accumulated rather than taken as a constant so it cannot see the future.
+    const sH = hN > 200 ? hC / hN - lgClean : 0;
+    const sA = aN > 200 ? aC / aN - lgClean : 0;
+    // Offence attaches to the arm FACING that lineup: away bats vs the home arm.
+    const tA = tm.get(g.away) || { n: 0, d: 0 }, tH = tm.get(g.home) || { n: 0, d: 0 };
+    const oH = tA.d / (tA.n + KTEAM), oA = tH.d / (tH.n + KTEAM);
+    rated.push({
+      ...g, pa, ph, adj,
+      p: clamp(clamp(ph + adj + sH + oH) * clamp(pa + adj + sA + oA)),
+      priorA: a.n, priorH: h.n, mat: a.n >= 20 && h.n >= 20,
+    });
     arm.set(g.ap, { n: a.n + 1, c: a.c + g.apClean });
     arm.set(g.hp, { n: h.n + 1, c: h.c + g.hpClean });
     pk.set(g.venue, { n: v.n + 2, d: v.d + (g.hpClean - ph) + (g.apClean - pa) });
+    tm.set(g.away, { n: tA.n + 1, d: tA.d + (g.hpClean - ph) });
+    tm.set(g.home, { n: tH.n + 1, d: tH.d + (g.apClean - pa) });
+    hN++; hC += g.hpClean; aN++; aC += g.apClean;
   }
+
+  /* Calibrate, walk-forward, and it is not optional.
+   *
+   * P(NRFI) is built as P(home half clean) * P(away half clean), and that
+   * product is biased because the two halves are POSITIVELY CORRELATED — the
+   * weather, the ball and the umpire's zone push both the same way at once. The
+   * arithmetic is stark: correct marginals give 0.729*0.684 = 49.9%, the pooled
+   * mean squared gives 0.711^2 = 50.6%, and the truth is 50.7%. Multiplying two
+   * right numbers lands further from the answer than multiplying two wrong ones.
+   *
+   * Fitting logit(p') = a + b*logit(p) absorbs it, and the slope is the finding:
+   * it comes out near 0.55, so the raw product is about twice as confident as it
+   * has any right to be. Refit every 250 games on strictly earlier ones, with the
+   * first 1000 left raw because there is nothing yet to fit on. */
+  const platt = (rows) => {
+    let a = 0, b = 1;
+    for (let it = 0; it < 60; it++) {
+      let g0 = 0, g1 = 0, h00 = 0, h01 = 0, h11 = 0;
+      for (const r of rows) {
+        const x = lg(r.p), mu = 1 / (1 + Math.exp(-(a + b * x))), w = mu * (1 - mu), d = r.nrfi - mu;
+        g0 += d; g1 += d * x; h00 += w; h01 += w * x; h11 += w * x * x;
+      }
+      const det = h00 * h11 - h01 * h01;
+      if (!(Math.abs(det) > 1e-12)) break;
+      a += (h11 * g0 - h01 * g1) / det;
+      b += (h00 * g1 - h01 * g0) / det;
+    }
+    return { a, b };
+  };
+  let cal = null;
+  for (let i = 0; i < rated.length; i++) {
+    // Fit on MATURE earlier games only. Fitting on everything was the mistake
+    // worth recording: the first season is nearly all games where k=75 pins both
+    // arms to the league mean, so the model is a constant there and the fit reads
+    // that constancy as over-confidence. The slope it learned then over-shrank
+    // the games that actually had signal, and calibrated came out worse than raw
+    // on mature games — a calibrator making the model less accurate is the
+    // symptom of fitting it on the wrong population.
+    if (i >= 1000 && i % 250 === 0) {
+      const hist = rated.slice(0, i).filter((r) => r.mat);
+      if (hist.length >= 500) cal = platt(hist);
+    }
+    rated[i].raw = rated[i].p;
+    if (cal) rated[i].p = clamp(1 / (1 + Math.exp(-(cal.a + cal.b * lg(rated[i].raw)))));
+  }
+  const finalCal = platt(rated.filter((r) => r.mat));
 
   console.log("=================== LEAK-FREE MODEL ===================");
   console.log(`  ${games.length} games ${games[0].date} .. ${games[games.length - 1].date}`);
@@ -169,6 +259,21 @@ async function scan() {
     `   (p10 ${spread[Math.floor(0.1 * spread.length)].toFixed(3)}, p90 ${spread[Math.floor(0.9 * spread.length)].toFixed(3)})`);
   console.log("  A narrow range is the honest consequence of k=75: with 20 starts an arm");
   console.log("  is only ~21% of the way from the league mean to its own record.\n");
+  console.log(`  calibration (full sample)  logit(p') = ${finalCal.a.toFixed(3)} + ${finalCal.b.toFixed(3)}*logit(p)`);
+  console.log("  A slope well below 1 means the raw product is over-confident, which is");
+  console.log("  the half-inning correlation described above showing up as a number.\n");
+  // Scored on games where the model had something to say. Before an arm has ~20
+  // starts, k=75 pins it to the league mean, so early games measure the base
+  // rate rather than the model and drag every comparison toward it.
+  {
+    const M = rated.filter((r) => r.mat);
+    const mb = M.reduce((s, r) => s + r.nrfi, 0) / M.length;
+    const bm = (f) => M.reduce((s, r) => { const d = f(r) - r.nrfi; return s + d * d; }, 0) / M.length;
+    console.log(`  MATURE GAMES ONLY (both arms 20+ starts): ${M.length} of ${rated.length}, base ${pc(mb)}`);
+    console.log(`    base rate               ${(mb * (1 - mb)).toFixed(5)}`);
+    console.log(`    raw product             ${bm((r) => r.raw).toFixed(5)}`);
+    console.log(`    calibrated              ${bm((r) => r.p).toFixed(5)}\n`);
+  }
 
   // Score against Kalshi on the overlap, using exactly the join that
   // nrfi-vs-kalshi.js verified (same abbreviations, doubleheaders dropped).
@@ -354,17 +459,21 @@ async function scan() {
   console.log("  found in nrfi-kalshi-bias.js is real but worth very little by itself.");
   console.log("  Adding leak-free pitcher rates moves it about ten times as far. Whatever");
   console.log("  this model knows, the price did not already know it.");
-  console.log("\n  Park is worth reading carefully, because it improves the model and does");
-  console.log("  NOT improve its edge. Standalone Brier on these games went .24751 ->");
-  console.log("  .24688 when park was added, and the model-alone z rose to 4.05 — but the");
-  console.log("  joint c FELL, 1.561 -> 1.374. Both moves are the same fact: the market");
-  console.log("  already knows about Coors. Park makes our number more correct and more");
-  console.log("  redundant at once, so it is worth having in a forecast and worth nothing");
-  console.log("  in a disagreement with the price. Expect that from any input that is");
-  console.log("  public and famous, and treat it as the cost of admission rather than");
-  console.log("  the edge.");
-  console.log("\n  Still one holdout of ~420 games, and the model is crude by design — two");
-  console.log("  regressed pitcher rates and a park nudge, no lineup, no bullpen, no");
+  console.log("\n  Read the MATURE GAMES block above before this one. On 6507 games where");
+  console.log("  both arms actually had a record, the calibrated model scores .24956");
+  console.log("  against a .24982 base rate. That is the honest size of this model: real,");
+  console.log("  repeatedly measured, and small. The larger margins that show up on the");
+  console.log("  831-game Kalshi window are one window, and a Brier difference of .003 on");
+  console.log("  831 games is about one standard error — do not quote it as the model's");
+  console.log("  accuracy.");
+  console.log("\n  Against the price the model still contributes (the blend beats the");
+  console.log("  stretch-only control, which is the control that could have killed it),");
+  console.log("  but c now carries z=1.83. That is below the two-standard-error line and");
+  console.log("  it fell as the model improved, because park and offence are things the");
+  console.log("  market already prices. Accuracy and edge are moving in opposite");
+  console.log("  directions here, and edge is the one that pays.");
+  console.log("\n  The model is crude by design — regressed pitcher rates, a park nudge, a");
+  console.log("  team-offence nudge and a calibration layer; no lineup, no bullpen, no");
   console.log("  weather, no handedness. Treat it as a floor on what an honest model can");
   console.log("  do, not as a finished forecaster, and do not size on the ROI column.");
 })().catch((e) => { console.error(e.stack || e); process.exitCode = 1; });
