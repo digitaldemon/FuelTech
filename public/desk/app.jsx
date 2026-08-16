@@ -9017,6 +9017,16 @@ function FirstInning() {
     fetch("/api/desk/nrfi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify([{ id, skipped: true }]) }).catch(() => {});
   }
 
+  /* Dual Score tier cutoffs, held in state rather than read out of localStorage
+   * at render time so an edit repaints every badge on the slate at once — the
+   * whole point of the control is watching where the line lands on today's
+   * games, and that is useless if you have to reload to see it. */
+  const [dsTh, setDsTh] = useState(dsThresholds);
+  function saveDsTh(next) {
+    setDsTh(next);
+    try { localStorage.setItem("nrfi.ds.tiers", JSON.stringify(next)); } catch { /* private mode */ }
+  }
+
   async function loadRecord() {
     try { const d = await fetch("/api/desk/nrfi").then((r) => r.json()); recRef.current = d.record || []; setRec(recRef.current); }
     catch { recRef.current = []; setRec([]); }
@@ -9535,7 +9545,6 @@ function FirstInning() {
    * bucketed Bets/Leans/Pass and sorted by confidence inside each, and silently
    * reordering the thing the user reads every day is a bigger change than adding
    * a number to it. Both orderings are now visible; the sort can follow later. */
-  const dsTh = dsThresholds();
   const dsOf = (r) => (r.pCal != null ? r.pCal * 100 : null);
   const dsEdgeOf = (r) => { const d = dsOf(r); return d != null && r.market ? d - r.market.marketNRFI : null; };
   const leadDS = validRows.reduce((m, r) => { const d = dsOf(r); return d != null && (m == null || d > m) ? d : m; }, null);
@@ -10303,6 +10312,60 @@ function FirstInning() {
         )}
         {importMsg && <span style={{ fontSize: 12, color: importMsg.ok ? "var(--moss)" : "var(--rose)" }}>{importMsg.text}</span>}
       </div>
+      {/* ── Dual Score tiers ──
+          The two cutoffs are the only hand-set numbers on the DS card, and they
+          are not equally well known: green is bracketed by observation, red is
+          not observed at all. The control says which is which, because a number
+          you can edit reads as a number someone measured unless it tells you
+          otherwise. Live counts sit next to the inputs so moving a cutoff shows
+          its consequence on today's slate rather than on a remembered one. */}
+      {(() => {
+        const counts = { GREEN: 0, YELLOW: 0, RED: 0, "NO DS": 0 };
+        for (const r of validRows) counts[dsTier(dsOf(r), dsTh).label]++;
+        const isDefault = dsTh.green === DS_TIER_DEFAULTS.green && dsTh.yellow === DS_TIER_DEFAULTS.yellow;
+        // Clamp on commit, not on keystroke: green must stay above yellow or the
+        // yellow band vanishes and every card jumps two tiers at once.
+        const setGreen = (v) => saveDsTh({ green: Math.min(95, Math.max(dsTh.yellow + 0.5, v)), yellow: dsTh.yellow });
+        const setYellow = (v) => saveDsTh({ green: dsTh.green, yellow: Math.max(5, Math.min(dsTh.green - 0.5, v)) });
+        const num = (label, val, onSet, color, title) => (
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }} title={title}>
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color }}>{label}</span>
+            <input type="number" step="0.5" min="5" max="95" defaultValue={val} key={label + val}
+              onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) onSet(v); }}
+              onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+              style={{ width: 58, fontSize: 12, padding: "2px 5px", background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.12)", borderRadius: 5, color: "var(--bone)",
+                fontVariantNumeric: "tabular-nums" }} />
+          </span>
+        );
+        return (
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center",
+            margin: "0 0 8px", padding: "7px 10px", background: "rgba(255,255,255,0.03)",
+            border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: "var(--dim)" }}>DUAL SCORE TIERS</span>
+            {num("GREEN ≥", dsTh.green, setGreen, "var(--moss)",
+              "Measured bracket: his published cards show GREEN at DS 64.7 and YELLOW at 60.0 and 59.1, so the real cutoff is somewhere in (60.0, 64.7]. 62 is the midpoint of that interval — a guess inside a measured range, not a fitted value.")}
+            {num("YELLOW ≥", dsTh.yellow, setYellow, "var(--amber)",
+              "UNOBSERVED. None of his three published cards is red, so nothing brackets this cutoff. 55 is a placeholder — move it the moment a red card is seen rather than defending it.")}
+            <span style={{ fontSize: 11, color: "var(--dim)", fontVariantNumeric: "tabular-nums" }}
+              title="How today's board splits at the cutoffs above. Held games and settled games are not counted — they are not decisions.">
+              today: <span style={{ color: "var(--moss)" }}>{counts.GREEN} green</span>
+              {" · "}<span style={{ color: "var(--amber)" }}>{counts.YELLOW} yellow</span>
+              {" · "}<span style={{ color: "var(--rose)" }}>{counts.RED} red</span>
+              {counts["NO DS"] > 0 ? " · " + counts["NO DS"] + " no DS" : ""}
+            </span>
+            {!isDefault && (
+              <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: "2px 7px" }}
+                onClick={() => saveDsTh({ ...DS_TIER_DEFAULTS })}
+                title={"Back to " + DS_TIER_DEFAULTS.green + " / " + DS_TIER_DEFAULTS.yellow}>Reset</button>
+            )}
+            <span style={{ fontSize: 10, color: "var(--dim)" }}
+              title="The badge is a threshold on the DS level. It is NOT the edge over the break-even price — his DS 60.0 against BE 51.5% is an +8.5pt edge and still YELLOW, while DS 64.7 at +5.2 is GREEN. The board's #N badge is what carries the edge ordering.">
+              badge = DS level, not edge
+            </span>
+          </div>
+        );
+      })()}
       {/* Bankroll builder */}
       {(() => {
         const RISK_CFG = {
