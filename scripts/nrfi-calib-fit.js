@@ -1,24 +1,39 @@
 // Is NRFI_CALIB_SEED still the right shift for the model that ships?
 //
-//   node scripts/nrfi-calib-fit.js
+//   node scripts/nrfi-calib-fit.js              # tout cache: more games, leaks
+//   node scripts/nrfi-calib-fit.js --backtest   # backtest rows: fewer, rewound
 //
 // nrfi-calib-audit.js answers the same question live, but it re-scans the API
 // and so is limited to a ~10-day window — around 130 games, where the 95% CI on
-// the level is +/-8pp and essentially any c is inside it. The tout cache holds
-// 1,272 graded games scored by the current model, so the same arithmetic runs
-// offline on ten times the sample. That is the only reason this exists.
+// the level is +/-8pp and essentially any c is inside it. Both sources here run
+// the same arithmetic offline on a bigger sample. That is the only reason this
+// exists.
 //
-// THE LEAKAGE CAVEAT, RESTATED. The cached `p` came from scanNrfi reading
-// season-to-date pitcher and team feeds that were never rewound to the date
-// being scored, so each game's inputs include that game and everything after it.
-// That inflates DISCRIMINATION (AUC, and the spread of the reliability table
-// below) and those numbers should be read as ceilings. It does not much move the
-// MEAN prediction, which is the only quantity a single scalar `c` corrects — so
-// the LEVEL section is the trustworthy part and the rest is context.
+// TWO SOURCES, AND THEY ARE NOT INTERCHANGEABLE.
 //
-// It also does not tell you what to ship. `c` is blended live against the seed
-// by weight n/(n+558), so a seed that is off by less than the noise band is not
-// worth moving: it would be replacing one number inside the CI with another.
+// The TOUT CACHE holds ~1,272 graded games, but its `p` came from scanNrfi
+// reading season-to-date pitcher and team feeds that were never rewound to the
+// date being scored, so each game's inputs include that game and everything
+// after it. That inflates DISCRIMINATION (AUC, and the spread of the reliability
+// table below) and those numbers should be read as ceilings. It does not much
+// move the MEAN prediction, which is the only quantity a single scalar `c`
+// corrects — so the LEVEL section is the trustworthy part and the rest is
+// context.
+//
+// The BACKTEST rows are ~409 games with the pitcher side rewound to the date
+// scored. Fewer games, wider band — but it is the source that MATCHES LIVE
+// CONDITIONS, and that asymmetry is easy to get backwards. The tout cache's leak
+// is an artifact of re-scoring finished games with today's feeds; when the desk
+// scans tomorrow's slate, season-to-date genuinely excludes the game being
+// scored. So the backtest is not merely the more conservative source, it is the
+// one whose inputs the live board actually has. **Prefer --backtest for any
+// decision about the shipped constant**; use the tout cache to ask whether the
+// two agree, because a disagreement between them is a leak measurement, not a
+// calibration measurement.
+//
+// Neither tells you what to ship on its own. `c` is blended live against the
+// seed by weight n/(n+558), so a seed that is off by less than the noise band is
+// not worth moving: it would be replacing one number inside the CI with another.
 const fs = require("fs");
 const path = require("path");
 const { modelSig } = require("./nrfi-model-lib");
@@ -31,23 +46,65 @@ const ul = (x) => 1 / (1 + Math.exp(-x));
 const pct = (x) => (x * 100).toFixed(1) + "%";
 const sp = (x) => ((x >= 0 ? "+" : "") + x.toFixed(2) + "pp");
 
-if (!fs.existsSync(CACHE)) {
-  console.error("no cached scores — run: node scripts/nrfi-tout-vs-model.js 318949");
-  process.exit(1);
-}
-const cache = JSON.parse(fs.readFileSync(CACHE, "utf8"));
-// Same guard the ladder sweep runs, for the same reason: these are model
-// outputs, the cache is committed, and a calibration fitted to a model that no
-// longer exists would still print a plausible-looking number.
-if (cache.modelSig !== modelSig) {
-  console.error(`STALE CACHE: built ${cache.at} from model ${cache.modelSig || "(none)"}, but the model is now ${modelSig}.`);
-  console.error("Rebuild: node scripts/nrfi-tout-vs-model.js 318949");
-  process.exit(1);
+const USE_BACKTEST = process.argv.includes("--backtest");
+const BACKTEST = path.join(__dirname, "nrfi-backtest.json");
+
+// Every row carries its DATE, because the bootstrap below resamples slates and
+// not games — see the note there.
+let rows, provenance, sourceNote, rebuildCmd;
+
+if (USE_BACKTEST) {
+  if (!fs.existsSync(BACKTEST)) {
+    console.error("no backtest artifact — run: node scripts/desk-nrfi-backtest.js 30");
+    process.exit(1);
+  }
+  const bt = JSON.parse(fs.readFileSync(BACKTEST, "utf8"));
+  rebuildCmd = "node scripts/desk-nrfi-backtest.js 30";
+  // An ablation artifact is a model that is not shipped. Fitting the live
+  // constant on it would be the same class of mistake the ablation filename was
+  // introduced to prevent, one step further downstream.
+  if (bt.ablations) {
+    console.error(`REFUSING: ${path.basename(BACKTEST)} was written by an ABLATED run (${bt.ablations}).`);
+    console.error("That is not the shipped model, so a constant fitted on it does not belong in app.jsx.");
+    process.exit(1);
+  }
+  if (!bt.modelSig) {
+    console.error(`${path.basename(BACKTEST)} predates modelSig, so there is no way to tell whether these`);
+    console.error(`scores came from the model that ships. Rebuild: ${rebuildCmd}`);
+    process.exit(1);
+  }
+  if (bt.modelSig !== modelSig) {
+    console.error(`STALE ARTIFACT: built ${bt.at} from model ${bt.modelSig}, but the model is now ${modelSig}.`);
+    console.error(`Rebuild: ${rebuildCmd}`);
+    process.exit(1);
+  }
+  rows = bt.rows.filter((r) => Number.isFinite(r.p) && (r.a === 0 || r.a === 1))
+    .map((r) => ({ p: r.p, y: r.a, date: r.k.slice(0, 10) }));
+  provenance = `backtest artifact, written ${bt.at}, model ${bt.modelSig}, window ${bt.days} days`;
+  sourceNote = "Inputs are REWOUND to the date scored on the pitcher side — this is the source\n" +
+    "that matches live conditions. Offence-side feeds still leak (see desk-nrfi-backtest.js).";
+} else {
+  if (!fs.existsSync(CACHE)) {
+    console.error("no cached scores — run: node scripts/nrfi-tout-vs-model.js 318949");
+    process.exit(1);
+  }
+  const cache = JSON.parse(fs.readFileSync(CACHE, "utf8"));
+  rebuildCmd = "node scripts/nrfi-tout-vs-model.js 318949";
+  // Same guard the ladder sweep runs, for the same reason: these are model
+  // outputs, the cache is committed, and a calibration fitted to a model that no
+  // longer exists would still print a plausible-looking number.
+  if (cache.modelSig !== modelSig) {
+    console.error(`STALE CACHE: built ${cache.at} from model ${cache.modelSig || "(none)"}, but the model is now ${modelSig}.`);
+    console.error(`Rebuild: ${rebuildCmd}`);
+    process.exit(1);
+  }
+  rows = [...new Map(cache.slates.flatMap(([d, gs]) => gs.map((g) => [g.gamePk, { g, d }])).map(([k, v]) => [k, v])).values()]
+    .filter(({ g }) => Number.isFinite(g.p) && (g.actual === 0 || g.actual === 1))
+    .map(({ g, d }) => ({ p: g.p, y: g.actual, date: d }));
+  provenance = `${cache.dates.length} slates, season ${cache.season}, cache written ${cache.at}, model ${cache.modelSig}`;
+  sourceNote = "Inputs were NOT rewound — discrimination numbers below are CEILINGS (see header).";
 }
 
-const rows = [...new Map(cache.slates.flatMap(([, gs]) => gs).map((g) => [g.gamePk, g])).values()]
-  .filter((g) => Number.isFinite(g.p) && (g.actual === 0 || g.actual === 1))
-  .map((g) => ({ p: g.p, y: g.actual }));
 if (rows.length < 200) { console.error(`only ${rows.length} graded games — not enough to fit a level`); process.exit(1); }
 
 const src = fs.readFileSync(APP, "utf8");
@@ -84,9 +141,9 @@ function fitC(score) {
 const cML = fitC(logloss);
 const cBrier = fitC(brier);
 
-console.log(`calibration fit over ${n} graded games (${cache.dates.length} slates, season ${cache.season})`);
-console.log(`cache written ${cache.at}, model ${cache.modelSig}`);
-console.log(`\nDiscrimination numbers below are CEILINGS — the cached inputs were not rewound (see header).`);
+console.log(`calibration fit over ${n} graded games — SOURCE: ${USE_BACKTEST ? "BACKTEST (rewound)" : "TOUT CACHE (leaky)"}`);
+console.log(`  ${provenance}`);
+console.log(`\n${sourceNote}`);
 
 const [lo, hi] = wilson(k, n);
 console.log("\n=================== LEVEL ===================");
@@ -143,11 +200,27 @@ const mlOf = (rs) => {
   }
   return c;
 };
+/* Resample SLATES, not games.
+ *
+ * This drew n games i.i.d., which treats fifteen games off one schedule call as
+ * fifteen independent draws. They are not: a slate shares the weather systems,
+ * the umpire crews, the day/night mix, and one fetch of our own upstream feeds,
+ * so a bad afternoon moves a whole cluster together. An i.i.d. bootstrap
+ * therefore reports a band NARROWER than the data supports, which is the
+ * dangerous direction — it makes the shipped seed look more distinguishable
+ * from the fit than it is, on precisely the boundary call this section exists
+ * to adjudicate.
+ *
+ * This widens the CI. That is the point, and it strengthens rather than
+ * reverses the standing "leave it alone" verdict. Any percentile quoted from a
+ * run before this change came from the narrow band. */
+const dates = [...new Set(rows.map((r) => r.date))];
+const byDate = new Map(dates.map((d) => [d, rows.filter((r) => r.date === d)]));
 const boot = [];
 for (let b = 0; b < B; b++) {
-  const idx = new Array(n);
-  for (let i = 0; i < n; i++) idx[i] = rows[(rnd() * n) | 0];
-  boot.push(mlOf(idx));
+  const s = [];
+  for (let i = 0; i < dates.length; i++) s.push(...byDate.get(dates[(rnd() * dates.length) | 0]));
+  boot.push(mlOf(s));
 }
 boot.sort((a, b2) => a - b2);
 const bLo = boot[Math.floor(B * 0.025)], bHi = boot[Math.floor(B * 0.975)];
@@ -211,8 +284,14 @@ for (let it = 0; it < 200; it++) {
 console.log("\n=================== SLOPE (full Platt) ===================");
 console.log(`  logit(actual) = ${a.toFixed(3)} * logit(pred) ${b0 >= 0 ? "+" : "-"} ${Math.abs(b0).toFixed(3)}`);
 console.log(`  slope 1.0 = correctly scaled; <1 = over-confident, >1 = under-confident.`);
-console.log(`  NOTE: leakage inflates slope here, so a value near 1 on this cache is`);
-console.log(`  consistent with the live model being over-confident. Treat as a ceiling.`);
+if (USE_BACKTEST) {
+  console.log(`  These inputs are rewound, so this slope is NOT inflated by leakage the way`);
+  console.log(`  the tout cache's is — read it at face value, with the caveat that 409 games`);
+  console.log(`  put roughly +/-0.5 around it, so it is about 1 SE from 1.0.`);
+} else {
+  console.log(`  NOTE: leakage inflates slope here, so a value near 1 on this cache is`);
+  console.log(`  consistent with the live model being over-confident. Treat as a ceiling.`);
+}
 
 console.log("\n=================== RELIABILITY (shipped c) ===================");
 const sorted = rows.map((r) => ({ q: shift(r.p, SEED_C), y: r.y })).sort((x, y) => x.q - y.q);

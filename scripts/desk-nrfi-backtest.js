@@ -145,7 +145,7 @@ const path = require("path");
 // every analysis script scores games through one code path. See that file for
 // why a second copy is worse than an import.
 const { J, savant, mapLimit, buildCtx, scoreBothPaths, C, PIT_MODE, pitStats,
-  NRFI_CALIB_SEED, ABLATIONS } = require("./nrfi-model-lib");
+  NRFI_CALIB_SEED, ABLATIONS, modelSig } = require("./nrfi-model-lib");
 /* Where this run's artifact goes, and why it is not always the same file.
  *
  * An ablation run scores the same games with a term switched off and writes a
@@ -517,7 +517,12 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
   console.log("  cannot serve both and the seed should be made path-aware.");
   fs.writeFileSync(path.join(__dirname, OUT), JSON.stringify({
     ...seed, at: new Date().toISOString(), days, season: se,
-    pitMode: PIT_MODE, pitStats: ps, ablations: ABLATIONS || null,
+    // modelSig travels with the rows, so a reader can tell whether these scores
+    // came from the model that ships. Without it this file is a page of numbers
+    // with no way to date them against the code — which is the same reason the
+    // tout cache carries one, and that guard is what stopped nrfi-calib-fit.js
+    // from fitting a live constant on scores from a model two commits old.
+    modelSig, pitMode: PIT_MODE, pitStats: ps, ablations: ABLATIONS || null,
     shipped, lambdaAll: metrics(samples, L), platt,
     paired: simRows.length ? { sim: metrics(simRows, P), lambda: metrics(simRows, L) } : null,
     // The per-game rows the seed was fit on. Without them the seed is a number
