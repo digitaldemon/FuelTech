@@ -113,19 +113,37 @@ for (let i = 0; i < ORDER.length - 1; i++) {
       : "very loose — barely constrains anything"));
 }
 
-/* WHAT THE APP SHIPS, and whether the observations actually agree with it. This
- * is the part that would catch a silent drift between this file and app.jsx. */
-const SHIPPED = { elite: 68, green: 62, yellow: 55 };
-console.log("\nAGAINST WHAT app.jsx SHIPS (DS_TIER_DEFAULTS)\n");
-const tierOf = (ds) => ds >= SHIPPED.elite ? "ELITE" : ds >= SHIPPED.green ? "GREEN"
-  : ds >= SHIPPED.yellow ? "YELLOW" : "RED";
+/* THESE CUTOFFS DESCRIBE HIS SCALE AND MUST NOT BE SHIPPED AS OURS.
+ *
+ * The obvious next move is to drop 68/62 into DS_TIER_DEFAULTS. It was tried and
+ * it is wrong, because the board's DS is our calibrated probability (pCal * 100),
+ * not his rating. Over the 1283 games in nrfi-tout-vs-model.json our p runs
+ * 37.9 .. 67.2 with a median of 54.2, while his plays FLOOR at 64.1. Applying his
+ * numbers to ours gives GREEN on 4.5% of the slate against his real 19% play
+ * rate, and ELITE on ZERO games in 95 days — a badge that can never appear.
+ *
+ * That is not conservatism, it is a dead control, and it reads to the user as
+ * "no elite games today" rather than "this threshold cannot be met".
+ *
+ * The cause is not a defect in either model: a calibrated probability is pulled
+ * toward the base rate and cannot reach 68 on a near-coin-flip market. His DS is
+ * a 0-100 rating and he says so ("it's dual score out of 100 for both arms").
+ * Comparing them by value is a category error. What transfers is SELECTIVITY,
+ * and app.jsx sets its cuts where OUR distribution is as selective as he is. */
+const SHIPPED_HIS_SCALE = { elite: 68, green: 62, yellow: 55 };
+console.log("\nSELF-CONSISTENCY OF THE DERIVED CUTOFFS (on HIS scale)\n");
+const tierOf = (ds) => ds >= SHIPPED_HIS_SCALE.elite ? "ELITE"
+  : ds >= SHIPPED_HIS_SCALE.green ? "GREEN"
+  : ds >= SHIPPED_HIS_SCALE.yellow ? "YELLOW" : "RED";
 let miss = 0;
 for (const o of all) {
   const got = tierOf(o.ds);
-  if (got !== o.tier) { console.log("  MISMATCH " + o.g + " DS " + o.ds + ": he says " + o.tier + ", we say " + got); miss++; }
+  if (got !== o.tier) { console.log("  MISMATCH " + o.g + " DS " + o.ds + ": he says " + o.tier + ", these cuts say " + got); miss++; }
 }
 console.log("  " + (all.length - miss) + "/" + all.length + " of his published badges reproduced" +
-  (miss === 0 ? " — the shipped cutoffs are consistent with every observation" : ""));
+  (miss === 0 ? " by 68 / 62 / 55 — internally consistent" : ""));
+console.log("\n  app.jsx does NOT ship these. It ships 62 / 58.5 / 54, set on our own");
+console.log("  calibrated-p scale to match his 19% play rate. See DS_TIER_DEFAULTS.");
 
 /* THE SELECTION RULE, which is the part worth more than the cutoffs themselves.
  *

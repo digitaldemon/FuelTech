@@ -8879,18 +8879,46 @@ function NrfiCalendar({ rec, bankroll, riskLevel }) {
  *   ELITE  cut in (67.8, 68.3]   width 0.5   -> 68
  *   GREEN  cut in (60.0, 64.1]   width 4.1   -> 62 (midpoint, still a guess)
  *
- * The ELITE bracket is half a point wide, so 68 is very close to known. The GREEN
- * bracket is four points wide and 62 remains a guess inside a measured interval.
- * Do not quote them with equal confidence. RED below 55 is still unobserved — no
- * card or posting of his has ever shown one — so it is a placeholder to be moved
- * when a red appears, not defended.
+ * BUT THOSE ARE HIS NUMBERS ON HIS SCALE, AND THEY MUST NOT BE SHIPPED AS OURS.
+ * The board's DS is our own calibrated probability (dsOf = pCal * 100), and the
+ * two distributions are nowhere near each other. Over the 1283 cached games:
  *
- * ELITE is not cosmetic. "Tough board today. Only playing MIL@LAD: DS 68.3 →
- * ELITE" is him dropping to ELITE-only when the slate is thin, which is a
- * SELECTION rule we did not previously model — and selection is exactly where
+ *   our p     min 37.9   median 54.2   p99 64.1   MAX 67.2
+ *   his plays floor at 64.1, and 8 of his 13 posted boards are 68.3 or higher
+ *
+ * So his cutoffs applied to our number give: GREEN 4.5% of the slate against his
+ * real 19% play rate, and ELITE ZERO GAMES IN 95 DAYS — a badge that can never
+ * appear. That is not a conservative setting, it is a dead control, and shipping
+ * one is worse than shipping none because it reads as "no elite games today".
+ *
+ * Calibration is why, and it is not a defect: a calibrated probability is pulled
+ * toward the base rate, so ours cannot reach 68 on a coin-flip market. His DS is
+ * a 0-100 rating, not a probability — he never claims otherwise ("it's dual score
+ * out of 100 for both arms"). Comparing the two by value is a category error.
+ *
+ * What DOES transfer is SELECTIVITY. He plays 2.59 of 13.6 games a day = 19.0%
+ * of the slate, so the cuts below are set where our own distribution reproduces
+ * that, and the ladder is then checked for monotonicity on the cache:
+ *
+ *   band     our cut     share of slate     NRFI hit rate
+ *   ELITE      >= 62           4.5%             69.0%
+ *   GREEN    58.5-62          14.9%             56.0%
+ *   YELLOW     54-58.5        32.0%             51.8%
+ *   RED         < 54          48.6%             45.3%   (base rate 50.0%)
+ *
+ * GREEN-or-better is 19.4%, matching his 19.0% almost exactly, and the hit rate
+ * falls monotonically across all four bands. Those rates are IN-SAMPLE on cached
+ * p and are optimistic — they order the bands, they do not size the edge.
+ *
+ * His absolute 68/62 are not lost: scripts/nrfi-ds-tier-brackets.js keeps every
+ * observation and re-derives them. They document HIS system. These document OURS.
+ *
+ * ELITE is not cosmetic either way. "Tough board today. Only playing MIL@LAD: DS
+ * 68.3 → ELITE" is him dropping to ELITE-only when the slate is thin — a
+ * SELECTION rule we did not previously model, and selection is exactly where
  * scripts/nrfi-tout-bottom-half.js concluded his edge lives.
  */
-const DS_TIER_DEFAULTS = { elite: 68, green: 62, yellow: 55 };
+const DS_TIER_DEFAULTS = { elite: 62, green: 58.5, yellow: 54 };
 
 function dsThresholds() {
   try {
@@ -10376,11 +10404,11 @@ function FirstInning() {
             border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8 }}>
             <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: "var(--dim)" }}>DUAL SCORE TIERS</span>
             {num("ELITE ≥", dsTh.elite, setElite, "var(--cyan)",
-              "BEST-KNOWN CUTOFF. From the 13 boards he posted as text in chat between 2026-08-03 and 2026-08-16: his lowest ELITE is 68.3 and his highest GREEN is 67.8, so the cut lies in (67.8, 68.3] — half a point wide. 68 is very close to known. He also drops to ELITE-only when the slate is thin (\"Tough board today. Only playing MIL@LAD: DS 68.3 → ELITE\").")}
+              "Top 4.5% of the slate; 69.0% NRFI on 58 cached games. NOT his 68 — his DS is a 0-100 rating, ours is a calibrated probability that maxed at 67.2 over 1283 games, so his cutoff would fire zero times ever. This is set where OUR distribution is as selective as he is. He drops to ELITE-only on a thin board (\"Tough board today. Only playing MIL@LAD\").")}
             {num("GREEN ≥", dsTh.green, setGreen, "var(--moss)",
-              "Bracketed but LOOSELY. His lowest GREEN is 64.1 and his highest YELLOW is 60.0, so the cut lies in (60.0, 64.1] — four points wide. 62 is the midpoint of that interval: a guess inside a measured range, not a fitted value. Do not quote it with the same confidence as the elite cutoff.")}
+              "GREEN-or-better is 19.4% of the slate, matching his real 19.0% play rate (2.59 of 13.6 games a day). The band itself hits 56.0% on 191 cached games. This is a selectivity anchor, not a reading of his number — see scripts/nrfi-ds-tier-brackets.js for his own cutoffs on his own scale.")}
             {num("YELLOW ≥", dsTh.yellow, setYellow, "var(--amber)",
-              "UNOBSERVED. Nothing he has ever published — card or posted board — is red, so nothing brackets this cutoff at all. 55 is a placeholder; move it the moment a red is seen rather than defending it.")}
+              "Roughly our median p (54.2). Splits the half of the slate we are lukewarm on from the half we are against: yellow band 51.8%, red band 45.3%, base rate 50.0%. The weakest of the three cuts — nothing he publishes is ever red, so his behaviour cannot anchor it.")}
             <span style={{ fontSize: 11, color: "var(--dim)", fontVariantNumeric: "tabular-nums" }}
               title="How today's board splits at the cutoffs above. Held games and settled games are not counted — they are not decisions.">
               today: <span style={{ color: "var(--cyan)" }}>{counts.ELITE} elite</span>
