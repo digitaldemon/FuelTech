@@ -6928,10 +6928,13 @@ function nrfiEvaluate(ctx) {
   const homeLoad = seasonLoadFactor(ctx.homeMeta && ctx.homeMeta.ip);
 
   // Blend each side's adjustments by DEVIATION-from-neutral (not raw product)
-  // so correlated signals don't compound, then cap the net swing. Platoon weight
-  // is lower now that lineups are measured directly vs the starter's hand.
-  // Platoon reduced to 0.20: lineup OBP is already computed vs the starter's hand,
-  // so the platoon factor partially double-counts the hand matchup.
+  // so correlated signals don't compound, then cap the net swing.
+  // platoon: GONE, not down-weighted. Two lines here described it as "reduced to
+  //   0.20" long after offMult stopped taking it as an argument — and
+  //   nrfi-weight-audit.js still carried that 0.20 in its weight table, printing
+  //   a "!! missing" warning above a share column whose denominator looked whole.
+  //   Lineup OBP is measured vs the starter's hand, which is the same fact; see
+  //   the note where platoonFactor was.
   // homeAdv: the measured first-inning home/away split, weight 1.0 (structural).
   //   Carries the WHOLE home-field effect — the pitcher-side twin was removed as
   //   unidentifiable; see homeOffAdvantage.
@@ -6950,7 +6953,9 @@ function nrfiEvaluate(ctx) {
   const homeVenue = pitcherVenueFactor(ctx.homeRolling, true);  // home pitcher pitching at home
   // Weights tuned from 4,015-game backtest (logistic regression on normalized features):
   // - skill (K%, BB%, barrel, GB): dominant after pitBase — keep at 1.0
-  // - form (FIP/ERA L3): LR coeff -0.018 = counterproductive once pitBase controlled → 0.10
+  // - form (FIP/ERA L3): LR coeff -0.018 = counterproductive once pitBase
+  //   controlled. Carried at 0.10 for a while, then REMOVED — pitMult below has
+  //   taken no form argument for some time, so read this line as history.
   // - opener (1st-inn ERA vs season ERA): still useful signal → 0.5
   // - openG (bullpen game pattern): strong → 1.0
   // - load (season IP): small but logical → 0.7
