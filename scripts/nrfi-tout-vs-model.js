@@ -151,9 +151,24 @@ async function collect(id, maxDates, se) {
       // sees only `p` would promise volume the real board never shows. Thin-arm
       // state is stored as booleans rather than the whole pitProfiles object,
       // which is the only part of it nrfiVerdict reads.
+      /* Per-factor capture, which is the point of this rebuild.
+       *
+       * nrfi-tout-profile.js could only compare his picks to their band peers on
+       * the four summaries stored here (p, consensus, confidence, thin arms),
+       * found them identical on all four while he beat those peers by 17.3 pts,
+       * and ended by prescribing a re-score that records the INPUTS. These are
+       * the shipped values straight off the evaluator, not a harness recompute.
+       *
+       * Rounded to 4 places: the gated factors take a handful of discrete values
+       * (0.84, 0.90, 0.95, 1.0, ...) and the continuous ones are lambda
+       * multipliers where the 5th decimal is far below anything a comparison of
+       * a few hundred legs can resolve. Full precision would roughly double a
+       * file that is read whole on every analysis pass. */
+      const r4 = (o) => { const out = {}; for (const k in o) out[k] = Math.round(o[k] * 1e4) / 1e4; return out; };
       return { gamePk: g.gamePk, p: ev.pNRFI, actual: runs === 0 ? 1 : 0,
         label: `${g.teams.away.team.abbreviation}@${g.teams.home.team.abbreviation}`,
         aligned: ev.aligned || null, confidence: ev.confidence == null ? 1 : ev.confidence,
+        factors: ev.factors ? r4(ev.factors) : null,
         thinAway: thinArm(ev.pitProfiles && ev.pitProfiles.away),
         thinHome: thinArm(ev.pitProfiles && ev.pitProfiles.home) };
     });
@@ -196,6 +211,24 @@ async function collect(id, maxDates, se) {
       "often a truncated feed than a real change, and the numbers it produces still look\n" +
       "plausible. If the shrink is intended (smaller maxDates, seller pruned history):\n" +
       `  node scripts/nrfi-tout-vs-model.js ${id} ${maxDates} --shrink`);
+  }
+  /* The factors are the reason this rebuild exists, so a run that did not
+   * capture them must not quietly produce a cache that looks complete.
+   * ev.factors is a field on nrfiEvaluate's return; if it is renamed or dropped,
+   * `ev.factors ? ... : null` above stores null on every game and the profile
+   * downstream reports "not recorded on enough games" for every input — which
+   * reads as a finding about his picks rather than as a broken capture. */
+  {
+    const all = [...slates.values()].flat();
+    const withF = all.filter((r) => r.factors && Object.keys(r.factors).length >= 20).length;
+    if (all.length && withF < all.length * 0.9) {
+      throw new Error(
+        `only ${withF} of ${all.length} scored games carry a factor block.\n` +
+        "This rebuild exists to capture per-factor values; a cache without them is the old\n" +
+        "cache with a new timestamp, and the profile that reads it would report every input\n" +
+        "as 'not recorded' rather than as missing. Check that nrfiEvaluate still returns\n" +
+        "`factors` before re-running.");
+    }
   }
   fs.writeFileSync(CACHE, JSON.stringify({ at: new Date().toISOString(), season: se, simW, modelSig,
     pitMode: PIT_MODE, pitStats: pitStats(),
