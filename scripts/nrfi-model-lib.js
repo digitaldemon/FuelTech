@@ -340,6 +340,22 @@ const H2H_MODE = process.env.NRFI_NO_H2H === "1" ? "off (ablation)" : "season (l
  * numbers above, because the offence-side inputs drift as games finalise.
  */
 const OBP_MODE = process.env.NRFI_NO_LINEUP_OBP === "1" ? "factor forced to 1 (ablation)" : "season (leaks)";
+/* The four rolling windows, ablatable — and this one exists to settle a debt.
+ *
+ * pitcherTrendFactor (0.30), pitcherVenueFactor (0.50), teamOffenseTrendFactor
+ * (0.50), offenseVenueFactor (0.30) and offKrateFactor (0.35) were pinned
+ * neutral in every harness run this project has ever done, because buildCtx did
+ * not set the keys they read (see the block above pitcherRolling). They are live
+ * now. What has never happened is a BACKTEST of them: the backtest could not
+ * compute them, so the "weights tuned from a 4,015-game backtest" provenance at
+ * app.jsx:6954 cannot cover any of the five.
+ *
+ * NRFI_NO_ROLLING=1 reproduces the old behaviour exactly — the keys go missing
+ * rather than being blanked downstream — so an A/B against a default run is a
+ * measurement of what the five factors are worth, on the same games, in the same
+ * API snapshot. Restoring the defect on purpose is the only way to price it.
+ */
+const ROLL_MODE = process.env.NRFI_NO_ROLLING === "1" ? "off (ablation)" : "on";
 pitI01.stats = { pit: 0, miss: 0, api: 0 };
 let lfGames = null;
 function leakfreeGames() {
@@ -822,8 +838,26 @@ async function buildCtx(g, date, se, peri) {
    * These were simply absent from this object, which meant four factors and two
    * checks were pinned neutral in every harness while the board computed them.
    * See the block above pitcherRolling for what that cost. */
-  const awayRolling = pitcherRolling(ap.id, se, date), homeRolling = pitcherRolling(hp.id, se, date);
-  const awayOffRolling = teamOffRolling(a.team.id, date), homeOffRolling = teamOffRolling(h.team.id, date);
+  const roll = ROLL_MODE === "on";
+  const awayRolling = roll ? pitcherRolling(ap.id, se, date) : null;
+  const homeRolling = roll ? pitcherRolling(hp.id, se, date) : null;
+  const awayOffRolling = roll ? teamOffRolling(a.team.id, date) : null;
+  const homeOffRolling = roll ? teamOffRolling(h.team.id, date) : null;
+  /* kRate goes with them, and the reason is that the ablation has to reproduce
+   * the DEFECT, not a tidy subset of it. offKrateFactor was dead in every
+   * harness for a different cause — teamOffApi never read plateAppearances or
+   * strikeOuts off a response it had already fetched — but it was dead in the
+   * same runs, so an A/B that revived it would be pricing four factors against a
+   * baseline that never existed. offKrateFactor opens with `off.kRate == null`,
+   * so nulling the field takes the same branch the harness used to take.
+   *
+   * Copied rather than mutated: teamOff memoizes by team+season, so writing to
+   * the object would edit a shared entry other games in the run also hold. It
+   * happens to be harmless here because the whole run wants the same value, but
+   * that is an argument about this call site rather than about the code, and it
+   * stops being true the moment anything ablates per-game. */
+  const awayOffX = !roll && awayOff ? { ...awayOff, kRate: null } : awayOff;
+  const homeOffX = !roll && homeOff ? { ...homeOff, kRate: null } : homeOff;
   // No umpire fields. The ABS challenge system retired that term in app.jsx, so
   // there is nothing here for them to feed. This also closes a standing gap
   // between harness and board: buildCtx used to hardcode umpFactor to 1 while
@@ -836,7 +870,8 @@ async function buildCtx(g, date, se, peri) {
     // harness runs joins on them — nrfiThinArm reads apps/seasonIp/sample. Free
     // to supply, so supply them rather than leave a hole shaped like a join key.
     awayPPId: ap.id, homePPId: hp.id,
-    awayOff, homeOff, awayPit, homePit, awayMeta, homeMeta, awayLineup, homeLineup, awayTravel, homeTravel,
+    awayOff: awayOffX, homeOff: homeOffX,
+    awayPit, homePit, awayMeta, homeMeta, awayLineup, homeLineup, awayTravel, homeTravel,
     awayRolling, homeRolling, awayOffRolling, homeOffRolling,
     // MLB's own designation, the same field scanNrfi passes. dayGameShift is 0
     // so this moves no probability today, but the "Day game" check reads it and
@@ -1039,8 +1074,29 @@ const modelBlank = MODEL_SLICES.map(([a, b]) => sliceBlank(a, b)).join("\n");
       "which fails silently. Do not relax this check.");
   }
 })();
+/* The ablation switches belong in the fingerprint, and their absence was a trap.
+ *
+ * modelSig answers "what produced the cached numbers, and is this cache stale?"
+ * An ablation run produces DIFFERENT numbers from the same source text, so
+ * before this it wrote a cache whose sig was byte-identical to a normal run's.
+ * Any later reader — nrfi-tout-profile, the residual fit, the band tables —
+ * would accept it as current. That is the same failure the mode strings were
+ * introduced to prevent ("a leaky cache and a clean one were byte-
+ * indistinguishable on their metadata"), left half-finished: the modes were
+ * recorded in the OUTPUT but never in the identity of the numbers.
+ *
+ * Non-default modes only, so a default run's sig is unchanged and every cache
+ * already on disk stays valid. Verified: with no env vars set, ABLATIONS is ""
+ * and the sha input is byte-identical to what it was before this block existed.
+ */
+const ABLATIONS = [
+  PIT_MODE === "leaky" ? "leaky" : null,
+  H2H_MODE.includes("ablation") ? "no-h2h" : null,
+  OBP_MODE.includes("ablation") ? "no-lineup-obp" : null,
+  ROLL_MODE.includes("ablation") ? "no-rolling" : null,
+].filter(Boolean).join(",");
 // What produced the cached numbers. A cache carrying a different one is stale.
-const modelSig = sha(modelBlank + sigOf("cache") + dataSlice);
+const modelSig = sha(modelBlank + sigOf("cache") + dataSlice + (ABLATIONS ? "|ablate:" + ABLATIONS : ""));
 // What interprets them. Report it; never gate a cache on it.
 const ladderSig = sha(sigOf("ladder"));
 
@@ -1056,6 +1112,6 @@ module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP, makeVer
   // source it ran on. A backtest that does not say whether it rewound its inputs
   // is not reporting a result, and the difference between the two modes here is
   // larger than most of the effects these scripts are built to measure.
-  PIT_MODE, H2H_MODE, OBP_MODE,
+  PIT_MODE, H2H_MODE, OBP_MODE, ROLL_MODE, ABLATIONS,
   pitStats: () => ({ ...pitI01.stats, off: { ...teamOff.stats }, meta: { ...pitMeta.stats }, h2h: H2H_MODE, obp: OBP_MODE }),
   sumPitLog, GLOG_REG, NRFI_CALIB_SEED, NRFI_PA_REG_PIT, NRFI_PA_REG_H2H };
