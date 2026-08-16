@@ -1856,7 +1856,34 @@ let pNRFI_simProj=null;if(method!=="sim"&&homeAllow&&awayAllow){const synthLine=
 // the number that replaced it were built to different recipes. Both now go
 // through offSimCtx.
 const pRT=nClamp((1-sTop)*hPC*ctx.awayTravel.factor*awayOffAdv.f*awayOffSim*env,0.02,0.97);const pRB=nClamp((1-sBot)*aPC*ctx.homeTravel.factor*homeOffAdv.f*homeOffSim*env,0.02,0.97);pNRFI_simProj=applyShift((1-pRT)*(1-pRB));}// Data-confidence: a decisive number on missing inputs isn't a real edge.
-let conf=1;const thin=p=>!p||(p.sample||0)<6;if(thin(ctx.awayPit))conf-=0.2;if(thin(ctx.homePit))conf-=0.2;if(!ctx.awayOff)conf-=0.1;if(!ctx.homeOff)conf-=0.1;if(ctx.awayLineup.obp==null)conf-=0.12;if(ctx.homeLineup.obp==null)conf-=0.12;if(ctx.awayPeri==null)conf-=0.05;if(ctx.homePeri==null)conf-=0.05;if(!ctx.awayRolling)conf-=0.04;if(!ctx.homeRolling)conf-=0.04;conf=nClamp(conf,0,1);const lean=(v,hi,lo)=>v>=hi?"yrfi":v<=lo?"nrfi":"neutral";const facLean=f=>f>=1.05?"yrfi":f<=0.96?"nrfi":"neutral";const hand=m=>m&&m.hand?" ("+m.hand+"HP)":"";const thinNote=p=>p&&p.sample&&p.sample<8?" ["+p.sample+"gs]":"";const checks=[{label:"Starting pitching (1st inning)",detail:ctx.homePP+hand(ctx.homeMeta)+thinNote(ctx.homePit)+" "+awayPit0(ctx.homePit)+" · "+ctx.awayPP+hand(ctx.awayMeta)+thinNote(ctx.awayPit)+" "+awayPit0(ctx.awayPit),lean:lean((awayPitBase+homePitBase)/2,0.6,0.42)},{label:"Pitcher skill (K/BB/barrel/GB)",detail:ctx.homePP+": "+homeSkill.note+" · "+ctx.awayPP+": "+awaySkill.note,lean:facLean((awaySkill.f+homeSkill.f)/2)},{label:"Opener / bullpen game",detail:ctx.homePP+": "+homeOpenG.note+" · "+ctx.awayPP+": "+awayOpenG.note,lean:awayOpenG.opener||homeOpenG.opener?"nrfi":"neutral"},(()=>{// A K/9 read off three starts is noisy: the standard error is
+let conf=1;const thin=p=>!p||(p.sample||0)<6;if(thin(ctx.awayPit))conf-=0.2;if(thin(ctx.homePit))conf-=0.2;if(!ctx.awayOff)conf-=0.1;if(!ctx.homeOff)conf-=0.1;if(ctx.awayLineup.obp==null)conf-=0.12;if(ctx.homeLineup.obp==null)conf-=0.12;if(ctx.awayPeri==null)conf-=0.05;if(ctx.homePeri==null)conf-=0.05;if(!ctx.awayRolling)conf-=0.04;if(!ctx.homeRolling)conf-=0.04;conf=nClamp(conf,0,1);const lean=(v,hi,lo)=>v>=hi?"yrfi":v<=lo?"nrfi":"neutral";const facLean=f=>f>=1.05?"yrfi":f<=0.96?"nrfi":"neutral";const hand=m=>m&&m.hand?" ("+m.hand+"HP)":"";const thinNote=p=>p&&p.sample&&p.sample<8?" ["+p.sample+"gs]":"";const checks=[// Informational, and deliberately not a vote — the same defect, in the same
+// shape, as the "1st-inning offense" headline check below.
+//
+// This voted on (awayPitBase + homePitBase)/2 against 0.60/0.42. Those
+// numbers are right for a RAW first-inning run rate, which runs 0.00 to 2.00
+// across starters with a median near 0.44. But pitBase is nrfiRegress'd
+// against NRFI_LG_LAMBDA at NRFI_PIT_REG = 75, and a starter with the
+// typical ~23 first innings therefore carries only 23/(23+75) ≈ 24% of his
+// own rate. Averaging the two starters compresses it further.
+//
+// Measured over 338 games (scripts/nrfi-check-votes.js and the pitProfiles
+// rate/sample it exposes): the average spans 0.433 to 0.627, median 0.513,
+// p5 0.458, p95 0.563. The NRFI line at 0.42 is BELOW THE MINIMUM — not
+// rare, unreachable, 0 of 338. The YRFI line at 0.60 cleared 4 times, 1.2%.
+// So the headline row of every card advertised a two-sided read on the
+// starters and could only ever cast one of the two votes, on one game in
+// eighty. It was measured at 5 votes in 415 games before anyone looked.
+//
+// NOT rescaled to the observed spread, though that is the tempting fix. New
+// lines at roughly +/-1 SD would vote on about a third of the slate, and
+// nothing here shows that vote would be any GOOD: the only discrimination
+// test available runs on feeds that are not rewound, so it would be tuned
+// against a leaked measurement. Neutralising costs almost nothing by
+// comparison — the check speaks on 1% of games and one vote among the ten
+// in the pitching family rarely moves it — so this removes a known-broken
+// input rather than adding an unvalidated one. Rescale when a point-in-time
+// discrimination test exists to justify a specific line.
+{label:"Starting pitching (1st inning)",detail:ctx.homePP+hand(ctx.homeMeta)+thinNote(ctx.homePit)+" "+awayPit0(ctx.homePit)+" · "+ctx.awayPP+hand(ctx.awayMeta)+thinNote(ctx.awayPit)+" "+awayPit0(ctx.awayPit),lean:"neutral"},{label:"Pitcher skill (K/BB/barrel/GB)",detail:ctx.homePP+": "+homeSkill.note+" · "+ctx.awayPP+": "+awaySkill.note,lean:facLean((awaySkill.f+homeSkill.f)/2)},{label:"Opener / bullpen game",detail:ctx.homePP+": "+homeOpenG.note+" · "+ctx.awayPP+": "+awayOpenG.note,lean:awayOpenG.opener||homeOpenG.opener?"nrfi":"neutral"},(()=>{// A K/9 read off three starts is noisy: the standard error is
 // sqrt(9*K9/IP), so at a typical 17 IP window one SE is ~2.2 K/9. The
 // thresholds below sit near 1 SE (report) and ~1.4 SE (vote) — anything
 // tighter is reading sampling noise as a change in stuff. Short windows

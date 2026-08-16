@@ -7114,9 +7114,36 @@ function nrfiEvaluate(ctx) {
   const hand = (m) => (m && m.hand ? " (" + m.hand + "HP)" : "");
   const thinNote = (p) => (p && p.sample && p.sample < 8) ? " [" + p.sample + "gs]" : "";
   const checks = [
+    // Informational, and deliberately not a vote — the same defect, in the same
+    // shape, as the "1st-inning offense" headline check below.
+    //
+    // This voted on (awayPitBase + homePitBase)/2 against 0.60/0.42. Those
+    // numbers are right for a RAW first-inning run rate, which runs 0.00 to 2.00
+    // across starters with a median near 0.44. But pitBase is nrfiRegress'd
+    // against NRFI_LG_LAMBDA at NRFI_PIT_REG = 75, and a starter with the
+    // typical ~23 first innings therefore carries only 23/(23+75) ≈ 24% of his
+    // own rate. Averaging the two starters compresses it further.
+    //
+    // Measured over 338 games (scripts/nrfi-check-votes.js and the pitProfiles
+    // rate/sample it exposes): the average spans 0.433 to 0.627, median 0.513,
+    // p5 0.458, p95 0.563. The NRFI line at 0.42 is BELOW THE MINIMUM — not
+    // rare, unreachable, 0 of 338. The YRFI line at 0.60 cleared 4 times, 1.2%.
+    // So the headline row of every card advertised a two-sided read on the
+    // starters and could only ever cast one of the two votes, on one game in
+    // eighty. It was measured at 5 votes in 415 games before anyone looked.
+    //
+    // NOT rescaled to the observed spread, though that is the tempting fix. New
+    // lines at roughly +/-1 SD would vote on about a third of the slate, and
+    // nothing here shows that vote would be any GOOD: the only discrimination
+    // test available runs on feeds that are not rewound, so it would be tuned
+    // against a leaked measurement. Neutralising costs almost nothing by
+    // comparison — the check speaks on 1% of games and one vote among the ten
+    // in the pitching family rarely moves it — so this removes a known-broken
+    // input rather than adding an unvalidated one. Rescale when a point-in-time
+    // discrimination test exists to justify a specific line.
     { label: "Starting pitching (1st inning)",
       detail: ctx.homePP + hand(ctx.homeMeta) + thinNote(ctx.homePit) + " " + awayPit0(ctx.homePit) + " · " + ctx.awayPP + hand(ctx.awayMeta) + thinNote(ctx.awayPit) + " " + awayPit0(ctx.awayPit),
-      lean: lean((awayPitBase + homePitBase) / 2, 0.6, 0.42) },
+      lean: "neutral" },
     { label: "Pitcher skill (K/BB/barrel/GB)",
       detail: ctx.homePP + ": " + homeSkill.note + " · " + ctx.awayPP + ": " + awaySkill.note,
       lean: facLean((awaySkill.f + homeSkill.f) / 2) },
