@@ -7866,10 +7866,18 @@ function applyCalibration(pNRFI, calib) {
   if (!Number.isFinite(calib.c)) return pNRFI;
   const lg = (p) => Math.log(p / (1 - p));
   const ul = (x) => 1 / (1 + Math.exp(-x));
-  // c is a bias shift on P(NRFI) itself, not on directional confidence: both the
-  // seed and nrfiCalibration's liveC are derived as lg(actual) − lg(meanPred)
-  // over pNRFI. Applying that number directionally (as the withdrawn Platt seed
-  // did) measures one thing and corrects another.
+  // c is a bias shift on P(NRFI) itself, not on directional confidence. Both the
+  // seed and nrfiCalibration's liveC are fit against pNRFI, so applying either
+  // one directionally (as the withdrawn Platt seed did) measures one thing and
+  // corrects another.
+  //
+  // The two are no longer derived the same way, and the difference is not
+  // cosmetic: liveC is now a Newton solve for the c that lands the mean on the
+  // observed rate (see nrfiCalibration), while NRFI_CALIB_SEED is still the old
+  // lg(actual) − lg(meanPred) shortcut, which overshoots toward 50% by ~0.2-0.3pp.
+  // They are blended together by sample weight below, so the seed's error decays
+  // as live picks accumulate rather than persisting. Refitting it needs the 558
+  // per-game predictions, not their mean — see the SECOND CAVEAT on the seed.
   return nClamp(ul(lg(nClamp(pNRFI, 0.02, 0.98)) + calib.c), 0.02, 0.98);
 }
 
