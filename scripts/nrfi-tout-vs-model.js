@@ -30,7 +30,17 @@ const { nrfiThinArm: thinArm } = makeVerdict();
 
 const pc = (x) => (x * 100).toFixed(1) + "%";
 const mean = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
-const CACHE = path.join(__dirname, "nrfi-tout-vs-model.json");
+/* One cache file per model variant, for the reason desk-nrfi-backtest.js gives
+ * at length: a run with a term ablated or a weight tilted scores the same games
+ * differently, and writing that to the default path leaves the shipped model's
+ * cache holding another model's numbers with nothing in the filename to say so.
+ * Every consumer checks modelSig and would refuse it — but refusing is a worse
+ * outcome than never colliding, because the refusal costs a full rebuild of the
+ * cache that was overwritten. Default runs keep the exact old path. */
+const { ABLATIONS } = require("./nrfi-model-lib");
+const CACHE = path.join(__dirname, ABLATIONS
+  ? `nrfi-tout-vs-model.${ABLATIONS.replace(/[^a-z0-9.]+/gi, "-")}.json`
+  : "nrfi-tout-vs-model.json");
 
 (async () => {
   const id = process.argv[2] || "318949";

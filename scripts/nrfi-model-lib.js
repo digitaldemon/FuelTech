@@ -356,6 +356,36 @@ const OBP_MODE = process.env.NRFI_NO_LINEUP_OBP === "1" ? "factor forced to 1 (a
  * API snapshot. Restoring the defect on purpose is the only way to price it.
  */
 const ROLL_MODE = process.env.NRFI_NO_ROLLING === "1" ? "off (ablation)" : "on";
+/* NRFI_ENV_W — how much credit the model gives the run ENVIRONMENT.
+ *
+ * This exists to price one specific, measured difference between our board and
+ * NRFIKINGKY's. Matched on our own p (same date, |dp| <= 0.02, so the composite
+ * probability is held fixed), his NRFI legs sit on BETTER PITCHING and in
+ * LIVELIER RUN ENVIRONMENTS than the games we score identically:
+ *
+ *     awayPitBase  -0.0107 (t -3.84)     env  +0.0198 (t +3.91)
+ *     homePitBase  -0.0174 (t -5.37)     homeOpen -0.0281 (t -4.41)
+ *
+ * Both signs verified empirically against our own p rather than read off the
+ * code: pitBase correlates -0.463 with p(NRFI) and env -0.522, so a LOWER
+ * pitBase and a HIGHER env both mean what the sentence above says. An earlier
+ * write-up of this called it "short run environment", which had env backwards;
+ * the tilt would have been built pointing the wrong way.
+ *
+ * Read together: our model will take a depressed park or a cold night as
+ * evidence for NRFI. He will not — he wants the arms to be doing the work, and
+ * he is happy to buy NRFI in a bandbox if the pitching justifies it. Scaling
+ * env's deviation from neutral is exactly that preference, expressed as one
+ * number: 1.0 ships today, 0.0 would ignore weather and park entirely.
+ *
+ * Driven through ctx.wx rather than through app.jsx because env enters as
+ * `1 + (ctx.wx.factor - 1)` in BOTH scoring paths, so scaling the deviation here
+ * is identical to scaling the weight there — and it means this can be measured
+ * without a single change to the shipped model. If it earns its place, it moves
+ * into app.jsx as a named constant; until then the board is untouched. */
+const ENV_W = process.env.NRFI_ENV_W == null ? 1 : Number(process.env.NRFI_ENV_W);
+if (!Number.isFinite(ENV_W) || ENV_W < 0 || ENV_W > 2)
+  throw new Error("NRFI_ENV_W must be a number in [0,2], got " + JSON.stringify(process.env.NRFI_ENV_W));
 pitI01.stats = { pit: 0, miss: 0, api: 0 };
 let lfGames = null;
 function leakfreeGames() {
@@ -858,6 +888,11 @@ async function buildCtx(g, date, se, peri) {
    * stops being true the moment anything ablates per-game. */
   const awayOffX = !roll && awayOff ? { ...awayOff, kRate: null } : awayOff;
   const homeOffX = !roll && homeOff ? { ...homeOff, kRate: null } : homeOff;
+    // ENV_W applied at the one place env is born. At 1 this returns the object
+  // untouched, so the default path is byte-identical to before this existed.
+  const envTilt = (wx) => (ENV_W === 1 || !wx || !Number.isFinite(wx.factor)
+    ? wx
+    : { ...wx, factor: 1 + (wx.factor - 1) * ENV_W });
   // No umpire fields. The ABS challenge system retired that term in app.jsx, so
   // there is nothing here for them to feed. This also closes a standing gap
   // between harness and board: buildCtx used to hardcode umpFactor to 1 while
@@ -878,7 +913,11 @@ async function buildCtx(g, date, se, peri) {
     // votes, and a harness that always reported night was casting that vote one
     // way on every game in the environment family.
     dayNight: g.dayNight || null,
-    wx: weatherPark(g, h.team.abbreviation), awayPeri: peri[ap.id] || null, homePeri: peri[hp.id] || null };
+    // Copied, not mutated: weatherPark may hand back a memoised park entry, and
+    // scaling a shared object in place would tilt every later game in the run by
+    // a compounding amount. Same trap the rolling ablation documents above.
+    wx: envTilt(weatherPark(g, h.team.abbreviation)),
+    awayPeri: peri[ap.id] || null, homePeri: peri[hp.id] || null };
 }
 
 // Score both paths on the SAME game. nrfiEvaluate takes the base-out sim
@@ -1094,6 +1133,11 @@ const ABLATIONS = [
   H2H_MODE.includes("ablation") ? "no-h2h" : null,
   OBP_MODE.includes("ablation") ? "no-lineup-obp" : null,
   ROLL_MODE.includes("ablation") ? "no-rolling" : null,
+  // A tilt is not an ablation, but it has the identical cache hazard: it changes
+  // every score while leaving the model text alone, so without it in the sig a
+  // tilted run would be served the untilted model's cached numbers and report a
+  // perfect null. Formatted so 0.5 and 0.50 hash the same.
+  ENV_W !== 1 ? "env-w-" + String(Number(ENV_W)) : null,
 ].filter(Boolean).join(",");
 // What produced the cached numbers. A cache carrying a different one is stale.
 const modelSig = sha(modelBlank + sigOf("cache") + dataSlice + (ABLATIONS ? "|ablate:" + ABLATIONS : ""));
