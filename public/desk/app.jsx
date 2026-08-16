@@ -5624,8 +5624,16 @@ const SAY_MAX = 3;
  * So staleness is carried on the event timestamp. A pitch thrown 40 seconds ago
  * is dropped at drain time no matter how it got here, which re-anchors the call
  * to the live edge by itself on every wake-up. SAY_MAX still bounds the queue;
- * this bounds its AGE, which is the thing that was actually wrong. */
-const SAY_STALE_MS = 12000;
+ * this bounds its AGE, which is the thing that was actually wrong.
+ *
+ * 6s, not 12s. A pitch comes about every 15-20s, and each spoken line runs 2-3s,
+ * so a line that has been waiting 12s is two pitches behind and is describing
+ * something the user can already see resolved on the board. Dropping it is not a
+ * loss — the queue behind it is fresher, and skipping straight to that is the
+ * whole mechanism by which the call re-anchors to live. The old value was set to
+ * bound the hidden-tab freeze case, where anything under a minute was an
+ * improvement; it was never tuned for how late a call can be and still be a call. */
+const SAY_STALE_MS = 6000;
 const _sayQ = [];
 /* _sayGen identifies the utterance the queue currently believes is speaking.
  *
@@ -5681,7 +5689,28 @@ function _sayDrain(s) {
   // s.paused nudge below was added to work around. Budget generously: ~90ms per
   // character plus a second, so a normal line never trips it.
   u.onerror = done;
-  _sayGuard = setTimeout(done, 1000 + text.length * 90);
+  /* The old budget was 1000 + 90ms/char, which is roughly 50% clear of what the
+   * voice actually takes. That margin existed because firing early is dangerous:
+   * `done` drains the next line, so a watchdog that goes off mid-sentence talks
+   * over it — the same garble the generation counter fixes on the cancel path.
+   * But paying for that safety in a flat budget means a dropped utterance costs
+   * ~6s of dead air on a normal line, and dead air is what makes the call feel
+   * behind the park.
+   *
+   * Asking the engine removes the tradeoff. If it is still speaking, the budget
+   * was merely tight for this voice and the answer is to wait again, not to
+   * interrupt; the budget can then sit close to real delivery (~70ms/char). If
+   * it is NOT speaking, the utterance was genuinely dropped and recovery is
+   * immediate instead of seconds late. Re-arms are capped so that Chrome parking
+   * synthesis with speaking stuck true still recovers rather than hanging the
+   * queue for the rest of the inning. */
+  let waits = 0;
+  const guard = () => {
+    if (gen !== _sayGen || !_sayOn) return;
+    if (s.speaking && waits < 6) { waits++; _sayGuard = setTimeout(guard, 1000); return; }
+    done();
+  };
+  _sayGuard = setTimeout(guard, 700 + text.length * 70);
   s.speak(u);
   // Chrome can leave synthesis parked in a paused state after a cancel; a queued
   // utterance then never starts. Nudging it is free when it is already running.
@@ -8571,7 +8600,15 @@ function FirstInning() {
    * interval, against the 8KB field-projected feed rather than the 537KB one.
    * statsapi itself publishes a play within a second or two of it ending, so
    * this tracks the park about as closely as a data feed can. */
-  const CALLOUT_POLL_MS = 2500;
+  /* 1200ms. The poll interval is pure additive lag — a pitch lands uniformly
+   * inside the gap, so the interval costs half itself on average before the
+   * callout has even seen the event, and 2.5s of that dominated everything else
+   * in the path. The cost of halving it is request rate, and that is bounded in
+   * a way that matters here: this effect only runs while the callout is ON, and
+   * only against games actually in the 1st inning, so it is a handful of 8KB
+   * field-projected requests, not the whole board. inFlight already absorbs a
+   * round trip that outlasts the interval by skipping rather than stacking. */
+  const CALLOUT_POLL_MS = 1200;
   // Anything older than this was over before the callout saw it. Reading it out
   // now would put the voice behind the game and keep it there for the rest of
   // the inning — the backlog never drains, it just delays everything after it.

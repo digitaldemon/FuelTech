@@ -55,8 +55,10 @@ function makeSynth() {
 const harness = [
   "let _voice = null, _voiceTried = false;",
   "function pickVoice() { return null; }",
-  slice("const SAY_MAX = 3;", "const SAY_STALE_MS = 12000;"),
-  slice("const _sayQ = [];", "\n}"),          // _sayGen decl + _sayDrain
+  // Markers deliberately avoid the tunable VALUES — an earlier version ended a
+  // slice on "const SAY_STALE_MS = 12000;" and broke the moment that was retuned.
+  slice("const SAY_MAX = 3;", "const _sayQ = [];"),   // both caps + the queue
+  slice("let _sayOn = false", "\n}"),                 // _sayGen decl + _sayDrain
   slice("function speak(text, urgent, at)", "\n}"),
   slice("function speakStop()", "\n}"),
   "return { speak, speakStop, state: () => ({ on: _sayOn, depth: _sayQ.length, gen: _sayGen }) };",
@@ -71,8 +73,24 @@ function check(name, cond, detail) {
 function fresh() {
   const synth = makeSynth();
   global.window = { SpeechSynthesisUtterance: function (t) { this.text = t; }, speechSynthesis: synth };
+  // The watchdog is a timer, and waiting out a real one would make this suite
+  // take seconds per case. Capture them instead and fire on demand.
+  // The queue resolves setTimeout at call time, not at construction, so the
+  // override has to stay installed while the tests drive it. Each fresh() gets
+  // its own timer list and the suite runs sequentially, so they cannot mix.
+  const timers = [];
+  global.setTimeout = (fn, ms) => { timers.push({ fn, ms, live: true }); return timers.length - 1; };
+  global.clearTimeout = (id) => { if (timers[id]) timers[id].live = false; };
   const api = new Function(harness)();
-  return { synth, api };
+  // Fire the most recently armed timer that is still live, i.e. the watchdog for
+  // whatever is speaking now.
+  const fireGuard = () => {
+    for (let i = timers.length - 1; i >= 0; i--) {
+      if (timers[i].live) { timers[i].live = false; timers[i].fn(); return true; }
+    }
+    return false;
+  };
+  return { synth, api, fireGuard, armed: () => timers.filter((t) => t.live).length };
 }
 
 console.log("ghost end event from a cancelled utterance");
@@ -150,6 +168,36 @@ console.log("\ndepth cap keeps the newest lines");
   check("queue capped at SAY_MAX", api.state().depth === 3, "depth " + api.state().depth);
   synth.finish();
   check("oldest backlog dropped, newest kept", synth.spoken[1] === "c", synth.spoken.join("|"));
+}
+
+console.log("\nwatchdog does not talk over a line that is still speaking");
+{
+  const { synth, api, fireGuard } = fresh();
+  api.speak("a long line of commentary", false);
+  api.speak("next up", false);
+  // Budget expired, but the engine says it is still going: a slow voice, not a
+  // dropped utterance. Interrupting here is what produced garble.
+  synth.speaking = true;
+  fireGuard();
+  check("queued line held back while still speaking", synth.spoken.length === 1, synth.spoken.join("|"));
+  check("latch still held", api.state().on === true);
+  // Chrome drops utterances silently and never fires end. Once it admits it is
+  // not speaking, the watchdog is the only thing that can recover the queue.
+  synth.speaking = false;
+  fireGuard();
+  check("recovers once the engine reports idle", synth.spoken[1] === "next up", synth.spoken.join("|"));
+}
+
+console.log("\nwatchdog re-arms are capped so a stuck engine still recovers");
+{
+  const { synth, api, fireGuard } = fresh();
+  api.speak("one", false);
+  api.speak("two", false);
+  synth.speaking = true;   // never goes false: synthesis parked
+  let fired = 0;
+  while (fired < 12 && synth.spoken.length === 1) { if (!fireGuard()) break; fired++; }
+  check("queue recovers despite speaking stuck true", synth.spoken[1] === "two", synth.spoken.join("|"));
+  check("gave the voice several chances first", fired > 1, "fired " + fired);
 }
 
 console.log(`\n${passes} passed, ${fails} failed`);
