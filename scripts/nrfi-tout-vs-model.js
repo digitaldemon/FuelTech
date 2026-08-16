@@ -60,7 +60,11 @@ const CACHE = path.join(__dirname, "nrfi-tout-vs-model.json");
     for (const x of byDate.get(date) || []) {
       const mine = x.gamePk != null ? idx.get(x.gamePk) : null;
       if (!mine) continue;
-      joined.push({ date, side: x.side, actual: mine.actual, p: mine.p, label: mine.label, slate });
+      // gamePk is carried through so the band comparison below can take his own
+      // legs OUT of the slate baseline. Leaving them in makes the baseline
+      // partly a measurement of him, which understates his edge — conservative,
+      // but conservative in a way that would hide the finding.
+      joined.push({ date, gamePk: x.gamePk, side: x.side, actual: mine.actual, p: mine.p, label: mine.label, slate });
     }
   }
   report(dates, slates, joined);
@@ -179,6 +183,106 @@ function report(dates, slates, joined) {
     console.log(`    ${String(b * 10).padStart(3)}-${String(b * 10 + 10).padStart(3)}%  ${"#".repeat(Math.round(n / Math.max(1, pctls.length) * 60)).padEnd(24)} ${n}`);
   }
 
+  /* ---- 2b. Does his edge survive INSIDE our ranking? ----
+   *
+   * Section 2 says his picks average the 64th percentile of our ranking, and
+   * the old READING took that as proof of a pure filter problem. It is not
+   * sufficient, and the reason is a confound the percentile number cannot see:
+   * games we rank high DO go NRFI more often than games we rank low. That is
+   * our ordering working. So a tout who did nothing but sample from the top of
+   * OUR board would post a percentile above 50 and a hit rate above the slate
+   * base rate, and both numbers would be measuring us, not him.
+   *
+   * The question that separates the two diagnoses is what he hits WITHIN a
+   * band, against the other games sitting in that same band:
+   *
+   *   edge only where we already rank high  -> FILTER. Our ordering is right,
+   *     we just do not convert the top of it into played verdicts. Fix the
+   *     ladder and the daily count; touching the model makes it worse.
+   *   edge across every band, including our BOTTOM half -> he is separating
+   *     games we consider interchangeable. That is SIGNAL we do not have, and
+   *     no threshold change can manufacture it.
+   *
+   * 23.9% of his legs land in our bottom half, so that cell is populated
+   * enough to answer rather than shrug at. */
+  console.log("\n=========== HIS EDGE WITHIN EACH BAND OF OUR OWN RANKING ===========");
+  const pctlIn = (p, s) => {
+    const below = s.filter((g) => g.p < p).length;
+    const ties = s.filter((g) => g.p === p).length;
+    return (below + ties / 2) / s.length;
+  };
+  const hisKeys = new Set(nrfiPicks.map((j) => j.date + ":" + j.gamePk));
+  const slateBand = [];
+  for (const date of dates) {
+    const s = slates.get(date) || [];
+    if (s.length < 4) continue;
+    for (const g of s) {
+      if (hisKeys.has(date + ":" + g.gamePk)) continue;   // his legs are the comparison, not the baseline
+      slateBand.push({ pctl: pctlIn(g.p, s), actual: g.actual ? 1 : 0 });
+    }
+  }
+  const hisBand = nrfiPicks.filter((j) => j.slate.length >= 4)
+    .map((j) => ({ pctl: pctlIn(j.p, j.slate), actual: j.actual ? 1 : 0 }));
+  const seOf = (p, n) => (n ? Math.sqrt(p * (1 - p) / n) : 0);
+  const band = (rs, lo, hi) => rs.filter((r) => r.pctl >= lo && (hi >= 1 ? r.pctl <= 1 : r.pctl < hi));
+  console.log("  our band        his picks        everything else       his edge");
+  for (let b = 0; b < 5; b++) {
+    const lo = b / 5, hi = (b + 1) / 5;
+    const H = band(hisBand, lo, hi), S = band(slateBand, lo, hi);
+    const hp = H.length ? mean(H.map((r) => r.actual)) : null;
+    const sp = S.length ? mean(S.map((r) => r.actual)) : null;
+    let tail = "";
+    if (hp != null && sp != null) {
+      const d = hp - sp;
+      const sd = Math.sqrt(seOf(hp, H.length) ** 2 + seOf(sp, S.length) ** 2);
+      tail = ((d >= 0 ? "+" : "") + (d * 100).toFixed(1) + " pts").padStart(9) +
+        (sd > 0 && Math.abs(d) > 2 * sd ? "  * 2se" : "");
+    }
+    console.log(`  ${String(b * 20).padStart(3)}-${String(b * 20 + 20).padStart(3)}%   ` +
+      `${(hp == null ? "—" : pc(hp)).padStart(7)} on ${String(H.length).padStart(3)}   ` +
+      `${(sp == null ? "—" : pc(sp)).padStart(7)} on ${String(S.length).padStart(4)}   ` + tail);
+  }
+  const edgeIn = (lo, hi) => {
+    const H = band(hisBand, lo, hi), S = band(slateBand, lo, hi);
+    if (!H.length || !S.length) return null;
+    const hp = mean(H.map((r) => r.actual)), sp = mean(S.map((r) => r.actual));
+    const sd = Math.sqrt(seOf(hp, H.length) ** 2 + seOf(sp, S.length) ** 2);
+    return { d: hp - sp, n: H.length, sd, z: sd > 0 ? (hp - sp) / sd : 0 };
+  };
+  const botE = edgeIn(0, 0.5), topE = edgeIn(0.5, 1);
+  const fmtE = (e) => e ? `${(e.d >= 0 ? "+" : "")}${(e.d * 100).toFixed(1)} pts on ${e.n} of his legs` +
+    `   (${e.z.toFixed(1)} se${Math.abs(e.z) > 2 ? ", significant" : ", NOT significant"})` : "—";
+  console.log("\n  our bottom half   " + fmtE(botE));
+  console.log("  our top half      " + fmtE(topE));
+  /* The verdict below turns on the bottom-half cell, so it has to clear a
+   * significance bar and not just a magnitude one. An earlier draft branched on
+   * "+5 pts or more" alone: with 78 legs the standard error on that cell is
+   * ~5.6 pts, so a threshold of 5 would have fired on pure noise about a third
+   * of the time, and it would have fired hardest exactly when the sample was
+   * smallest. Requiring 2se costs nothing when the effect is real and refuses
+   * to overturn a working diagnosis when it is not. */
+  if (botE && topE) {
+    // The bottom half is the diagnostic cell. Our ranking says those games are
+    // ordinary; if he still beats their peers there, the separation is his.
+    if (botE.d > 0.05 && Math.abs(botE.z) > 2) {
+      console.log("\n  -> He has SIGNAL WE LACK. In games our model ranks in its own bottom half —");
+      console.log("     games we consider unremarkable — his picks still beat their band peers by");
+      console.log(`     ${(botE.d * 100).toFixed(1)} pts. No ladder threshold can reach those; they are below our own`);
+      console.log("     ordering. This is a MODEL question, not a selection one.");
+    } else if (botE.d > 0.05) {
+      console.log("\n  -> INCONCLUSIVE, and say so rather than picking the flattering reading. He is");
+      console.log(`     ${(botE.d * 100).toFixed(1)} pts ahead of band peers in our bottom half, which points at signal we`);
+      console.log(`     lack, but on ${botE.n} legs that is only ${botE.z.toFixed(1)}se and would not survive a rerun.`);
+      console.log("     Collect more of his bottom-half legs before rebuilding anything around it.");
+    } else {
+      console.log("\n  -> His edge is CONCENTRATED WHERE WE ALREADY RANK HIGH. In our bottom half he");
+      console.log(`     is ${(botE.d * 100).toFixed(1)} pts against band peers, i.e. no better than the games around him.`);
+      console.log("     So he is not seeing anything we cannot; he is selecting from the same top");
+      console.log("     of the board we compute and then actually playing it. FILTER problem —");
+      console.log("     the lever is the ladder and the daily count, not the weights.");
+    }
+  }
+
   // ---- 3. Would our own top pick have done as well? ----
   // The honest head-to-head: on the days he played, take OUR highest-p game and
   // see how it lands. If our top pick matches his hit rate, the model is fine
@@ -268,19 +372,29 @@ function report(dates, slates, joined) {
     console.log("     the slate base rate, so most of his return is price rather than which");
     console.log("     games he picks. Line shopping is the lever, not the model.");
   }
-  if (mp >= 0.62) {
-    console.log("\n  -> FILTER problem. We already rank his games near the top of the slate;");
-    console.log("     we simply do not convert that ranking into a played verdict often");
-    console.log("     enough. The lever is the ladder thresholds and daily pick count,");
-    console.log("     NOT the probability model. Changing weights here would be chasing");
-    console.log("     a number that is already right.");
-  } else if (mp <= 0.55) {
-    console.log("\n  -> DIRECTION problem. His winning games are not distinguishable in our");
-    console.log("     ranking, so he is using information the model does not have. The");
-    console.log("     lever is signal. Look at what his picks share that we do not price.");
+  /* The filter-vs-direction call is made in section 2b, NOT here.
+   *
+   * This block used to decide it from mean percentile alone: >=0.62 printed
+   * "FILTER problem ... changing weights would be chasing a number that is
+   * already right." Mean percentile cannot support that. It is high both when a
+   * tout has no independent signal and merely samples the top of our board, and
+   * when he has plenty and happens to agree with us often — and those two want
+   * opposite fixes, which is the whole distinction this file exists to draw.
+   *
+   * Measured on 326 legs at mean percentile 64.5%, which this rule called a
+   * settled FILTER problem: his edge over band peers is +16.9 pts in our top
+   * half AND +12.9 pts (2.2se) in our BOTTOM half. An edge inside the half our
+   * own ordering calls unremarkable cannot be reached by any threshold, so the
+   * old verdict was not merely imprecise, it pointed at the wrong lever. Two
+   * sections of one script printing opposite conclusions is how a stale reading
+   * survives, so this one now defers instead of competing. */
+  if (botE && topE) {
+    console.log(`  within our own ranking he beats band peers by ${(topE.d * 100).toFixed(1)} pts in our top half`);
+    console.log(`  and ${(botE.d * 100).toFixed(1)} pts (${botE.z.toFixed(1)}se) in our bottom half`);
+    console.log("\n  -> see HIS EDGE WITHIN EACH BAND above for the filter-vs-direction call.");
+    console.log("     Mean percentile alone cannot make it and no longer tries.");
   } else {
-    console.log("\n  -> Mixed. We rank his games modestly above average but not decisively.");
-    console.log("     Expect a real but partial signal gap; do not expect a threshold");
-    console.log("     change alone to close it.");
+    console.log("\n  -> not enough joined legs to place his picks inside our own ranking;");
+    console.log("     the filter-vs-direction question is unanswered on this sample.");
   }
 }
