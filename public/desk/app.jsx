@@ -6117,7 +6117,7 @@ async function pitcherRollingNRFI(pid, season) {
     const splits = (gl.stats && gl.stats[0] && gl.stats[0].splits) || [];
     // Only actual starts; extract gamePk and home/away flag.
     const items = splits.filter((s) => Number(s.stat && s.stat.gamesStarted) === 1)
-      .map((s) => ({ gamePk: s.game && s.game.gamePk, isHome: !!s.isHome }))
+      .map((s) => ({ gamePk: s.game && s.game.gamePk, isHome: !!s.isHome, date: s.date || null }))
       .filter((x) => x.gamePk);
     if (items.length) {
       // Fire all linescore fetches concurrently (shared cache deduplicates).
@@ -6130,7 +6130,7 @@ async function pitcherRollingNRFI(pid, season) {
           const r = item.isHome
             ? Number((inn1.away && inn1.away.runs) || 0)
             : Number((inn1.home && inn1.home.runs) || 0);
-          return { clean: r === 0, runs: r, home: item.isHome };
+          return { clean: r === 0, runs: r, home: item.isHome, date: item.date };
         } catch { return null; }
       }));
       const valid = results.filter((x) => x !== null);
@@ -6139,7 +6139,27 @@ async function pitcherRollingNRFI(pid, season) {
         const pct = (arr) => arr.length ? Math.round(arr.filter(Boolean).length / arr.length * 100) : null;
         const rps = (arr) => arr.length ? Math.round(arr.reduce((s, v) => s + v.runs, 0) / arr.length * 100) / 100 : null;
         const split = (subset) => subset.length >= 5 ? { pct: pct(subset.map(v => v.clean)), n: subset.length, runsPerStart: rps(subset) } : null;
+        /* DAY windows, for the board strip only — deliberately NOT the same thing
+         * as the START windows below. NRFIKINGKY's card reads "L30 · 5g": five
+         * starts inside thirty days, a calendar window. `l30` here is the last
+         * thirty STARTS. pitcherTrendFactor and pitcherVenueFactor read l30/l10/l5,
+         * so repurposing them would silently move the model; these are additive
+         * and display-only.
+         *
+         * n rides along on every window and is shown on the card, because n IS the
+         * story. At the measured k=87.6 (scripts/nrfi-pitcherbt-rebuild.js) a
+         * 2-start window is ~2% reliable, so a "100%" cell there is sampling dust
+         * — true first-inning skill only spans about 64-77%. The strip mutes thin
+         * cells instead of colouring them, so the eye cannot read noise as form. */
+        const dayWin = (days) => {
+          const cut = Date.now() - days * 864e5;
+          const sub = valid.filter((v) => v.date && Date.parse(v.date + "T12:00:00Z") >= cut);
+          return { pct: sub.length ? pct(sub.map((v) => v.clean)) : null, n: sub.length,
+            runsPerStart: sub.length ? rps(sub) : null };
+        };
         val = {
+          windows: [{ key: "SZN", pct: pct(cleans), n: valid.length, runsPerStart: rps(valid) }]
+            .concat([50, 30, 20, 14, 10, 7].map((d) => Object.assign({ key: "L" + d }, dayWin(d)))),
           szn: { pct: pct(cleans),             n: valid.length,                runsPerStart: rps(valid) },
           l30: { pct: pct(cleans.slice(-30)),   n: Math.min(valid.length, 30), runsPerStart: rps(valid.slice(-30)) },
           l10: { pct: pct(cleans.slice(-10)),   n: Math.min(valid.length, 10), runsPerStart: rps(valid.slice(-10)) },
@@ -8804,6 +8824,162 @@ function NrfiCalendar({ rec, bankroll, riskLevel }) {
   );
 }
 
+/* ── Dual Score board header ────────────────────────────────────────────────
+ * The card layout NRFIKINGKY runs on his own board (a Replit app, screenshotted
+ * 2026-08-16): two starter columns, a scrollable strip of first-inning clean%
+ * windows, and one bottom bar carrying the score against the market price.
+ *
+ * "Dual Score" is ONE number — the dual is that it fuses the TWO starters. The
+ * DUAL in this layout is that TWO different numbers do two different jobs, and
+ * a third screenshot is what established it. Reading only the first two cards,
+ * the badge looks like the edge (DS 64.7 vs BE 59.5 -> GREEN at +5.2; DS 59.1 vs
+ * BE 57.6 -> YELLOW at +1.5). The third kills that: DS 60.0 vs BE 51.5% is an
+ * edge of +8.5 and still YELLOW. So:
+ *
+ *   badge  = threshold on DS ITSELF   (green lands between 60.0 and 64.7)
+ *   rank   = ordered by EDGE, DS - BE (on both screenshots the card above has a
+ *            larger edge and a smaller DS; MIL @ LAD carries "#3" while showing
+ *            the best DS on screen)
+ *
+ * Cross-check that holds: card A reads "trails lead by 6pts" at DS 64.7 -> leader
+ * 70.7; card C reads "trails lead by 11pts" at DS 60.0 -> leader 71.0. Same slate,
+ * same leader, from two independently-read screenshots.
+ *
+ * WHAT DRIVES DS HERE IS OUR CALIBRATED p, NOT HIS WINDOWS, and the reason is
+ * measured (scripts/nrfi-ds-vs-model.js, 1057 games, walk-forward, bootstrap
+ * clustered by date):
+ *
+ *   scorer                      Brier      AUC
+ *   ours (33 factors)           0.24649    0.5755
+ *   raw window product          0.27645    0.5501
+ *
+ * A raw window score is WORSE THAN A CONSTANT as a probability — predicting the
+ * base rate every day scores ~0.2498. DS is displayed against BE and the gap is
+ * called an edge, so an overconfident DS manufactures green badges on edges that
+ * do not exist. That is the one thing this layout must not do.
+ *
+ * Be honest about the other half of that table: on RANKING the two cannot be
+ * separated (ours - raw +0.0253, 95% [-0.0176, +0.0657]). Our advantage here is
+ * calibration, not discrimination. Nothing on this card should imply otherwise.
+ */
+// Thresholds on the DS LEVEL, not on the edge. Green is bracketed by observation
+// to (60.0, 64.7]; 62 is the midpoint of that bracket and is a guess inside a
+// measured interval, not a fitted value. Red below 55 is unobserved — his three
+// published cards contain no red — so it is a placeholder that should be moved
+// the moment a red card is seen rather than defended.
+const DS_TIER_DEFAULTS = { green: 62, yellow: 55 };
+
+function dsThresholds() {
+  try {
+    const raw = JSON.parse(localStorage.getItem("nrfi.ds.tiers") || "null");
+    if (raw && Number.isFinite(raw.green) && Number.isFinite(raw.yellow)) return raw;
+  } catch { /* fall through to defaults */ }
+  return DS_TIER_DEFAULTS;
+}
+
+// Probability (0-100) -> American odds, the way his card prints N and Y.
+function dsAmerican(pct) {
+  if (pct == null || pct <= 0 || pct >= 100) return null;
+  const p = pct / 100;
+  return p >= 0.5 ? "-" + Math.round(100 * p / (1 - p)) : "+" + Math.round(100 * (1 - p) / p);
+}
+
+// Tiers on the DS level. Deliberately NOT on the edge — see the header comment;
+// his DS 60.0 / +8.5 edge card is YELLOW while DS 64.7 / +5.2 is GREEN.
+function dsTier(ds, th) {
+  if (ds == null) return { label: "NO DS", color: "var(--dim)" };
+  if (ds >= th.green) return { label: "GREEN", color: "var(--moss)" };
+  if (ds >= th.yellow) return { label: "YELLOW", color: "var(--amber)" };
+  return { label: "RED", color: "var(--rose)" };
+}
+
+/* A window cell. n rides on every cell and drives how loudly it is allowed to
+ * speak: at the measured k=87.6 a 2-start window is ~2% reliable, so colouring
+ * a 100%-on-2g cell green would render sampling dust as form. Thin cells go
+ * grey — the number is still shown, it just is not dressed up as a signal. */
+function DSCell({ w }) {
+  const thin = w.n < 3, semi = w.n >= 3 && w.n < 5;
+  const color = w.pct == null || thin ? "var(--dim)"
+    : w.pct >= 75 ? "var(--moss)" : w.pct >= 60 ? "var(--amber)" : "var(--rose)";
+  return (
+    <div style={{ flex: "0 0 auto", minWidth: 46, textAlign: "center", padding: "4px 6px",
+      background: "rgba(255,255,255,0.03)", borderRadius: 6, opacity: semi ? 0.72 : 1 }}>
+      <div style={{ fontSize: 8, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.06em" }}>{w.key}</div>
+      <div style={{ fontSize: 12, fontWeight: 800, color }}>{w.pct == null ? "—" : w.pct + "%"}</div>
+      <div style={{ fontSize: 8, color: "var(--dim)" }}>{w.n}g</div>
+    </div>
+  );
+}
+
+function DSArm({ label, prof }) {
+  const rolling = prof && prof.rolling;
+  const wins = (rolling && rolling.windows) || [];
+  const l30 = wins.find((w) => w.key === "L30");
+  const szn = wins.find((w) => w.key === "SZN");
+  const big = l30 && l30.pct != null ? l30.pct : (szn ? szn.pct : null);
+  const bigColor = big == null ? "var(--dim)"
+    : big >= 75 ? "var(--moss)" : big >= 60 ? "var(--amber)" : "var(--rose)";
+  return (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: 8, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>{label}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden",
+        textOverflow: "ellipsis" }}>{(prof && prof.name) || "TBD"}</div>
+      <div style={{ fontSize: 26, fontWeight: 800, color: bigColor, lineHeight: 1.1 }}>
+        {big == null ? "—" : big + "%"}
+      </div>
+      <div style={{ fontSize: 9, color: "var(--dim)" }}>
+        NRFI L30 · {szn ? szn.n : 0}GS
+      </div>
+      {/* Horizontally scrollable, like his — the strip runs past the card edge. */}
+      <div style={{ display: "flex", gap: 4, marginTop: 6, overflowX: "auto", paddingBottom: 2 }}>
+        {wins.length ? wins.map((w) => <DSCell key={w.key} w={w} />)
+          : <div style={{ fontSize: 10, color: "var(--dim)" }}>no game log</div>}
+      </div>
+    </div>
+  );
+}
+
+function DSHeader({ r, leadDS, thresholds }) {
+  const pp = r.pitProfiles || {};
+  // DS is P(NRFI) on our calibrated number, pre market-blend, so DS vs BE stays a
+  // genuine model-against-market comparison rather than the market against itself.
+  const ds = r.pCal != null ? r.pCal * 100 : null;
+  const be = r.market ? r.market.marketNRFI : null;
+  const edge = ds != null && be != null ? ds - be : null;
+  const tier = dsTier(ds, thresholds);
+  const behind = leadDS != null && ds != null ? leadDS - ds : null;
+  return (
+    <div style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: 8, marginBottom: 8 }}>
+      <div style={{ display: "flex", gap: 12 }}>
+        <DSArm label="AWAY" prof={pp.away} />
+        <DSArm label="HOME" prof={pp.home} />
+      </div>
+      {behind != null && behind > 0.05 && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 8, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>WHY NOT LEAD</div>
+          <div style={{ fontSize: 11, color: "var(--dim)" }}>
+            dual score trails lead by {behind.toFixed(1)}pts (DS {Math.round(ds)})
+          </div>
+        </div>
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 22, fontWeight: 800, color: tier.color }}>
+          {ds == null ? "—" : ds.toFixed(1)}
+        </span>
+        <span style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>DS</span>
+        <span style={{ fontSize: 9, fontWeight: 700, color: tier.color, border: "1px solid " + tier.color,
+          borderRadius: 4, padding: "1px 5px", letterSpacing: "0.06em" }}>{tier.label}</span>
+        <span style={{ fontSize: 10, color: "var(--dim)" }}>
+          {be == null ? "no market" : (
+            "N " + dsAmerican(be) + " · Y " + dsAmerican(100 - be) + " · BE " + be.toFixed(1) + "%"
+          )}
+          {edge != null && (edge >= 0 ? "  ·  +" : "  ·  ") + edge.toFixed(1) + " edge"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function FirstInning() {
   const [rows, setRows] = useState([]);
   const [sellers, setSellers] = useState([]);
@@ -9350,6 +9526,22 @@ function FirstInning() {
   // profit tracker read `rec`, never the rendered cards.
   const decided = (r) => r.inning1runs != null && (r.currentInning > 1 || r.final);
   const validRows = enriched.filter((r) => !r.v.thinPass && !isHeld(r) && !decided(r));
+  /* Dual Score board state. `leadDS` is the best DS on the slate, which is what
+   * his WHY NOT LEAD line measures every other game against — his two cards agree
+   * on a leader of ~71 from independent "trails by 6pts"/"trails by 11pts" lines.
+   *
+   * The DS RANK is ordered by edge (DS - BE), which is his ordering, not ours.
+   * It is shown as a badge rather than used to re-sort: the existing board is
+   * bucketed Bets/Leans/Pass and sorted by confidence inside each, and silently
+   * reordering the thing the user reads every day is a bigger change than adding
+   * a number to it. Both orderings are now visible; the sort can follow later. */
+  const dsTh = dsThresholds();
+  const dsOf = (r) => (r.pCal != null ? r.pCal * 100 : null);
+  const dsEdgeOf = (r) => { const d = dsOf(r); return d != null && r.market ? d - r.market.marketNRFI : null; };
+  const leadDS = validRows.reduce((m, r) => { const d = dsOf(r); return d != null && (m == null || d > m) ? d : m; }, null);
+  const dsRank = new Map(validRows.filter((r) => dsEdgeOf(r) != null)
+    .sort((a, b) => dsEdgeOf(b) - dsEdgeOf(a))
+    .map((r, i) => [r.gamePk, i + 1]));
   const betNRFI = validRows.filter((r) => r.v.isBet && r.call === "NRFI").sort(byConf);
   const betYRFI = validRows.filter((r) => r.v.isBet && r.call === "YRFI").sort(byConf);
   const leans = validRows.filter((r) => r.v.strength === "LEAN").sort(byConf);
@@ -9454,9 +9646,16 @@ function FirstInning() {
               {countdown && <span title="Time until first pitch" style={{ cursor: "help", marginLeft: 5, color: !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)", fontWeight: !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400 }}>· {countdown}</span>}
             </div>
           )}
-          <div title={r.away + " (away) @ " + r.home + " (home)"} style={{ fontWeight: 800, fontSize: 20, letterSpacing: "-0.02em", lineHeight: 1.1, marginBottom: 3 }}>
-            {r.awayAbbr || r.away} <span style={{ color: "var(--dim)", fontWeight: 300 }}>@</span> {r.homeAbbr || r.home}
+          <div title={r.away + " (away) @ " + r.home + " (home)"} style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: 20, letterSpacing: "-0.02em", lineHeight: 1.1, marginBottom: 3 }}>
+            <span>{r.awayAbbr || r.away} <span style={{ color: "var(--dim)", fontWeight: 300 }}>@</span> {r.homeAbbr || r.home}</span>
+            {dsRank.has(r.gamePk) && (
+              <span title={"Rank " + dsRank.get(r.gamePk) + " of " + dsRank.size + " by edge (DS minus break-even) — his board's ordering."}
+                style={{ cursor: "help", fontSize: 10, fontWeight: 700, color: "var(--sky, #6cf)", border: "1px solid var(--sky, #6cf)", borderRadius: 4, padding: "1px 5px" }}>
+                #{dsRank.get(r.gamePk)}
+              </span>
+            )}
           </div>
+          <DSHeader r={r} leadDS={leadDS} thresholds={dsTh} />
           <div style={{ fontSize: 11, color: "var(--dim)" }}>{r.away} @ {r.home}</div>
         </div>
 
