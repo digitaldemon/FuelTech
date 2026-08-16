@@ -2032,19 +2032,40 @@ function nrfiReliefBacked(p){return!!p&&(p.sample||0)<NRFI_THIN_STARTS&&!nrfiThi
 // (n_live + n_seed)), so the honest smaller number lets graded picks take over
 // in a season rather than never.
 //
-// CAVEAT: one 45-day window, and split stats are current-season, so there is
-// mild look-ahead leakage (see the harness header). Re-run before trusting this
-// into a new season.
+// REFIT AGAIN 2026-08-16: c -0.073 -> -0.048, same 558 games. Both caveats the
+// -0.073 note left open are now closed, and each one moved the number:
 //
-// SECOND CAVEAT, 2026-08-15: -0.073 is lg(0.518) - lg(0.536), i.e. the same
-// difference-of-logits-of-means shortcut that nrfiCalibration used until it was
-// replaced with a proper Newton solve. That shortcut does not actually land the
-// mean on target; over a spread like the desk's it misses by roughly 0.2-0.3pp
-// of probability, always overshooting toward 50%. Correcting it needs the 558
-// per-game predictions, not just their mean, so it waits for the next backtest
-// run — and the error is comfortably inside the leakage caveat above, which is
-// the larger problem with this number.
-const NRFI_CALIB_SEED={c:-0.073,n:558,active:true,source:"backtest-v6-blend"};// Pitcher backtest rankings — GENERATED, do not hand-edit.
+//   1. LEAKAGE. -0.073 was fit on predictions built from season-to-date pitcher
+//      splits and team offence — inputs containing the very games being scored.
+//      Both are now rewound to the scored date. Over the same 558 games that
+//      leak was 47% of the model's apparent skill (Brier .2383 -> .2436 against
+//      a .2495 base rate), so what this seed corrects are different predictions
+//      than before, with a different bias.
+//   2. THE SHORTCUT. -0.073 was lg(0.518) - lg(0.536), a difference of logits
+//      of MEANS. c is applied per game, in logit space, so that equals the right
+//      answer only if logit were linear. It is not, and the shortcut always
+//      overshoots toward 50%. desk-nrfi-backtest.js now Newton-solves for the c
+//      that lands the calibrated mean on the observed rate — the same solver
+//      nrfiCalibration uses for liveC. Until now the two halves of one
+//      calibration were derived differently, so the seed a game inherited on day
+//      one disagreed with what the live fit would give it on day two with no
+//      model change in between. That discontinuity is gone.
+//
+// AND A SLOPE CHECK, the question this seed could not previously answer. An
+// intercept-only calibration moves every prediction the same distance in logit
+// space, so it fixes the LEVEL and nothing else; if the model were also
+// over-confident — 65% on games that go 58% — no value of c would repair it,
+// and games would cross these absolute ladder thresholds on spread they had not
+// earned. Fitting the full two-parameter Platt map over the same 558 games
+// gives a = 1.482 +/- 0.387, i.e. +1.24 SE from 1, buying 0.0006 of Brier. The
+// slope is inside noise of 1 and if anything leans UNDER-confident. So the
+// shift is the right tool, and a second parameter would be fitting this sample
+// rather than a defect. The harness prints this on every run.
+//
+// STILL CAVEATED: one 45-day window, and pitMeta's season ERA/IP, top-of-order
+// OBP, Statcast and teamOff's platoon OPS are all still whole-season pulls.
+// Re-run before trusting this into a new season.
+const NRFI_CALIB_SEED={c:-0.048,n:558,active:true,source:"backtest-v7-pit"};// Pitcher backtest rankings — GENERATED, do not hand-edit.
 //   node scripts/nrfi-pitcherbt-rebuild.js && node scripts/nrfi-pitcherbt-emit.js
 // Source: 4274 games across 2025 + 2026, arms with >=10 starts.
 // Built 2026-08-15. League clean-1st rate 70.5%.
