@@ -8571,6 +8571,94 @@ function nrfiVerdict(r) {
   return { strength, side, isBet, label, color, blurb, confLbl, thinPass, notes };
 }
 
+/* WHY THIS IS OR IS NOT A PICK, as sentences.
+ *
+ * Every number below was already on the card. It was spread across a verdict
+ * badge, a battle bar, two full starter panels, a seven-cell window strip per
+ * arm, a stats strip and a badge row — six places, none of which said outright
+ * why the desk was betting or passing. The reader had to reconstruct it from
+ * percentages every single time.
+ *
+ * Nothing here re-derives a gate. nrfiVerdict already returns `notes`, the only
+ * structured record of which gate demoted a pick, and every check already
+ * carries a lean. Reading those back means the reasons and the verdict cannot
+ * drift apart; recomputing them here is how a card ends up claiming a reason
+ * the verdict never actually used.
+ *
+ * Reasons are collected FOR and AGAINST a clean first inning and only then
+ * flipped onto the called side. Collecting them as "pros" directly is wrong on
+ * a YRFI call, where a shutdown starter is an argument against the pick — it
+ * would read as gibberish on exactly the games that need explaining most.
+ */
+function nrfiWhy(r) {
+  const forN = [], vsN = [];
+  const pp = r.pitProfiles || {};
+
+  // The two arms. L30 clean-first-inning rate is the single largest input to
+  // the model, so it leads whichever way it points. Same >=6-start floor the
+  // starter panel uses before it trusts a rolling window over the regressed
+  // rate — a 1-start L30 is not a rate and must not become a sentence.
+  for (const [prof, nm] of [[pp.away, r.awayPP], [pp.home, r.homePP]]) {
+    if (!prof) continue;
+    const rl = prof.rolling;
+    const ok = rl && rl.l30 && rl.l30.pct != null && (rl.l30.n || 0) >= 6;
+    const pct = ok ? rl.l30.pct : prof.cleanPct;
+    const n = ok ? rl.l30.n : prof.sample;
+    if (pct == null) continue;
+    const who = nm || prof.name || "Starter";
+    const tail = " — " + Math.round(pct) + "% of " + (n || 0) + " starts";
+    if (pct >= 72) forN.push(who + " keeps the 1st clean" + tail);
+    else if (pct <= 55) vsN.push(who + " leaks runs in the 1st" + tail);
+  }
+
+  // The two lineups, the same reading the TEAM 1ST-INN rates show.
+  for (const [abbr, pct] of [[r.awayAbbr || r.away, r.awayYrfiPct],
+    [r.homeAbbr || r.home, r.homeYrfiPct]]) {
+    if (pct == null) continue;
+    if (pct <= 25) forN.push(abbr + " scores in the 1st in only " + pct + "% of games");
+    else if (pct >= 38) vsN.push(abbr + " scores in the 1st in " + pct + "% of games");
+  }
+
+  if (r.parkEnv && r.parkEnv.factor != null) {
+    const f = r.parkEnv.factor;
+    const note = r.parkEnv.note && r.parkEnv.note !== "neutral" ? " (" + r.parkEnv.note + ")" : "";
+    if (f <= 0.98) forN.push("Park and weather suppress scoring here" + note);
+    else if (f >= 1.02) vsN.push("Park and weather inflate scoring here" + note);
+  }
+
+  const pros = r.call === "NRFI" ? forN : vsN;
+  const cons = r.call === "NRFI" ? vsN : forN;
+
+  // Consensus, said once and in words. The badge showed "3/3 signal groups";
+  // what it never said is whether that count was support or a warning.
+  if (r.aligned && r.aligned.total >= 2) {
+    const agree = r.aligned.agree, total = r.aligned.total;
+    const line = agree + " of " + total + " signal groups back " + r.call;
+    if (agree / total >= 0.6) pros.push(line);
+    else cons.push(line);
+  }
+
+  // The gate notes are already English. One of them — the value line — is an
+  // argument FOR the wager rather than against it, so it is routed to pros;
+  // leaving it among the blockers is what left "why it's a pick" empty on live
+  // bets in the first draft of this.
+  const blockers = [], value = [];
+  for (const n of (r.v.notes || [])) {
+    const s = n.charAt(0).toUpperCase() + n.slice(1);
+    if (/^value \+/i.test(n)) value.push(s);
+    else blockers.push(s);
+  }
+  // Value goes to the FRONT, not the back. A strong game generates a reason per
+  // arm, per lineup and per park before the notes are even read, which pushed
+  // the one line saying WHY IT IS A BET to seventh — past the six-line cap, on
+  // exactly the cards that are bets. Everything else here argues the side; this
+  // is the only line that argues the wager.
+  pros.unshift(...value);
+  if (!r.lineupPosted) blockers.push("Lineups not posted — batting orders are projected");
+
+  return { pros, cons, blockers };
+}
+
 // Match one of NRFIKINGKY's picks to a scheduled game by team-name overlap.
 function nrfiTokens(name) {
   return String(name || "").toLowerCase().replace(/[^a-z ]/g, " ").split(/\s+/).filter((w) => w.length >= 3);
@@ -9220,7 +9308,57 @@ function DSTeamRates({ r }) {
   );
 }
 
-function DSHeader({ r, leadDS, thresholds, priceOv, onSavePrice }) {
+/* The reasons, as a list you read top to bottom instead of decode.
+ *
+ * Order is the whole design. Whatever DECIDED the verdict goes first: on a bet
+ * that is the supporting reasons, on a lean or a pass it is the blocker. "No
+ * value at this price" is the actual answer to "why isn't this a pick?", and
+ * putting it under four green ticks answers a question nobody asked.
+ *
+ * Capped at six lines. The card exists to be read at a glance before a game
+ * starts; an exhaustive list is what the research disclosure is for, and it
+ * says how many it is holding back rather than silently truncating. */
+function WhyBlock({ why, isBet }) {
+  const rows = [];
+  const add = (kind, list) => { for (const text of list) rows.push({ kind, text }); };
+  if (isBet) { add("for", why.pros); add("warn", why.blockers); add("against", why.cons); }
+  else { add("warn", why.blockers); add("against", why.cons); add("for", why.pros); }
+  if (!rows.length) return null;
+  const MARK = {
+    for: { mark: "+", color: "var(--moss)" },
+    against: { mark: "−", color: "var(--rose)" },
+    warn: { mark: "!", color: "var(--amber)" },
+  };
+  const shown = rows.slice(0, 6);
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.10em", marginBottom: 5 }}>
+        {isBet ? "WHY IT'S A PICK" : "WHY IT'S NOT A PICK"}
+      </div>
+      {shown.map((row, i) => (
+        <div key={i} style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 12.5, lineHeight: 1.6 }}>
+          <span style={{ color: MARK[row.kind].color, fontWeight: 800, flexShrink: 0, width: 8, textAlign: "center" }}>
+            {MARK[row.kind].mark}
+          </span>
+          <span style={{ color: row.kind === "for" ? "var(--fg)" : "var(--bone)" }}>{row.text}</span>
+        </div>
+      ))}
+      {rows.length > shown.length && (
+        <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 3, paddingLeft: 16 }}>
+          +{rows.length - shown.length} more in details
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* NOTE: the price BOX is no longer here — it moved onto the card's own price
+ * line, which is visible without expanding. DSHeader now lives behind the
+ * research disclosure, and a field you have to go looking for is not a field
+ * you will use to shop a line before first pitch. This still reads the override
+ * and still flags MANUAL, so the DS/BE/edge shown here and the edge shown on
+ * the card are computed against the same price. */
+function DSHeader({ r, leadDS, thresholds, priceOv }) {
   const pp = r.pitProfiles || {};
   // DS is P(NRFI) on our calibrated number, pre market-blend, so DS vs BE stays a
   // genuine model-against-market comparison rather than the market against itself.
@@ -9268,7 +9406,6 @@ function DSHeader({ r, leadDS, thresholds, priceOv, onSavePrice }) {
               style={{ cursor: "help", color: "var(--violet)", fontWeight: 700 }}> · MANUAL</span>
           )}
         </span>
-        <DSPriceOverride value={priceOv} onSave={(v) => onSavePrice(r.gamePk, v)} />
       </div>
       <DSTeamRates r={r} />
     </div>
@@ -9982,51 +10119,121 @@ function FirstInning() {
     const avgOffHP = (awayOffHP != null && homeOffHP != null) ? Math.round((awayOffHP + homeOffHP) / 2) : awayOffHP ?? homeOffHP;
     const pitWinning = avgPitHP != null && avgOffHP != null ? avgPitHP > avgOffHP : null;
 
+    // ── The three things the plain card is built out of ──
+    const why = nrfiWhy(r);
+
+    /* Price and edge, quoted ON THE CALLED SIDE. DSHeader quotes both sides of
+     * an NRFI market because it is a scoreboard; a card that says "BET YRFI"
+     * and then prints a negative edge underneath is not. The override wins over
+     * Kalshi in both places, so the two readings cannot disagree. */
+    const ovBe = dsImplied(priceOv[String(r.gamePk)]);
+    const beNRFI = ovBe != null ? ovBe : (r.market ? r.market.marketNRFI : null);
+    const dsVal = r.pCal != null ? r.pCal * 100 : null;
+    const callBe = beNRFI == null ? null : (r.call === "NRFI" ? beNRFI : 100 - beNRFI);
+    const callDS = dsVal == null ? null : (r.call === "NRFI" ? dsVal : 100 - dsVal);
+    const callEdge = callBe != null && callDS != null ? callDS - callBe : null;
+
+    /* Kelly sizing, hoisted out of the stats strip so the plain card and the
+     * strip quote one number instead of two computations that could drift. */
+    const sizing = r.kelly == null || !r.market ? null : (() => {
+      const cfg = { ghost:{mult:0.10,maxPct:0.02}, conservative:{mult:0.25,maxPct:0.06}, moderate:{mult:0.50,maxPct:0.12}, standard:{mult:0.75,maxPct:0.18}, aggressive:{mult:1.00,maxPct:0.25}, turbo:{mult:1.50,maxPct:0.35}, xtreme:{mult:2.00,maxPct:0.50}, degen:{mult:3.00,maxPct:0.65}, yolo:{mult:5.00,maxPct:0.80} };
+      const rc = cfg[riskLevel] || cfg.moderate;
+      const confMult = r.confidence != null ? Math.max(0.30, r.confidence) : 1;
+      const sized = Math.min(r.kelly * rc.mult * confMult, rc.maxPct);
+      const amt = bankroll ? Math.round(bankroll * sized * 100) / 100 : null;
+      return {
+        label: amt ? "$" + amt : (sized * 100).toFixed(1) + "%",
+        pct: (sized * 100).toFixed(1),
+        amt,
+        capPct: (rc.maxPct * 100).toFixed(0),
+        confNote: confMult < 0.95 ? " Scaled to ×" + confMult.toFixed(2) + " for thin data." : "",
+      };
+    })();
+
     return (
       <div className={"pick " + r.tier.cls} key={r.gamePk}>
-        {/* ── Verdict badge — centered at top ── */}
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-          <div title={r.v.blurb} style={{ cursor: "help", textAlign: "center", border: "2px solid " + r.v.color, background: r.v.color + "15", borderRadius: 12, padding: "6px 20px" }}>
-            <div style={{ fontWeight: 900, fontSize: 12, color: r.v.color, lineHeight: 1, letterSpacing: "0.05em", textTransform: "uppercase" }}>{r.v.label}</div>
-            <div style={{ fontWeight: 800, fontSize: 26, color: r.v.color, lineHeight: 1, marginTop: 5 }}>{r.pMax.toFixed(0)}%</div>
-            <div style={{ fontSize: 9, letterSpacing: "0.10em", color: r.v.color, marginTop: 3, opacity: 0.6 }}>{r.tier.t}</div>
-            {r.aligned && r.aligned.total >= 3 && (
-              <div title={r.aligned.agree + " of " + r.aligned.total + " signal groups agree with the model's call" + (r.aligned.rows ? " (from " + r.aligned.rows + " individual checks)" : "") + ". Checks reading the same underlying fact — the twelve that all grade the starter, for instance — share one vote, so a single input can't outvote everything else."} style={{ cursor: "help", fontSize: 9, color: r.v.color, marginTop: 4, opacity: 0.75, fontWeight: 700 }}>
-                {r.aligned.agree}/{r.aligned.total} signal groups
-              </div>
-            )}
-            {r.checks && r.aligned && r.aligned.agree >= 2 && (() => {
-              const call = r.call.toLowerCase();
-              const top = r.checks.filter((c) => c.lean === call).slice(0, 2).map((c) => c.label);
-              if (!top.length) return null;
-              return (
-                <div title={"Top signals agreeing with " + r.call + ": " + top.join(", ")} style={{ cursor: "help", fontSize: 8, color: r.v.color, marginTop: 3, opacity: 0.55, fontWeight: 600, letterSpacing: "0.02em" }}>
-                  {top.map((l, i) => <span key={i}>{i > 0 ? " · " : ""}{l}</span>)}
-                </div>
-              );
-            })()}
+        {/* ── Who and when ── */}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 2 }}>
+          <span title={r.away + " (away) @ " + r.home + " (home)"} style={{ fontWeight: 800, fontSize: 20, letterSpacing: "-0.02em" }}>
+            {r.awayAbbr || r.away} <span style={{ color: "var(--dim)", fontWeight: 300 }}>@</span> {r.homeAbbr || r.home}
+          </span>
+          {dsRank.has(r.gamePk) && (
+            <span title={"Rank " + dsRank.get(r.gamePk) + " of " + dsRank.size + " of today's board by edge (our number minus the break-even price)."}
+              style={{ cursor: "help", fontSize: 10, fontWeight: 700, color: "var(--sky, #6cf)", border: "1px solid var(--sky, #6cf)", borderRadius: 4, padding: "1px 5px" }}>
+              #{dsRank.get(r.gamePk)}
+            </span>
+          )}
+          {gameTime && (
+            <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--dim)" }}>
+              {gameTime}
+              {countdown && <span title="Time until first pitch" style={{ cursor: "help", color: !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)", fontWeight: !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400 }}> · {countdown}</span>}
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: "var(--dim)", marginBottom: 10 }}>{r.away} @ {r.home}</div>
+
+        {/* ── The call, in one bar. The old badge stacked label, probability,
+             tier word, a signal-group count and two check names into a centred
+             box; four of those five were context for the two that matter. The
+             count and the check names now appear as sentences in WHY, and the
+             tier word was a restatement of the colour it was printed in. ── */}
+        <div title={r.v.blurb} style={{ cursor: "help", display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", marginBottom: 12, borderRadius: 10, border: "1px solid " + r.v.color + "66", background: r.v.color + "12" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 900, fontSize: 15, color: r.v.color, letterSpacing: "0.04em", textTransform: "uppercase", lineHeight: 1.2 }}>{r.v.label}</div>
+            <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>
+              {r.call === "NRFI" ? "No run scores in the 1st inning" : "A run scores in the 1st inning"}
+            </div>
+          </div>
+          <div style={{ textAlign: "right", flexShrink: 0 }}>
+            <div style={{ fontWeight: 800, fontSize: 28, color: r.v.color, lineHeight: 1 }}>{r.pMax.toFixed(0)}%</div>
+            <div style={{ fontSize: 9, color: "var(--dim)", letterSpacing: "0.08em", marginTop: 3 }}>OUR NUMBER</div>
           </div>
         </div>
-        {/* ── Header ── */}
-        <div style={{ marginBottom: 12 }}>
-          {gameTime && (
-            <div style={{ fontSize: 11, color: "var(--dim)", marginBottom: 5 }}>
-              {gameTime}
-              {countdown && <span title="Time until first pitch" style={{ cursor: "help", marginLeft: 5, color: !countdown.includes("h") && parseInt(countdown) < 30 ? "var(--amber)" : "var(--dim)", fontWeight: !countdown.includes("h") && parseInt(countdown) < 30 ? 700 : 400 }}>· {countdown}</span>}
-            </div>
-          )}
-          <div title={r.away + " (away) @ " + r.home + " (home)"} style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: 20, letterSpacing: "-0.02em", lineHeight: 1.1, marginBottom: 3 }}>
-            <span>{r.awayAbbr || r.away} <span style={{ color: "var(--dim)", fontWeight: 300 }}>@</span> {r.homeAbbr || r.home}</span>
-            {dsRank.has(r.gamePk) && (
-              <span title={"Rank " + dsRank.get(r.gamePk) + " of " + dsRank.size + " by edge (DS minus break-even) — his board's ordering."}
-                style={{ cursor: "help", fontSize: 10, fontWeight: 700, color: "var(--sky, #6cf)", border: "1px solid var(--sky, #6cf)", borderRadius: 4, padding: "1px 5px" }}>
-                #{dsRank.get(r.gamePk)}
+
+        {/* ── Why ── */}
+        <WhyBlock why={why} isBet={r.v.isBet} />
+
+        {/* ── The price, on one line, against the price you are actually taking ── */}
+        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", fontSize: 12, marginBottom: 12, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+          {callBe == null ? (
+            <span style={{ color: "var(--dim)" }}>No market price yet</span>
+          ) : (
+            <>
+              <span title={"The price on " + r.call + ". You need to win this bet " + callBe.toFixed(1) + "% of the time just to break even." + (ovBe != null ? " This is YOUR typed price, not Kalshi's." : "")}>
+                <span style={{ color: "var(--dim)" }}>Price </span>
+                <b style={{ color: "var(--bone)" }}>{dsAmerican(callBe)}</b>
+                <span style={{ color: "var(--dim)" }}> · break even {callBe.toFixed(0)}%</span>
+                {ovBe != null && <b style={{ color: "var(--violet)" }}> · MANUAL</b>}
               </span>
-            )}
-          </div>
-          <DSHeader r={r} leadDS={leadDS} thresholds={dsTh}
-            priceOv={priceOv[String(r.gamePk)]} onSavePrice={savePriceOv} />
-          <div style={{ fontSize: 11, color: "var(--dim)" }}>{r.away} @ {r.home}</div>
+              {callEdge != null && (
+                <span title={"Edge = our number minus the break-even price, on the " + r.call + " side. The desk needs roughly +2.5 before it will fire."}>
+                  <span style={{ color: "var(--dim)" }}>Edge </span>
+                  <b style={{ color: callEdge >= 2.5 ? "var(--moss)" : callEdge <= -2.5 ? "var(--rose)" : "var(--dim)" }}>
+                    {callEdge > 0 ? "+" : ""}{callEdge.toFixed(1)}
+                  </b>
+                </span>
+              )}
+            </>
+          )}
+          {sizing && (
+            <span title={"Kelly-sized to the edge at " + riskLevel + " risk, capped at " + sizing.capPct + "% of bankroll per bet." + sizing.confNote}>
+              <span style={{ color: "var(--dim)" }}>Bet </span>
+              <b style={{ color: "var(--moss)" }}>{sizing.label}</b>
+            </span>
+          )}
+          <span style={{ marginLeft: "auto" }} title="Type the American price you can actually get (e.g. -137 or +118). It replaces Kalshi's break-even everywhere on this card. Clear it to go back to the live market.">
+            <DSPriceOverride value={priceOv[String(r.gamePk)]} onSave={(v) => savePriceOv(r.gamePk, v)} />
+          </span>
+        </div>
+
+        {/* ── Everything below is detail, and stays folded until asked for.
+             The four blocks that follow — the tagline band, the two starter
+             panels, the stats strip and the badge row — were the card. They are
+             still every number they were; what changed is that reading the
+             board no longer requires reading all of them. ── */}
+        {isOpen && (<>
+        <div style={{ marginBottom: 12 }}>
+          <DSHeader r={r} leadDS={leadDS} thresholds={dsTh} priceOv={priceOv[String(r.gamePk)]} />
         </div>
 
         {/* ── Verdict graphic + battle bar ── */}
@@ -10280,21 +10487,12 @@ function FirstInning() {
                 <span style={{ color: "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>KALSHI YES</span>
                 <span style={{ fontWeight: 700, color: "var(--bone)" }}>{r.market.yesPrice.toFixed(0)}¢</span>
               </span>
-              {r.kelly != null && (() => {
-                const _rCfg = { ghost:{mult:0.10,maxPct:0.02}, conservative:{mult:0.25,maxPct:0.06}, moderate:{mult:0.50,maxPct:0.12}, standard:{mult:0.75,maxPct:0.18}, aggressive:{mult:1.00,maxPct:0.25}, turbo:{mult:1.50,maxPct:0.35}, xtreme:{mult:2.00,maxPct:0.50}, degen:{mult:3.00,maxPct:0.65}, yolo:{mult:5.00,maxPct:0.80} };
-                const _rc = _rCfg[riskLevel] || _rCfg.moderate;
-                const confMult = r.confidence != null ? Math.max(0.30, r.confidence) : 1;
-                const sized = Math.min(r.kelly * _rc.mult * confMult, _rc.maxPct);
-                const betPct = (sized * 100).toFixed(1);
-                const betAmt = bankroll ? Math.round(bankroll * sized * 100) / 100 : null;
-                const confNote = confMult < 0.95 ? " (confidence adj ×" + confMult.toFixed(2) + ")" : "";
-                return (
-                  <span title={"Suggested bet size at " + riskLevel + " risk: " + betPct + "% of bankroll" + (betAmt ? " = $" + betAmt : "") + ". Kelly-sized to your edge, capped at " + (_rc.maxPct * 100).toFixed(0) + "% max per bet." + confNote} style={{ cursor: "help", padding: "8px 12px" }}>
-                    <span style={{ color: "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>BET SIZE</span>
-                    <span style={{ fontWeight: 800, color: "var(--moss)" }}>{betAmt ? "$" + betAmt : betPct + "%"}</span>
-                  </span>
-                );
-              })()}
+              {sizing && (
+                <span title={"Suggested bet size at " + riskLevel + " risk: " + sizing.pct + "% of bankroll" + (sizing.amt ? " = $" + sizing.amt : "") + ". Kelly-sized to your edge, capped at " + sizing.capPct + "% max per bet." + sizing.confNote} style={{ cursor: "help", padding: "8px 12px" }}>
+                  <span style={{ color: "var(--dim)", fontSize: 10, display: "block", marginBottom: 1 }}>BET SIZE</span>
+                  <span style={{ fontWeight: 800, color: "var(--moss)" }}>{sizing.label}</span>
+                </span>
+              )}
             </>
           )}
           {r.method === "sim" && <span title="Probabilities calculated via base-out Markov simulation — models each batter's actual PA rates vs this pitcher's allow rates across all possible 1st-inning scenarios." style={{ cursor: "help", padding: "8px 8px", display: "flex", alignItems: "center" }}><span style={{ fontSize: 9, color: "var(--dim)", border: "1px solid rgba(120,130,150,.3)", borderRadius: 3, padding: "1px 4px" }}>SIM</span></span>}
@@ -10343,6 +10541,17 @@ function FirstInning() {
               {r.market.mktMove > 0 ? "↑" : "↓"} MKT {r.market.mktMove > 0 ? "+" : ""}{r.market.mktMove.toFixed(0)}¢
             </span>
           )}
+        </div>
+        </>)}
+
+        {/* ── Who else is on it, and how it finished. Neither folds.
+             A seller pick the desk is passing on, and the result of a settled
+             game, are the two things on this card you would be annoyed to have
+             missed. The pills above them are context; these are outcomes.
+             The tout pills sit here rather than in the fold because on a game
+             the desk IS betting the band below stays silent, and folding the
+             pills too would leave agreement with his board showing nowhere. ── */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 10 }}>
           {(r.tails || []).map((t, i) => {
             const rec = t.record;
             const recStr = rec && rec.sample >= 5
@@ -10414,7 +10623,7 @@ function FirstInning() {
             </div>
           )}
           <button className="btn btn-ghost btn-sm" onClick={() => setOpen((o) => Object.assign({}, o, { [r.gamePk]: !o[r.gamePk] }))}>
-            {isOpen ? "Hide research" : "Show research"}
+            {isOpen ? "Hide details" : "Show details"}
           </button>
           <button className="btn btn-ghost btn-sm" onClick={() => dismissGame(r.gamePk)} title="Remove this game from the board and record tracking" style={{ color: "var(--dim)", fontSize: 11 }}>Skip ✕</button>
           {tradeLink && (
