@@ -28,9 +28,16 @@ const CARDS = [
     home: { p: [64, 70, 67, 50], n: [11, 10, 6, 2] },
   },
   {
-    id: "B", ds: 64.7, tier: "GREEN", be: 59.5, // N -147 / Y +119
+    // CORRECTED 2026-08-16 against a clean re-shot of this card. Two values
+    // here were misread off the original screenshot: the away L50 count was
+    // recorded as 4g and is 6g, and the YES price was recorded as +119 and is
+    // +110. Only the first one matters to this script — n feeds every weighted
+    // and shrunk rule below, and the whole output is an ordering test — but the
+    // price is fixed too so the row is not half-trusted. `be` was right: -147
+    // is 59.5%, which is what the card itself prints.
+    id: "B", ds: 64.7, tier: "GREEN", be: 59.5, // N -147 / Y +110
     game: "MIL @ LAD, Logan Henderson vs Tarik Skubal",
-    away: { p: [91, 100, 100, 100], n: [11, 4, 5, 1] },
+    away: { p: [91, 100, 100, 100], n: [11, 6, 5, 1] },
     home: { p: [67, 60, 83, 0], n: [18, 10, 6, 1] },
   },
   {
