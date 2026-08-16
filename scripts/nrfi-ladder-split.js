@@ -72,7 +72,23 @@ for (const [date, gs] of cache.slates) {
 }
 games.sort((a, b) => a.date.localeCompare(b.date));
 
-const seedC = makeVerdict().NRFI_CALIB_SEED ? makeVerdict().NRFI_CALIB_SEED.c : -0.063;
+/* Read the shipped seed; do not restate it.
+ *
+ * This was `makeVerdict().NRFI_CALIB_SEED ? ....c : -0.063`, which looks like a
+ * careful read with a safe fallback and is neither. makeVerdict returns four
+ * functions and no constants, so the ternary was false on every run since it
+ * was written and the literal -0.063 was ALWAYS what got used. It happened to
+ * match the shipped value, so nothing looked wrong -- and the day the seed
+ * moves, this file keeps calibrating at the old one and reports ladder rungs
+ * fitted to a model that no longer exists, silently, with a line of code
+ * sitting right there that appears to prevent exactly that.
+ *
+ * A fallback that fires unconditionally is not a fallback, it is the value.
+ * The library validates NRFI_CALIB_SEED at load and throws if the slice did not
+ * deliver a finite c, so importing it directly has no failure mode worth
+ * catching here: either the real seed arrives or nothing runs. */
+const { NRFI_CALIB_SEED } = require("./nrfi-model-lib");
+const seedC = NRFI_CALIB_SEED.c;
 const { applyCalibration } = makeVerdict();
 const CAL = { c: seedC, active: true };
 
@@ -116,14 +132,44 @@ function score(rowSet, overrides) {
     se: n ? Math.sqrt((rate * (1 - rate)) / n) : null };
 }
 
+/* The rung numbers in each label are MEASURED, not typed.
+ *
+ * They used to be written into the label by hand. The `shipped` row said
+ * "63/55/52" and its override is {} -- so when NRFI_BET_MIN moved 55 -> 57 the
+ * row went on scoring the real shipped ladder while announcing the old one, and
+ * printed identical counts to the `bet 57 only` row two lines below it without
+ * anything flagging that they were now the same experiment run twice. A report
+ * whose labels and whose numbers come from different sources will eventually
+ * disagree, and the label is the half a reader trusts.
+ *
+ * So probe the ladder instead of restating it: hand nrfiVerdict a row with
+ * every gate satisfied and walk pMax upward, recording where the rung changes.
+ * Whatever comes back IS the ladder that scored the row beside it, including
+ * any rung an override or a gate interaction has made unreachable -- which a
+ * hand-typed triple can never show. */
+function ladderOf(overrides) {
+  const { nrfiVerdict } = makeVerdict(overrides);
+  const at = (p) => nrfiVerdict({
+    pMax: p, call: "NRFI", market: null, awayPP: "away", homePP: "home",
+    aligned: { total: 3, agree: 3 }, confidence: 1,
+    pitProfiles: { away: { sample: 99 }, home: { sample: 99 } },
+  }).strength;
+  const first = (want) => {
+    for (let p = 40; p <= 90; p = +(p + 0.1).toFixed(1)) if (at(p) === want) return p;
+    return null;
+  };
+  const f = (x) => (x == null ? "--" : String(Math.round(x)));
+  return [f(first("STRONG")), f(first("BET")), f(first("LEAN"))].join("/");
+}
+
 const CANDIDATES = [
-  ["shipped        63/55/52", {}],
-  ["bet 54         63/54/52", { NRFI_BET_MIN: 54 }],
-  ["bet 53         63/53/51", { NRFI_BET_MIN: 53, NRFI_LEAN_MIN: 51 }],
-  ["bet 52         63/52/50", { NRFI_BET_MIN: 52, NRFI_LEAN_MIN: 50 }],
-  ["strong 61      61/55/52", { NRFI_STRONG_MIN: 61 }],
-  ["strong 60/53   60/53/51", { NRFI_STRONG_MIN: 60, NRFI_BET_MIN: 53, NRFI_LEAN_MIN: 51 }],
-  ["tighter 65/57  65/57/53", { NRFI_STRONG_MIN: 65, NRFI_BET_MIN: 57, NRFI_LEAN_MIN: 53 }],
+  ["shipped       ", {}],
+  ["bet 54        ", { NRFI_BET_MIN: 54 }],
+  ["bet 53        ", { NRFI_BET_MIN: 53, NRFI_LEAN_MIN: 51 }],
+  ["bet 52        ", { NRFI_BET_MIN: 52, NRFI_LEAN_MIN: 50 }],
+  ["strong 61     ", { NRFI_STRONG_MIN: 61 }],
+  ["strong 60/53  ", { NRFI_STRONG_MIN: 60, NRFI_BET_MIN: 53, NRFI_LEAN_MIN: 51 }],
+  ["tighter 65/57 ", { NRFI_STRONG_MIN: 65, NRFI_BET_MIN: 57, NRFI_LEAN_MIN: 53 }],
   /* One-knob variants, to tell a real threshold from a lucky one.
    *
    * `tighter 65/57` moves three numbers at once, so a win tells you nothing
@@ -132,12 +178,32 @@ const CANDIDATES = [
    * the cut, that is the model's probability ordering being real and the ladder
    * simply reading further up it. If 57 spikes and its neighbours sag, 57 was
    * fitted to this sample and will not survive contact with a new season. */
-  ["bet 56 only    63/56/52", { NRFI_BET_MIN: 56 }],
-  ["bet 57 only    63/57/52", { NRFI_BET_MIN: 57 }],
-  ["bet 58 only    63/58/52", { NRFI_BET_MIN: 58 }],
-  ["bet 59 only    63/59/52", { NRFI_BET_MIN: 59 }],
-  ["bet 60 only    63/60/52", { NRFI_BET_MIN: 60 }],
-];
+  ["bet 56 only   ", { NRFI_BET_MIN: 56 }],
+  ["bet 57 only   ", { NRFI_BET_MIN: 57 }],
+  ["bet 58 only   ", { NRFI_BET_MIN: 58 }],
+  ["bet 59 only   ", { NRFI_BET_MIN: 59 }],
+  ["bet 60 only   ", { NRFI_BET_MIN: 60 }],
+].map(([nm, ov]) => [nm + " " + ladderOf(ov).padEnd(9), ov]);
+
+/* Mark candidates that are not actually a different experiment.
+ *
+ * Twelve rows of numbers read as twelve pieces of evidence, and a row that
+ * scores an identical bet slate to shipped is none: it is shipped, printed
+ * again, and a reader comparing rows will count it as corroboration. Once
+ * BET_MIN moved to 57, `bet 57 only` became exactly that.
+ *
+ * The test is the PLAYED SET, not the rungs. `tighter 65/57` carries three
+ * different numbers and still bets the identical games, because STRONG and BET
+ * both play -- moving the STRONG line reshuffles labels above a cut nobody
+ * wagers differently on, and moving LEAN moves a line below it. Comparing
+ * rungs would call that row distinct; comparing what it bets tells the truth,
+ * which is the whole reason the STRONG/LEAN knobs earned nothing in the first
+ * place. */
+const keyOf = (ov) => played(rows, ov).map((r) => r.date + "#" + r.pMax.toFixed(2) + r.side).sort().join("|");
+const shippedKey = keyOf({});
+for (const c of CANDIDATES) {
+  if (!c[0].startsWith("shipped") && keyOf(c[1]) === shippedKey) c[0] = c[0].trimEnd() + "  = shipped's bets";
+}
 
 const SPLIT_AT = Number(process.argv[2] || 0.6);
 const dates = [...new Set(rows.map((r) => r.date))].sort();
@@ -152,10 +218,15 @@ console.log(`  TEST  ${test.length} games, ${dates.filter((d) => d >= cut).lengt
 console.log(`\nflat 1u at ${PRICE.toFixed(3)} (-119); break-even ${pc(BREAKEVEN)}`);
 
 console.log("\n=============== EVERY CANDIDATE, BOTH HALVES ===============");
-console.log("                            TRAIN played   rate    units  |   TEST played   rate    units");
+// Header built from the same widths as the rows below, so a name field that
+// grows cannot slide the columns out from under their own labels.
+const hdr = (a, b, c) => `  ${a.padStart(6)}  ${b.padStart(6)}  ${c.padStart(6)}`;
+console.log(" ".repeat(44) + "-------- TRAIN --------     -------- TEST ---------");
+console.log("  " + "candidate  STRONG/BET/LEAN".padEnd(42) +
+  hdr("played", "rate", "units") + "  |" + hdr("played", "rate", "units"));
 const scored = CANDIDATES.map(([name, ov]) => ({ name, ov, tr: score(train, ov), te: score(test, ov) }));
 for (const s of scored) {
-  console.log(`  ${s.name}  ${String(s.tr.n).padStart(6)}  ${pc(s.tr.rate).padStart(6)}  ` +
+  console.log(`  ${s.name.padEnd(42)}  ${String(s.tr.n).padStart(6)}  ${pc(s.tr.rate).padStart(6)}  ` +
     `${s.tr.units == null ? "    —" : s.tr.units.toFixed(1).padStart(6)}  |  ${String(s.te.n).padStart(6)}  ` +
     `${pc(s.te.rate).padStart(6)}  ${s.te.units == null ? "    —" : s.te.units.toFixed(1).padStart(6)}`);
 }
