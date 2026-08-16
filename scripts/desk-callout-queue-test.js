@@ -200,16 +200,56 @@ console.log("\nqueue wait is measured from enqueue, not from the pitch");
   const { synth, api } = fresh();
   const realNow = Date.now;
   api.speak("speaking", false);
-  // Enqueued now, but the drain happens 8s later — past SAY_WAIT_MS. This is the
-  // "waited behind two other utterances" case the tight budget is actually for,
-  // and it has to still fire now that the event clock is loose.
+  // Enqueued now, drained 8s later — past SAY_WAIT_MS. The gate only skips a
+  // line when there is a fresher one waiting to be said instead, so these two
+  // cases have to be separated: with a backlog behind it the stale line is
+  // skipped, and with an empty queue behind it it is said late rather than lost.
   api.speak("waited too long", false, Date.now());
+  api.speak("fresher line", false, Date.now());
   const t = realNow();
   Date.now = () => t + 8000;
   synth.finish();
   Date.now = realNow;
-  check("line that sat in the queue too long is dropped",
-    synth.spoken.length === 1, synth.spoken.join("|"));
+  check("stale line is skipped when a fresher one is queued behind it",
+    synth.spoken.join("|") === "speaking|fresher line", synth.spoken.join("|"));
+}
+{
+  const { synth, api } = fresh();
+  const realNow = Date.now;
+  api.speak("speaking", false);
+  api.speak("waited but last in line", false, Date.now());
+  const t = realNow();
+  Date.now = () => t + 8000;
+  synth.finish();
+  Date.now = realNow;
+  // Dropping here buys no freshness — there is nothing newer to move on to —
+  // and silence is the worse of the two failures.
+  check("stale line with an empty queue behind it is still said",
+    synth.spoken.join("|") === "speaking|waited but last in line", synth.spoken.join("|"));
+}
+
+console.log("\na batch of pitches from one poll is not decapitated at the tail");
+{
+  // The reported failure. Three pitches land in one tick, enqueued together.
+  // 3.5s per line is what a real one costs: a named-batter pitch call runs about
+  // 45 characters and the neural voices take it at rate 1.02. By the time the
+  // queue reaches the third it has waited 7s — and it is the one carrying the
+  // current count, so losing it is both the most audible drop available and the
+  // one that makes the call sound behind the park.
+  //
+  // Do not round this to 3s. That puts the third line at exactly SAY_WAIT_MS,
+  // where `>` is false and the case passes without the fix in place — checked.
+  const { synth, api } = fresh();
+  const realNow = Date.now;
+  const t = realNow();
+  api.speak("ball one", false, t);
+  api.speak("strike one", false, t);
+  api.speak("strike two", false, t);
+  Date.now = () => t + 3500; synth.finish();
+  Date.now = () => t + 7000; synth.finish();
+  Date.now = realNow;
+  check("every pitch of the batch is called",
+    synth.spoken.join("|") === "ball one|strike one|strike two", synth.spoken.join("|"));
 }
 
 console.log("\ndepth cap keeps the newest lines");

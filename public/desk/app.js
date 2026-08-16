@@ -1205,10 +1205,26 @@ function playRuns(p,prev){const s=p.result||{},q=prev&&prev.result||{};const now
 // velocity that makes it sound like a broadcast rather than a scoreboard.
 const CALLOUT_FIELDS="gameData,status,abstractGameState,liveData,linescore,currentInning,"+"inningState,plays,allPlays,about,inning,isComplete,endTime,result,description,awayScore,homeScore,"+// pitch level: the events inside each at-bat, the call on each one, the count
 // it produced, its velocity, and who is hitting.
-"playEvents,isPitch,playId,atBatIndex,details,call,code,count,balls,strikes,"+"pitchData,startSpeed,matchup,batter,fullName";async function fetchFirstInning(gamePk){const url="https://statsapi.mlb.com/api/v1.1/game/"+gamePk+"/feed/live?fields="+CALLOUT_FIELDS+"&_="+Date.now();let f=null;try{// no-store, not just a cache-buster: statsapi sends cache headers and the
+"playEvents,isPitch,playId,atBatIndex,details,call,code,count,balls,strikes,"+"pitchData,startSpeed,matchup,batter,fullName";/* A poll with no deadline is not a poll, it is a way to stop polling.
+ *
+ * fetch() has no default timeout. A statsapi request that never answers — a
+ * dropped connection on a phone waking from sleep, a stalled TLS handshake —
+ * leaves this promise pending for as long as the socket lives, which can be
+ * minutes. The caller cannot poll that game again while it is outstanding, so
+ * one hung socket takes the game silent with the button still reading "on".
+ *
+ * 6s is chosen against the measured round trip, which is ~100ms direct. Sixty
+ * times the normal response is not a slow network, it is a dead one. And
+ * abandoning it costs nothing that matters: the next tick is 1.2s away and asks
+ * for the same state, so a request still outstanding at 6s has already been
+ * superseded five times over. The one thing to be careful of is the proxy
+ * fallback below — it gets its own budget rather than sharing this one, or a
+ * slow direct leg would leave the fallback no time to succeed. */const CALLOUT_FETCH_MS=6000;function calloutSignal(){if(typeof AbortController==="undefined")return{signal:undefined,done:()=>{}};const c=new AbortController();const t=setTimeout(()=>c.abort(),CALLOUT_FETCH_MS);return{signal:c.signal,done:()=>clearTimeout(t)};}async function fetchFirstInning(gamePk){const url="https://statsapi.mlb.com/api/v1.1/game/"+gamePk+"/feed/live?fields="+CALLOUT_FIELDS+"&_="+Date.now();let f=null;const a=calloutSignal();try{// no-store, not just a cache-buster: statsapi sends cache headers and the
 // browser will happily serve a stale body to a URL it has seen. An earlier
 // cut bucketed the buster to 10s, which silently capped freshness at 10s.
-const r=await fetch(url,{cache:"no-store"});if(r.ok)f=await r.json();}catch{/* fall through to the proxy */}if(!f){try{f=await getJson(px(url));}catch{return null;}}const ls=f.liveData&&f.liveData.linescore||{};const abst=String(f.gameData&&f.gameData.status&&f.gameData.status.abstractGameState||"");return{plays:firstInningPlays(f),pitches:firstInningPitches(f),// Same pre-first-pitch linescore shell the row builder guards against: MLB
+const r=await fetch(url,{cache:"no-store",signal:a.signal});if(r.ok)f=await r.json();}catch{/* fall through to the proxy */}finally{a.done();}// Own budget, own abort. getJson is not used here because it has no deadline
+// of its own and its second leg would proxy the proxy.
+if(!f){const b=calloutSignal();try{const r=await fetch(px(url),{cache:"no-store",signal:b.signal});if(r.ok)f=await r.json();}catch{return null;}finally{b.done();}if(!f)return null;}const ls=f.liveData&&f.liveData.linescore||{};const abst=String(f.gameData&&f.gameData.status&&f.gameData.status.abstractGameState||"");return{plays:firstInningPlays(f),pitches:firstInningPitches(f),// Same pre-first-pitch linescore shell the row builder guards against: MLB
 // reports currentInning 1 on a Preview game. Reading it straight here let
 // the callout treat a game that had not begun as a live 1st inning.
 inning:abst==="Preview"?0:ls.currentInning||0,half:abst==="Preview"?"":String(ls.inningState||""),// The inning is over once play has moved past it — not when outs hit 3,
@@ -1428,6 +1444,28 @@ const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.f
  *                   has sat here 6s is two spoken lines deep in a backlog and the
  *                   queue behind it is fresher.
  *
+ *                   THAT LAST CLAUSE IS A CONDITION, AND IT WAS NEVER CHECKED.
+ *                   The gate fired on wall-clock wait alone, so it dropped lines
+ *                   with nothing queued behind them — and because the queue
+ *                   drains oldest-first, the line it dropped was the NEWEST of
+ *                   the batch. Walk a poll that delivers three pitches, all
+ *                   enqueued at t=0, each ~3s to say: p1 goes out at 0s; p2 has
+ *                   waited 3s and goes out; p3 has now waited 6s and is deleted.
+ *                   The listener hears the two oldest pitches of the at-bat and
+ *                   never hears the current count. Every batch of three lost its
+ *                   tail, every batch of four lost two, and what came out was
+ *                   both late and full of holes — reported as "very delayed and
+ *                   even skipping". _sayDrain now requires a fresher line to be
+ *                   waiting before it will skip one, which is what the sentence
+ *                   above always described. When the queue behind is empty there
+ *                   is nothing to skip TO, and dropping buys no freshness at
+ *                   all: it just converts a late line into silence, which this
+ *                   file has now made the same mistake over three times.
+ *
+ *                   Backlogs that are REAL still skip, because a real backlog by
+ *                   definition has something behind it. That is the whole case
+ *                   the gate was added for and it is untouched.
+ *
  * A freeze trips both: the poll stops, nothing enqueues, and on wake every event
  * is a minute old by event time and dropped by the first gate — which is the
  * re-anchoring behaviour the original comment describes, now actually reachable.
@@ -1486,7 +1524,10 @@ for(;;){item=_sayQ.shift();if(item==null)return;// Both gates, each on its own c
 // whenever they are said (the intro, a settle) and those skip the event
 // gate; the wait gate still applies to them, because a settle that has been
 // stuck behind commentary for six seconds is behind the board either way.
-const staleEvent=item.at>0&&Date.now()-item.at>SAY_STALE_MS;const staleWait=Date.now()-item.qat>SAY_WAIT_MS;if(!staleEvent&&!staleWait)break;}const text=item.text;if(text==null)return;_sayOn=true;const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}u.rate=voiceRate(_voice);u.pitch=1;u.volume=1;const gen=++_sayGen;const done=()=>{// A late event from a cancelled or superseded utterance must not touch the
+const staleEvent=item.at>0&&Date.now()-item.at>SAY_STALE_MS;// `_sayQ.length` — i.e. only skip a line for having waited when there is a
+// FRESHER ONE BEHIND IT TO SKIP TO. See SAY_WAIT_MS: without this the gate
+// deletes the newest line of every batch and says the older ones instead.
+const staleWait=_sayQ.length>0&&Date.now()-item.qat>SAY_WAIT_MS;if(!staleEvent&&!staleWait)break;}const text=item.text;if(text==null)return;_sayOn=true;const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}u.rate=voiceRate(_voice);u.pitch=1;u.volume=1;const gen=++_sayGen;const done=()=>{// A late event from a cancelled or superseded utterance must not touch the
 // latch, the watchdog or the queue — all three now belong to whatever is
 // speaking instead.
 if(gen!==_sayGen||!_sayOn)return;_sayOn=false;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayDrain(s);};// A line that genuinely reached the speakers clears any standing complaint:
@@ -3185,7 +3226,26 @@ const CALLOUT_STALE_MS=45000;const[callout,setCallout]=useState(false);/* The br
    * ticket resolving and it is two seconds of audio. */const[focus,setFocus]=useState(null);const focusRef=useRef(null);const spoken=useRef(new Map());// gamePk -> { n: plays announced, opened, settled }
 useEffect(()=>{if(!callout)return;const held=calloutHeld(openPositions);// Re-evaluated per tick rather than closed over, so a game entering the 1st
 // between renders is picked up on the next poll instead of the next render.
-const tracked=()=>enriched.filter(r=>calloutEligible(r,held));let stopped=false;let inFlight=false;async function pollGame(r){const st=spoken.current.get(r.gamePk)||{n:0,opened:false,settled:false};if(st.settled)return;const live=await fetchFirstInning(r.gamePk);if(stopped||!live)return;// What is at stake here: the position if one is held, otherwise the call.
+const tracked=()=>enriched.filter(r=>calloutEligible(r,held));let stopped=false;/* In-flight is tracked PER GAME, and that is the difference between a live
+     * call and a recap on a busy slate.
+     *
+     * It used to be one boolean for the whole tick, set around a Promise.all
+     * over every tracked game. Promise.all settles with the SLOWEST leg, so the
+     * effective poll interval for the game being listened to was not
+     * CALLOUT_POLL_MS — it was the slowest round trip anywhere on the board,
+     * plus the wait for the next tick. At 4:10, with five games opening the 1st
+     * within minutes of each other, that is five chances per tick to be the
+     * straggler that holds the other four. The listener hears it as the call
+     * drifting further behind the park as more games start, which is precisely
+     * backwards: the games are independent and nothing about polling one
+     * requires knowing anything about another.
+     *
+     * Worse before CALLOUT_FETCH_MS existed: one socket that never answered
+     * pinned the shared flag and stopped the ENTIRE callout for the life of
+     * that request. The deadline bounds that now, and this bounds the blast
+     * radius to the one game that was slow. */const inFlight=new Set();async function pollGame(r){const st=spoken.current.get(r.gamePk)||{n:0,opened:false,settled:false};if(st.settled)return;// A game whose previous poll has not come back yet skips this tick on its
+// own account. Nothing else on the board waits for it.
+if(inFlight.has(r.gamePk))return;inFlight.add(r.gamePk);let live;try{live=await fetchFirstInning(r.gamePk);}finally{inFlight.delete(r.gamePk);}if(stopped||!live)return;// What is at stake here: the position if one is held, otherwise the call.
 // Announcing the model's side on a game the user faded would be worse than
 // saying nothing.
 const mine=calloutHeldSide(r,held);const side=mine||r.call;const stake=mine?"You are on "+mine:"Desk is on "+r.call;// Focus mutes this game's running commentary. It does NOT stop the poll:
@@ -3239,9 +3299,11 @@ if(runs>0){speak(tag+(loud&&line?line+verdict:verdict.slice(2)),true);st.settled
 // Losing the reverted play is the right trade. If the review changes the
 // call the play comes back with a NEW description and a higher index, so it
 // still gets announced; if it does not, the listener has already heard it.
-st.n=Math.max(st.n,live.plays.length);if(!st.settled&&live.past1){speak(tag+"First inning is clean in "+r.home+". N-R-F-I — "+(side==="NRFI"?mine?"you are a winner":"that is a winner":mine?"that ticket is dead":"the desk was wrong")+".",true);st.settled=true;}spoken.current.set(r.gamePk,st);}async function tick(){// A slow round trip must not stack ticks on top of each other; skipping is
-// correct because the next poll is 2.5s away and reads the same state.
-if(inFlight)return;inFlight=true;try{await Promise.all(tracked().map(pollGame));}finally{inFlight=false;}}tick();const stopMetronome=calloutMetronome(CALLOUT_POLL_MS,tick);/* Foregrounding the tab re-anchors the call immediately rather than waiting
+st.n=Math.max(st.n,live.plays.length);if(!st.settled&&live.past1){speak(tag+"First inning is clean in "+r.home+". N-R-F-I — "+(side==="NRFI"?mine?"you are a winner":"that is a winner":mine?"that ticket is dead":"the desk was wrong")+".",true);st.settled=true;}spoken.current.set(r.gamePk,st);}function tick(){// Not awaited and deliberately not Promise.all'd: each game gates itself
+// through the in-flight set above, so a tick is just a nudge to every
+// game that is currently free to poll. Errors are per-game and already
+// swallowed inside fetchFirstInning, which returns null on failure.
+for(const r of tracked())pollGame(r);}tick();const stopMetronome=calloutMetronome(CALLOUT_POLL_MS,tick);/* Foregrounding the tab re-anchors the call immediately rather than waiting
      * out the rest of an interval. This mattered enormously when the metronome
      * was a main-thread setInterval and a hidden tab got one wake a minute; with
      * the Worker driving it the interval no longer stretches, so this is now a
