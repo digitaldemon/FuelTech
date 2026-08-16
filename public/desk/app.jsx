@@ -8063,7 +8063,14 @@ function nrfiVerdict(r) {
   const blurb = (strength === "PASS"
     ? outcome + " only " + p.toFixed(0) + "% — basically a coin flip." + al
     : outcome + " — " + p.toFixed(0) + "% (" + word + " lean)." + al) + tail;
-  return { strength, side, isBet, label, color, blurb, confLbl, thinPass };
+  // `notes` is returned as well as joined into `blurb`. It is the only record of
+  // WHY a rung was demoted, and until now the sole way to read it was to regex
+  // it back out of a prose string built for display — so an analysis asking
+  // "which gate removed this pick?" either parsed the blurb or, as
+  // nrfi-gate-value.js first did, read a `notes` key that was not there and
+  // concluded four of the five gates were inert. Return the structure next to
+  // the sentence; the sentence stays exactly as it was.
+  return { strength, side, isBet, label, color, blurb, confLbl, thinPass, notes };
 }
 
 // Match one of NRFIKINGKY's picks to a scheduled game by team-name overlap.
