@@ -9,18 +9,21 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="DDDesk" />
-<meta name="theme-color" content="#232A38" />
+<meta name="theme-color" content="#06080D" />
 <meta name="robots" content="noindex" />
 <link rel="manifest" href="/desk/manifest.json" />
 <link rel="apple-touch-icon" href="/desk/icon.svg" />
 
 <style>
-  html, body { margin:0; padding:0; background:#1B202B; min-height:100%; overflow-x:hidden; }
+  /* Matches --slate-900 in app.jsx's .cd block. This is what iOS shows in the
+     rubber-band overscroll gutter and behind the status bar, so it has to be
+     kept in step with the theme by hand — the app's CSS never reaches here. */
+  html, body { margin:0; padding:0; background:#06080D; min-height:100%; overflow-x:hidden; }
   #root { min-height:100vh; }
-  #boot { color:#939CB0; font:13px/1.5 ui-monospace, monospace; padding:40px 20px; text-align:center; }
+  #boot { color:#8E99B0; font:13px/1.5 ui-monospace, monospace; padding:40px 20px; text-align:center; }
   #rotate-overlay {
     display:none; position:fixed; inset:0; z-index:9999;
-    background:#1B202B; color:#939CB0;
+    background:#06080D; color:#8E99B0;
     flex-direction:column; align-items:center; justify-content:center;
     gap:16px; font:14px/1.5 ui-monospace, monospace; text-align:center; padding:20px;
   }

@@ -7,17 +7,29 @@ const BUILD="2026-08-15.nrfi-platt-cal";// Everything outbound goes through the 
 const px=u=>"/api/desk/proxy?url="+encodeURIComponent(u);const CSS=`
 @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
+/* OBSIDIAN. The ramp is near-black on purpose: the board is read at night on a
+ * phone, and the old #212836 page floor was light enough that the amber tier
+ * badges and the moss/rose call colours all landed at similar apparent
+ * brightness. Dropping the floor four stops widens the gap between "surface"
+ * and "signal" without touching a single accent hue, so a GREEN card now reads
+ * as lit rather than tinted. Surfaces climb by adding white over the floor
+ * (see .pick/.panel), which keeps one source of truth for depth. */
 .cd {
-  --slate-900:#171C26; --slate-800:#212836; --slate-700:#2A3244;
-  --slate-600:#3A445A; --line:#3D4760;
-  --bone:#EFEAE0; --dim:#96A0B5;
-  --amber:#F5B840; --rose:#E4707E; --cyan:#6FB3D2; --moss:#7FB98B; --violet:#9B8CD8;
-  --bg:rgba(0,0,0,.26); --fg:#EFEAE0;
+  --slate-900:#05070C; --slate-800:#0A0E17; --slate-700:#111725;
+  --slate-600:#222B3E; --line:#293349;
+  --bone:#F0ECE3; --dim:#8E99B0;
+  --amber:#FFC24D; --rose:#F2748A; --cyan:#79C2E6; --moss:#74CB94; --violet:#A895E8;
+  --bg:rgba(0,0,0,.34); --fg:#F0ECE3;
+  /* Blooms sit ABOVE the vignette in this stack so the corner light survives
+   * the edge darkening instead of being smothered by it. */
   background:
-    radial-gradient(900px 420px at 85% -10%, rgba(242,179,61,.07), transparent 60%),
-    radial-gradient(700px 380px at -10% 0%, rgba(111,179,210,.05), transparent 55%),
-    repeating-linear-gradient(to bottom, rgba(255,255,255,.012) 0 1px, transparent 1px 5px),
-    linear-gradient(178deg, var(--slate-800) 0%, var(--slate-900) 100%);
+    radial-gradient(1000px 460px at 88% -12%, rgba(255,194,77,.10), transparent 62%),
+    radial-gradient(760px 420px at -12% 4%, rgba(121,194,230,.07), transparent 58%),
+    radial-gradient(900px 500px at 30% 108%, rgba(168,149,232,.055), transparent 60%),
+    radial-gradient(125% 95% at 50% 26%, transparent 42%, rgba(0,0,0,.62) 100%),
+    repeating-linear-gradient(to bottom, rgba(255,255,255,.016) 0 1px, transparent 1px 5px),
+    linear-gradient(178deg, var(--slate-800) 0%, var(--slate-900) 72%, #03050A 100%);
+  background-attachment: scroll, scroll, scroll, fixed, scroll, scroll;
   color: var(--bone);
   font-family: 'Inter Tight', system-ui, sans-serif;
   font-size: 15px;
@@ -51,7 +63,9 @@ details.fold > summary:hover { color:var(--bone); }
 .answer strong { font-weight:600; }
 .figures { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
   gap:10px; margin-top:20px; padding-top:18px; border-top:1px solid var(--line); }
-.fig { background:rgba(0,0,0,.16); border:1px solid rgba(65,75,99,.5); border-radius:11px; padding:13px 15px; }
+.fig { background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.008) 70%), rgba(0,0,0,.30);
+  border:1px solid rgba(65,75,99,.45); border-radius:11px; padding:13px 15px;
+  box-shadow:0 1px 0 rgba(255,255,255,.045) inset; }
 .fig .big { font-family:'JetBrains Mono',monospace; font-size:22px; font-weight:700;
   letter-spacing:-.01em; display:block; }
 .fig .cap { font-size:13px; font-weight:500; display:block; margin-top:3px; }
@@ -78,10 +92,14 @@ details.fold > summary:hover { color:var(--bone); }
   padding-bottom:12px; flex-wrap:wrap; }
 .cd-title { font-family:'Bricolage Grotesque', sans-serif; font-weight:800; font-size:26px;
   letter-spacing:-.02em; margin:0; }
-.cd-title span { background:linear-gradient(120deg, #FFC95A, #EFA02F); -webkit-background-clip:text; background-clip:text; color:transparent; }
+.cd-title span { background:linear-gradient(120deg, #FFE29A, #FFC95A 42%, #EFA02F);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  filter:drop-shadow(0 0 18px rgba(255,194,77,.28)); }
 
 .tabs { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:20px; padding:5px;
-  background:rgba(0,0,0,.18); border:1px solid var(--line); border-radius:13px; }
+  background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.008)), rgba(0,0,0,.30);
+  border:1px solid var(--line); border-radius:13px;
+  box-shadow:0 1px 0 rgba(255,255,255,.04) inset; }
 .tabs button { background:none; border:none; color:var(--dim); border-radius:9px;
   font-family:'Inter Tight',sans-serif; font-size:13px; font-weight:600; letter-spacing:0;
   padding:7px 12px; cursor:pointer; white-space:nowrap; transition:background .15s, color .15s; }
@@ -120,9 +138,9 @@ details.fold > summary:hover { color:var(--bone); }
 .chip.static { cursor:default; }
 .chip:hover:not(.static):not(.on) { color:var(--bone); border-color:var(--dim); }
 
-.panel { background:linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,0) 60%), var(--slate-700);
+.panel { background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.008) 62%), var(--slate-700);
   border:1px solid var(--slate-600); border-radius:14px; padding:22px; margin-top:18px;
-  box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 10px 30px rgba(0,0,0,.28); }
+  box-shadow:0 1px 0 rgba(255,255,255,.055) inset, 0 14px 40px rgba(0,0,0,.5); }
 .q { font-size:19px; font-weight:600; line-height:1.32; margin:8px 0 0; letter-spacing:-.01em; }
 .meta { display:flex; gap:18px; flex-wrap:wrap; margin-top:14px; }
 .meta div { font-size:11px; }
@@ -178,12 +196,19 @@ details.fold > summary:hover { color:var(--bone); }
 /* pick cards — the landing board. Hierarchy: winner name and the tier
    badge dominate; everything else is quiet metadata. */
 .pick { display:block;
-  border:1px solid rgba(255,255,255,0.07); border-left:3px solid var(--slate-600); border-radius:14px;
-  padding:16px 18px; margin-top:10px; background:rgba(15,19,30,0.65);
-  transition:border-color .2s, box-shadow .2s; }
-.pick:hover { border-color:rgba(255,255,255,0.14); box-shadow:0 6px 28px rgba(0,0,0,.35); }
+  border:1px solid rgba(255,255,255,0.075); border-left:3px solid var(--slate-600); border-radius:14px;
+  padding:16px 18px; margin-top:10px;
+  /* Lift off the near-black floor with white, not with a lighter opaque fill:
+   * the page floor is a gradient, and an opaque card colour picked to match its
+   * top edge goes muddy against its bottom edge. */
+  background:linear-gradient(180deg, rgba(255,255,255,.052), rgba(255,255,255,.014) 46%, rgba(255,255,255,.004) 100%), rgba(10,14,23,.72);
+  box-shadow:0 1px 0 rgba(255,255,255,.05) inset, 0 8px 26px rgba(0,0,0,.42);
+  transition:border-color .2s, box-shadow .2s, transform .18s; }
+.pick:hover { border-color:rgba(255,255,255,0.16); transform:translateY(-1px);
+  box-shadow:0 1px 0 rgba(255,255,255,.06) inset, 0 12px 38px rgba(0,0,0,.55); }
 .pick.t-strongest { border-left-color:var(--moss);
-  box-shadow:0 0 0 1px rgba(127,185,139,.1), 0 4px 20px rgba(0,0,0,.3); }
+  box-shadow:0 1px 0 rgba(255,255,255,.05) inset, 0 0 0 1px rgba(116,203,148,.14),
+             0 0 34px -8px rgba(116,203,148,.30), 0 8px 26px rgba(0,0,0,.42); }
 .pick.t-strong { border-left-color:var(--moss); }
 .pick.t-lean { border-left-color:var(--amber); }
 .tierbox { text-align:center; flex:0 0 auto; min-width:76px; padding:8px 10px; border-radius:11px;

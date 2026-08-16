@@ -5,8 +5,8 @@
   "start_url": "/desk",
   "scope": "/desk",
   "display": "standalone",
-  "background_color": "#1B202B",
-  "theme_color": "#232A38",
+  "background_color": "#06080D",
+  "theme_color": "#06080D",
   "orientation": "portrait",
   "icons": [
     { "src": "/desk/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
