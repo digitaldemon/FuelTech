@@ -10257,6 +10257,7 @@ function FirstInning() {
     const ovBe = dsImplied(priceOv[String(r.gamePk)]);
     const beNRFI = ovBe != null ? ovBe : (r.market ? r.market.marketNRFI : null);
     const dsVal = r.pCal != null ? r.pCal * 100 : null;
+    const dsTierNow = dsVal == null ? null : dsTier(dsVal, dsTh);
     const callBe = beNRFI == null ? null : (r.call === "NRFI" ? beNRFI : 100 - beNRFI);
     const callDS = dsVal == null ? null : (r.call === "NRFI" ? dsVal : 100 - dsVal);
     const callEdge = callBe != null && callDS != null ? callDS - callBe : null;
@@ -10312,11 +10313,58 @@ function FirstInning() {
               {r.call === "NRFI" ? "No run scores in the 1st inning" : "A run scores in the 1st inning"}
             </div>
           </div>
+          {/* ── Dual score, on the FRONT of the card ──
+               It had been moved into the details fold with the rest of DSHeader
+               when the card was cut down, which is a fold too far: DS is the
+               number the whole ladder is graded on and the one that lines up
+               against the tout board, so a reader comparing the two was opening
+               every card to find it.
+
+               It sits next to OUR NUMBER rather than replacing it because they
+               are genuinely different quantities and the card must not imply
+               otherwise. DS is calibrated P(NRFI) BEFORE the market blend, always
+               on the NRFI side. OUR NUMBER is post-blend and on the called side,
+               so on a YRFI call the two sit on opposite sides of 50 by design. ── */}
+          {dsVal != null && dsTierNow && (
+            <div title={"DUAL SCORE " + dsVal.toFixed(1) + " — our calibrated chance of a clean 1st inning, " +
+              "before any blend toward the market price. Tier " + dsTierNow.label + "." +
+              (callBe != null ? "\n\nBreak-even on this price is " + callBe.toFixed(1) + "%." : "") +
+              "\n\nNot the same number as OUR NUMBER beside it: DS is pre-blend and always on NRFI, " +
+              "OUR NUMBER is post-blend and on the side we actually call." +
+              "\n\nDS is on OUR scale and is not comparable cell-for-cell with a tout board's dual " +
+              "score. Ours is a probability (this season it runs about 38-67, median 54); theirs is a " +
+              "0-100 rating with its own floor. The tier bands are what were fitted to line up." +
+              (leadDS != null && leadDS - dsVal > 0.05
+                ? "\n\nToday's board leader is DS " + leadDS.toFixed(1) + " — this trails by " +
+                  (leadDS - dsVal).toFixed(1) + "pts."
+                : leadDS != null ? "\n\nThis is the top DS on today's board." : "")}
+              style={{ cursor: "help", textAlign: "right", flexShrink: 0, paddingRight: 12,
+                marginRight: 4, borderRight: "1px solid rgba(255,255,255,0.09)" }}>
+              <div style={{ fontWeight: 800, fontSize: 22, color: dsTierNow.color, lineHeight: 1 }}>
+                {dsVal.toFixed(1)}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, justifyContent: "flex-end", marginTop: 4 }}>
+                <span style={{ fontSize: 9, color: "var(--dim)", letterSpacing: "0.08em" }}>DS</span>
+                <span style={{ fontSize: 8, fontWeight: 700, color: dsTierNow.color,
+                  border: "1px solid " + dsTierNow.color, borderRadius: 3, padding: "0 4px",
+                  letterSpacing: "0.06em" }}>{dsTierNow.label}</span>
+              </div>
+            </div>
+          )}
           <div style={{ textAlign: "right", flexShrink: 0 }}>
             <div style={{ fontWeight: 800, fontSize: 28, color: r.v.color, lineHeight: 1 }}>{r.pMax.toFixed(0)}%</div>
             <div style={{ fontSize: 9, color: "var(--dim)", letterSpacing: "0.08em", marginTop: 3 }}>OUR NUMBER</div>
           </div>
         </div>
+        {/* His board prints this line and it is the honest framing of a good
+            number that still is not the play — "third best today" is a thing our
+            ladder cannot say in a verdict, so it says it here instead. */}
+        {dsVal != null && leadDS != null && leadDS - dsVal > 0.05 && (
+          <div style={{ fontSize: 10, color: "var(--dim)", marginTop: -6, marginBottom: 12 }}>
+            <span style={{ fontWeight: 700, letterSpacing: "0.08em" }}>WHY NOT LEAD</span>
+            {" · dual score trails today's lead by " + (leadDS - dsVal).toFixed(1) + "pts (lead DS " + leadDS.toFixed(1) + ")"}
+          </div>
+        )}
 
         {/* ── Why ── */}
         <WhyBlock why={why} isBet={r.v.isBet} />
