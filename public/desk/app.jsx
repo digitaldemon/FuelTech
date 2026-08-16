@@ -5236,7 +5236,42 @@ const NRFI_SIM_W = 0.20;
 
 const NRFI_LG_LAMBDA = 0.52;  // league avg runs per team in the 1st inning
 const NRFI_LG_P0 = 0.72;      // league P(no run in a half-inning) -> ~52% NRFI
-const NRFI_PIT_REG = 12;      // heavy regression — 1st-inning rate is a tiebreaker, not the thesis
+/* Regression weight on a starter's own 1st-inning run rate, applied at
+   nrfiRegress (app.jsx:6688-6689) where it sets his baseline lambda. This prices
+   the wager; it is not a display knob.
+
+   Was 12, described as "heavy regression". It was neither measured nor heavy. At
+   12 a starter with 20 starts keeps 20/32 = 63% of his own observed rate, and
+   the held-out error says that is roughly five times too much trust.
+
+   Measured by scripts/nrfi-pitreg-fit.js over 8,548 starts by 268 starters
+   (2025+2026), walk-forward: order an arm's starts by date and predict each one
+   from only the starts before it, which is the live setting exactly. Best weight
+   75 over 7,207 predicted starts, bootstrap 95% CI over ARMS (the unit of
+   independence — two starts by one pitcher are not) [50, 150]. A random
+   within-arm half-split, which cannot see drift, agrees at 65 [40, 150].
+   12 is outside both intervals. Corroborated by a third statistic reached a
+   third way: the same scan's clean-first-inning SHARE has a beta-binomial
+   concentration of ~88 starts (scripts/nrfi-pitcherbt-rebuild.js).
+
+   DO NOT "FIX" THIS WITH nrfi-ladder-sweep.js. That backtest prefers a weight
+   near 12 and it is wrong, for a reason that is reproducible on demand. scanNrfi
+   reads season-to-date pitcher splits that were never rewound to the scored
+   date, so the rate feeding nrfiRegress on a past game already contains that
+   game's result — an arm shelled in the 1st that afternoon looks worse in the
+   line the model reads. Trusting that rate harder mines the leak. Run the fit
+   with the leak deliberately left in and the optimum collapses from 75 to 1,
+   with error rising monotonically in the weight: the backtest is not measuring
+   prediction, it is measuring how much of the answer you let through. Held-out
+   error on raw outcomes carries no such contamination, which is why it decides.
+
+   The visible cost is real and expected: heavier regression compresses the
+   board, so at the fixed 63/55/52 ladder the played count falls ~742 -> ~592 and
+   nominal backtest units fall with it. Those units were partly the leak.
+
+   Re-run the fit before moving this. The curve is flat between about 50 and 150,
+   so anything in that range is defensible and precision beyond that is fake. */
+const NRFI_PIT_REG = 75;
 const NRFI_OFF_REG = 6;       // regression games for a team's 1st-inning offense
 /* Lineup-strength baseline. This is NOT league OBP, and the difference is the
  * whole point. The numerator it divides is a 0.5/0.3/0.2-weighted OBP of the

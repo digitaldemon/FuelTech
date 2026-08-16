@@ -32,6 +32,20 @@
 // from season-to-date, so if an arm's true rate moves over time the honest reg
 // is HEAVIER than what a random within-arm split reports. Read the answer as a
 // lower bound on how much to regress.
+//
+// SO IT ALSO RUNS WALK-FORWARD, which is the live setting exactly: order an
+// arm's starts by gamePk (which is monotone in date — the largest gap in any
+// arm's sequence is the season boundary) and predict each start from only the
+// ones before it. That has no leakage of any kind and it does see drift.
+//
+// The walk-forward number is the one to trust, and the reason it matters here is
+// that the ladder backtest CANNOT adjudicate this constant. scanNrfi reads
+// season-to-date pitcher splits that were never rewound, so the rate feeding
+// nrfiRegress on a past date already contains that date's result: an arm shelled
+// in the 1st that afternoon looks worse in the line the model reads. Trusting
+// that rate harder mines the leak, so a leaky backtest will always prefer a
+// LIGHTER reg regardless of what predicts real games. Held-out error on raw
+// outcomes is the only clean evidence available, which is why it decides.
 const fs = require("fs");
 const path = require("path");
 
@@ -142,6 +156,105 @@ console.log(`  => shipped ${SHIPPED} is ${inside ? "INSIDE" : "OUTSIDE"} that in
 // The MSE difference is the wrong unit for a betting decision. Translate it: how
 // far does the pitcher baseline actually move between the two weights, for an
 // arm at a realistic sample and a realistic distance from league average?
+// ---------------------------------------------------------------------------
+// WALK-FORWARD. Same sweep, but each start is predicted from only its
+// predecessors, so this measures what the live model actually does.
+//
+// MIN_PRIOR exists because the first start of a career is predicted by the
+// league mean under every reg, which contributes identical error to every grid
+// point and only flattens the curve. Starting at 3 keeps the comparison about
+// starts where the weight can actually differ.
+const MIN_PRIOR = 3;
+const wfArm = arms.map((a) => {
+  const seq = a.log.slice().sort((x, y) => x.pk - y.pk).map((x) => x.runs);
+  const acc = new Array(GRID.length).fill(0);
+  let cnt = 0, run = 0;
+  for (let i = 0; i < seq.length; i++) {
+    if (i >= MIN_PRIOR) {
+      cnt++;
+      for (let g = 0; g < GRID.length; g++) {
+        const est = (run + LG * GRID[g]) / (i + GRID[g]);
+        acc[g] += (est - seq[i]) * (est - seq[i]);
+      }
+    }
+    run += seq[i];
+  }
+  return { acc, cnt };
+});
+const wfTot = new Array(GRID.length).fill(0);
+let wfN = 0;
+for (const w of wfArm) { wfN += w.cnt; for (let g = 0; g < GRID.length; g++) wfTot[g] += w.acc[g]; }
+let wbi = 0;
+for (let g = 1; g < GRID.length; g++) if (wfTot[g] < wfTot[wbi]) wbi = g;
+
+const wfBest = [];
+for (let b = 0; b < BOOT; b++) {
+  const acc = new Array(GRID.length).fill(0);
+  for (let i = 0; i < wfArm.length; i++) {
+    const pick = wfArm[(Math.random() * wfArm.length) | 0].acc;
+    for (let g = 0; g < GRID.length; g++) acc[g] += pick[g];
+  }
+  let m = 0;
+  for (let g = 1; g < GRID.length; g++) if (acc[g] < acc[m]) m = g;
+  wfBest.push(GRID[m]);
+}
+wfBest.sort((a, b) => a - b);
+const wLo = wfBest[Math.floor(BOOT * 0.025)], wHi = wfBest[Math.floor(BOOT * 0.975)];
+
+console.log(`\n=================== WALK-FORWARD (${wfN} predicted starts, ${MIN_PRIOR}+ priors) ===================`);
+console.log("    reg      held-out MSE     vs shipped");
+const wsi = GRID.indexOf(SHIPPED);
+for (const r of show) {
+  const g = GRID.indexOf(r);
+  const d = wfTot[g] / wfN - wfTot[wsi] / wfN;
+  console.log(`  ${String(r).padStart(5)}      ${(wfTot[g] / wfN).toFixed(6)}     ${(d >= 0 ? "+" : "") + d.toFixed(6)}${g === wbi ? "   <== best" : ""}${r === SHIPPED ? "   (shipped)" : ""}`);
+}
+console.log(`\n  best reg predicting forward: ${GRID[wbi]}`);
+console.log(`  bootstrap 95% CI over arms:  [${wLo}, ${wHi}]`);
+console.log(`  => shipped ${SHIPPED} is ${SHIPPED >= wLo && SHIPPED <= wHi ? "INSIDE" : "OUTSIDE"} that interval.`);
+console.log(`  This is the live setting with no leakage. It is the number to trust.`);
+
+// ---------------------------------------------------------------------------
+// THE LEAK, REPRODUCED ON PURPOSE.
+//
+// The claim above — that a leaky backtest structurally prefers a lighter reg —
+// should not be taken on argument when it can be demonstrated. So run the same
+// walk-forward sweep with one change: include the start being predicted in its
+// own history, which is exactly what scanNrfi does when it reads a season-to-date
+// split that was never rewound to the scored date.
+//
+// If the leaky curve's optimum collapses toward the old value while the clean
+// curve sits at 75, then the ladder backtest's preference for a light reg is the
+// leak talking, and the constant should be set from the clean curve.
+const leakTot = new Array(GRID.length).fill(0);
+let leakN = 0;
+for (const a of arms) {
+  const seq = a.log.slice().sort((x, y) => x.pk - y.pk).map((x) => x.runs);
+  let run = 0;
+  for (let i = 0; i < seq.length; i++) {
+    run += seq[i];                       // today's result is already in the line
+    if (i < MIN_PRIOR) continue;
+    leakN++;
+    for (let g = 0; g < GRID.length; g++) {
+      const est = (run + LG * GRID[g]) / (i + 1 + GRID[g]);
+      leakTot[g] += (est - seq[i]) * (est - seq[i]);
+    }
+  }
+}
+let lbi = 0;
+for (let g = 1; g < GRID.length; g++) if (leakTot[g] < leakTot[lbi]) lbi = g;
+console.log(`\n=================== SAME TEST, LEAK LEFT IN (${leakN} starts) ===================`);
+console.log("    reg     clean MSE     leaky MSE");
+for (const r of show) {
+  const g = GRID.indexOf(r);
+  console.log(`  ${String(r).padStart(5)}     ${(wfTot[g] / wfN).toFixed(6)}     ${(leakTot[g] / leakN).toFixed(6)}${g === lbi ? "   <== leaky best" : ""}${g === wbi ? "   <== clean best" : ""}`);
+}
+console.log(`\n  clean optimum ${GRID[wbi]}   vs   leaky optimum ${GRID[lbi]}`);
+console.log("  The leak pulls the apparent best weight down, because a rate that already");
+console.log("  contains today's result is worth trusting more than one that does not.");
+console.log("  That is why nrfi-ladder-sweep.js cannot settle this constant: its cached");
+console.log("  inputs carry the same contamination, so it rewards mining it.");
+
 console.log("\n=================== WHAT THE CHANGE WOULD DO TO A BASELINE ===================");
 const shrink = (rate, sample, reg) => (rate * sample + LG * reg) / (sample + reg);
 console.log(`  A starter ${(0.30).toFixed(2)} runs/start below league (a genuinely good first-inning arm):`);
