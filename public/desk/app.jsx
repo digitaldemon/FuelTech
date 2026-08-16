@@ -388,6 +388,11 @@ table.tbl tbody tr:hover td { background:rgba(255,255,255,.025); }
   .pit-grid { grid-template-columns:1fr !important; }
   .pit-windows { grid-template-columns:repeat(2,1fr) !important; }
   .nrfi-stats { grid-template-columns:repeat(2,1fr) !important; }
+  /* On a phone the verdict bar has no dead space to fill, so the logos and the
+     headstone stop being decoration and start being a squeeze. Drop the epitaph
+     text first and keep the marks; the bar is still readable at 360px. */
+  .card-mid { gap:7px !important; }
+  .card-mid .rip { display:none; }
 }
 @media (max-width:380px) {
   .cd-title { font-size:18px; }
@@ -8863,6 +8868,7 @@ async function scanNrfi(onProgress, dateOverride) {
       gamePk: g.gamePk, date, startUtc: g.gameDate,
       away: ctx.awayName, home: ctx.homeName,
       awayAbbr: away && away.team && away.team.abbreviation, homeAbbr: home && home.team && home.team.abbreviation,
+      awayId: away && away.team && away.team.id, homeId: home && home.team && home.team.id,
       awayPP: ctx.awayPP, homePP: ctx.homePP,
       pNRFI: ev.pNRFI, pNRFI_simProj: ev.pNRFI_simProj, pYRFI: 1 - ev.pNRFI, checks: ev.checks, aligned: ev.aligned, confidence: ev.confidence, method: ev.method, pitProfiles: ev.pitProfiles, parkEnv: ctx.wx,
       awayYrfiPct: yrfiPctFromLambda(awayOff && awayOff.rate),
@@ -9480,6 +9486,68 @@ function WhyBlock({ why, isBet }) {
  * you will use to shop a line before first pitch. This still reads the override
  * and still flags MANUAL, so the DS/BE/edge shown here and the edge shown on
  * the card are computed against the same price. */
+/* Club logo off MLB's own static host, keyed by the statsapi team id we already
+ * carry. No bundled art, no licence question, no build step — and if the host
+ * ever 404s the <img> hides itself and the row closes up around it rather than
+ * leaving a broken-image glyph on a card that is meant to look composed. */
+function TeamLogo({ id, abbr, size }) {
+  const [dead, setDead] = useState(false);
+  if (id == null || dead) return null;
+  return (
+    <img src={"https://www.mlbstatic.com/team-logos/" + id + ".svg"}
+      alt={abbr || ""} title={abbr || ""} width={size} height={size}
+      loading="lazy" onError={() => setDead(true)}
+      style={{ width: size, height: size, objectFit: "contain", flexShrink: 0 }} />
+  );
+}
+
+/* The headstone.
+ *
+ * It fills the dead space in the middle of the verdict bar, and it earns the
+ * space by saying something: the epitaph names WHO the call expects to die in
+ * the first inning. NRFI is a prediction that the bats get buried, YRFI that the
+ * arms do, and a PASS is the desk admitting the only casualty is its own edge.
+ * The card already talks like this — "COIN FLIP ENERGY · GOD HELP US ALL" ships
+ * two blocks down — so this is the house voice, not a new one.
+ *
+ * Drawn inline: cartoon, four colours, no asset to host and nothing to load. */
+function GraveMotif({ call, isBet, strength }) {
+  const dead = strength === "PASS" ? "MY EDGE" : call === "NRFI" ? "THE BATS" : "THE ARMS";
+  const tint = strength === "PASS" ? "var(--dim)" : isBet ? "var(--moss)" : "var(--amber)";
+  const quip = strength === "PASS"
+    ? "Nobody dies here. No edge at this price — the desk is passing."
+    : call === "NRFI"
+      ? "Here lie the bats: the desk expects a scoreless 1st inning."
+      : "Here lie the arms: the desk expects a run in the 1st inning.";
+  return (
+    <div title={quip} style={{ cursor: "help", display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
+      <svg width="34" height="38" viewBox="0 0 34 38" aria-hidden="true">
+        {/* mound */}
+        <ellipse cx="17" cy="35" rx="15" ry="3.2" fill={tint} opacity="0.18" />
+        {/* slab */}
+        <path d="M4 35 V14 a13 13 0 0 1 26 0 V35 Z" fill="rgba(255,255,255,0.07)"
+          stroke={tint} strokeWidth="1.4" strokeLinejoin="round" />
+        {/* skull */}
+        <circle cx="17" cy="15" r="6.1" fill={tint} opacity="0.92" />
+        <ellipse cx="14.7" cy="14.3" rx="1.5" ry="1.9" fill="#0d1016" />
+        <ellipse cx="19.3" cy="14.3" rx="1.5" ry="1.9" fill="#0d1016" />
+        <path d="M15 19.4 h4 M16 18.2 v2.4 M18 18.2 v2.4" stroke="#0d1016" strokeWidth="0.9" />
+        {/* jaw */}
+        <path d="M13.4 19.9 q3.6 3.1 7.2 0" fill="none" stroke={tint} strokeWidth="1.2" opacity="0.92" />
+        {/* epitaph rule */}
+        <path d="M9 26.5 h16 M11 29.5 h12" stroke={tint} strokeWidth="1.1" opacity="0.42" strokeLinecap="round" />
+        {/* two drips, because gruesome was the brief */}
+        <path d="M11 35 v2.2 a1 1 0 0 0 2 0 V35" fill="var(--rose)" opacity="0.75" />
+        <path d="M22 35 v3.0 a1 1 0 0 0 2 0 V35" fill="var(--rose)" opacity="0.55" />
+      </svg>
+      <div className="rip" style={{ lineHeight: 1.15 }}>
+        <div style={{ fontSize: 8, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.14em" }}>R.I.P.</div>
+        <div style={{ fontSize: 10.5, fontWeight: 800, color: tint, letterSpacing: "0.03em" }}>{dead}</div>
+      </div>
+    </div>
+  );
+}
+
 function DSHeader({ r, leadDS, thresholds, priceOv }) {
   const pp = r.pitProfiles || {};
   // DS is P(NRFI) on our calibrated number, pre market-blend, so DS vs BE stays a
@@ -10307,11 +10375,23 @@ function FirstInning() {
              count and the check names now appear as sentences in WHY, and the
              tier word was a restatement of the colour it was printed in. ── */}
         <div title={r.v.blurb} style={{ cursor: "help", display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", marginBottom: 12, borderRadius: 10, border: "1px solid " + r.v.color + "66", background: r.v.color + "12" }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 900, fontSize: 15, color: r.v.color, letterSpacing: "0.04em", textTransform: "uppercase", lineHeight: 1.2 }}>{r.v.label}</div>
             <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>
               {r.call === "NRFI" ? "No run scores in the 1st inning" : "A run scores in the 1st inning"}
             </div>
+          </div>
+          {/* ── The middle, which used to be a hole ──
+               Verdict on the left, numbers on the right, and 400px of nothing in
+               between. Club marks either side of the headstone read as the
+               matchup and give the bar a centre of gravity. `flex: 1` moved off
+               the label block and onto this one so the growth happens HERE and
+               the label stays snug against its own text. ── */}
+          <div className="card-mid" style={{ flex: 1, display: "flex", alignItems: "center",
+            justifyContent: "center", gap: 12, minWidth: 0 }}>
+            <TeamLogo id={r.awayId} abbr={r.awayAbbr || r.away} size={30} />
+            <GraveMotif call={r.call} isBet={r.v.isBet} strength={r.v.strength} />
+            <TeamLogo id={r.homeId} abbr={r.homeAbbr || r.home} size={30} />
           </div>
           {/* ── Dual score, on the FRONT of the card ──
                It had been moved into the details fold with the rest of DSHeader
