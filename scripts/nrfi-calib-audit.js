@@ -71,10 +71,33 @@ const pct = (x) => (x * 100).toFixed(1) + "%";
   console.log("  actual NRFI rate:    " + pct(actual) + "  [" + pct(lo) + ", " + pct(hi) + "]");
   const need = lg(actual) - lg(meanP);
   console.log("  bias (actual - pred): " + ((actual - meanP) * 100 >= 0 ? "+" : "") + ((actual - meanP) * 100).toFixed(2) + "pp");
-  console.log("  logit shift that would centre the model:  c = " + (need >= 0 ? "+" : "") + need.toFixed(4));
+  /* An error bar on the fitted shift, because without one this line is an
+   * invitation to churn a 558-game constant on a fortnight of games.
+   *
+   * c is a difference of logits and meanP is a model output carrying no
+   * sampling error of its own, so essentially all the uncertainty sits in
+   * logit(actual): Var[logit(k/n)] = 1/(n*p*(1-p)) by the delta method. At
+   * n=134 and p~0.5 that is about +/-0.17 — wider than the entire shipped
+   * seed. Any "this window wants -0.030 but we ship -0.063" reading has to
+   * clear this bar before it is a disagreement rather than a coin. */
+  const seC = 1 / Math.sqrt(n * actual * (1 - actual));
+  const sgn = (x) => (x >= 0 ? "+" : "") + x.toFixed(4);
+  console.log("  logit shift that would centre the model:  c = " + sgn(need) +
+    " +/- " + seC.toFixed(4) + "  [" + sgn(need - 1.96 * seC) + ", " + sgn(need + 1.96 * seC) + "]");
   const seed = c.read("NRFI_CALIB_SEED");
-  console.log("  NRFI_CALIB_SEED currently ships:          c = " + (seed.c >= 0 ? "+" : "") + seed.c.toFixed(4) +
+  console.log("  NRFI_CALIB_SEED currently ships:          c = " + sgn(seed.c) +
     "  (n=" + seed.n + ", " + seed.source + ")");
+  /* Is the shipped seed actually contradicted, or merely different? Both sides
+   * are estimates, so the comparison needs the seed's own sampling error at ITS
+   * n, not a test of this window against a constant treated as truth. */
+  const seSeed = 1 / Math.sqrt(seed.n * actual * (1 - actual));
+  const seDiff = Math.sqrt(seC * seC + seSeed * seSeed);
+  const zSeed = (need - seed.c) / seDiff;
+  console.log("  this window vs the shipped seed:          " + sgn(need - seed.c) +
+    " (SE " + seDiff.toFixed(4) + ", z=" + zSeed.toFixed(2) + ")");
+  console.log("    -> " + (Math.abs(zSeed) > 1.96
+    ? "SEED IS CONTRADICTED at 95%. Re-fit on a long window; do not paste this window's c."
+    : "inside noise. DO NOT retune the seed on this window."));
   const withSeed = rows.reduce((s, r) => s + ul(lg(r.p) + seed.c), 0) / n;
   console.log("  mean AFTER the shipped seed is applied:   " + pct(withSeed) +
     "   (" + ((withSeed - actual) * 100 >= 0 ? "+" : "") + ((withSeed - actual) * 100).toFixed(2) + "pp vs actual)");
