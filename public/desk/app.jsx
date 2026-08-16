@@ -9551,8 +9551,21 @@ function TeamLogo({ id, abbr, size }) {
       }}>{(abbr || "").slice(0, 3)}</span>
     );
   }
+  /* team-cap-on-dark, not the plain /team-logos/<id>.svg, for two measured
+   * reasons on the obsidian floor:
+   *
+   * 1. SIZE. The plain marks share a 150px height but their widths run 94-150
+   *    (checked across 30 clubs), so inside one square box object-fit:contain
+   *    scales a narrow mark like SEA down to about two thirds of a wide one
+   *    like HOU. Side by side on the same card that reads as a rendering fault.
+   *    Every cap-on-dark mark is exactly 150x150, so they all land the same.
+   * 2. CONTRAST. The plain marks are drawn for white. The Yankees' navy NY is
+   *    the worst case and is very nearly invisible against #06080D; the
+   *    cap-on-dark NY is white.
+   *
+   * All 30 club ids were fetched and confirmed 150x150 before this switch. */
   return (
-    <img src={"https://www.mlbstatic.com/team-logos/" + id + ".svg"}
+    <img src={"https://www.mlbstatic.com/team-logos/team-cap-on-dark/" + id + ".svg"}
       alt={abbr || ""} title={abbr || ""} width={size} height={size}
       loading="eager" decoding="async" onError={() => setDead(true)}
       style={{ width: size, height: size, objectFit: "contain", flexShrink: 0 }} />

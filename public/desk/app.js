@@ -2971,7 +2971,19 @@ const base=l10?l10.priorRate!=null?l10.priorRate:l10.sznRate:null;const delta=l1
  * are the thing the eye lands on first.
  *
  * On a genuine load failure fall back to the abbreviation rather than to
- * nothing, so the card keeps its shape instead of collapsing asymmetrically. */function TeamLogo({id,abbr,size}){const[dead,setDead]=useState(false);if(id==null)return null;if(dead){return/*#__PURE__*/React.createElement("span",{className:"mono",title:abbr||"",style:{width:size,height:size,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:size<=24?8:9,fontWeight:700,color:"var(--dim)",border:"1px solid var(--slate-600)",borderRadius:6}},(abbr||"").slice(0,3));}return/*#__PURE__*/React.createElement("img",{src:"https://www.mlbstatic.com/team-logos/"+id+".svg",alt:abbr||"",title:abbr||"",width:size,height:size,loading:"eager",decoding:"async",onError:()=>setDead(true),style:{width:size,height:size,objectFit:"contain",flexShrink:0}});}/* The headstone.
+ * nothing, so the card keeps its shape instead of collapsing asymmetrically. */function TeamLogo({id,abbr,size}){const[dead,setDead]=useState(false);if(id==null)return null;if(dead){return/*#__PURE__*/React.createElement("span",{className:"mono",title:abbr||"",style:{width:size,height:size,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:size<=24?8:9,fontWeight:700,color:"var(--dim)",border:"1px solid var(--slate-600)",borderRadius:6}},(abbr||"").slice(0,3));}/* team-cap-on-dark, not the plain /team-logos/<id>.svg, for two measured
+   * reasons on the obsidian floor:
+   *
+   * 1. SIZE. The plain marks share a 150px height but their widths run 94-150
+   *    (checked across 30 clubs), so inside one square box object-fit:contain
+   *    scales a narrow mark like SEA down to about two thirds of a wide one
+   *    like HOU. Side by side on the same card that reads as a rendering fault.
+   *    Every cap-on-dark mark is exactly 150x150, so they all land the same.
+   * 2. CONTRAST. The plain marks are drawn for white. The Yankees' navy NY is
+   *    the worst case and is very nearly invisible against #06080D; the
+   *    cap-on-dark NY is white.
+   *
+   * All 30 club ids were fetched and confirmed 150x150 before this switch. */return/*#__PURE__*/React.createElement("img",{src:"https://www.mlbstatic.com/team-logos/team-cap-on-dark/"+id+".svg",alt:abbr||"",title:abbr||"",width:size,height:size,loading:"eager",decoding:"async",onError:()=>setDead(true),style:{width:size,height:size,objectFit:"contain",flexShrink:0}});}/* The headstone.
  *
  * It fills the dead space in the middle of the verdict bar, and it earns the
  * space by saying something: the epitaph names WHO the call expects to die in
