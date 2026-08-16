@@ -29,10 +29,30 @@
 // In the first inning the away team bats against the HOME starter and the home
 // team bats against the AWAY starter, so those are the two relevant arms. Each
 // rate is regressed toward the league mean with k = 75 prior starts, the weight
-// established by walk-forward fit in nrfi-pitreg-fit.js. Team offence is
-// omitted on purpose: nrfi-offreg-fit.js measured its true spread as narrower
-// than the sampling noise floor, so adding it would add noise with a story
+// established by walk-forward fit in nrfi-pitreg-fit.js, then both are nudged by
+// a park adjustment regressed with k = 1216 half-innings.
+//
+// What is NOT in it matters as much as what is. Every candidate went through the
+// same variance decomposition in nrfi-park-rest.js — observed spread between
+// groups minus the binomial noise a 4-batter sample generates — and only park
+// came out the far side:
+//
+//   park                 true spread 1.30pp   kept
+//   pitcher rest         nothing above noise  rejected
+//   batting team rest    nothing above noise  rejected
+//   travel               nothing above noise  rejected
+//   team offence         nothing above noise  rejected (nrfi-offreg-fit.js)
+//
+// Rest and travel are the ones worth naming, because they are the terms a
+// handicapper would reach for first and both are flat here — and where they do
+// lean, they lean the wrong way for the story (teams that travelled overnight
+// scored slightly LESS). Adding them would be adding noise with a narrative
 // attached.
+//
+// Park is kept honestly, not enthusiastically: it is real (the leaderboard puts
+// Coors and Sacramento at the run-friendly end and T-Mobile at the clean end,
+// which is the correct answer) but small once shrunk properly, worth about
+// +0.00009 Brier and 0.65pp of movement in P(NRFI).
 //
 // If this beats the price, there is real signal and scanNrfi's job is to
 // recover it without cheating. If it does not, the +19% in nrfi-vs-kalshi.js
@@ -41,8 +61,28 @@ const fs = require("fs");
 const path = require("path");
 
 const CACHE = path.join(__dirname, "nrfi-leakfree-games.json");
-const SEASONS = [2025, 2026];
+/* 2021 forward, not just the two seasons this started with.
+ *
+ * Park was the term that forced this. It cleared the noise floor — Coors first,
+ * T-Mobile among the cleanest, so it is finding real parks — but its correct
+ * shrinkage constant is k=1717 half-innings against a venue accruing ~275 in a
+ * season and a half, leaving it worth 14% of its own record and moving P(NRFI)
+ * by 0.33pp. That is not a weak effect, it is a short sample: a park is the one
+ * input here that is genuinely stable across years, so seasons are the cheapest
+ * thing that can be added to it. Six of them put a venue near 1100 half-innings
+ * and ~40% weight.
+ *
+ * 2020 is skipped deliberately: 60 games, no travel of the usual kind, and
+ * runners starting on second in extras. It is not the same sport for these
+ * purposes. Each season is one schedule call. */
+const SEASONS = [2021, 2022, 2023, 2024, 2025, 2026];
 const K = 75;           // NRFI_PIT_REG, walk-forward fit
+/* Park shrinkage, and it is derived rather than tuned: k is the ratio of
+ * per-half-inning noise variance to the true spread between parks, both measured
+ * in nrfi-park-rest.js (true spread 1.30pp, so k = 0.205/0.000169). Re-derive it
+ * there if the seasons change; do not hand-tune it here, because the whole point
+ * of the number is that it is not a free parameter. */
+const KPARK = 1216;
 const pc = (x) => (x * 100).toFixed(1) + "%";
 const lg = (x) => Math.log(x / (1 - x));
 const clamp = (p) => Math.min(0.98, Math.max(0.02, p));
@@ -99,17 +139,25 @@ async function scan() {
   // result — the same reason a base rate is not considered leakage.
   const lgClean = games.reduce((s, g) => s + g.hpClean + g.apClean, 0) / (2 * games.length);
 
-  // Walk forward. Each arm's rate uses only starts that happened earlier.
+  // Walk forward. Each arm's rate uses only starts that happened earlier, and so
+  // does each park's adjustment.
   const arm = new Map();
   const get = (id) => arm.get(id) || { n: 0, c: 0 };
+  const pk = new Map();
   const rated = [];
   for (const g of games) {
     const a = get(g.ap), h = get(g.hp);
     const pa = (a.c + lgClean * K) / (a.n + K);
     const ph = (h.c + lgClean * K) / (h.n + K);
-    rated.push({ ...g, pa, ph, p: clamp(pa * ph), priorA: a.n, priorH: h.n });
+    // Park moves both arms, because both halves are thrown in it. The residual
+    // is measured against the pitcher rates, so a park that happens to host good
+    // pitching is not credited for it.
+    const v = pk.get(g.venue) || { n: 0, d: 0 };
+    const adj = v.d / (v.n + KPARK);
+    rated.push({ ...g, pa, ph, adj, p: clamp(clamp(pa + adj) * clamp(ph + adj)), priorA: a.n, priorH: h.n });
     arm.set(g.ap, { n: a.n + 1, c: a.c + g.apClean });
     arm.set(g.hp, { n: h.n + 1, c: h.c + g.hpClean });
+    pk.set(g.venue, { n: v.n + 2, d: v.d + (g.hpClean - ph) + (g.apClean - pa) });
   }
 
   console.log("=================== LEAK-FREE MODEL ===================");
@@ -306,8 +354,17 @@ async function scan() {
   console.log("  found in nrfi-kalshi-bias.js is real but worth very little by itself.");
   console.log("  Adding leak-free pitcher rates moves it about ten times as far. Whatever");
   console.log("  this model knows, the price did not already know it.");
+  console.log("\n  Park is worth reading carefully, because it improves the model and does");
+  console.log("  NOT improve its edge. Standalone Brier on these games went .24751 ->");
+  console.log("  .24688 when park was added, and the model-alone z rose to 4.05 — but the");
+  console.log("  joint c FELL, 1.561 -> 1.374. Both moves are the same fact: the market");
+  console.log("  already knows about Coors. Park makes our number more correct and more");
+  console.log("  redundant at once, so it is worth having in a forecast and worth nothing");
+  console.log("  in a disagreement with the price. Expect that from any input that is");
+  console.log("  public and famous, and treat it as the cost of admission rather than");
+  console.log("  the edge.");
   console.log("\n  Still one holdout of ~420 games, and the model is crude by design — two");
-  console.log("  regressed pitcher rates multiplied together, no park, no lineup, no");
-  console.log("  weather. Treat it as a floor on what an honest model can do, not as a");
-  console.log("  finished forecaster, and do not size on the ROI column.");
+  console.log("  regressed pitcher rates and a park nudge, no lineup, no bullpen, no");
+  console.log("  weather, no handedness. Treat it as a floor on what an honest model can");
+  console.log("  do, not as a finished forecaster, and do not size on the ROI column.");
 })().catch((e) => { console.error(e.stack || e); process.exitCode = 1; });
