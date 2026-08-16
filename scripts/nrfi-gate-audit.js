@@ -175,17 +175,59 @@ check(ORDER.indexOf(withAgree(0, 2)) < ORDER.indexOf(withAgree(2, 2)),
 console.log("\ncheck directionality");
 const src = require("fs").readFileSync(
   require("path").join(__dirname, "..", "public", "desk", "app.jsx"), "utf8");
-const travelLean = /Travel & rest"[\s\S]{0,600}?lean: ([\s\S]*?)\},/.exec(src);
-check(!!travelLean && /"nrfi"/.test(travelLean[1]) && /"yrfi"/.test(travelLean[1]),
-  "Travel & rest can vote either direction",
+/* Pull a check's `lean:` expression out of app.jsx by label.
+ *
+ * This used to be an inline regex per check with a fixed character budget
+ * between the label and `lean:` (600 for Travel & rest, 400 for Offense trend).
+ * Both budgets were sized to the source as it stood, and then the source grew:
+ * documenting the Travel & rest measurement pushed that gap to 1269 chars, the
+ * regex stopped matching, `!!travelLean` went false, and the audit reported
+ *
+ *     FAIL  Travel & rest can vote either direction
+ *           the lean expression cannot reach one of the two sides.
+ *
+ * That message is not merely wrong, it is a confident and specific accusation
+ * against code that was fine — the check had failed to PARSE and reported that
+ * it had failed to VALIDATE. A probe that cannot find its target must say so in
+ * its own name; it may never fall through into the target's verdict, because a
+ * parse failure and a real one-sided check call for completely different work.
+ *
+ * So: no character budget (anchor on the next `lean:`, which is the one
+ * belonging to this check), comments stripped from the captured expression so a
+ * note mentioning "nrfi" cannot manufacture a PASS, and an unlocatable label
+ * raised as its own distinct failure. */
+const leanOf = (label) => {
+  const at = src.indexOf('"' + label + '"');
+  if (at < 0) return { found: false, why: `no check labelled "${label}" in app.jsx` };
+  const l = src.indexOf("lean:", at);
+  if (l < 0) return { found: false, why: `"${label}" has no lean: expression after it` };
+  const end = src.indexOf("},", l);
+  if (end < 0) return { found: false, why: `could not find the end of "${label}"'s lean: expression` };
+  // Strip comments before testing. The expression is read as text, so a comment
+  // that happens to contain "yrfi" would otherwise satisfy a two-sidedness test
+  // the code itself fails — the exact inversion this file exists to catch.
+  const code = src.slice(l + 5, end).replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+  return { found: true, code };
+};
+const leanCheck = (label, name, detail, extra) => {
+  const g = leanOf(label);
+  if (!g.found) {
+    check(false, `${label}: lean expression located`,
+      g.why + " — this audit could not read the check, so the line below is NOT a verdict on it.");
+    return;
+  }
+  check(/"nrfi"/.test(g.code) && /"yrfi"/.test(g.code) && (!extra || extra(g.code)),
+    name, detail + "\n  as written: " + g.code.trim().replace(/\s+/g, " "));
+};
+leanCheck("Travel & rest", "Travel & rest can vote either direction",
   "the lean expression cannot reach one of the two sides.");
 // Offense trend required BOTH offences to be 12pp off their own season rate in
 // the same direction — ~3.8% of games, and it voted on none of a live slate.
 // A conjunction across the two teams is the shape to watch for here.
-const offTrend = /Offense trend \(1st inn L10\)"[\s\S]{0,400}?lean: ([\s\S]*?)\};/.exec(src);
-check(!!offTrend && /"nrfi"/.test(offTrend[1]) && /"yrfi"/.test(offTrend[1]) && !/every\(/.test(offTrend[1]),
+leanCheck("Offense trend (1st inn L10)",
   "Offense trend votes on the combined read, not a both-teams conjunction",
-  "the lean expression is back to requiring every team to clear the same gate.");
+  "the lean expression is back to requiring every team to clear the same gate.",
+  (code) => !/every\(/.test(code));
 const lgk = /const LG_K = ([\d.]+);/.exec(src);
 check(!!lgk && Number(lgk[1]) >= 0.235 && Number(lgk[1]) <= 0.255,
   "LG_K matches a plausible league first-inning K rate (measured 24.6% on 2026-08-15)",
