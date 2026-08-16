@@ -3,7 +3,10 @@
 // Run: node scripts/desk-math-test.js
 const fs = require("fs");
 const path = require("path");
-const src = fs.readFileSync(path.join(__dirname, "..", "public", "desk", "app.jsx"), "utf8");
+// DESK_SRC lets this suite be pointed at a deliberately broken copy of app.jsx
+// to confirm an assertion still fails there. A test that passes on both the
+// fixed and the broken source is not testing anything.
+const src = fs.readFileSync(process.env.DESK_SRC || path.join(__dirname, "..", "public", "desk", "app.jsx"), "utf8");
 
 // Slice from a start marker to an end marker (inclusive of end line).
 function slice(startMarker, endMarker) {
@@ -489,6 +492,38 @@ ok(positionAdvice(pos(), 66, null, { price: 66, bid: 0, ask: 100 }, { prob: 30, 
   "parlay slipping but empty bid -> HOLD (selling collects nothing)");
 ok(positionAdvice(pos(), 66, null, { price: 66, bid: 0, ask: 100 }, { prob: 0, live: false, dead: true }).act === "SETTLING",
   "dead parlay with no bid -> SETTLING at zero");
+
+// The property nrfiCalibration exists to deliver, stated as an assertion: after
+// the shift, the predictions must average to what actually happened. The old
+// implementation took lg(actual) - lg(meanPred), which only satisfies this if
+// logit is linear, and it is not — so it missed by more the wider the spread of
+// picks. These cases use a genuinely wide spread, because a narrow one hides the
+// bug (it costs only ~0.02pp at 0.50-0.62, but ~0.91pp at 0.35-0.85).
+{
+  const ulg = (x) => 1 / (1 + Math.exp(-x));
+  const lgt = (p) => Math.log(p / (1 - p));
+  const meanAfter = (rec, c) =>
+    rec.reduce((s, e) => s + ulg(lgt(e.pNRFI) + c), 0) / rec.length;
+  const build = (lo, hi, n, hits) => Array.from({ length: n }, (_, i) => ({
+    pNRFI: lo + (hi - lo) * i / (n - 1),
+    firstInningRuns: i < hits ? 0 : 1,
+  }));
+  for (const [lo, hi, n, hits] of [[0.45, 0.75, 400, 207], [0.35, 0.85, 400, 200], [0.5, 0.62, 400, 207]]) {
+    const rec = build(lo, hi, n, hits);
+    const cal = nrfiCalibration(rec);
+    const got = meanAfter(rec, cal.liveC), want = hits / n;
+    ok(Math.abs(got - want) < 1e-6,
+      `calibration over ${lo}-${hi} averages to the actual rate ` +
+      `(want ${(want * 100).toFixed(2)}%, got ${(got * 100).toFixed(2)}%)`);
+  }
+  // Degenerate records: every graded pick hit, or none did. The target is clamped
+  // to 0.05-0.95 so a finite shift exists, and the solver must return one rather
+  // than an infinity that would reach the ladder and price a wager.
+  const allHit = Array.from({ length: 30 }, () => ({ pNRFI: 0.6, firstInningRuns: 0 }));
+  ok(Number.isFinite(nrfiCalibration(allHit).liveC), "all-hit record yields a finite shift");
+  const allMiss = Array.from({ length: 30 }, () => ({ pNRFI: 0.6, firstInningRuns: 1 }));
+  ok(Number.isFinite(nrfiCalibration(allMiss).liveC), "all-miss record yields a finite shift");
+}
 
 console.log(fail ? fail + " FAILURES" : "ALL TESTS PASSED");
 process.exit(fail ? 1 : 0);

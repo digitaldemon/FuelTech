@@ -2035,6 +2035,15 @@ function nrfiReliefBacked(p){return!!p&&(p.sample||0)<NRFI_THIN_STARTS&&!nrfiThi
 // CAVEAT: one 45-day window, and split stats are current-season, so there is
 // mild look-ahead leakage (see the harness header). Re-run before trusting this
 // into a new season.
+//
+// SECOND CAVEAT, 2026-08-15: -0.073 is lg(0.518) - lg(0.536), i.e. the same
+// difference-of-logits-of-means shortcut that nrfiCalibration used until it was
+// replaced with a proper Newton solve. That shortcut does not actually land the
+// mean on target; over a spread like the desk's it misses by roughly 0.2-0.3pp
+// of probability, always overshooting toward 50%. Correcting it needs the 558
+// per-game predictions, not just their mean, so it waits for the next backtest
+// run — and the error is comfortably inside the leakage caveat above, which is
+// the larger problem with this number.
 const NRFI_CALIB_SEED={c:-0.073,n:558,active:true,source:"backtest-v6-blend"};// Pitcher backtest rankings — GENERATED, do not hand-edit.
 //   node scripts/nrfi-pitcherbt-rebuild.js && node scripts/nrfi-pitcherbt-emit.js
 // Source: 4274 games across 2025 + 2026, arms with >=10 starts.
@@ -2083,7 +2092,28 @@ return PITCHER_BT[k.normalize("NFD").replace(/[̀-ͯ]/g,"")]||null;}// Empirical
 // and shrunk by sample size so it can't overcorrect early.
 function nrfiCalibration(record){// Exclude kalshi-import entries: their pNRFI is the market entry price, not model output.
 // Training on market prices would teach the calibration to correct for market bias, not model bias.
-const g=(record||[]).filter(e=>e.pNRFI!=null&&e.firstInningRuns!=null&&e.source!=="kalshi-import"&&e.strength!=="PASS"&&!e.thinPass);const lg=p=>Math.log(p/(1-p));const cp=x=>nClamp(x,0.05,0.95);const meanPred=g.reduce((s,e)=>s+e.pNRFI,0)/(g.length||1);const actual=g.length?g.filter(e=>e.firstInningRuns===0).length/g.length:0.5;const liveC=g.length?lg(cp(actual))-lg(cp(meanPred)):0;// Blend live correction with seed using sample-count weighting — smooth transition instead of hard cutover.
+const g=(record||[]).filter(e=>e.pNRFI!=null&&e.firstInningRuns!=null&&e.source!=="kalshi-import"&&e.strength!=="PASS"&&!e.thinPass);const lg=p=>Math.log(p/(1-p));const ul=x=>1/(1+Math.exp(-x));const cp=x=>nClamp(x,0.05,0.95);const actual=g.length?g.filter(e=>e.firstInningRuns===0).length/g.length:0.5;/* Solve for the shift, rather than taking a difference of logits.
+   *
+   * This used to be lg(actual) - lg(meanPred), and that does not do what the
+   * comment above it promises. c is applied per game, in logit space, to each
+   * pNRFI; but the difference of logits of the MEANS only cancels if logit were
+   * linear, and it is not. The result is a calibration that misses its own
+   * target: on a realistic spread of desk picks (0.45-0.75) the shifted
+   * predictions land ~0.27pp from the observed hit rate, and on a wide spread
+   * (0.35-0.85) they miss by ~0.91pp — always overshooting toward the middle,
+   * because logit is concave above 0.5 and convex below it.
+   *
+   * The quantity actually wanted is the c that makes the calibrated predictions
+   * average to what really happened, i.e. solves
+   *
+   *   mean_i sigmoid(logit(p_i) + c) = actual
+   *
+   * which is also the maximum-likelihood intercept for a Platt fit with the
+   * slope pinned at 1 — the moment condition and the likelihood agree here, so
+   * one Newton solve gets both. The derivative of the mean with respect to c is
+   * mean(q(1-q)), which is what makes this converge in a handful of steps. */const solveShift=(preds,target)=>{let c=0;for(let i=0;i<60;i++){let m=0,d=0;for(const p of preds){const q=ul(lg(p)+c);m+=q;d+=q*(1-q);}m/=preds.length;d/=preds.length;// Every prediction saturated: no shift can move the mean, so stop rather
+// than divide by ~0 and return an infinity into the ladder.
+if(!(d>1e-9))break;const step=(target-m)/d;c+=step;if(Math.abs(step)<1e-10)break;}return Number.isFinite(c)?c:0;};const liveC=g.length?solveShift(g.map(e=>cp(e.pNRFI)),cp(actual)):0;// Blend live correction with seed using sample-count weighting — smooth transition instead of hard cutover.
 return{liveC,n:g.length,active:true};}function applyCalibration(pNRFI,calib){if(!calib||!calib.active)return pNRFI;// nrfiCalibration returns {liveC, n}, NOT {c} — its output is the live
 // component that the caller blends against NRFI_CALIB_SEED weighted by n.
 // Passing it here directly reads calib.c as undefined and returns NaN, which
