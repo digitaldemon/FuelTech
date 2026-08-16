@@ -1668,12 +1668,21 @@ async function officialGame(lg, codes) {
     return {
       source: "MLB StatsAPI",
       state: abstract === "live" ? "in" : abstract === "final" ? "post" : "pre",
-      detail: (ls.inningState ? ls.inningState + " " + (ls.currentInningOrdinal || "") : st.detailedState) || "",
+      // Only phrase the state as an inning once the game is actually live. The
+      // pre-first-pitch linescore shell carries inningState "Top" and ordinal
+      // "1st" on a Preview game, which rendered "Top 1st" for a game that had
+      // not started instead of its detailedState ("Pre-Game", "Warmup", ...).
+      detail: ((abstract === "live" && ls.inningState)
+        ? ls.inningState + " " + (ls.currentInningOrdinal || "")
+        : st.detailedState) || "",
       sides: [
         { name: f.gameData.teams.away.name, abbr: String(f.gameData.teams.away.abbreviation || "").toUpperCase(), score: (ls.teams && ls.teams.away && ls.teams.away.runs) ?? null, home: false },
         { name: f.gameData.teams.home.name, abbr: String(f.gameData.teams.home.abbreviation || "").toUpperCase(), score: (ls.teams && ls.teams.home && ls.teams.home.runs) ?? null, home: true },
       ],
-      extra: ls.balls != null ? ls.balls + "-" + ls.strikes + " count, " + (ls.outs ?? "?") + " out" : "",
+      // Same shell: balls/strikes/outs are all present and zeroed before first
+      // pitch, so this read "0-0 count, 0 out" on an unstarted game.
+      extra: (abstract === "live" && ls.balls != null)
+        ? ls.balls + "-" + ls.strikes + " count, " + (ls.outs ?? "?") + " out" : "",
       // Starting pitchers decide baseball moneylines — name them.
       probables: (() => {
         const pp = f.gameData && f.gameData.probablePitchers;
@@ -5623,15 +5632,18 @@ async function fetchFirstInning(gamePk) {
   } catch { /* fall through to the proxy */ }
   if (!f) { try { f = await getJson(px(url)); } catch { return null; } }
   const ls = (f.liveData && f.liveData.linescore) || {};
+  const abst = String(f.gameData && f.gameData.status && f.gameData.status.abstractGameState || "");
   return {
     plays: firstInningPlays(f),
     pitches: firstInningPitches(f),
-    inning: ls.currentInning || 0,
-    half: String(ls.inningState || ""),
+    // Same pre-first-pitch linescore shell the row builder guards against: MLB
+    // reports currentInning 1 on a Preview game. Reading it straight here let
+    // the callout treat a game that had not begun as a live 1st inning.
+    inning: abst === "Preview" ? 0 : (ls.currentInning || 0),
+    half: abst === "Preview" ? "" : String(ls.inningState || ""),
     // The inning is over once play has moved past it — not when outs hit 3,
     // which is briefly true mid-changeover in the feed.
-    past1: (ls.currentInning || 0) > 1 || String(f.gameData && f.gameData.status &&
-      f.gameData.status.abstractGameState || "").toLowerCase() === "final",
+    past1: (ls.currentInning || 0) > 1 || abst.toLowerCase() === "final",
   };
 }
 /* The callout metronome, driven from a Worker rather than the main thread.
@@ -8927,7 +8939,29 @@ async function scanNrfi(onProgress, dateOverride) {
       dataOk: !!(awayOff && homeOff && awayPit && homePit) && !ev.modelError && Number.isFinite(ev.pNRFI),
       modelError: ev.modelError || null,
       lineupPosted: (ctx.awayLineup.obp != null && ctx.homeLineup.obp != null),
-      state, currentInning: ls.currentInning || 0,
+      state,
+      /* MLB seeds the linescore with a top-of-1st SHELL before first pitch:
+       * gamePk 824156 (SEA @ HOU, 8/16) served abstractGameState "Preview" and
+       * detailedState "Pre-Game" while its linescore already read
+       * currentInning 1, inningState "Top", innings.length 1. Taking that at
+       * face value told four separate places that a game which had not started
+       * was under way:
+       *
+       *   - the value gate nulled edge and PASSed the card with the note
+       *     "game under way — no pregame edge left" (this is what was seen),
+       *   - the countdown stopped rendering (needs currentInning === 0),
+       *   - the T-45 auto-refresh skipped the game (skips currentInning > 0),
+       *   - callouts became eligible to narrate a game hours before it began.
+       *
+       * The shell appears roughly when pregame starts, so the damage lands in
+       * the last hour before first pitch — precisely the window where lineups
+       * post, the price moves and the bet actually gets made.
+       *
+       * abstractGameState is the authority on whether a game has begun; the
+       * linescore is only the authority on where it is once it has. Normalise
+       * here, at the one place the row is built, so every consumer downstream
+       * reads a truthful inning instead of each one growing its own guard. */
+      currentInning: state === "Preview" ? 0 : (ls.currentInning || 0),
       inning1runs: (inn1 && inn1.away && inn1.home && inn1.away.runs != null && inn1.home.runs != null) ? (inn1.away.runs + inn1.home.runs) : null,
       final: state === "Final",
     };
