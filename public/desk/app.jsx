@@ -7636,15 +7636,25 @@ function nrfiTier(pMax) {
 // over-confident — 65% on games that go 58% — no value of c would repair it,
 // and games would cross these absolute ladder thresholds on spread they had not
 // earned. Fitting the full two-parameter Platt map over the same 558 games
-// gives a = 1.482 +/- 0.387, i.e. +1.24 SE from 1, buying 0.0006 of Brier. The
+// gives a = 1.423 +/- 0.419, i.e. +1.01 SE from 1, buying 0.0004 of Brier. The
 // slope is inside noise of 1 and if anything leans UNDER-confident. So the
 // shift is the right tool, and a second parameter would be fitting this sample
 // rather than a defect. The harness prints this on every run.
 //
-// STILL CAVEATED: one 45-day window, and pitMeta's season ERA/IP, top-of-order
-// OBP, Statcast and teamOff's platoon OPS are all still whole-season pulls.
+//   3. THE STARTER'S SEASON LINE. -0.048 was fit while pitMeta still pulled
+//      seasonEra/ip/allow whole-season, so the starter's first inning was
+//      point-in-time and his overall line was not. Those are now summed out of
+//      the game log up to the scored date, and the pitcher allow-rates are
+//      regressed with NRFI_PA_REG_PIT as the app does (the backtest had been
+//      passing no regression at all, scoring a sharper model than ships). Over
+//      the same 558 games that cost another 0.8pp of pick-side accuracy and
+//      1.0 of AUC — Brier .2436 -> .2449 — and moved the fitted shift from
+//      -0.048 to -0.063, which is this value.
+//
+// STILL CAVEATED: one 45-day window, and top-of-order OBP, batter-vs-pitcher
+// h2h, Statcast and teamOff's platoon OPS are all still whole-season pulls.
 // Re-run before trusting this into a new season.
-const NRFI_CALIB_SEED = { c: -0.048, n: 558, active: true, source: "backtest-v7-pit" };
+const NRFI_CALIB_SEED = { c: -0.063, n: 558, active: true, source: "backtest-v8-pitmeta" };
 
 // Pitcher backtest rankings — GENERATED, do not hand-edit.
 //   node scripts/nrfi-pitcherbt-rebuild.js && node scripts/nrfi-pitcherbt-emit.js

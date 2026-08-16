@@ -37,19 +37,66 @@
 // collapsed sd for an unrelated reason. The leak inflates ACCURACY, not
 // confidence.
 //
-// STILL LEAKING, so this is not yet a clean walk-forward: pitMeta's
-// seasonEra/ip/allow, topOrder's batter OBP, savant's Statcast, and the
-// opsVsR/opsVsL platoon split inside teamOff are all whole-season pulls.
-// pitI01 was rewound first because it is the term measured to leak
-// (nrfi-pitreg-fit.js) and it feeds pitBase at full weight; teamOff followed
-// because the same cache already held the runs, keyed by team.
+// THE STARTER'S SEASON LINE IS NOW POINT-IN-TIME TOO, and two silent drifts
+// between this harness and the app were fixed with it. Same 558 games again:
+//
+//                    pitI01+teamOff    + pitMeta & regression
+//     Brier              .2436                .2449
+//     AUC                .5881                .5780
+//     pick-side acc      57.1%                56.3%
+//
+// Three separate things, all pointing the same way:
+//   - pitMeta's seasonEra/ip/gs/g/allow were whole-season pulls, so the
+//     starter's first inning was rewound and his overall line was not. They are
+//     now summed out of the game log he was already being fetched for, which
+//     costs no extra request. nrfi-rewind-test.js asserts the sum reproduces
+//     MLB's own season aggregate; without that equality this is not a rewind,
+//     it is a different statistic wearing the same field names.
+//   - paRates was being called here with NO regression, at both the pitcher
+//     allow-rate and the batter-vs-pitcher h2h site, while the app passes
+//     NRFI_PA_REG_PIT and NRFI_PA_REG_H2H. An unregressed 8-PA h2h line blended
+//     in at up to 65% weight is a very loud signal, and in a backtest it is a
+//     loud LEAKY one. The constants were in scope the whole time and simply
+//     never destructured.
+//   - the "Pitcher K9 trend" check reads recentK9/seasonK9/recentIp off the
+//     meta object, and this harness never supplied any of them, so the check
+//     returned null on every row while firing live. It votes into the consensus
+//     that decides a game's rung, so every tier volume below had been measured
+//     on a model with one fewer check than the one that ships. A missing check
+//     is indistinguishable from a check that abstained, which is why this sat
+//     unnoticed; the rewind test now asserts the fields arrive.
+//
+// Cumulatively the model's measured skill over the base rate has gone .0112
+// (leaky) -> .0059 -> .0046. What ships is 41% as sharp as the original harness
+// claimed. Nothing about the model changed to cause that; only the honesty of
+// what it was being fed.
+//
+// A SIDE EFFECT WORTH READING: the sim path's advantage over the lambda path is
+// gone. It was Brier .2436 vs .2453 and AUC .5881 vs .5758; it is now .2450 vs
+// .2449 and .5827 vs .5857 — a dead heat, with lambda a hair ahead inside
+// noise. The sim is the path that consumes `allow` and the batter rates, so it
+// was the path holding most of the leak. Do NOT read this as "switch to
+// lambda": the blend sweep below is flat to four decimals across every w, which
+// means the window cannot tell them apart, not that lambda won.
+//
+// STILL LEAKING, so this is not yet a clean walk-forward: topOrder's batter OBP
+// and per-PA rates, the h2h lines, savant's Statcast, and the opsVsR/opsVsL
+// platoon split inside teamOff are all whole-season pulls. Everything still
+// leaking is now on the OFFENCE side; the pitcher side is clean.
 // CLV on live picks remains the cleanest test available.
 const fs = require("fs");
 const path = require("path");
 // The model loader and the MLB fetchers now live in nrfi-model-lib.js so that
 // every analysis script scores games through one code path. See that file for
 // why a second copy is worse than an import.
-const { J, savant, mapLimit, buildCtx, scoreBothPaths, C, PIT_MODE, pitStats } = require("./nrfi-model-lib");
+const { J, savant, mapLimit, buildCtx, scoreBothPaths, C, PIT_MODE, pitStats,
+  NRFI_CALIB_SEED } = require("./nrfi-model-lib");
+// Read from app.jsx through the model slice, never retyped here. This was
+// hardcoded as `0.050` in two places while app.jsx shipped -0.048: wrong
+// magnitude and wrong SIGN, so the "shipped seed applied to each path" section
+// below was shifting every prediction the wrong direction and then reporting
+// that the shipped seed HURT both paths. The report was measuring its own typo.
+const SHIPPED_C = NRFI_CALIB_SEED.c;
 const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-x));
 
 (async () => {
@@ -105,7 +152,9 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
   const ps = pitStats();
   console.log(`\nSPLITS: ${PIT_MODE}` +
     `\n  pitcher 1st-inn  rewound ${ps.pit}, no prior starts ${ps.miss}, season-aggregate ${ps.api}` +
-    `\n  team offence     rewound ${ps.off.pit}, no prior games ${ps.off.miss}, season-aggregate ${ps.off.api}`);
+    `\n  team offence     rewound ${ps.off.pit}, no prior games ${ps.off.miss}, season-aggregate ${ps.off.api}` +
+    `\n  starter szn line rewound ${ps.meta.pit}, no prior starts ${ps.meta.miss}, season-aggregate ${ps.meta.api}` +
+    `\n  STILL WHOLE-SEASON: lineup OBP and per-PA rates, batter-vs-pitcher h2h, Statcast, platoon OPS.`);
   if (PIT_MODE === "leaky") console.log("  !! NRFI_LEAKY=1 — season-to-date splits contain the scored game. Control only.");
   else if (ps.miss > ps.pit) console.log("  !! more arms had no prior starts than were rewound — early-window sample, read with care.");
   const cl = (x) => C(x, 1e-6, 1 - 1e-6);
@@ -223,7 +272,7 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
     console.log("\n  verdict on the pair:");
     console.log(`    Brier   sim ${sSim.brier.toFixed(4)} vs lambda ${sLam.brier.toFixed(4)}   -> ${dB < 0 ? "SIM better" : "LAMBDA better"} by ${Math.abs(dB).toFixed(4)}`);
     console.log(`    AUC     sim ${(sSim.auc || 0).toFixed(4)} vs lambda ${(sLam.auc || 0).toFixed(4)}   -> ${dA > 0 ? "SIM better" : "LAMBDA better"} by ${Math.abs(dA).toFixed(4)}`);
-    console.log(`    seed c  sim ${sSim.c.toFixed(3)} vs lambda ${sLam.c.toFixed(3)}   (shipped NRFI_CALIB_SEED.c = 0.050)`);
+    console.log(`    seed c  sim ${sSim.c.toFixed(3)} vs lambda ${sLam.c.toFixed(3)}   (shipped NRFI_CALIB_SEED.c = ${SHIPPED_C.toFixed(3)})`);
     const near = (x) => Math.abs(x - 0.05);
     console.log(`    -> the shipped seed sits closer to the ${near(sSim.c) < near(sLam.c) ? "SIM" : "LAMBDA"} path's own fit`);
     const disagree = simRows.filter((r) => (P(r) >= 0.5) !== (L(r) >= 0.5));
@@ -265,7 +314,6 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
     // What the SHIPPED seed does to each path. NRFI_CALIB_SEED is a single
     // constant applied regardless of which path produced the number, so if the
     // two paths need different shifts, one of them is being actively mis-set.
-    const SHIPPED_C = 0.050;
     console.log("\n============ THE SHIPPED SEED, APPLIED TO EACH PATH ============");
     console.log(`NRFI_CALIB_SEED.c = ${SHIPPED_C.toFixed(3)} is applied to both paths indiscriminately.`);
     for (const [name, get] of [["SIM", P], ["LAMBDA", L]]) {

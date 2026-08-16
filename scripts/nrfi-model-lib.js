@@ -55,14 +55,39 @@ const model = [
   slice("const rate2 = (o)", ";"),
   slice("const awayPit0 = (o)", ";"),
   slice("const NRFI_LG_PA = (() => {", "const NRFI_PA_REG_H2H = 50;"),
+  // The shipped calibration seed, read rather than retyped. desk-nrfi-backtest
+  // had it hardcoded in two places as +0.050 — wrong magnitude AND wrong sign
+  // against the -0.048 in app.jsx — so its "shipped seed applied to each path"
+  // section was shifting predictions the wrong way and reporting HURT for both
+  // paths on that basis. Exactly the drift the header of this file warns about,
+  // caught only because the fitted c moved and the printed comparison stopped
+  // making sense.
+  slice("const NRFI_CALIB_SEED = {", "};"),
   slice("function paRates(", "\n}"),
   slice("function matchupPA(", "\n}"),
   slice("function advanceBaseOut(", "\n}"),
   slice("function simHalfNoRun(", "\n}"),
   slice("function nrfiEvaluate(", "\n}"),
 ].join("\n");
-const { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP } = eval('"use strict";\n' + model +
-  "\n;({ nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP })");
+// The regression constants come out with the rest of the model, not as literals
+// here. They were in scope all along (the NRFI_LG_PA slice above ends on the
+// NRFI_PA_REG_H2H declaration) but were never destructured, so both fetchers
+// below called paRates with `reg` undefined and got raw rates back. The app
+// passes NRFI_PA_REG_PIT for a starter's allow-rates and NRFI_PA_REG_H2H for
+// batter-vs-pitcher histories, so the backtest was scoring UNregressed inputs
+// against a model that ships regressed ones — measuring a model that does not
+// exist, and flattering it, because an unregressed 12-batter h2h line is a much
+// louder signal than the shipped one.
+const { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP,
+  NRFI_PA_REG_PIT, NRFI_PA_REG_H2H, NRFI_CALIB_SEED } = eval('"use strict";\n' + model +
+  "\n;({ nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP," +
+  " NRFI_PA_REG_PIT, NRFI_PA_REG_H2H, NRFI_CALIB_SEED })");
+if (!Number.isFinite(NRFI_CALIB_SEED?.c)) {
+  throw new Error("NRFI_CALIB_SEED did not come through the slice: " + JSON.stringify(NRFI_CALIB_SEED));
+}
+for (const [n, v] of [["NRFI_PA_REG_PIT", NRFI_PA_REG_PIT], ["NRFI_PA_REG_H2H", NRFI_PA_REG_H2H]]) {
+  if (!(v > 0)) throw new Error(n + " did not come through the slice: " + v);
+}
 
 // ---- data (Node fetchers; faithful to the app's getJson logic) ----
 const J = async (u) => { const r = await fetch(u, { headers: { accept: "application/json" } }); if (!r.ok) throw new Error(u + " " + r.status); return r.json(); };
@@ -117,11 +142,14 @@ const memo = (k, fn) => cache.has(k) ? cache.get(k) : cache.set(k, fn()).get(k);
  * THE COUNTERS BELOW ARE LOAD-BEARING. A join that matches nothing looks exactly
  * like a clean run.
  *
- * WHAT IT DOES NOT FIX, and these still leak: pitMeta's seasonEra/ip/allow,
- * teamOff, topOrder's batter OBP and savant's Statcast are all still whole-season
- * pulls. pitI01 is done first because it is the one measured to leak, and it
- * feeds pitBase at full weight — the dominant term in the model. Do not read a
- * clean result here as a clean harness.
+ * REWOUND SO FAR: pitI01 (first done, because it is the one measured to leak and
+ * it feeds pitBase at full weight — the dominant term), teamOff's first-inning
+ * rate, and pitMeta's seasonEra/ip/gs/g/allow.
+ *
+ * STILL LEAKING: topOrder's batter OBP and per-PA rates, the batter-vs-pitcher
+ * h2h lines, savant's Statcast, and teamOff's opsVsR/opsVsL — all whole-season
+ * pulls, all on the offence side. Do not read a clean result here as a clean
+ * harness; read it as "the pitcher side is clean".
  *
  * NO SILENT FALLBACK. An arm missing from the index returns null, so nrfiRegress
  * sends it to the league mean. Falling back to the API would quietly restore the
@@ -274,17 +302,118 @@ function teamOff(id, se, asOf) {
     opsVsR: api ? api.opsVsR : null, opsVsL: api ? api.opsVsL : null,
   })).catch(() => ({ rate: runs / n, sample: n, opsVsR: null, opsVsL: null }));
 }
-const pitMeta = (id, se) => id == null ? Promise.resolve({ hand: null, form: null, seasonEra: null, gs: null, g: null, ip: null, allow: null, id: null }) : memo("m" + id + se, async () => {
+/* Point-in-time starter season line, summed out of the game log.
+ *
+ * nrfiEvaluate reads seasonEra, ip, g and allow off this object — openerFactor
+ * and seasonLoadFactor take the first two, pitcherI01Profile the era, and the
+ * base-out sim takes `allow` as the pitcher's per-PA event distribution. All
+ * four came from the `type=[season]` payload, which is the pitcher's WHOLE
+ * season including the start being predicted, and for an April game including
+ * every start through September. Rewinding pitI01 while leaving these whole
+ * meant the pitcher's first inning was point-in-time and his overall line was
+ * not, which is the harder leak to spot precisely because the loud one next to
+ * it had been fixed.
+ *
+ * The rewind costs no extra request: the game log is already fetched here (it
+ * was only being used for `form`), and every field above is a sum over it. So
+ * this filters the log to starts strictly before `asOf` and re-derives the line
+ * from the per-game rows. Regular season only — the log carries spring and
+ * postseason rows under other gameTypes, and the season aggregate does not
+ * count them, so including them would make the sum disagree with the API for a
+ * reason that has nothing to do with the rewind.
+ *
+ * nrfi-rewind-test.js asserts the sum reproduces the API season aggregate when
+ * asOf is past the last start. That equality is the whole warrant for this
+ * function: it is the difference between "rewound" and "computed a different
+ * statistic and called it rewound".
+ *
+ * `form` is left on the object for shape parity and is NOT rewound, because
+ * nrfiEvaluate does not read it — the L3-FIP factor was withdrawn on
+ * measurement (see the REMOVED note in app.jsx). If it is ever restored it must
+ * be rewound first: `.slice(-3)` of a full-season log is the last three starts
+ * of SEPTEMBER no matter which game is being scored.
+ */
+const GLOG_REG = (sp) => (sp || []).filter((x) => (x.gameType || "R") === "R");
+function sumPitLog(rows) {
+  const n0 = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+  const acc = { earnedRuns: 0, hits: 0, doubles: 0, triples: 0, homeRuns: 0,
+    baseOnBalls: 0, hitByPitch: 0, battersFaced: 0, strikeOuts: 0 };
+  let ipOuts = 0, gs = 0, g = 0;
+  for (const r of rows) {
+    const s = r.stat || {};
+    for (const k of Object.keys(acc)) acc[k] += n0(s[k]);
+    ipOuts += Math.round(parseIp(s.inningsPitched) * 3);
+    gs += n0(s.gamesStarted); g += n0(s.gamesPlayed);
+  }
+  const ip = ipOuts / 3;
+  return { gs, g, ip, seasonK9: ip > 0 ? acc.strikeOuts * 9 / ip : null,
+    // A pitcher with appearances but no outs recorded has an undefined ERA, not
+    // an infinite one — same call MLB's own "INF" sentinel forces, and null is
+    // what the guards downstream are written against.
+    seasonEra: ip > 0 ? acc.earnedRuns * 9 / ip : null,
+    allow: acc.battersFaced > 0 ? paRates(acc, acc.battersFaced, NRFI_PA_REG_PIT) : null };
+}
+/* The L3 K/9 window, which nrfiEvaluate's "Pitcher K9 trend" check VOTES on.
+ *
+ * This was the drift that mattered most in this file. That check reads
+ * recentK9, seasonK9 and recentIp off the meta object; the lib's pitMeta never
+ * returned any of them, so `m.recentK9 == null` sent it to null on every
+ * backtest row and the check simply was not there. It fires live, it feeds the
+ * consensus, and the consensus gates which rung a game lands on — so every tier
+ * volume and hit rate in the backtest was measured on a model with one fewer
+ * check than the one that ships. Not a wrong number: a different model.
+ *
+ * Starts only, matching app.jsx — a relief appearance is not a data point about
+ * a starter's stuff, and mixing one in drags the window. Point-in-time falls out
+ * of the same filter: the last three starts BEFORE asOf, not the last three of
+ * the season.
+ */
+function recentK9Window(startsBefore) {
+  const last = startsBefore.slice(-3);
+  let k = 0, ip = 0;
+  for (const r of last) { k += Number(r.stat?.strikeOuts) || 0; ip += parseIp(r.stat?.inningsPitched); }
+  return ip > 0 ? { recentK9: k * 9 / ip, recentIp: ip } : { recentK9: null, recentIp: null };
+}
+const pitMeta = (id, se, asOf) => id == null ? Promise.resolve({ hand: null, form: null, seasonEra: null, gs: null, g: null, ip: null, allow: null, id: null, recentK9: null, seasonK9: null, recentIp: null }) : memo("m" + id + se + (PIT_MODE === "leaky" || !asOf ? "" : ":" + asOf), async () => {
   let hand = null, form = null, seasonEra = null, gs = null, g = null, ip = null, allow = null;
+  let recentK9 = null, seasonK9 = null, recentIp = null;
   try { const [p, gl] = await Promise.all([
       J(`https://statsapi.mlb.com/api/v1/people/${id}?hydrate=stats(group=[pitching],type=[season],season=${se})`),
       J(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=gameLog&group=pitching&season=${se}`)]);
     const pp = p.people?.[0]; hand = pp?.pitchHand?.code || null;
-    const s = pp?.stats?.[0]?.splits?.[0]?.stat; if (s) { seasonEra = numOrNull(s.era); gs = numOrNull(s.gamesStarted); g = numOrNull(s.gamesPlayed); ip = s.inningsPitched != null ? parseIp(s.inningsPitched) : null; allow = paRates(s, s.battersFaced); }
-    const last = (gl.stats?.[0]?.splits || []).slice(-3); if (last.length) { let er = 0, lip = 0; last.forEach((x) => { er += +(x.stat?.earnedRuns || 0); lip += parseIp(x.stat?.inningsPitched); }); if (lip > 0) form = er * 9 / lip; }
+    const splits = GLOG_REG(gl.stats?.[0]?.splits);
+    const isStart = (x) => Number(x.stat?.gamesStarted) === 1;
+    if (PIT_MODE === "leaky" || !asOf) {
+      pitMeta.stats.api++;
+      const s = pp?.stats?.[0]?.splits?.[0]?.stat;
+      if (s) {
+        seasonEra = numOrNull(s.era); gs = numOrNull(s.gamesStarted); g = numOrNull(s.gamesPlayed);
+        ip = s.inningsPitched != null ? parseIp(s.inningsPitched) : null;
+        allow = paRates(s, s.battersFaced, NRFI_PA_REG_PIT);
+        const k = Number(s.strikeOuts) || 0; if (ip > 0) seasonK9 = k * 9 / ip;
+      }
+      ({ recentK9, recentIp } = recentK9Window(splits.filter(isStart)));
+    } else {
+      const prior = splits.filter((x) => x.date && x.date < asOf);
+      if (!prior.length) {
+        // Same no-silent-fallback rule as pitI01 and teamOff: a debut start has
+        // no prior line, and handing back the season one would be the leak this
+        // function exists to remove. Nulls let the model regress him to the
+        // league prior, which is what "no information" is supposed to look like.
+        pitMeta.stats.miss++;
+      } else {
+        pitMeta.stats.pit++;
+        ({ gs, g, ip, seasonEra, seasonK9, allow } = sumPitLog(prior));
+        ({ recentK9, recentIp } = recentK9Window(prior.filter(isStart)));
+      }
+    }
+    const last = splits.slice(-3); if (last.length) { let er = 0, lip = 0; last.forEach((x) => { er += +(x.stat?.earnedRuns || 0); lip += parseIp(x.stat?.inningsPitched); }); if (lip > 0) form = er * 9 / lip; }
   } catch { /* nulls */ }
-  return { hand, form, seasonEra, gs, g, ip, allow, id };
+  return { hand, form, seasonEra, gs, g, ip, allow, id, recentK9, seasonK9, recentIp };
 });
+// After the declaration, not before it: pitMeta is a const arrow, and a const is
+// hoisted without being initialised, so touching it above throws on load.
+pitMeta.stats = { pit: 0, miss: 0, api: 0 };
 // Read from app.jsx, never redeclared here. A script that carries its own copy
 // of a model constant stops measuring the model the moment the two drift, and
 // the drift is silent — the numbers still look like numbers.
@@ -303,7 +432,7 @@ const topOrder = async (players, se, oppHand, oppPitcherId) => {
       if (oppPitcherId && batters.some(Boolean)) {
         try {
           const h2hD = await J(`https://statsapi.mlb.com/api/v1/people?personIds=${ids.join(",")}&hydrate=stats(group=[hitting],type=[vsPlayer],opposingPlayerId=${oppPitcherId},season=${se})`);
-          const h2h = {}; (h2hD.people || []).forEach((p) => { const s = p.stats?.[0]?.splits?.[0]?.stat; const pa = s ? Number(s.plateAppearances || s.atBats || 0) : 0; if (s && pa >= 5) h2h[p.id] = { pa, rates: paRates(s, pa) }; });
+          const h2h = {}; (h2hD.people || []).forEach((p) => { const s = p.stats?.[0]?.splits?.[0]?.stat; const pa = s ? Number(s.plateAppearances || s.atBats || 0) : 0; if (s && pa >= 5) h2h[p.id] = { pa, rates: paRates(s, pa, NRFI_PA_REG_H2H) }; });
           batters = batters.map((b, i) => { const h = h2h[ids[i]]; if (!b || !h || !h.rates) return b; const wH = Math.min(0.65, h.pa / 20); const keys = ["out","bb","s1","s2","s3","hr"]; const bl = {}; for (const k of keys) bl[k] = b[k]*(1-wH) + h.rates[k]*wH; return bl; });
         } catch { /* H2H unavailable */ }
       }
@@ -352,9 +481,9 @@ async function buildCtx(g, date, se, peri) {
   if (!ap?.id || !hp?.id) return null;
   const lu = g.lineups || {};
   const [awayPit, homePit, awayMeta, homeMeta, awayOff, homeOff, awayTravel, homeTravel] = await Promise.all([
-    // `date` is what rewinds the splits: pitI01 and teamOff count only games
-    // before it. pitMeta and topOrder still take season aggregates.
-    pitI01(ap.id, se, date), pitI01(hp.id, se, date), pitMeta(ap.id, se), pitMeta(hp.id, se),
+    // `date` is what rewinds the splits: pitI01, pitMeta and teamOff count only
+    // games before it. topOrder still takes season aggregates.
+    pitI01(ap.id, se, date), pitI01(hp.id, se, date), pitMeta(ap.id, se, date), pitMeta(hp.id, se, date),
     teamOff(a.team.id, se, date), teamOff(h.team.id, se, date), travelRest(a.team.id, date, g.venue?.id), travelRest(h.team.id, date, g.venue?.id)]);
   const [awayLineup, homeLineup] = await Promise.all([topOrder(lu.awayPlayers, se, homeMeta.hand, homeMeta.id), topOrder(lu.homePlayers, se, awayMeta.hand, awayMeta.id)]);
   const hpUmp = (g.officials || []).find((o) => o.officialType === "Home Plate");
@@ -440,4 +569,5 @@ module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP, makeVer
   // source it ran on. A backtest that does not say whether it rewound its inputs
   // is not reporting a result, and the difference between the two modes here is
   // larger than most of the effects these scripts are built to measure.
-  PIT_MODE, pitStats: () => ({ ...pitI01.stats, off: { ...teamOff.stats } }) };
+  PIT_MODE, pitStats: () => ({ ...pitI01.stats, off: { ...teamOff.stats }, meta: { ...pitMeta.stats } }),
+  sumPitLog, GLOG_REG, NRFI_CALIB_SEED, NRFI_PA_REG_PIT, NRFI_PA_REG_H2H };
