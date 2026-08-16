@@ -169,6 +169,57 @@ const MODEL_SLICES = [
   ["function nrfiEvaluate(", "\n}"],
 ];
 const model = MODEL_SLICES.map(([a, b]) => slice(a, b)).join("\n");
+/* NRFI_SIM_W — how much of the shipped number comes from the base-out SIMULATION
+ * rather than from the lambda path, sweepable from the environment.
+ *
+ * It is declared HERE, a hundred and seventy lines above PIT_MODE / ROLL_MODE /
+ * OBP_MODE / ENV_W, and not down among them, because it is a different kind of
+ * switch. Those four are read by code in THIS file — they tilt a ctx or change
+ * which fetcher runs — so they only have to exist before their first use at
+ * runtime. NRFI_SIM_W is a constant inside app.jsx's own source text, and the
+ * only way to change it without editing the board is to rewrite the text before
+ * it is eval'd. That has to happen between the join above and the eval below,
+ * and there is nowhere else it can go.
+ *
+ * The shipped value is READ OUT OF THE BUNDLE, never retyped, for the same
+ * reason nrfi-calib-walk.js reads NRFI_CALIB_SEED out of the working tree: a
+ * sweep that decides whether to keep a constant must know what that constant
+ * currently is, and a hardcoded default is how "no change from shipped" gets
+ * reported against a value nobody ships any more.
+ *
+ * WHY THIS IS BEING ASKED. The comment on the constant in app.jsx justifies
+ * w = 0.20 with a 395-game paired run (w 0.0/.2321, 0.2/.2321, 0.5/.2332,
+ * 1.0/.2377) on the grounds that Brier ties and AUC peaks at 0.2. On the
+ * 1022-game paired subset of the 120-day artifact the tie is still a tie and the
+ * AUC tiebreak has switched sides — sim .24778/.57519 against lambda
+ * .24796/.57530 — so the stated reason for the shipped value no longer holds on
+ * the larger sample. This makes the question answerable at intermediate w
+ * instead of only at the endpoints, which is what scoreBothPaths' evLam already
+ * gives for free.
+ */
+const SIM_W_SHIPPED = (() => {
+  const m = model.match(/const NRFI_SIM_W = ([\d.]+);/);
+  if (!m) throw new Error("NRFI_SIM_W not found in the model bundle — the declaration was " +
+    "renamed or reformatted, and this override would silently do nothing. Fix the pattern.");
+  return Number(m[1]);
+})();
+const SIM_W = process.env.NRFI_SIM_W == null ? SIM_W_SHIPPED : Number(process.env.NRFI_SIM_W);
+if (!Number.isFinite(SIM_W) || SIM_W < 0 || SIM_W > 1)
+  throw new Error("NRFI_SIM_W must be a number in [0,1], got " + JSON.stringify(process.env.NRFI_SIM_W));
+/* The substitution, guarded. A .replace that matches nothing returns the input
+ * unchanged and throws nothing, so an unguarded one would run the whole sweep at
+ * the shipped weight and print a flat, believable set of identical numbers. The
+ * count check is the difference between "the override applied" and "the override
+ * appeared to apply". */
+const modelSrc = SIM_W === SIM_W_SHIPPED ? model : (() => {
+  let hits = 0;
+  const out = model.replace(/const NRFI_SIM_W = [\d.]+;/g, () => {
+    hits++;
+    return "const NRFI_SIM_W = " + SIM_W + ";";
+  });
+  if (hits !== 1) throw new Error("NRFI_SIM_W override replaced " + hits + " declarations, expected 1");
+  return out;
+})();
 // The regression constants come out with the rest of the model, not as literals
 // here. They were in scope all along (the NRFI_LG_PA slice above ends on the
 // NRFI_PA_REG_H2H declaration) but were never destructured, so both fetchers
@@ -179,7 +230,7 @@ const model = MODEL_SLICES.map(([a, b]) => slice(a, b)).join("\n");
 // exist, and flattering it, because an unregressed 12-batter h2h line is a much
 // louder signal than the shipped one.
 const { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP,
-  NRFI_PA_REG_PIT, NRFI_PA_REG_H2H, NRFI_CALIB_SEED } = eval('"use strict";\n' + model +
+  NRFI_PA_REG_PIT, NRFI_PA_REG_H2H, NRFI_CALIB_SEED } = eval('"use strict";\n' + modelSrc +
   "\n;({ nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP," +
   " NRFI_PA_REG_PIT, NRFI_PA_REG_H2H, NRFI_CALIB_SEED })");
 if (!Number.isFinite(NRFI_CALIB_SEED?.c)) {
@@ -1173,6 +1224,13 @@ const ABLATIONS = [
   // tilted run would be served the untilted model's cached numbers and report a
   // perfect null. Formatted so 0.5 and 0.50 hash the same.
   ENV_W !== 1 ? "env-w-" + String(Number(ENV_W)) : null,
+  /* REQUIRED, not optional, and for a sharper reason than the others. modelBlank
+   * is built by sliceBlank straight off app.jsx and never sees modelSrc, so the
+   * substituted weight is invisible to the fingerprint by construction — a
+   * NRFI_SIM_W=0 run would otherwise hash byte-identical to the shipped model and
+   * be served, or write, the wrong cache. Every other entry on this list guards a
+   * hazard; this one guards a hazard the fingerprint cannot see at all. */
+  SIM_W !== SIM_W_SHIPPED ? "sim-w-" + String(Number(SIM_W)) : null,
 ].filter(Boolean).join(",");
 // What produced the cached numbers. A cache carrying a different one is stale.
 const modelSig = sha(modelBlank + sigOf("cache") + dataSlice + (ABLATIONS ? "|ablate:" + ABLATIONS : ""));
@@ -1192,5 +1250,8 @@ module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP, makeVer
   // is not reporting a result, and the difference between the two modes here is
   // larger than most of the effects these scripts are built to measure.
   PIT_MODE, H2H_MODE, OBP_MODE, ROLL_MODE, ABLATIONS,
+  // Both, so a harness can print "0.20 (shipped)" or "0 (shipped 0.20)" without
+  // re-deriving where the default came from.
+  SIM_W, SIM_W_SHIPPED,
   pitStats: () => ({ ...pitI01.stats, off: { ...teamOff.stats }, meta: { ...pitMeta.stats }, h2h: H2H_MODE, obp: OBP_MODE }),
   sumPitLog, GLOG_REG, NRFI_CALIB_SEED, NRFI_PA_REG_PIT, NRFI_PA_REG_H2H };
