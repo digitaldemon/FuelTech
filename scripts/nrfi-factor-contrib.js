@@ -6,10 +6,16 @@
 // 0.85-1.15 moves real money. The only honest way to rank them is to turn each
 // one off and re-run the whole board.
 //
-// So: for every factor, zero its weight EVERYWHERE it appears -- the lambda path
+// So: for every factor, zero its weight EVERYWHERE it appears, rebuild the model
+// in a VM, rescan the slate, and record how far the probability and the verdict
+// moved.
+//
+// "Everywhere" used to mean three sites per factor: the lambda path
 // (offMult/pitMult), the base-out sim (homeCtx/awayCtx/offSimCtx) and the
-// projected sim -- rebuild the model in a VM, rescan the slate, and record how
-// far the probability and the verdict moved.
+// projected sim, the last two duplicated per half-inning. Both sim paths have
+// been removed, so most entries below are back to one site. The per-half twins
+// were not deleted on judgement — the match guard threw on all seventeen of
+// them, which is exactly the check doing its job.
 //
 // Every patch is checked for a match. A replacement that silently hits nothing
 // would report its factor as inert when in truth it was never switched off,
@@ -31,11 +37,8 @@ const FACTORS = {
   // are gone from this table rather than kept at zero, because the match guard
   // below would (correctly) throw on a pattern that no longer exists.
   lineup:    [["(lineup.factor-1)*1.0", "(lineup.factor-1)*0"]],
-  offTrend:  [["(offTrend.f-1)*0.5", "(offTrend.f-1)*0"],
-              ["(trend.f-1)*0.5", "(trend.f-1)*0"]],                    // offSimCtx
-  homeAdv:   [["(homeAdv.f-1)*1.0", "(homeAdv.f-1)*0"],
-              ["awayOffAdv.f*awayOffSim", "1*awayOffSim"],
-              ["homeOffAdv.f*homeOffSim", "1*homeOffSim"]],
+  offTrend:  [["(offTrend.f-1)*0.5", "(offTrend.f-1)*0"]],
+  homeAdv:   [["(homeAdv.f-1)*1.0", "(homeAdv.f-1)*0"]],
   // one string, two sites: offMult and offSimCtx share the literal, so a single
   // replacement switches the factor off on both paths
   offVenue:  [["(venue.f-1)*0.3", "(venue.f-1)*0"]],
@@ -44,28 +47,14 @@ const FACTORS = {
   // the Travel & rest check's lean expression, and blanking that would change
   // the row's VOTE as well as the math — two different effects landing in one
   // number. The vote is measured separately below.
-  travel:    [["(travel.factor-1)*0.6", "(travel.factor-1)*0"],
-              ["homeCtx*ctx.awayTravel.factor*", "homeCtx*"],
-              ["awayCtx*ctx.homeTravel.factor*", "awayCtx*"],
-              ["hPC*ctx.awayTravel.factor*", "hPC*"],
-              ["aPC*ctx.homeTravel.factor*", "aPC*"]],
+  travel:    [["(travel.factor-1)*0.6", "(travel.factor-1)*0"]],
   // ---- pitcher side ----
   skill:     [["(skill.f-1)*1.0", "(skill.f-1)*0"]],
-  opener:    [["(opener.f-1)*0.5", "(opener.f-1)*0"],
-              ["(homeOpen.f-1)*0.5", "(homeOpen.f-1)*0"],
-              ["(awayOpen.f-1)*0.5", "(awayOpen.f-1)*0"]],
-  openerGame:[["(openG.f-1)*1.0", "(openG.f-1)*0"],
-              ["(homeOpenG.f-1)*1.0", "(homeOpenG.f-1)*0"],
-              ["(awayOpenG.f-1)*1.0", "(awayOpenG.f-1)*0"]],
-  seasonLoad:[["(load.f-1)*0.7", "(load.f-1)*0"],
-              ["(homeLoad.f-1)*0.7", "(homeLoad.f-1)*0"],
-              ["(awayLoad.f-1)*0.7", "(awayLoad.f-1)*0"]],
-  pitTrend:  [["(trend.f-1)*0.30", "(trend.f-1)*0"],
-              ["(homeTrend.f-1)*0.30", "(homeTrend.f-1)*0"],
-              ["(awayTrend.f-1)*0.30", "(awayTrend.f-1)*0"]],
-  pitVenue:  [["(venue.f-1)*0.5", "(venue.f-1)*0"],
-              ["(homeVenue.f-1)*0.5", "(homeVenue.f-1)*0"],
-              ["(awayVenue.f-1)*0.5", "(awayVenue.f-1)*0"]],
+  opener:    [["(opener.f-1)*0.5", "(opener.f-1)*0"]],
+  openerGame:[["(openG.f-1)*1.0", "(openG.f-1)*0"]],
+  seasonLoad:[["(load.f-1)*0.7", "(load.f-1)*0"]],
+  pitTrend:  [["(trend.f-1)*0.30", "(trend.f-1)*0"]],
+  pitVenue:  [["(venue.f-1)*0.5", "(venue.f-1)*0"]],
   // No `umpire` entry. The ABS challenge system retired that term, so there is
   // no expression left to switch off — and patch() throws when a pattern never
   // matches, which is what would happen if this were merely left here. That

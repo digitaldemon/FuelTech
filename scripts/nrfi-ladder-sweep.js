@@ -56,10 +56,11 @@ if (!games.length || games[0].aligned === undefined) {
 // from a model that no longer exists, with nothing but a timestamp to hint at
 // it. So pin it to the model and fail loudly on drift.
 //
-// Pinning NRFI_SIM_W was not enough. Rebuilding PITCHER_BT and the cutoffs of
-// the "Backtest profile" check changed every cached `aligned` value — which is
-// what the gates read — without touching NRFI_SIM_W, so the guard would have
-// waved through consensus numbers from a model that no longer existed. modelSig
+// Pinning a single constant was not enough. The guard used to be NRFI_SIM_W
+// alone; rebuilding PITCHER_BT and the cutoffs of the "Backtest profile" check
+// changed every cached `aligned` value — which is what the gates read — without
+// touching that constant, so the guard would have waved through consensus
+// numbers from a model that no longer existed. modelSig
 // hashes every slice the backtest actually evaluates, so nothing can move
 // underneath this cache unnoticed.
 const { modelSig } = require("./nrfi-model-lib");
@@ -171,7 +172,7 @@ const hit = (arr) => {
 const fmt = (h) => `${String(h.w).padStart(3)}-${String(h.l).padStart(3)} ${h.rate == null ? "   —  " : pc(h.rate).padStart(6)}`;
 
 console.log(`ladder sweep over ${rows.length} finished games (${cache.dates.length} slates, season ${cache.season})`);
-console.log(`cache written ${cache.at}, model ${cache.modelSig} (NRFI_SIM_W=${cache.simW}), calibration c=${seedC}`);
+console.log(`cache written ${cache.at}, model ${cache.modelSig}, calibration c=${seedC}`);
 console.log(`overall NRFI base rate ${pc(rows.filter((r) => r.actual === 1).length / rows.length)}`);
 console.log("\nVolumes are CEILINGS: the value gate against market price is not reconstructable here.");
 

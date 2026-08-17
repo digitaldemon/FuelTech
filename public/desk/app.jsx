@@ -5294,13 +5294,6 @@ function Commodities({ onPick }) {
    picks (JuiceReel) ride along as a tailing signal. Self-graded from the
    real first-inning line score. */
 
-/* How much of the final probability the base-out sim gets once lineups post.
-   Was effectively 1.00 (the sim replaced the lambda path outright); measured at
-   0.20. See the table in nrfiEvaluate for the 395-game paired backtest, and
-   scripts/desk-nrfi-backtest.js to re-run it. Do not raise this without
-   re-running that backtest — the old value was never measured at all. */
-const NRFI_SIM_W = 0.20;
-
 const NRFI_LG_LAMBDA = 0.52;  // league avg runs per team in the 1st inning
 const NRFI_LG_P0 = 0.72;      // league P(no run in a half-inning) -> ~52% NRFI
 /* Regression weight on a starter's own 1st-inning run rate, applied at
@@ -5416,7 +5409,6 @@ const _obpCache = new Map();
 const _travelCache = new Map();
 const _linescore = new Map(); // gamePk -> Promise<linescore>
 const _rolling = new Map();   // pid:season -> rolling NRFI windows
-const _rosterCache = new Map(); // teamId:season:sit:ppId -> batter PA rate array
 const _teamOffRolling = new Map(); // teamId:date -> rolling first-inning scored-in-1st windows
 const _teamGameDates = new Map(); // teamId:date -> Promise<sorted dates of completed team games>
 // Shared linescore fetch — stores the Promise so concurrent callers dedup.
@@ -6506,7 +6498,7 @@ async function pitcherMeta(pid, season) {
   if (pid == null) return { hand: null, form: null };
   const k = pid + ":" + season;
   if (_pitMeta.has(k)) return _pitMeta.get(k);
-  let hand = null, form = null, fipForm = null, lastStartDate = null, seasonEra = null, gs = null, g = null, ip = null, allow = null, recentK9 = null, seasonK9 = null, recentIp = null;
+  let hand = null, form = null, fipForm = null, lastStartDate = null, seasonEra = null, gs = null, g = null, ip = null, recentK9 = null, seasonK9 = null, recentIp = null;
   try {
     const [p, gl] = await Promise.all([
       getJson("https://statsapi.mlb.com/api/v1/people/" + pid + "?hydrate=stats(group=[pitching],type=[season],season=" + season + ")"),
@@ -6516,7 +6508,9 @@ async function pitcherMeta(pid, season) {
     hand = (pp && pp.pitchHand && pp.pitchHand.code) || null;
     const sst = pp && pp.stats && pp.stats[0] && pp.stats[0].splits && pp.stats[0].splits[0] && pp.stats[0].splits[0].stat;
     seasonEra = sst ? numOrNull(sst.era) : null;
-    if (sst) { gs = numOrNull(sst.gamesStarted); g = numOrNull(sst.gamesPlayed); ip = sst.inningsPitched != null ? parseIp(sst.inningsPitched) : null; allow = paRates(sst, sst.battersFaced, NRFI_PA_REG_PIT); }
+    // `allow` (per-PA outcome rates off the season line, regressed with
+    // NRFI_PA_REG_PIT) was read only by the base-out sim and went with it.
+    if (sst) { gs = numOrNull(sst.gamesStarted); g = numOrNull(sst.gamesPlayed); ip = sst.inningsPitched != null ? parseIp(sst.inningsPitched) : null; }
     const sp = (gl.stats && gl.stats[0] && gl.stats[0].splits) || [];
     // Use starts only for form + rest day tracking (exclude relief appearances)
     const starts = sp.filter((s) => Number(s.stat && s.stat.gamesStarted) === 1);
@@ -6546,7 +6540,7 @@ async function pitcherMeta(pid, season) {
       }
     }
   } catch { /* leave nulls */ }
-  const val = { hand, form, fipForm, lastStartDate, seasonEra, gs, g, ip, allow, id: pid, recentK9, seasonK9, recentIp };
+  const val = { hand, form, fipForm, lastStartDate, seasonEra, gs, g, ip, id: pid, recentK9, seasonK9, recentIp };
   _pitMeta.set(k, val);
   return val;
 }
@@ -7030,15 +7024,24 @@ function seasonLoadFactor(ip) {
 // already reflected — the bench bat simply appears instead of the star.
 // Leadoff-weighted (0.5/0.3/0.2) top-of-order OBP vs the OPPOSING STARTER'S
 // HAND — the single sharpest offensive signal for a first-inning run.
-// When oppPitcherId is provided, batter H2H history vs that pitcher is blended
-// in (shrunk by sample size) for a sharper per-matchup estimate.
-async function topOrderStrength(players, season, oppHand, oppPitcherId) {
-  const ordered = (players || []).slice(0, 5).map((p) => p && p.id).filter(Boolean);
-  if (ordered.length < 3) return { factor: 1, obp: null, note: "lineup not posted", batters: null };
+/* H2H WENT WITH THE SIM. Batter-vs-pitcher history was blended into per-batter
+   PA rates here, shrunk by sample, and those rates had exactly one consumer: the
+   base-out sim. It never touched the OBP factor below, which is what this
+   function now returns and always was its main product. It also had its own
+   measured verdict before this — see H2H_MODE in scripts/nrfi-model-lib.js —
+   so nothing is being discarded here that was carrying the number.
+
+   Only the first three batters are fetched now, down from five. The 4th and 5th
+   were collected for the sim's batting order; the leadoff-weighted OBP has only
+   ever read three. Cache key bumped to v3 because the shape of the cached value
+   changed, so a v2 entry left over from before must not be served as this one. */
+async function topOrderStrength(players, season, oppHand) {
+  const ordered = (players || []).slice(0, 3).map((p) => p && p.id).filter(Boolean);
+  if (ordered.length < 3) return { factor: 1, obp: null, note: "lineup not posted" };
   const sit = oppHand === "L" ? "vl" : oppHand === "R" ? "vr" : null;
-  const k = ordered.join(",") + ":" + (sit || "all") + ":" + season + ":v2";
+  const k = ordered.join(",") + ":" + (sit || "all") + ":" + season + ":v3";
   if (_obpCache.has(k)) return _obpCache.get(k);
-  let val = { factor: 1, obp: null, note: "lineup not posted", batters: null };
+  let val = { factor: 1, obp: null, note: "lineup not posted" };
   try {
     const type = sit ? "type=[statSplits],sitCodes=[" + sit + "]" : "type=[season]";
     const d = await getJson("https://statsapi.mlb.com/api/v1/people?personIds=" + ordered.join(",") +
@@ -7046,106 +7049,26 @@ async function topOrderStrength(players, season, oppHand, oppPitcherId) {
     const byId = {};
     (d.people || []).forEach((p) => {
       const s = p.stats && p.stats[0] && p.stats[0].splits && p.stats[0].splits[0] && p.stats[0].splits[0].stat;
-      if (s) byId[p.id] = { obp: s.obp != null ? Number(s.obp) : null, rates: paRates(s, s.plateAppearances) };
+      if (s) byId[p.id] = s.obp != null ? Number(s.obp) : null;
     });
     const w = [0.5, 0.3, 0.2];
     let num = 0, den = 0;
-    ordered.slice(0, 3).forEach((id, i) => { const o = byId[id] && byId[id].obp; if (o != null) { num += o * w[i]; den += w[i]; } });
-    let batters = ordered.map((id) => (byId[id] && byId[id].rates) || null);
-    // Batter vs pitcher H2H: blend actual history into per-batter rates.
-    if (oppPitcherId && batters.some(Boolean)) {
-      try {
-        const h2hD = await getJson("https://statsapi.mlb.com/api/v1/people?personIds=" + ordered.join(",") +
-          "&hydrate=stats(group=[hitting],type=[vsPlayer],opposingPlayerId=" + oppPitcherId + ",season=" + season + ")");
-        const h2hById = {};
-        (h2hD.people || []).forEach((p) => {
-          const s = p.stats && p.stats[0] && p.stats[0].splits && p.stats[0].splits[0] && p.stats[0].splits[0].stat;
-          const pa = s ? Number(s.plateAppearances || s.atBats || 0) : 0;
-          if (s && pa >= 5) h2hById[p.id] = { pa, rates: paRates(s, pa, NRFI_PA_REG_H2H) };
-        });
-        batters = batters.map((b, i) => {
-          const h = h2hById[ordered[i]];
-          if (!b || !h || !h.rates) return b;
-          const wH = Math.min(0.65, h.pa / 20); // shrink to log5 when sparse
-          const keys = ["out", "bb", "s1", "s2", "s3", "hr"];
-          const blended = {};
-          for (const k of keys) blended[k] = b[k] * (1 - wH) + h.rates[k] * wH;
-          return blended;
-        });
-      } catch { /* H2H unavailable; keep season rates */ }
-    }
-    const hasB = batters.some(Boolean);
+    ordered.forEach((id, i) => { const o = byId[id]; if (o != null) { num += o * w[i]; den += w[i]; } });
     if (den > 0) {
       const obp = num / den;
-      val = { factor: nClamp(obp / NRFI_LG_TOP3_OBP, 0.82, 1.24), obp, batters: hasB ? batters : null,
+      val = { factor: nClamp(obp / NRFI_LG_TOP3_OBP, 0.82, 1.24), obp,
         note: "1-3 OBP " + obp.toFixed(3) + (sit ? " vs " + (oppHand === "L" ? "LHP" : "RHP") : "") };
-    } else if (hasB) {
-      val = { factor: 1, obp: null, batters, note: "lineup posted" };
     }
   } catch { /* leave neutral */ }
   _obpCache.set(k, val);
   return val;
 }
 
-// Fetch the team's top-OBP batters from the active roster — used for the sim
-// projection toggle when the real lineup hasn't been posted yet.
-// Sorted by OBP desc, top 9 kept, H2H vs the opposing pitcher blended in.
-async function teamBestLineup(teamId, season, oppHand, oppPitcherId) {
-  if (teamId == null) return null;
-  const sit = oppHand === "L" ? "vl" : oppHand === "R" ? "vr" : null;
-  const k = teamId + ":" + season + ":" + (sit || "all") + ":" + (oppPitcherId || "");
-  if (_rosterCache.has(k)) return _rosterCache.get(k);
-  let val = null;
-  try {
-    const roster = await getJson("https://statsapi.mlb.com/api/v1/teams/" + teamId +
-      "/roster?rosterType=active&season=" + season);
-    const posPlayers = (roster.roster || []).filter((p) => p.position && p.position.type !== "Pitcher");
-    const ids = posPlayers.map((p) => p.person && p.person.id).filter(Boolean);
-    if (!ids.length) { _rosterCache.set(k, null); return null; }
-    const type = sit ? "type=[statSplits],sitCodes=[" + sit + "]" : "type=[season]";
-    const d = await getJson("https://statsapi.mlb.com/api/v1/people?personIds=" + ids.join(",") +
-      "&hydrate=stats(group=[hitting]," + type + ",season=" + season + ")");
-    const players = [];
-    (d.people || []).forEach((p) => {
-      const s = p.stats && p.stats[0] && p.stats[0].splits && p.stats[0].splits[0] && p.stats[0].splits[0].stat;
-      if (!s) return;
-      const pa = Number(s.plateAppearances || 0);
-      if (pa < 50) return;
-      const obp = s.obp != null ? Number(s.obp) : null;
-      const rates = paRates(s, pa);
-      if (obp != null && rates) players.push({ id: p.id, obp, rates });
-    });
-    if (!players.length) { _rosterCache.set(k, null); return null; }
-    players.sort((a, b) => b.obp - a.obp);
-    const top9 = players.slice(0, 9);
-    let batters = top9.map((p) => p.rates);
-    if (oppPitcherId && batters.some(Boolean)) {
-      try {
-        const topIds = top9.map((p) => p.id);
-        const h2hD = await getJson("https://statsapi.mlb.com/api/v1/people?personIds=" + topIds.join(",") +
-          "&hydrate=stats(group=[hitting],type=[vsPlayer],opposingPlayerId=" + oppPitcherId + ",season=" + season + ")");
-        const h2hById = {};
-        (h2hD.people || []).forEach((p) => {
-          const s = p.stats && p.stats[0] && p.stats[0].splits && p.stats[0].splits[0] && p.stats[0].splits[0].stat;
-          const pa = s ? Number(s.plateAppearances || s.atBats || 0) : 0;
-          if (s && pa >= 5) h2hById[p.id] = { pa, rates: paRates(s, pa, NRFI_PA_REG_H2H) };
-        });
-        batters = batters.map((b, i) => {
-          const h = h2hById[top9[i].id];
-          if (!b || !h || !h.rates) return b;
-          const wH = Math.min(0.65, h.pa / 20);
-          const keys = ["out", "bb", "s1", "s2", "s3", "hr"];
-          const blended = {};
-          for (const key of keys) blended[key] = b[key] * (1 - wH) + h.rates[key] * wH;
-          return blended;
-        });
-      } catch { /* keep season rates */ }
-    }
-    val = batters;
-  } catch { /* leave null */ }
-  _rosterCache.set(k, val);
-  return val;
-}
+/* teamBestLineup stood here: a team's top-9 active-roster bats by OBP, with H2H
+   blended in, fetched for every side whose lineup had not posted yet so the
+   projected sim had someone to bat. Two API calls per side per game (roster,
+   then a batched people/stats hydrate) plus a third for H2H, all of it to feed a
+   number that is no longer computed. */
 
 // Travel & rest: fatigue nudges early offense down slightly (favours NRFI).
 //
@@ -7461,105 +7384,24 @@ function halfNoRun(offLambda, pitLambda, env) {
   return Math.pow(NRFI_LG_P0, lam / NRFI_LG_LAMBDA);
 }
 
-/* ---- Base-out simulation: model the actual batters through a base/out
-   Markov chain vs the starter's outcome profile -> true P(no run). ---- */
-// League-average per-PA outcome distribution (walk includes HBP).
-// The tabulated rates sum to 0.992, not 1 — the ~0.8pp gap is reached-on-error
-// and other non-tabulated outcomes. matchupPA renormalises its own output, so
-// this never escaped as a bad probability, but paRates regresses toward these
-// numbers raw, which made the regression target something other than the league
-// average it claims to be. Normalise once here so both callers see a real
-// distribution; proportions are unchanged.
-const NRFI_LG_PA = (() => {
-  const raw = { out: 0.685, bb: 0.085, s1: 0.140, s2: 0.045, s3: 0.004, hr: 0.033 };
-  const sum = Object.values(raw).reduce((a, b) => a + b, 0);
-  const o = {}; for (const k of Object.keys(raw)) o[k] = raw[k] / sum;
-  return o;
-})();
-// Regression toward the league PA profile, in pseudo-plate-appearances.
-// The sim path (simHalfNoRun) consumes these rates raw, so a starter with one
-// outing would otherwise arrive with out≈1.0 and score a near-certain NRFI —
-// bypassing NRFI_PIT_REG, which only guards the lambda fallback path.
-const NRFI_PA_REG_PIT = 200;  // ~9-10 starts before a pitcher outweighs the prior
-const NRFI_PA_REG_H2H = 50;   // batter-vs-pitcher histories are tiny by nature
-// Per-PA/BF outcome rates from a raw stat line.
-// reg = pseudo-PA of league-average prior; omit (or 0) for raw rates.
-function paRates(st, denom, reg) {
-  const d = Number(denom || 0);
-  if (!st || d <= 0) return null;
-  const n = (x) => Number(x || 0);
-  const bb = (n(st.baseOnBalls) + n(st.hitByPitch)) / d;
-  const hr = n(st.homeRuns) / d;
-  const s3 = n(st.triples) / d;
-  const s2 = n(st.doubles) / d;
-  const s1 = Math.max(0, n(st.hits) - n(st.doubles) - n(st.triples) - n(st.homeRuns)) / d;
-  const out = Math.max(0, 1 - bb - hr - s3 - s2 - s1);
-  const raw = { out, bb, s1, s2, s3, hr };
-  // If the events outnumber the denominator (a stat line paired with the wrong
-  // count), `out` floors at 0 while the hit rates keep their full value and the
-  // row stops being a distribution. matchupPA would renormalise it into a silent
-  // reweighting rather than an error, so square it up here.
-  const rawSum = Object.values(raw).reduce((a, b) => a + b, 0);
-  if (rawSum > 1) for (const key of Object.keys(raw)) raw[key] /= rawSum;
-  const k = Number(reg || 0);
-  if (k <= 0) return raw;
-  const o = {};
-  for (const key of ["out", "bb", "s1", "s2", "s3", "hr"]) {
-    o[key] = (raw[key] * d + NRFI_LG_PA[key] * k) / (d + k);
-  }
-  return o;
-}
-// Log5 matchup of a batter vs a pitcher's allowed rates, normalized to sum 1.
-function matchupPA(b, p, lg) {
-  const keys = ["out", "bb", "s1", "s2", "s3", "hr"];
-  const raw = {}; let sum = 0;
-  for (const k of keys) { const v = lg[k] > 0 ? (b[k] * p[k]) / lg[k] : 0; raw[k] = v; sum += v; }
-  if (sum <= 0) return Object.assign({}, lg);
-  const o = {}; for (const k of keys) o[k] = raw[k] / sum;
-  return o;
-}
-// Advance base/out state for one outcome. base = 3-bit (1=1B,2=2B,4=3B).
-function advanceBaseOut(base, outs, o) {
-  const r1 = base & 1, r2 = base & 2 ? 1 : 0, r3 = base & 4 ? 1 : 0, on1 = base & 1 ? 1 : 0;
-  if (o === "out") return [base, outs + 1, 0];
-  if (o === "bb") {
-    if (on1 && r2 && r3) return [7, outs, 1];              // loaded -> forced run in
-    if (on1 && r2) return [7, outs, 0];                    // 1st&2nd -> loaded
-    if (on1) return [1 | 2 | (r3 ? 4 : 0), outs, 0];       // 1st occupied -> 1st&2nd(+3rd)
-    return [1 | (r2 ? 2 : 0) | (r3 ? 4 : 0), outs, 0];     // batter to 1st
-  }
-  if (o === "s1") return [1 | (on1 ? 2 : 0), outs, r2 + r3];        // 2nd,3rd score; 1st->2nd
-  if (o === "s2") return [2 | (on1 ? 4 : 0), outs, r2 + r3];        // 2nd,3rd score; 1st->3rd
-  if (o === "s3") return [4, outs, on1 + r2 + r3];                  // all score; batter->3rd
-  if (o === "hr") return [0, outs, on1 + r2 + r3 + 1];             // everyone + batter
-  return [base, outs, 0];
-}
-// Probability the half-inning is scoreless, batting `batters` in order.
-function simHalfNoRun(batters, pAllow, lg, maxBatters) {
-  const N = maxBatters || 12;
-  const keys = ["out", "bb", "s1", "s2", "s3", "hr"];
-  let D = new Array(24).fill(0); D[0] = 1;   // bases empty, 0 outs
-  let noRun = 0;
-  for (let i = 0; i < N; i++) {
-    const b = batters[i] || lg;
-    const dist = matchupPA(b, pAllow, lg);
-    const nd = new Array(24).fill(0);
-    for (let s = 0; s < 24; s++) {
-      const m = D[s]; if (m <= 0) continue;
-      const base = Math.floor(s / 3), outs = s % 3;
-      for (const o of keys) {
-        const po = dist[o]; if (po <= 0) continue;
-        const adv = advanceBaseOut(base, outs, o);
-        if (adv[2] > 0) continue;                 // a run scored -> not scoreless
-        if (adv[1] >= 3) noRun += m * po;         // 3 outs, still 0 runs
-        else nd[adv[0] * 3 + adv[1]] += m * po;
-      }
-    }
-    D = nd;
-    if (D.reduce((a, x) => a + x, 0) < 1e-6) break;
-  }
-  return nClamp(noRun + D.reduce((a, x) => a + x, 0), 0.02, 0.98);
-}
+/* ---- The base-out simulation stood here. ----
+
+   NRFI_LG_PA (league per-PA outcome distribution), NRFI_PA_REG_PIT/H2H, paRates
+   (per-PA rates off a raw stat line, regressed toward the league profile),
+   matchupPA (log5 batter-vs-pitcher), advanceBaseOut (24-state base/out
+   transition) and simHalfNoRun (the forward pass over the batting order) all
+   lived in this block and had no reader outside it.
+
+   Removed on a paired 1555-game measurement; the arithmetic and the numbers are
+   in the note inside nrfiEvaluate, at the point where the blend used to happen.
+   The short version: it moved the probability twelve times more than run-to-run
+   noise and could not be told apart from zero on either Brier or AUC.
+
+   IF YOU ARE REBUILDING THIS, do not start from scratch — it is in git, and the
+   commit that removed it carries the measurement. Start instead by deciding what
+   NEW information it would carry, because the finding was not that the sim was
+   implemented badly. It was that per-PA season rates run through a Markov chain
+   tell you what the lambda path already knew. ---- */
 
 // Full research pass for one game -> probability + informative checks.
 function nrfiEvaluate(ctx) {
@@ -7718,34 +7560,13 @@ function nrfiEvaluate(ctx) {
     nClamp(1 + (skill.f - 1) * 1.0 + (opener.f - 1) * 0.5 + (openG.f - 1) * 1.0 + (load.f - 1) * 0.7 + (trend.f - 1) * 0.30 + (venue.f - 1) * 0.5, 0.78, 1.25);
   const awayOffKRate = offKrateFactor(ctx.awayOff);
   const homeOffKRate = offKrateFactor(ctx.homeOff);
-  /* The offense adjustments the base-out sim does NOT already contain.
-   *
-   * The sim reads real batters against real allow-rates, so lineup strength and
-   * platoon are genuinely inside it and must not be applied twice — that part of
-   * the original reasoning was right. But it left out three that season rates
-   * cannot contain, and the sim path is the one that runs once lineups post,
-   * which is to say almost all of them: measured 13 of 15 on the 2026-08-15
-   * board. So the model's headline number changed character a few hours before
-   * first pitch, and the checks list — which is built from the factors on either
-   * path — kept printing "off cold (-33pp)" and casting its ballot while nothing
-   * behind the probability carried it. Three such games on that same slate, all
-   * between 48% and 51%, which is exactly where a 0.5-weight offense term
-   * decides the call.
-   *
-   *   offTrend  0.5   last ten games of 1st-inning scoring; a recent deviation
-   *                   from the season is by construction not in the season.
-   *   offVenue  0.3   team-specific home/road gap; batter rates are venue-blended.
-   *   kRate     0.35  1st-inning K% vs league.
-   *
-   * Weights match offMult so the two paths agree. kRate does partly overlap the
-   * sim's own out-rate, but it overlaps the lambda path's 1st-inning run rate the
-   * same way — a pre-existing double-count in both, not one introduced here.
-   * Clamp is wide enough not to bind: the three terms cap at about +-0.083.
+  /* offSimCtx lived here: a second offense-context helper that re-applied
+   * offTrend/offVenue/kRate at offMult's own weights, because the base-out sim
+   * contained lineup and platoon but not those three. It went with the sim. The
+   * three factors were never the problem and are untouched — they still reach the
+   * number through offMult on the line below, which is now the only route they
+   * have. One offense recipe instead of two that had to be kept in step by hand.
    */
-  const offSimCtx = (trend, venue, kRate) =>
-    nClamp(1 + (trend.f - 1) * 0.5 + (venue.f - 1) * 0.3 + (kRate.f - 1) * 0.35, 0.88, 1.12);
-  const awayOffSim = offSimCtx(awayOffTrend, awayOffVenue, awayOffKRate);
-  const homeOffSim = offSimCtx(homeOffTrend, homeOffVenue, homeOffKRate);
   const awayOff = awayOffBase * offMult(ctx.awayLineup, ctx.awayTravel, awayOffTrend, awayOffAdv, awayOffVenue, awayOffKRate);
   const homeOff = homeOffBase * offMult(ctx.homeLineup, ctx.homeTravel, homeOffTrend, homeOffAdv, homeOffVenue, homeOffKRate);
   const awayPit = awayPitBase * pitMult(awaySkill, awayOpen, awayOpenG, awayLoad, awayTrend, awayVenue);
@@ -7762,59 +7583,54 @@ function nrfiEvaluate(ctx) {
    * probabilities again; the point of taking it out is that it cannot come
    * back by accident. */
   const env = nClamp(1 + (ctx.wx.factor - 1), 0.85, 1.20);
-  // λ-model (fallback when we don't have posted batters + pitcher allow-rates).
-  let p0top = halfNoRun(awayOff, homePit, env); // away bats vs home starter
-  let p0bot = halfNoRun(homeOff, awayPit, env); // home bats vs away starter
-  let method = "model";
-  const awayB = ctx.awayLineup && ctx.awayLineup.batters;
-  const homeB = ctx.homeLineup && ctx.homeLineup.batters;
-  const homeAllow = ctx.homeMeta && ctx.homeMeta.allow;
-  const awayAllow = ctx.awayMeta && ctx.awayMeta.allow;
-  if (awayB && homeAllow && homeB && awayAllow) {
-    // Base-out simulation captures matchup + lineup + platoon + pitcher skill
-    // from the raw rates. Apply only what the season rates DON'T contain:
-    // recent form, opener/bullpen, travel, and park/weather.
-    // Form weight 0.10 (down from 0.6) matches lambda path — backtest LR showed form counterproductive.
-    const homeCtx = nClamp(1 + (homeOpen.f - 1) * 0.5 + (homeOpenG.f - 1) * 1.0 + (homeLoad.f - 1) * 0.7 + (homeTrend.f - 1) * 0.30 + (homeVenue.f - 1) * 0.5, 0.82, 1.2);
-    const awayCtx = nClamp(1 + (awayOpen.f - 1) * 0.5 + (awayOpenG.f - 1) * 1.0 + (awayLoad.f - 1) * 0.7 + (awayTrend.f - 1) * 0.30 + (awayVenue.f - 1) * 0.5, 0.82, 1.2);
-    const s0top = simHalfNoRun(awayB, homeAllow, NRFI_LG_PA);
-    const s0bot = simHalfNoRun(homeB, awayAllow, NRFI_LG_PA);
-    const pRunTop = nClamp((1 - s0top) * homeCtx * ctx.awayTravel.factor * awayOffAdv.f * awayOffSim * env, 0.02, 0.97);
-    const pRunBot = nClamp((1 - s0bot) * awayCtx * ctx.homeTravel.factor * homeOffAdv.f * homeOffSim * env, 0.02, 0.97);
-    /* The sim used to overwrite the lambda path outright the moment lineups
-       posted. That was never measured. When it finally was, it lost.
+  /* ONE PATH. There used to be two, blended at NRFI_SIM_W = 0.20: this λ-model
+     and a base-out Markov simulation that ran the posted lineup batter by batter
+     against the starter's per-PA allow rates. The sim is gone, and this is the
+     measurement that removed it.
 
-       Paired over 395 games — same games, same inputs, only the path differs
-       (scripts/desk-nrfi-backtest.js, 45-day window):
+     Paired over 1555 games / 118 dates — same games, same outcomes, same fetch,
+     the scoring path the only difference (scripts/nrfi-backtest-ab.js, which
+     resamples by date because a slate shares parks, weather and one fetch of our
+     own data):
 
-           w:       0.0     0.2     0.5     1.0 (old)
-           Brier    .2321   .2321   .2332   .2377
-           AUC      .6570   .6593   .6551   .6221
-           BET55+    389     369     343     300
+         blend (w=0.20)   Brier .24832   AUC .5700
+         λ only           Brier .24850   AUC .5703
+         difference       -0.00018 Brier (se 0.00016, t -1.12)
+                          -0.0003  AUC   (t -0.16)
+         side flips       45 games; the blend was right on 22 of them (48.9%)
 
-       Pure sim was worst on every column at once: worse Brier, worse
-       discrimination, AND a third fewer playable games. It compresses toward
-       50 (sd 8.1pp vs lambda's 10.5pp), so the 52/55/57/63 ladder has less to
-       bite on. That compression is what "the model got less accurate and
-       stopped giving me picks" actually was.
+     Both TOO CLOSE TO CALL against that harness's own stated resolution: it
+     could not have separated anything smaller than 0.00031 Brier or 0.0038 AUC.
+     For scale, the model's whole calibrated edge over the base rate is ~0.0039
+     Brier, so the entire simulation was worth at most ~5% of the model's skill
+     and could not be told apart from zero.
 
-       Blend in logit space, not probability space: averaging probabilities
-       drags every mix toward 0.5, which would make the midpoint look good for
-       a reason unrelated to either path being right.
+     THE PART THAT DECIDED IT: the sim was not merely noise. It moved p on 95.8%
+     of games, mean 0.59pp and max 3.04pp, against a measured run-to-run drift of
+     0.048pp — twelve times the noise floor. So it was systematically and
+     confidently moving the number in directions uncorrelated with outcomes, and
+     on the 45 games where it actually changed which side you would bet it went
+     22/45. A term that big and that useless is worse than one that does nothing.
 
-       w = 0.20 rather than 0 because the minimum is shallow — 0.0 through 0.3
-       sit within 0.0002 Brier of each other — and AUC peaks at 0.2. The sim
-       carries real matchup information, just far less than one full vote. */
-    const pSim = (1 - pRunTop) * (1 - pRunBot);
-    const pLam = p0top * p0bot;
-    const lgt = (p) => Math.log(p / (1 - p));
-    // Folded into one half so the `p0top * p0bot` product below reproduces the
-    // blend exactly rather than re-multiplying two already-combined halves.
-    p0top = 1 / (1 + Math.exp(-(NRFI_SIM_W * lgt(nClamp(pSim, 0.02, 0.98)) +
-      (1 - NRFI_SIM_W) * lgt(nClamp(pLam, 0.02, 0.98)))));
-    p0bot = 1;
-    method = "blend";
-  }
+     WHAT THE OLD COMMENT HERE CLAIMED, and why it did not survive: it justified
+     w = 0.20 over w = 0 on 395 games, on the grounds that Brier ties across
+     0.0-0.3 and "AUC peaks at 0.2". On 1022 games the AUC tiebreak had switched
+     to λ; on the full 1555 it switched back on Brier and stayed with λ on AUC,
+     every reading inside |t| < 1.2. The peak was never there. Do not re-derive it
+     from a window smaller than about 1500 games — at 395 this looks decisive and
+     is not.
+
+     Before it was removed, NRFI_SIM_W was made sweepable from the environment so
+     the endpoints could be checked against each other: w=0 was verified to
+     reproduce this λ path to 4dp on 92 games, 91 of them on the old blend path.
+     That scaffolding came out with the constant it swept — it is in git alongside
+     the measurement if this is ever re-opened. */
+  const p0top = halfNoRun(awayOff, homePit, env); // away bats vs home starter
+  const p0bot = halfNoRun(homeOff, awayPit, env); // home bats vs away starter
+  // Retained as a field, not a variable: rows, caches and the UI all record which
+  // path produced a number, and a backtest artifact that cannot say so is a page
+  // of numbers with no provenance. There is one path now, and it says so.
+  const method = "model";
   // dayGameShift is 0 — see the block above for the measurement that withdrew
   // it. Kept as a named term rather than deleted so the next person to reach for
   // a day/night adjustment finds the 1,936-game result instead of the intuition.
@@ -7824,33 +7640,14 @@ function nrfiEvaluate(ctx) {
     : nClamp(unlogit(logit(nClamp(p, 0.02, 0.98)) - dayGameShift), 0.02, 0.98));
   const pNRFI = applyShift(p0top * p0bot);
 
-  // Projected sim: when lineups aren't posted, run the Markov sim with the team's
-  // top-OBP active roster batters vs this pitcher's season allow rates.
-  // Falls back to synthetic team-rate batters if the roster fetch failed.
-  let pNRFI_simProj = null;
-  if (method !== "sim" && homeAllow && awayAllow) {
-    const synthLine = (teamOff) => {
-      const lgRate = 0.50;
-      const rate = teamOff && teamOff.rate != null ? teamOff.rate : lgRate;
-      const rawScale = Math.min(1.5, Math.max(0.6, rate / lgRate));
-      const outNew = Math.max(0.55, 1 - (1 - NRFI_LG_PA.out) * rawScale);
-      const ns = (1 - outNew) / (1 - NRFI_LG_PA.out);
-      return new Array(5).fill({ out: outNew, bb: NRFI_LG_PA.bb * ns, s1: NRFI_LG_PA.s1 * ns, s2: NRFI_LG_PA.s2 * ns, s3: NRFI_LG_PA.s3 * ns, hr: NRFI_LG_PA.hr * ns });
-    };
-    const awaySimBatters = ctx.awayBestLineup || synthLine(ctx.awayOff);
-    const homeSimBatters = ctx.homeBestLineup || synthLine(ctx.homeOff);
-    const sTop = simHalfNoRun(awaySimBatters, homeAllow, NRFI_LG_PA);
-    const sBot = simHalfNoRun(homeSimBatters, awayAllow, NRFI_LG_PA);
-    const hPC = nClamp(1 + (homeOpen.f-1)*0.5 + (homeOpenG.f-1)*1.0 + (homeLoad.f-1)*0.7 + (homeTrend.f-1)*0.30 + (homeVenue.f-1)*0.5, 0.82, 1.2);
-    const aPC = nClamp(1 + (awayOpen.f-1)*0.5 + (awayOpenG.f-1)*1.0 + (awayLoad.f-1)*0.7 + (awayTrend.f-1)*0.30 + (awayVenue.f-1)*0.5, 0.82, 1.2);
-    // Was the odd one out: it multiplied offVenue in raw and at full strength
-    // while the real sim applied none of the three, so the projected number and
-    // the number that replaced it were built to different recipes. Both now go
-    // through offSimCtx.
-    const pRT = nClamp((1-sTop) * hPC * ctx.awayTravel.factor * awayOffAdv.f * awayOffSim * env, 0.02, 0.97);
-    const pRB = nClamp((1-sBot) * aPC * ctx.homeTravel.factor * homeOffAdv.f * homeOffSim * env, 0.02, 0.97);
-    pNRFI_simProj = applyShift((1-pRT) * (1-pRB));
-  }
+  /* The projected sim stood here — the same Markov sim run before lineups posted,
+     against the team's top-OBP active roster (or a synthetic line built from the
+     team rate when the roster fetch failed), surfaced on the card as a "what the
+     sim would say" badge. It cannot outlive the sim it was projecting: it shared
+     simHalfNoRun, the per-PA rates and the allow rates, and it existed to preview
+     a number the model no longer computes. Removed rather than left dark, so it
+     cannot come back by accident — the same rule the umpire term above was
+     removed under. */
 
   // Data-confidence: a decisive number on missing inputs isn't a real edge.
   let conf = 1;
@@ -8241,7 +8038,7 @@ function nrfiEvaluate(ctx) {
   // looking "YRFI · Pass — too close" rather than as the missing data it is.
   // Report it instead: modelError is what the board and the record filter on.
   const modelError = !Number.isFinite(pNRFI) ? "model produced a non-finite probability" : null;
-  return { pNRFI: modelError ? null : pNRFI, pNRFI_simProj, checks,
+  return { pNRFI: modelError ? null : pNRFI, checks,
     aligned: { agree, total: famTotal, rows: nonNeutral.length },
     confidence: conf, method, pitProfiles, factors, modelError };
 }
@@ -8424,7 +8221,8 @@ const NRFI_TIER_STRONG = 57;
 // only (see the gamesStarted filter in pitcherRollingNRFI), so a reliever reads
 // as thin no matter how much he has actually pitched. An opener with a full
 // season of relief work is not unknown: the model already prices him off his
-// complete season line via paRates, and 25+ innings across 15+ appearances is a
+// complete season line — ERA, innings and appearance counts, through
+// openerFactor and seasonLoadFactor — and 25+ innings across 15+ appearances is a
 // real book on how he handles a fresh inning. Penalising that identically to a
 // September callup with four innings discards the workload we do have.
 //
@@ -8521,7 +8319,10 @@ function nrfiTier(pMax) {
 //      point-in-time and his overall line was not. Those are now summed out of
 //      the game log up to the scored date, and the pitcher allow-rates are
 //      regressed with NRFI_PA_REG_PIT as the app does (the backtest had been
-//      passing no regression at all, scoring a sharper model than ships). Over
+//      passing no regression at all, scoring a sharper model than ships).
+//      [HISTORICAL: allow-rates and NRFI_PA_REG_PIT fed the base-out sim, which
+//      has since been removed. This records how the shipped seed was arrived at
+//      and is left as written; it does not describe the current model.] Over
 //      the same 558 games that cost another 0.8pp of pick-side accuracy and
 //      1.0 of AUC — Brier .2436 -> .2449 — and moved the fitted shift from
 //      -0.048 to -0.063, which is this value.
@@ -9086,13 +8887,14 @@ async function scanNrfi(onProgress, dateOverride) {
         teamOffenseRolling(home && home.team && home.team.id, date, season),
       ]);
     // Lineups vs the opposing starter's hand (needs the hands resolved first).
-    const awayPosted = (lu.awayPlayers || []).length >= 3;
-    const homePosted = (lu.homePlayers || []).length >= 3;
-    const [awayLineup, homeLineup, awayBestLineup, homeBestLineup] = await Promise.all([
+    /* teamBestLineup ran here for both sides whenever a lineup was unposted, to
+       feed the projected sim. Both calls are gone with it, and that is the whole
+       per-game API saving from this removal: a roster fetch plus one season-stat
+       fetch per hitter, for every unposted side on the slate — the majority of a
+       board until a couple of hours before first pitch. */
+    const [awayLineup, homeLineup] = await Promise.all([
       topOrderStrength(lu.awayPlayers, season, homeMeta && homeMeta.hand, homeMeta && homeMeta.id),
       topOrderStrength(lu.homePlayers, season, awayMeta && awayMeta.hand, awayMeta && awayMeta.id),
-      awayPosted ? Promise.resolve(null) : teamBestLineup(away && away.team && away.team.id, season, homeMeta && homeMeta.hand, homeMeta && homeMeta.id),
-      homePosted ? Promise.resolve(null) : teamBestLineup(home && home.team && home.team.id, season, awayMeta && awayMeta.hand, awayMeta && awayMeta.id),
     ]);
     const wx = weatherPark(g, home && home.team && home.team.abbreviation);
     const ctx = {
@@ -9100,7 +8902,7 @@ async function scanNrfi(onProgress, dateOverride) {
       awayPP: (awayPP && awayPP.fullName) || "TBD", homePP: (homePP && homePP.fullName) || "TBD",
       awayPPId: awayPP && awayPP.id, homePPId: homePP && homePP.id,
       awayOff, homeOff, awayPit, homePit, awayMeta, homeMeta,
-      awayLineup, homeLineup, awayBestLineup, homeBestLineup, awayTravel, homeTravel, wx,
+      awayLineup, homeLineup, awayTravel, homeTravel, wx,
       awayRolling, homeRolling, awayOffRolling, homeOffRolling,
       awayPeri: awayPP ? periById[awayPP.id] : null,
       homePeri: homePP ? periById[homePP.id] : null,
@@ -9121,7 +8923,7 @@ async function scanNrfi(onProgress, dateOverride) {
       awayAbbr: away && away.team && away.team.abbreviation, homeAbbr: home && home.team && home.team.abbreviation,
       awayId: away && away.team && away.team.id, homeId: home && home.team && home.team.id,
       awayPP: ctx.awayPP, homePP: ctx.homePP,
-      pNRFI: ev.pNRFI, pNRFI_simProj: ev.pNRFI_simProj, pYRFI: 1 - ev.pNRFI, checks: ev.checks, aligned: ev.aligned, confidence: ev.confidence, method: ev.method, pitProfiles: ev.pitProfiles, parkEnv: ctx.wx,
+      pNRFI: ev.pNRFI, pYRFI: 1 - ev.pNRFI, checks: ev.checks, aligned: ev.aligned, confidence: ev.confidence, method: ev.method, pitProfiles: ev.pitProfiles, parkEnv: ctx.wx,
       awayYrfiPct: yrfiPctFromLambda(awayOff && awayOff.rate),
       homeYrfiPct: yrfiPctFromLambda(homeOff && homeOff.rate),
       awayOffSample: awayOff ? awayOff.sample : null,
@@ -11210,22 +11012,18 @@ function FirstInning() {
               logic; only the position changed. The two starters and the two offences
               are the four inputs to a first-inning bet and three of them were above
               the fold while the fourth was down here among the badges. */}
+          {/* Was "the model is using projected batting orders". It no longer is,
+              and did not strictly do so before either — that read across from the
+              SIM PROJ badge that used to sit beside it. With no lineup posted the
+              top-of-order OBP factor sits at a flat 1 and the offense side runs on
+              team season rates, so the honest thing to say is that a real input is
+              MISSING, not that a substitute is standing in for it. */}
           {!r.lineupPosted && (
-            <span title="Official starting lineups haven't been posted yet. The model is using projected batting orders, which are less accurate than the real lineup. Check back closer to game time." style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", background: "rgba(230,160,0,0.1)", border: "1px solid rgba(230,160,0,0.4)", borderRadius: 20, fontSize: 11, fontWeight: 700, color: "var(--amber)" }}>⚠ LINEUPS PENDING</span>
+            <span title="Official starting lineups haven't been posted yet, so the model is running without the top-of-order OBP adjustment — the offense side is on team season rates alone. The number will firm up once lineups post. Check back closer to game time." style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", background: "rgba(230,160,0,0.1)", border: "1px solid rgba(230,160,0,0.4)", borderRadius: 20, fontSize: 11, fontWeight: 700, color: "var(--amber)" }}>⚠ LINEUPS PENDING</span>
           )}
-          {!r.lineupPosted && r.pNRFI_simProj != null && (() => {
-            const calProj = applyCalibration(r.pNRFI_simProj, calib);
-            const blendProj = r.market ? nrfiBlend(calProj, r.market.marketNRFI) : calProj;
-            const projPct = Math.max(blendProj, 1 - blendProj) * 100;
-            const projCall = blendProj >= 0.5 ? "NRFI" : "YRFI";
-            const diff = projPct - r.pMax;
-            const arrow = Math.abs(diff) < 1 ? "" : diff > 0 ? " ↑" : " ↓";
-            return (
-              <span title={"Sim projection: if the lineup were the top active-roster batters vs this starter, model says " + projCall + " " + projPct.toFixed(0) + "%. Actual may shift once real lineups post. Δ " + (diff > 0 ? "+" : "") + diff.toFixed(0) + "pp vs λ-model."} style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", background: "rgba(120,130,150,0.08)", border: "1px solid rgba(120,130,150,0.25)", borderRadius: 20, fontSize: 11, fontWeight: 700, color: "var(--dim)" }}>
-                SIM PROJ {projCall} {projPct.toFixed(0)}%{arrow}
-              </span>
-            );
-          })()}
+          {/* The SIM PROJ badge sat here, previewing the base-out sim's number
+              before lineups posted. It went with the sim — see the note in
+              nrfiEvaluate for the 1555-game measurement. */}
           {r.parkEnv && (() => {
             const f = r.parkEnv.factor;
             const label = f >= 1.06 ? "HITTER FRIENDLY" : f >= 1.02 ? "SLIGHT HITTER LEAN" : f <= 0.95 ? "PITCHER FRIENDLY" : f <= 0.98 ? "SLIGHT PITCHER LEAN" : null;

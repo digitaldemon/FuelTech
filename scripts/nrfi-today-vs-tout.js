@@ -24,7 +24,7 @@
 // Teams are matched on full club NAME from the schedule feed rather than on
 // abbreviation, because the abbreviations do not agree across sources — the
 // scratch version also carried "ARI" where MLB says "AZ".
-const { J, savant, mapLimit, buildCtx, scoreBothPaths, makeVerdict, modelSig, PIT_MODE } = require("./nrfi-model-lib");
+const { J, savant, mapLimit, buildCtx, scoreGame, makeVerdict, modelSig, PIT_MODE } = require("./nrfi-model-lib");
 const { nrfiVerdict, applyCalibration } = makeVerdict();
 
 const args = process.argv.slice(2);
@@ -84,7 +84,7 @@ const HIS_AS_RENDERED = args;
     const key = keyOf(g);
     const ctx = await buildCtx(g, date, se, periBy);
     if (!ctx) return { key, skip: "no context (probable pitcher not posted?)" };
-    const { ev } = scoreBothPaths(ctx, lg);
+    const ev = scoreGame(ctx, lg);
     if (ev.pNRFI == null) return { key, skip: "model returned no probability" };
     const p = applyCalibration(ev.pNRFI);
     const call = p >= 0.5 ? "NRFI" : "YRFI";

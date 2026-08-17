@@ -15,7 +15,7 @@
  *   node scripts/nrfi-why.js AZ@ATL [YYYY-MM-DD]
  */
 const path = require("path");
-const { J, savant, buildCtx, scoreBothPaths, makeVerdict, modelSig, PIT_MODE } =
+const { J, savant, buildCtx, scoreGame, makeVerdict, modelSig, PIT_MODE } =
   require(path.join(__dirname, "nrfi-model-lib.js"));
 const { nrfiVerdict, applyCalibration } = makeVerdict();
 
@@ -62,7 +62,7 @@ const ABLATIONS = [
     if (!WANT.includes(key)) continue;
 
     const ctx = await buildCtx(g, DATE, se, periBy);
-    const base = scoreBothPaths(ctx, lg).ev;
+    const base = scoreGame(ctx, lg);
     const baseCal = applyCalibration(base.pNRFI);
     const call = (p) => (p >= 0.5 ? "NRFI" : "YRFI");
 
@@ -79,7 +79,7 @@ const ABLATIONS = [
       const c = clone(ctx);
       mut(c);
       let p;
-      try { p = applyCalibration(scoreBothPaths(c, lg).ev.pNRFI); }
+      try { p = applyCalibration(scoreGame(c, lg).pNRFI); }
       catch (e) { console.log("    " + name.padEnd(34) + "  ERROR " + e.message); continue; }
       rows.push([name, p, p - baseCal]);
     }
@@ -97,7 +97,7 @@ const ABLATIONS = [
     const all = clone(ctx);
     for (const [, mut] of ABLATIONS) mut(all);
     let allP = null;
-    try { allP = applyCalibration(scoreBothPaths(all, lg).ev.pNRFI); } catch { /* some paths need lineups */ }
+    try { allP = applyCalibration(scoreGame(all, lg).pNRFI); } catch { /* some paths need lineups */ }
     if (allP != null) console.log("    " + "ALL OF THE ABOVE".padEnd(34) +
       (allP * 100).toFixed(1).padStart(6) + "%  " + "(sanity: should sit near the league base rate)");
 

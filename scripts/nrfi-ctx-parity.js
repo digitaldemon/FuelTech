@@ -37,7 +37,7 @@
 // a genuinely rare factor can sit at zero on a small sample — which is exactly
 // why it runs over several dates and reports the count rather than asserting on
 // one slate.
-const { J, savant, buildCtx, scoreBothPaths, MODEL_SLICES, modelSig } = require("./nrfi-model-lib");
+const { J, savant, buildCtx, scoreGame, MODEL_SLICES, modelSig } = require("./nrfi-model-lib");
 const fs = require("fs");
 const path = require("path");
 
@@ -98,9 +98,10 @@ const read = new Set();
  * simply never noticed.
  */
 const EXCUSED = {
-  lg: "supplied by scoreBothPaths, which wraps buildCtx's object before evaluating",
-  awayBestLineup: "projected-sim input with a documented synthetic fallback; pNRFI_simProj is not the headline number",
-  homeBestLineup: "projected-sim input with a documented synthetic fallback; pNRFI_simProj is not the headline number",
+  lg: "supplied by scoreGame, which wraps buildCtx's object before evaluating",
+  // awayBestLineup/homeBestLineup were excused here as projected-sim inputs with
+  // a synthetic fallback. The sim is gone and the model no longer reads them, so
+  // the excuse goes with it rather than sitting here widening the valve.
 };
 
 /* Factors that are SUPPOSED to be the same on every game.
@@ -130,7 +131,7 @@ const CONSTANT_BY_DESIGN = {
       const ctx = await buildCtx(g, date, se, periBy);
       if (!ctx) continue;
       if (!ctxSample) ctxSample = ctx;
-      const { ev } = scoreBothPaths(ctx, lg);
+      const ev = scoreGame(ctx, lg);
       if (ev.factors) rows.push(ev.factors);
     }
   }

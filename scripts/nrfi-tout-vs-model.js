@@ -24,7 +24,7 @@
 // backtest uses, so this measures the shipped model rather than a copy of it.
 const fs = require("fs");
 const path = require("path");
-const { J, savant, mapLimit, buildCtx, scoreBothPaths, makeVerdict, modelSig, PIT_MODE, pitStats } = require("./nrfi-model-lib");
+const { J, savant, mapLimit, buildCtx, scoreGame, makeVerdict, modelSig, PIT_MODE, pitStats } = require("./nrfi-model-lib");
 const { gradeSeller } = require("./nrfi-tout-grade");
 const { nrfiThinArm: thinArm } = makeVerdict();
 
@@ -81,7 +81,7 @@ const CACHE = path.join(__dirname, ABLATIONS
       }
       process.stderr.write(`!! --stale: ${msg}. Numbers below describe the OLD model.\n`);
     }
-    process.stderr.write(`loaded cached scores from ${c.at} (model ${c.simW == null ? "?" : "NRFI_SIM_W=" + c.simW}, sig ${c.modelSig || "none recorded"})\n`);
+    process.stderr.write(`loaded cached scores from ${c.at} (sig ${c.modelSig || "none recorded"})\n`);
     dates = c.dates; slates = new Map(c.slates); byDate = new Map(c.byDate);
   } else {
     ({ dates, slates, byDate } = await collect(id, maxDates, se));
@@ -152,7 +152,7 @@ async function collect(id, maxDates, se) {
     const rows = await mapLimit(games, 5, async (g) => {
       const ctx = await buildCtx(g, date, se, periBy);
       if (!ctx) return null;
-      const { ev } = scoreBothPaths(ctx, lg);
+      const ev = scoreGame(ctx, lg);
       if (ev.pNRFI == null) return null;
       const inn1 = g.linescore.innings[0];
       const runs = (+(inn1.away?.runs || 0)) + (+(inn1.home?.runs || 0));
@@ -194,8 +194,9 @@ async function collect(id, maxDates, se) {
     console.error("!! last: " + ((mapLimit.lastErr && mapLimit.lastErr.message) || mapLimit.lastErr));
     if (rate > 0.2) { console.error("!! >20% — refusing to report off a partial model.\n"); process.exitCode = 1; throw new Error("partial model"); }
   }
-  const simW = (require("fs").readFileSync(require("path").join(__dirname, "..", "public", "desk", "app.jsx"), "utf8")
-    .match(/const NRFI_SIM_W = ([\d.]+);/) || [])[1] || null;
+  // simW was recorded here, scraped out of app.jsx. It named the weight on the
+  // base-out sim path, which no longer exists; modelSig alone identifies what
+  // scored these games now.
   // Record WHICH pitcher-split source scored these games. modelSig fingerprints
   // the model's constants, so it caught the rewind only because that landed with
   // other changes — a cache rebuilt under NRFI_LEAKY=1 hashes identically to a
@@ -240,7 +241,7 @@ async function collect(id, maxDates, se) {
         "`factors` before re-running.");
     }
   }
-  fs.writeFileSync(CACHE, JSON.stringify({ at: new Date().toISOString(), season: se, simW, modelSig,
+  fs.writeFileSync(CACHE, JSON.stringify({ at: new Date().toISOString(), season: se, modelSig,
     pitMode: PIT_MODE, pitStats: pitStats(),
     dates, slates: [...slates], byDate: [...byDate] }));
   process.stderr.write(`  cached to ${CACHE}\n`);

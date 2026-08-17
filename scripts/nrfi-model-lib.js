@@ -117,7 +117,9 @@ function declMarker(...names) {
 }
 // Pull the real model math out of app.jsx.
 const MODEL_SLICES = [
-  ["const NRFI_SIM_W = 0.20;", "const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));"],
+  // Started at NRFI_SIM_W until the sim was removed; that constant is gone from
+  // app.jsx, so the block now opens on the first constant that survived it.
+  ["const NRFI_LG_LAMBDA = 0.52;", "const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));"],
   ["function nrfiRegress(", "\n}"],
   ["function halfNoRun(", "\n}"],
   ["function pitchSkillFactor(", "\n}"],
@@ -153,7 +155,6 @@ const MODEL_SLICES = [
   ["function weatherPark(", "\n}"],
   ["const rate2 = (o)", ";"],
   ["const awayPit0 = (o)", ";"],
-  ["const NRFI_LG_PA = (() => {", "const NRFI_PA_REG_H2H = 50;"],
   // The shipped calibration seed, read rather than retyped. desk-nrfi-backtest
   // had it hardcoded in two places as +0.050 — wrong magnitude AND wrong sign
   // against the -0.048 in app.jsx — so its "shipped seed applied to each path"
@@ -162,110 +163,45 @@ const MODEL_SLICES = [
   // caught only because the fitted c moved and the printed comparison stopped
   // making sense.
   ["const NRFI_CALIB_SEED = {", "};"],
-  ["function paRates(", "\n}"],
-  ["function matchupPA(", "\n}"],
-  ["function advanceBaseOut(", "\n}"],
-  ["function simHalfNoRun(", "\n}"],
   ["function nrfiEvaluate(", "\n}"],
 ];
 const model = MODEL_SLICES.map(([a, b]) => slice(a, b)).join("\n");
-/* NRFI_SIM_W — how much of the shipped number comes from the base-out SIMULATION
- * rather than from the lambda path, sweepable from the environment.
+/* NRFI_SIM_W was made sweepable from here — read out of the bundle, overridden by
+ * a guarded textual substitution on the model source before the eval, tagged into
+ * ABLATIONS so a swept run could not be served the shipped model+s cache. It was
+ * scaffolding for one question: is the base-out sim worth its weight? The answer
+ * came back no on 1555 paired games, the sim was removed from app.jsx, and the
+ * constant it swept no longer exists. The scaffolding went with it rather than
+ * being left pointing at a declaration that is not there — a knob whose target has
+ * been deleted is worse than no knob, because it reads as a live option.
  *
- * It is declared HERE, a hundred and seventy lines above PIT_MODE / ROLL_MODE /
- * OBP_MODE / ENV_W, and not down among them, because it is a different kind of
- * switch. Those four are read by code in THIS file — they tilt a ctx or change
- * which fetcher runs — so they only have to exist before their first use at
- * runtime. NRFI_SIM_W is a constant inside app.jsx's own source text, and the
- * only way to change it without editing the board is to rewrite the text before
- * it is eval'd. That has to happen between the join above and the eval below,
- * and there is nowhere else it can go.
+ * It is in git if this is re-opened. The measurement is in the note inside
+ * nrfiEvaluate in app.jsx. */
+/* paRates, NRFI_PA_REG_PIT and NRFI_PA_REG_H2H were destructured here too, for
+ * the harness fetchers below. All three belonged to the base-out sim and were
+ * deleted from app.jsx with it, so they are gone from both sides.
  *
- * The shipped value is READ OUT OF THE BUNDLE, never retyped, for the same
- * reason nrfi-calib-walk.js reads NRFI_CALIB_SEED out of the working tree: a
- * sweep that decides whether to keep a constant must know what that constant
- * currently is, and a hardcoded default is how "no change from shipped" gets
- * reported against a value nobody ships any more.
+ * NO GUARD FOR THE FUNCTIONS, deliberately, and this was measured rather than
+ * assumed. The eval ends in a shorthand object literal, so a destructured name
+ * the bundle has stopped defining is a bare reference to a const in TDZ right
+ * here and throws at load:
  *
- * WHY THIS IS BEING ASKED. The comment on the constant in app.jsx justifies
- * w = 0.20 with a 395-game paired run (w 0.0/.2321, 0.2/.2321, 0.5/.2332,
- * 1.0/.2377) on the grounds that Brier ties and AUC peaks at 0.2. On the
- * 1022-game paired subset of the 120-day artifact the tie is still a tie and the
- * AUC tiebreak has switched sides — sim .24778/.57519 against lambda
- * .24796/.57530 — so the stated reason for the shipped value no longer holds on
- * the larger sample. This makes the question answerable at intermediate w
- * instead of only at the endpoints, which is what scoreBothPaths' evLam already
- * gives for free.
- */
-const SIM_W_SHIPPED = (() => {
-  const m = model.match(/const NRFI_SIM_W = ([\d.]+);/);
-  if (!m) throw new Error("NRFI_SIM_W not found in the model bundle — the declaration was " +
-    "renamed or reformatted, and this override would silently do nothing. Fix the pattern.");
-  return Number(m[1]);
-})();
-const SIM_W = process.env.NRFI_SIM_W == null ? SIM_W_SHIPPED : Number(process.env.NRFI_SIM_W);
-if (!Number.isFinite(SIM_W) || SIM_W < 0 || SIM_W > 1)
-  throw new Error("NRFI_SIM_W must be a number in [0,1], got " + JSON.stringify(process.env.NRFI_SIM_W));
-/* The substitution, guarded. A .replace that matches nothing returns the input
- * unchanged and throws nothing, so an unguarded one would run the whole sweep at
- * the shipped weight and print a flat, believable set of identical numbers. The
- * count check is the difference between "the override applied" and "the override
- * appeared to apply". */
-const modelSrc = SIM_W === SIM_W_SHIPPED ? model : (() => {
-  let hits = 0;
-  const out = model.replace(/const NRFI_SIM_W = [\d.]+;/g, () => {
-    hits++;
-    return "const NRFI_SIM_W = " + SIM_W + ";";
-  });
-  if (hits !== 1) throw new Error("NRFI_SIM_W override replaced " + hits + " declarations, expected 1");
-  return out;
-})();
-// The regression constants come out with the rest of the model, not as literals
-// here. They were in scope all along (the NRFI_LG_PA slice above ends on the
-// NRFI_PA_REG_H2H declaration) but were never destructured, so both fetchers
-// below called paRates with `reg` undefined and got raw rates back. The app
-// passes NRFI_PA_REG_PIT for a starter's allow-rates and NRFI_PA_REG_H2H for
-// batter-vs-pitcher histories, so the backtest was scoring UNregressed inputs
-// against a model that ships regressed ones — measuring a model that does not
-// exist, and flattering it, because an unregressed 12-batter h2h line is a much
-// louder signal than the shipped one.
-const { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP,
-  NRFI_PA_REG_PIT, NRFI_PA_REG_H2H, NRFI_CALIB_SEED } = eval('"use strict";\n' + modelSrc +
-  "\n;({ nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP," +
-  " NRFI_PA_REG_PIT, NRFI_PA_REG_H2H, NRFI_CALIB_SEED })");
+ *   function weatherPark(   -> ReferenceError: Cannot access before initialization
+ *
+ * A guard placed after that line could never run. NRFI_CALIB_SEED is different
+ * and does still need its check below: a constant arrives DEFINED but wrong when
+ * a slice cuts short, which no ReferenceError catches.
+ *
+ * The third class — a name the bundle USES but never destructures — belongs to
+ * nrfi-slice-gap.js, which looks for references the bundle does not define. Run
+ * it after touching the slice lists; this file cannot see that class and should
+ * not pretend to. */
+const { nrfiEvaluate, weatherPark, NRFI_LG_TOP3_OBP, NRFI_CALIB_SEED } =
+  eval('"use strict";\n' + model +
+  "\n;({ nrfiEvaluate, weatherPark, NRFI_LG_TOP3_OBP, NRFI_CALIB_SEED })");
 if (!Number.isFinite(NRFI_CALIB_SEED?.c)) {
   throw new Error("NRFI_CALIB_SEED did not come through the slice: " + JSON.stringify(NRFI_CALIB_SEED));
 }
-for (const [n, v] of [["NRFI_PA_REG_PIT", NRFI_PA_REG_PIT], ["NRFI_PA_REG_H2H", NRFI_PA_REG_H2H]]) {
-  if (!(v > 0)) throw new Error(n + " did not come through the slice: " + v);
-}
-/* No matching guard for the four FUNCTIONS beside them, deliberately.
- *
- * I wrote one, on the assumption that a name the bundle never defines just
- * destructures to undefined and fails later at "paRates is not a function" —
- * the same shape as nrfi-platoon-audit.js's standing "c.platoonFactor is not a
- * function". Measured instead of assumed, by commenting one slice line out of
- * MODEL_SLICES and loading this file in a fresh process:
- *
- *   function paRates(       -> ReferenceError: Cannot access 'paRates' before initialization
- *   function weatherPark(   -> ReferenceError: Cannot access 'weatherPark' before initialization
- *   function simHalfNoRun(  -> LOADED CLEAN, nothing fired
- *
- * The eval ends in a shorthand object literal, so a destructured name that the
- * bundle stopped defining is a bare reference to the const in TDZ right here,
- * and it throws at load already. A guard after that line cannot run. Adding
- * one would have been a check that never fires, defended by a paragraph that
- * was wrong — worse than no check, because the next reader believes it.
- *
- * The constants above are different and do still need theirs: they arrive
- * DEFINED but wrong when a slice cuts short, which no ReferenceError catches.
- *
- * simHalfNoRun is the case with no guard at all here: it is used inside the
- * bundle and never destructured, so dropping it loads clean and would throw at
- * whichever call site ran first. That one belongs to nrfi-slice-gap.js, which
- * looks for names the bundle references without defining — verified, it
- * reports "simHalfNoRun 4x in model" and exits 1. Run it after touching the
- * slice lists; this file cannot see that class and should not pretend to. */
 
 // ---- data (Node fetchers; faithful to the app's getJson logic) ----
 const J = async (u) => { const r = await fetch(u, { headers: { accept: "application/json" } }); if (!r.ok) throw new Error(u + " " + r.status); return r.json(); };
@@ -347,8 +283,11 @@ const PIT_MODE = process.env.NRFI_LEAKY === "1" ? "leaky" : "point-in-time";
 // is that a leaky cache and a clean one were byte-indistinguishable on their
 // metadata, so any artifact written by a run has to carry the mode that
 // produced it or the next reader inherits the same trap.
-const H2H_MODE = process.env.NRFI_NO_H2H === "1" ? "off (ablation)" : "season (leaks)";
-/* The top-of-order OBP factor, ablatable for the same reason h2h is.
+/* H2H_MODE lived here. type=[vsPlayer] leaked the scored game into its own
+ * inputs and could not be rewound, so it was bracketed by an ablation switch
+ * rather than fixed. It fed only the sim's per-batter rates; the sim is gone
+ * and so is the leak, which is why there is nothing left to bracket. */
+/* The top-of-order OBP factor, ablatable for the same reason h2h was.
  *
  * A hitting gameLog does not split by the opposing pitcher's hand, and topOrder
  * asks for sitCodes=[vl]/[vr], so there is no per-game log to sum into a
@@ -741,10 +680,10 @@ function teamOffRolling(teamId, asOf) {
 
 /* Point-in-time starter season line, summed out of the game log.
  *
- * nrfiEvaluate reads seasonEra, ip, g and allow off this object — openerFactor
- * and seasonLoadFactor take the first two, pitcherI01Profile the era, and the
- * base-out sim takes `allow` as the pitcher's per-PA event distribution. All
- * four came from the `type=[season]` payload, which is the pitcher's WHOLE
+ * nrfiEvaluate reads seasonEra, ip and g off this object — openerFactor and
+ * seasonLoadFactor take the last two, pitcherI01Profile the era. (A fourth
+ * field, `allow`, fed the base-out sim's per-PA event distribution and went
+ * with it.) All came from the `type=[season]` payload, which is the pitcher's WHOLE
  * season including the start being predicted, and for an April game including
  * every start through September. Rewinding pitI01 while leaving these whole
  * meant the pitcher's first inning was point-in-time and his overall line was
@@ -787,8 +726,7 @@ function sumPitLog(rows) {
     // A pitcher with appearances but no outs recorded has an undefined ERA, not
     // an infinite one — same call MLB's own "INF" sentinel forces, and null is
     // what the guards downstream are written against.
-    seasonEra: ip > 0 ? acc.earnedRuns * 9 / ip : null,
-    allow: acc.battersFaced > 0 ? paRates(acc, acc.battersFaced, NRFI_PA_REG_PIT) : null };
+    seasonEra: ip > 0 ? acc.earnedRuns * 9 / ip : null };
 }
 /* The L3 K/9 window, which nrfiEvaluate's "Pitcher K9 trend" check VOTES on.
  *
@@ -811,8 +749,8 @@ function recentK9Window(startsBefore) {
   for (const r of last) { k += Number(r.stat?.strikeOuts) || 0; ip += parseIp(r.stat?.inningsPitched); }
   return ip > 0 ? { recentK9: k * 9 / ip, recentIp: ip } : { recentK9: null, recentIp: null };
 }
-const pitMeta = (id, se, asOf) => id == null ? Promise.resolve({ hand: null, form: null, seasonEra: null, gs: null, g: null, ip: null, allow: null, id: null, recentK9: null, seasonK9: null, recentIp: null }) : memo("m" + id + se + (PIT_MODE === "leaky" || !asOf ? "" : ":" + asOf), async () => {
-  let hand = null, form = null, seasonEra = null, gs = null, g = null, ip = null, allow = null;
+const pitMeta = (id, se, asOf) => id == null ? Promise.resolve({ hand: null, form: null, seasonEra: null, gs: null, g: null, ip: null, id: null, recentK9: null, seasonK9: null, recentIp: null }) : memo("m" + id + se + (PIT_MODE === "leaky" || !asOf ? "" : ":" + asOf), async () => {
+  let hand = null, form = null, seasonEra = null, gs = null, g = null, ip = null;
   let recentK9 = null, seasonK9 = null, recentIp = null;
   try { const [p, gl] = await Promise.all([
       J(`https://statsapi.mlb.com/api/v1/people/${id}?hydrate=stats(group=[pitching],type=[season],season=${se})`),
@@ -826,7 +764,6 @@ const pitMeta = (id, se, asOf) => id == null ? Promise.resolve({ hand: null, for
       if (s) {
         seasonEra = numOrNull(s.era); gs = numOrNull(s.gamesStarted); g = numOrNull(s.gamesPlayed);
         ip = s.inningsPitched != null ? parseIp(s.inningsPitched) : null;
-        allow = paRates(s, s.battersFaced, NRFI_PA_REG_PIT);
         const k = Number(s.strikeOuts) || 0; if (ip > 0) seasonK9 = k * 9 / ip;
       }
       ({ recentK9, recentIp } = recentK9Window(splits.filter(isStart)));
@@ -840,13 +777,13 @@ const pitMeta = (id, se, asOf) => id == null ? Promise.resolve({ hand: null, for
         pitMeta.stats.miss++;
       } else {
         pitMeta.stats.pit++;
-        ({ gs, g, ip, seasonEra, seasonK9, allow } = sumPitLog(prior));
+        ({ gs, g, ip, seasonEra, seasonK9 } = sumPitLog(prior));
         ({ recentK9, recentIp } = recentK9Window(prior.filter(isStart)));
       }
     }
     const last = splits.slice(-3); if (last.length) { let er = 0, lip = 0; last.forEach((x) => { er += +(x.stat?.earnedRuns || 0); lip += parseIp(x.stat?.inningsPitched); }); if (lip > 0) form = er * 9 / lip; }
   } catch { /* nulls */ }
-  return { hand, form, seasonEra, gs, g, ip, allow, id, recentK9, seasonK9, recentIp };
+  return { hand, form, seasonEra, gs, g, ip, id, recentK9, seasonK9, recentIp };
 });
 // After the declaration, not before it: pitMeta is a const arrow, and a const is
 // hoisted without being initialised, so touching it above throws on load.
@@ -856,43 +793,27 @@ pitMeta.stats = { pit: 0, miss: 0, api: 0 };
 // the drift is silent — the numbers still look like numbers.
 const LG_OBP = NRFI_LG_TOP3_OBP, C = (x, a, b) => Math.max(a, Math.min(b, x));
 if (!(LG_OBP > 0.2 && LG_OBP < 0.5)) throw new Error("NRFI_LG_TOP3_OBP did not come through the slice: " + LG_OBP);
-const topOrder = async (players, se, oppHand, oppPitcherId) => {
-  const ids = (players || []).slice(0, 5).map((p) => p?.id).filter(Boolean);
-  if (ids.length < 3) return { factor: 1, obp: null, note: "lineup n/a", batters: null };
+const topOrder = async (players, se, oppHand) => {
+  const ids = (players || []).slice(0, 3).map((p) => p?.id).filter(Boolean);
+  if (ids.length < 3) return { factor: 1, obp: null, note: "lineup n/a" };
   const sit = oppHand === "L" ? "vl" : oppHand === "R" ? "vr" : null;
-  return memo("o" + ids.join(",") + (sit || "") + (oppPitcherId || "") + se, async () => {
+  return memo("o" + ids.join(",") + (sit || "") + se + ":v3", async () => {
     try { const type = sit ? `type=[statSplits],sitCodes=[${sit}]` : "type=[season]";
       const d = await J(`https://statsapi.mlb.com/api/v1/people?personIds=${ids.join(",")}&hydrate=stats(group=[hitting],${type},season=${se})`);
-      const by = {}; (d.people || []).forEach((p) => { const s = p.stats?.[0]?.splits?.[0]?.stat; if (s) by[p.id] = { obp: s.obp != null ? +s.obp : null, rates: paRates(s, s.plateAppearances) }; });
-      const w = [0.5, 0.3, 0.2]; let num = 0, den = 0; ids.slice(0, 3).forEach((id, i) => { const o = by[id] && by[id].obp; if (o != null) { num += o * w[i]; den += w[i]; } });
-      let batters = ids.map((id) => (by[id] && by[id].rates) || null);
-      /* The h2h line CANNOT be rewound, and this is how its leak gets bounded.
-       *
-       * type=[vsPlayer] returns this batter's record against this pitcher over
-       * the whole season — including the plate appearances in the game being
-       * scored. Unlike pitI01, teamOff and pitMeta there is no per-game log to
-       * sum, so there is no honest point-in-time version to build.
-       *
-       * What is available is an ablation. NRFI_NO_H2H=1 drops the blend and
-       * leaves the batter on his season rates, which is strictly LESS
-       * information than the app has live, so it under-states the model rather
-       * than over-stating it. Running the backtest both ways brackets the
-       * truth: the clean number is at least the no-h2h number, and at most the
-       * with-h2h one. A bracket you can state is worth more than a single
-       * figure you cannot defend.
-       */
-      if (oppPitcherId && batters.some(Boolean) && process.env.NRFI_NO_H2H !== "1") {
-        try {
-          const h2hD = await J(`https://statsapi.mlb.com/api/v1/people?personIds=${ids.join(",")}&hydrate=stats(group=[hitting],type=[vsPlayer],opposingPlayerId=${oppPitcherId},season=${se})`);
-          const h2h = {}; (h2hD.people || []).forEach((p) => { const s = p.stats?.[0]?.splits?.[0]?.stat; const pa = s ? Number(s.plateAppearances || s.atBats || 0) : 0; if (s && pa >= 5) h2h[p.id] = { pa, rates: paRates(s, pa, NRFI_PA_REG_H2H) }; });
-          batters = batters.map((b, i) => { const h = h2h[ids[i]]; if (!b || !h || !h.rates) return b; const wH = Math.min(0.65, h.pa / 20); const keys = ["out","bb","s1","s2","s3","hr"]; const bl = {}; for (const k of keys) bl[k] = b[k]*(1-wH) + h.rates[k]*wH; return bl; });
-        } catch { /* H2H unavailable */ }
-      }
-      const hasB = batters.some(Boolean);
+      const by = {}; (d.people || []).forEach((p) => { const s = p.stats?.[0]?.splits?.[0]?.stat; if (s) by[p.id] = s.obp != null ? +s.obp : null; });
+      const w = [0.5, 0.3, 0.2]; let num = 0, den = 0; ids.forEach((id, i) => { const o = by[id]; if (o != null) { num += o * w[i]; den += w[i]; } });
+      /* THE H2H LEAK IS GONE, not bounded. type=[vsPlayer] returns a batter's
+       * record against this pitcher over the WHOLE season, including the plate
+       * appearances in the game being scored, and unlike pitI01/teamOff/pitMeta
+       * there is no per-game log to sum, so no honest point-in-time version could
+       * be built. The old comment here explained how NRFI_NO_H2H=1 bracketed it:
+       * the clean number is at least the no-h2h number and at most the with-h2h
+       * one. That bracket is no longer needed. H2H fed only the sim's per-batter
+       * rates, the sim is gone, and every backtest from here is inside the
+       * bracket's clean end by construction. */
       if (den > 0) { const obp = num / den; const ablate = process.env.NRFI_NO_LINEUP_OBP === "1";
-        return { factor: ablate ? 1 : C(obp / LG_OBP, 0.82, 1.24), obp, batters: hasB ? batters : null, note: "1-3 OBP " + obp.toFixed(3) }; }
-      if (hasB) return { factor: 1, obp: null, batters, note: "lineup posted" };
-    } catch { /* neutral */ } return { factor: 1, obp: null, note: "lineup n/a", batters: null };
+        return { factor: ablate ? 1 : C(obp / LG_OBP, 0.82, 1.24), obp, note: "1-3 OBP " + obp.toFixed(3) }; }
+    } catch { /* neutral */ } return { factor: 1, obp: null, note: "lineup n/a" };
   });
 };
 const travelRest = async (teamId, todayStr, venueId) => {
@@ -947,7 +868,7 @@ async function buildCtx(g, date, se, peri) {
     // games before it. topOrder still takes season aggregates.
     pitI01(ap.id, se, date), pitI01(hp.id, se, date), pitMeta(ap.id, se, date), pitMeta(hp.id, se, date),
     teamOff(a.team.id, se, date), teamOff(h.team.id, se, date), travelRest(a.team.id, date, g.venue?.id), travelRest(h.team.id, date, g.venue?.id)]);
-  const [awayLineup, homeLineup] = await Promise.all([topOrder(lu.awayPlayers, se, homeMeta.hand, homeMeta.id), topOrder(lu.homePlayers, se, awayMeta.hand, awayMeta.id)]);
+  const [awayLineup, homeLineup] = await Promise.all([topOrder(lu.awayPlayers, se, homeMeta.hand), topOrder(lu.homePlayers, se, awayMeta.hand)]);
   /* The four rolling windows. Synchronous — they read the leakfree index that
    * pitI01 and teamOff already load, so they add no requests to a run.
    *
@@ -1006,18 +927,15 @@ async function buildCtx(g, date, se, peri) {
     awayPeri: peri[ap.id] || null, homePeri: peri[hp.id] || null };
 }
 
-// Score both paths on the SAME game. nrfiEvaluate takes the base-out sim
-// whenever posted batters and pitcher allow-rates are both on file; nulling
-// `batters` is the only thing that stands the sim down, and it leaves
-// lineup.factor intact, so the fallback is the real lambda path rather than a
-// lineup-blind strawman.
-function scoreBothPaths(ctx, lg) {
-  const full = { ...ctx, lg };
-  const ev = nrfiEvaluate(full);
-  const noB = (l) => ({ ...l, batters: null });
-  const evLam = nrfiEvaluate({ ...full, awayLineup: noB(full.awayLineup), homeLineup: noB(full.homeLineup) });
-  if (evLam.method !== "model") throw new Error("suppressing batters did not stand the sim down: " + evLam.method);
-  return { ev, evLam };
+/* Score a game. This was scoreBothPaths and returned {ev, evLam} because
+ * nrfiEvaluate ran a base-out sim whenever posted batters and pitcher
+ * allow-rates were both on file, and nulling `batters` was the only way to
+ * stand it down and see the lambda path underneath. Both paths were measured
+ * over 1555 paired games: Brier -0.00018 (t -1.12), AUC -0.0003 (t -0.16),
+ * and on the 45 games where they picked opposite sides the sim was right on 22.
+ * There is one path now, so there is nothing to pair. */
+function scoreGame(ctx, lg) {
+  return nrfiEvaluate({ ...ctx, lg });
 }
 
 // The verdict half of the pipeline, loaded separately so the ladder thresholds
@@ -1128,7 +1046,7 @@ const dataSlice = (() => {
    * and a region that silently shrinks back past buildCtx would restore the
    * hole without failing anything. Under-fingerprinting is the failure that
    * cannot be noticed from the outside, so it gets checked from the inside. */
-  for (const must of ["async function buildCtx(", "function scoreBothPaths(", "const topOrder =", "const travelRest =",
+  for (const must of ["async function buildCtx(", "function scoreGame(", "const topOrder =", "const travelRest =",
     // The rolling builders decide four factors and two checks. They were not
     // covered before because they did not exist; a cache scored with them and a
     // cache scored without them must not share a fingerprint.
@@ -1191,7 +1109,9 @@ const modelBlank = MODEL_SLICES.map(([a, b]) => sliceBlank(a, b)).join("\n");
     throw new Error("modelSig comment stripping removed nothing from the model bundle — " +
       "blankComments is not reaching these slices, and the fingerprint is back to hashing prose.");
   }
-  const names = ["nrfiEvaluate", "PITCHER_BT", "NRFI_SIM_W", "weatherPark", "pitcherI01Profile"];
+  // NRFI_SIM_W stood in this list as the constants-slice sentinel until the sim
+  // was removed; NRFI_LG_LAMBDA now opens that slice and serves the same purpose.
+  const names = ["nrfiEvaluate", "PITCHER_BT", "NRFI_LG_LAMBDA", "weatherPark", "pitcherI01Profile"];
   const missing = names.filter((n) => !modelBlank.includes(n));
   if (missing.length) {
     throw new Error("modelSig comment stripping removed CODE, not just comments — " +
@@ -1216,7 +1136,6 @@ const modelBlank = MODEL_SLICES.map(([a, b]) => sliceBlank(a, b)).join("\n");
  */
 const ABLATIONS = [
   PIT_MODE === "leaky" ? "leaky" : null,
-  H2H_MODE.includes("ablation") ? "no-h2h" : null,
   OBP_MODE.includes("ablation") ? "no-lineup-obp" : null,
   ROLL_MODE.includes("ablation") ? "no-rolling" : null,
   // A tilt is not an ablation, but it has the identical cache hazard: it changes
@@ -1224,22 +1143,19 @@ const ABLATIONS = [
   // tilted run would be served the untilted model's cached numbers and report a
   // perfect null. Formatted so 0.5 and 0.50 hash the same.
   ENV_W !== 1 ? "env-w-" + String(Number(ENV_W)) : null,
-  /* REQUIRED, not optional, and for a sharper reason than the others. modelBlank
-   * is built by sliceBlank straight off app.jsx and never sees modelSrc, so the
-   * substituted weight is invisible to the fingerprint by construction — a
-   * NRFI_SIM_W=0 run would otherwise hash byte-identical to the shipped model and
-   * be served, or write, the wrong cache. Every other entry on this list guards a
-   * hazard; this one guards a hazard the fingerprint cannot see at all. */
-  SIM_W !== SIM_W_SHIPPED ? "sim-w-" + String(Number(SIM_W)) : null,
+  /* The sim-w tag stood here beside a no-h2h tag. Both guarded switches that no
+     longer exist: h2h fed only the sim's per-batter rates, and the sim weight was
+     the sim itself. Removed rather than left inert, so ABLATIONS lists exactly the
+     switches a run can actually be given. */
 ].filter(Boolean).join(",");
 // What produced the cached numbers. A cache carrying a different one is stale.
 const modelSig = sha(modelBlank + sigOf("cache") + dataSlice + (ABLATIONS ? "|ablate:" + ABLATIONS : ""));
 // What interprets them. Report it; never gate a cache on it.
 const ladderSig = sha(sigOf("ladder"));
 
-module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP, makeVerdict,
+module.exports = { nrfiEvaluate, weatherPark, NRFI_LG_TOP3_OBP, makeVerdict,
   J, parseIp, memo, pitI01, teamOff, pitMeta, topOrder, travelRest, savant, mapLimit,
-  buildCtx, scoreBothPaths, C, modelSig, ladderSig,
+  buildCtx, scoreGame, C, modelSig, ladderSig,
   // The slice lists themselves, so a checker never has to regex them back out
   // of this file's source. nrfi-slice-gap.js did exactly that and broke the
   // moment VERDICT_SLICES grew a third element — a drift detector taken out by
@@ -1249,9 +1165,6 @@ module.exports = { nrfiEvaluate, weatherPark, paRates, NRFI_LG_TOP3_OBP, makeVer
   // source it ran on. A backtest that does not say whether it rewound its inputs
   // is not reporting a result, and the difference between the two modes here is
   // larger than most of the effects these scripts are built to measure.
-  PIT_MODE, H2H_MODE, OBP_MODE, ROLL_MODE, ABLATIONS,
-  // Both, so a harness can print "0.20 (shipped)" or "0 (shipped 0.20)" without
-  // re-deriving where the default came from.
-  SIM_W, SIM_W_SHIPPED,
-  pitStats: () => ({ ...pitI01.stats, off: { ...teamOff.stats }, meta: { ...pitMeta.stats }, h2h: H2H_MODE, obp: OBP_MODE }),
-  sumPitLog, GLOG_REG, NRFI_CALIB_SEED, NRFI_PA_REG_PIT, NRFI_PA_REG_H2H };
+  PIT_MODE, OBP_MODE, ROLL_MODE, ABLATIONS,
+  pitStats: () => ({ ...pitI01.stats, off: { ...teamOff.stats }, meta: { ...pitMeta.stats }, obp: OBP_MODE }),
+  sumPitLog, GLOG_REG, NRFI_CALIB_SEED };

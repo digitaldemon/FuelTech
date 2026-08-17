@@ -124,78 +124,17 @@ console.log("\nhalfNoRun");
   ok(mono, "monotone: a worse pitcher never raises P(no run)", ex);
 }
 
-// ── paRates / matchupPA: must stay valid distributions ───────────────────
-console.log("\nPA distributions");
-{
-  const LG = c.read("NRFI_LG_PA");
-  const lgSum = Object.values(LG).reduce((a, b) => a + b, 0);
-  ok(Math.abs(lgSum - 1) < 1e-9, "NRFI_LG_PA sums to 1",
-    "sums to " + lgSum.toFixed(4) + " (short by " + ((1 - lgSum) * 100).toFixed(2) + "pp). Every rate blended " +
-    "toward\nthis prior inherits the gap; matchupPA renormalises so it cannot escape as a\n" +
-    "bad probability, but the regression target is not the league average it claims.");
-
-  ok(c.paRates({ hits: 1 }, 0, 0) === null, "zero denominator returns null, not a divide-by-zero");
-  // A tiny sample where the events outnumber the plate appearances.
-  const wild = c.paRates({ hits: 5, doubles: 2, homeRuns: 2, baseOnBalls: 3 }, 3, 0);
-  const wildSum = wild ? Object.values(wild).reduce((a, b) => a + b, 0) : null;
-  ok(wild == null || Math.abs(wildSum - 1) < 1e-9, "raw rates sum to 1 even when events exceed PA",
-    "sum=" + (wildSum == null ? "n/a" : wildSum.toFixed(4)) + " — `out` floors at 0 while the hit rates keep\n" +
-    "their full value, so the row stops being a distribution. matchupPA renormalises,\n" +
-    "so the effect is a silent reweighting rather than a crash.");
-
-  const b = c.paRates({ hits: 150, doubles: 30, triples: 3, homeRuns: 20, baseOnBalls: 50 }, 600, 0);
-  const p = c.paRates({ hits: 140, doubles: 28, triples: 2, homeRuns: 18, baseOnBalls: 45 }, 600, 0);
-  const m = c.matchupPA(b, p, LG);
-  const mSum = Object.values(m).reduce((a, x) => a + x, 0);
-  ok(Math.abs(mSum - 1) < 1e-9, "matchupPA output sums to 1", "sum=" + mSum);
-  ok(Object.values(m).every((v) => finite(v) && v >= 0), "matchupPA output has no negative or NaN mass");
-  const degenerate = c.matchupPA({ out: 0, bb: 0, s1: 0, s2: 0, s3: 0, hr: 0 }, p, LG);
-  ok(Object.values(degenerate).every(finite), "all-zero batter profile does not produce NaN", JSON.stringify(degenerate));
-}
-
-// ── advanceBaseOut: state machine stays in bounds ────────────────────────
-console.log("\nbase/out state machine");
-{
-  const bad = [];
-  for (let base = 0; base < 8; base++) for (let outs = 0; outs < 3; outs++) {
-    for (const o of ["out", "bb", "s1", "s2", "s3", "hr", "bogus"]) {
-      const [nb, no, runs] = c.advanceBaseOut(base, outs, o);
-      if (!(nb >= 0 && nb <= 7)) bad.push("base " + base + "/" + outs + "/" + o + " -> base " + nb);
-      if (!(no >= 0 && no <= 3)) bad.push("base " + base + "/" + outs + "/" + o + " -> outs " + no);
-      if (!(runs >= 0 && runs <= 4)) bad.push("base " + base + "/" + outs + "/" + o + " -> runs " + runs);
-    }
-  }
-  ok(bad.length === 0, "state index never escapes the 24-cell grid", bad.slice(0, 4).join("\n"));
-  // A run may only score when someone was actually on or it left the yard.
-  const [, , r] = c.advanceBaseOut(0, 0, "s1");
-  ok(r === 0, "single with empty bases scores nobody", "scored " + r);
-  const [, , rh] = c.advanceBaseOut(7, 0, "hr");
-  ok(rh === 4, "grand slam scores four", "scored " + rh);
-}
-
-// ── simHalfNoRun ─────────────────────────────────────────────────────────
-console.log("\nsimHalfNoRun");
-{
-  const LG = c.read("NRFI_LG_PA");
-  const lineup = (mult) => new Array(9).fill(0).map(() => {
-    const o = {}; for (const k of Object.keys(LG)) o[k] = LG[k] * (k === "out" ? 1 / mult : mult);
-    return o;
-  });
-  const bad = [];
-  for (const m of [0.5, 0.8, 1, 1.3, 2]) {
-    const v = c.simHalfNoRun(lineup(m), LG, LG, 12);
-    if (!finite(v) || v < 0 || v > 1) bad.push("mult=" + m + " -> " + v);
-  }
-  ok(bad.length === 0, "always a probability", bad.join("\n"));
-  let prev = Infinity, mono = true, ex = "";
-  for (const m of [0.5, 0.7, 0.9, 1.1, 1.3, 1.6, 2]) {
-    const v = c.simHalfNoRun(lineup(m), LG, LG, 12);
-    if (v > prev + 1e-9) { mono = false; ex = "mult " + m + ": " + v.toFixed(4) + " > " + prev.toFixed(4); }
-    prev = v;
-  }
-  ok(mono, "monotone: a better offense never raises P(no run)", ex);
-  ok(finite(c.simHalfNoRun([], LG, LG, 12)), "empty lineup falls back to league batters");
-}
+/* paRates / matchupPA, the base/out state machine and simHalfNoRun were
+ * audited here — three blocks, ~70 lines: distributions summing to 1, the 24-cell
+ * grid never escaping its bounds, a grand slam scoring four, monotonicity in
+ * offense quality. All of it tested the base-out sim, which no longer exists.
+ *
+ * It was deleted rather than kept passing against nothing. Over 1555 paired
+ * games the sim was worth -0.00018 Brier (t -1.12) and -0.0003 AUC (t -0.16);
+ * it moved p on 95.8% of games by a mean 0.59pp, twelve times the run-to-run
+ * drift, in directions uncorrelated with outcomes. These checks were sound and
+ * the code passed them — being correct is not the same as being worth having.
+ * If the sim comes back, so should they; git has both. */
 
 // ── kellyNRFI ────────────────────────────────────────────────────────────
 console.log("\nkellyNRFI");

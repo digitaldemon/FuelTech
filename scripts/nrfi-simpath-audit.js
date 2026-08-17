@@ -1,30 +1,26 @@
-// Do the offense adjustments survive the switch to the base-out sim?
+// Is there still only ONE scoring path?
 //
-// FIXED — this script now guards the fix rather than reporting the bug. History
-// below; the assertion at the bottom is what runs.
+// This file used to guard a fix inside the base-out sim. nrfiEvaluate had two
+// paths: the lambda path multiplied the offense rate by offMult(lineup, platoon,
+// travel, offTrend, homeAdv, offVenue, kRate), and the sim path replaced that
+// with pRun = (1 - simNoRun) * pitcherCtx * travel * homeAdv * env, where
+// pitcherCtx carried only the pitcher-side adjustments. So the moment a lineup
+// posted and `method` flipped to "sim", three offense adjustments stopped
+// affecting the number — offTrend (weight 0.5 in offMult), offVenue (0.3) and
+// kRate (0.35) — while the checks list, which is built from the factors
+// regardless of path, kept printing "off cold (-33pp)" on the card. A vote
+// displayed on a probability that does not contain it.
 //
+// That was fixed by threading offSimCtx into both sim halves, and this script
+// guarded the fix. The sim has since been removed outright: measured over 1555
+// paired games it was worth -0.00018 Brier (t -1.12) and -0.0003 AUC (t -0.16),
+// and it picked the opposite side on 45 games while being right on 22 of them.
 //
-// nrfiEvaluate has two paths. The lambda path multiplies the offense rate by
-// offMult(lineup, platoon, travel, offTrend, homeAdv, offVenue, kRate). The
-// base-out sim path replaces it with:
-//
-//   pRun = (1 - simNoRun) * pitcherCtx * travel * homeAdv * env
-//
-// and pitcherCtx carries only the pitcher-side adjustments. So the moment a
-// lineup is posted and `method` flips to "sim", three offense adjustments stop
-// affecting the number: offTrend (weight 0.5 in offMult), offVenue (0.3) and
-// kRate (0.35). The comment above that block justifies dropping platoon and
-// lineup -- the sim reads real batters, so those are genuinely inside it -- but
-// a team's LAST TEN GAMES of first-inning scoring is not in its season rates by
-// construction, which is the entire reason the trend factor exists.
-//
-// The checks list is built from the factors regardless of path, so those rows
-// keep casting votes and keep printing "off cold (-33pp)" on the card while the
-// probability behind them no longer contains it.
-//
-// Note also: the PROJECTED sim (pNRFI_simProj, used before lineups post)
-// multiplies awayOffVenue.f/homeOffVenue.f in, and the real sim does not. Two
-// code paths for the same idea that disagree with each other.
+// So the guard has been inverted. The failure mode it protects against is no
+// longer "the sim drops three factors" but "a second path comes back", because
+// a second path is exactly how a factor gets to be visible on the card and
+// absent from the number. If you are deliberately reintroducing one, this file
+// is the thing to update — not to delete.
 const { loadDeskModel } = require("./nrfi-model-load");
 const fs = require("fs");
 const path = require("path");
@@ -36,47 +32,36 @@ let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "  PASS  " : "  FAIL  ") + msg); if (!cond) fail++; };
 
 (async () => {
-  // Structural guard. The defect was an omission, and an omission is invisible
-  // to any test that only reads the output number — a missing 0.5-weight term
-  // just looks like a slightly different probability. So assert on the shape of
-  // the expression: both sim halves, and both projected-sim halves, must carry
-  // the offense context alongside the home-field factor they already had.
-  // Comments survive the build and this file's own history quotes the old
-  // expression, so match against code only.
+  // Code only. This file's own history quotes the old expressions, and comments
+  // survive the build, so a raw substring search would match the tombstones.
   const src = fs.readFileSync(BUNDLE, "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-  const sim = src.match(/pRunTop[\s\S]{0,400}?pRunBot[^;]*;/);
-  const proj = src.match(/pRT\s*=[\s\S]{0,400}?pRB\s*=[^;]*;/);
-  console.log("\nSIM-PATH OFFENSE ADJUSTMENTS — structure");
-  ok(!!sim && /awayOffSim/.test(sim[0]) && /homeOffSim/.test(sim[0]),
-    "the base-out sim carries offTrend/offVenue/kRate on both halves");
-  ok(!!proj && /awayOffSim/.test(proj[0]) && /homeOffSim/.test(proj[0]),
-    "the projected sim carries the same three, by the same helper");
-  ok(/offSimCtx\s*=\s*\([^)]*\)\s*=>[\s\S]{0,200}?0\.5[\s\S]{0,80}?0\.3[\s\S]{0,80}?0\.35/.test(src),
-    "weights match offMult (0.5 trend / 0.3 venue / 0.35 kRate)");
-  ok(!/awayOffAdv\.f\s*\*\s*env/.test(src),
-    "no sim half applies home-field without the offense context beside it");
+  console.log("\nONE SCORING PATH — structure");
+  for (const gone of ["simHalfNoRun", "advanceBaseOut", "matchupPA", "paRates",
+    "offSimCtx", "awayOffSim", "homeOffSim", "pNRFI_simProj", "NRFI_SIM_W"]) {
+    ok(!new RegExp("\\b" + gone + "\\b").test(src), gone + " is not in the bundle");
+  }
 
-  // Behavioural read: the same rows the bug used to mute, and what they now do.
+  // Behavioural read. `method` is what the two paths used to disagree about, so
+  // it is the field that would show a new one first — a card reading anything
+  // but "model" means something is scoring games another way.
   const c = loadDeskModel(BUNDLE);
   const rows = await c.scanNrfi();
-  let simN = 0, lamN = 0;
-  const detail = [];
-  for (const r of rows) {
-    if (r.method === "sim") simN++; else lamN++;
-    const votes = (r.checks || []).filter((k) => OFFENSE_ROWS.has(k.label) && k.lean !== "neutral");
-    if (r.method === "sim" && votes.length)
-      detail.push("    " + ((r.awayAbbr || r.away) + "@" + (r.homeAbbr || r.home)).padEnd(10) +
-        "p" + (r.pNRFI * 100).toFixed(1) + "%  " +
-        votes.map((v) => v.label.replace(/ \(.*/, "") + "=" + v.lean.toUpperCase()).join(", "));
-  }
+  const methods = {};
+  for (const r of rows) methods[r.method] = (methods[r.method] || 0) + 1;
   console.log("\n  today's board (" + rows.length + " games)");
-  console.log("    method = sim   (lineups posted): " + simN);
-  console.log("    method = model (lambda path):    " + lamN);
-  console.log("\n  sim-path games with a live offense-side vote — these are the ones");
-  console.log("  that used to show the vote while the probability ignored it:");
-  for (const d of detail) console.log(d);
+  for (const [m, k] of Object.entries(methods)) console.log("    method = " + m + ": " + k);
+  ok(rows.length === 0 || Object.keys(methods).every((m) => m === "model"),
+    "every game scored through the single model path");
 
-  console.log(fail ? "\n" + fail + " FAILED" : "\nall structural checks pass");
+  // The rows the old bug muted. They are listed rather than asserted on: a
+  // neutral vote is legitimate on a game with nothing to say, so a count of zero
+  // is only suspicious across a whole board.
+  const voted = rows.filter((r) => (r.checks || []).some((k) => OFFENSE_ROWS.has(k.label) && k.lean !== "neutral"));
+  console.log("\n  games with a live offense-side vote: " + voted.length + "/" + rows.length);
+  ok(rows.length === 0 || voted.length > 0,
+    "the offense rows are voting somewhere on the board, not pinned neutral");
+
+  console.log(fail ? "\n" + fail + " FAILED" : "\nall checks pass");
   process.exitCode = fail ? 1 : 0;
 })().catch((e) => { console.error(e); process.exit(1); });

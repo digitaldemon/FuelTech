@@ -144,7 +144,7 @@ const path = require("path");
 // The model loader and the MLB fetchers now live in nrfi-model-lib.js so that
 // every analysis script scores games through one code path. See that file for
 // why a second copy is worse than an import.
-const { J, savant, mapLimit, buildCtx, scoreBothPaths, C, PIT_MODE, pitStats,
+const { J, savant, mapLimit, buildCtx, scoreGame, C, PIT_MODE, pitStats,
   NRFI_CALIB_SEED, ABLATIONS, modelSig } = require("./nrfi-model-lib");
 /* Where this run's artifact goes, and why it is not always the same file.
  *
@@ -183,14 +183,10 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
       const a = g.teams?.away, h = g.teams?.home;
       const ctx = await buildCtx(g, date, se, periBy);
       if (!ctx) return null;
-      // Comparing the two paths on a paired subset is the point: a sim-vs-lambda
-      // split across DIFFERENT games would confound the path with "lineups posted
-      // early enough to scrape", which is itself a selection on day games,
-      // marquee matchups, and well-run clubhouses.
-      const { ev, evLam } = scoreBothPaths(ctx, lg);
+      const ev = scoreGame(ctx, lg);
       const inn1 = g.linescore.innings[0];
       const runs = (+(inn1.away?.runs || 0)) + (+(inn1.home?.runs || 0));
-      if (ev.pNRFI == null || evLam.pNRFI == null) return null;
+      if (ev.pNRFI == null) return null;
       // gamePk alongside the readable key, because the readable key is NOT
       // unique: both ends of a doubleheader share a date and both teams. Seven
       // of them in a 30-day window, and each pair carries different starters and
@@ -198,7 +194,7 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
       // silently pairs game 1's probability with game 2's outcome — which is
       // exactly how nrfi-backtest-ab.js first tripped, reporting a "stale
       // artifact" for two runs made ten seconds apart.
-      return { pModel: ev.pNRFI, pLam: evLam.pNRFI, method: ev.method, id: g.gamePk,
+      return { pModel: ev.pNRFI, method: ev.method, id: g.gamePk,
         actual: runs === 0 ? 1 : 0, key: date + " " + a.team.abbreviation + "@" + h.team.abbreviation };
     });
     for (const r of rows) if (r) samples.push(r);
@@ -328,48 +324,29 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
     });
   }
 
-  const simRows = samples.filter((s) => s.method !== "model"); // "blend" today, "sim" historically
-  const P = (r) => r.pModel, L = (r) => r.pLam;
+  const P = (r) => r.pModel;
 
-  console.log("\n================ NRFI BACKTEST — BOTH PATHS ================");
+  /* THIS REPORT USED TO HAVE TWO OF EVERYTHING. Every game was scored twice —
+   * once through the base-out sim, once through the lambda path with `batters`
+   * nulled — and the paired head-to-head, the per-path ladder, the per-path seed
+   * fit and an 11-step blend sweep all lived here. The sim is gone (see the
+   * tombstone in nrfi-model-lib.js and public/desk/app.jsx), so there is one
+   * column now. What killed it, on 1555 paired games out of this artifact:
+   *   Brier  blend .24832  vs  lambda .24850   (diff -0.00018, t -1.12)
+   *   AUC    blend .5700   vs  lambda .5703    (diff -0.0003,  t -0.16)
+   *   side flips 45 games; the sim was right on 22 of them.
+   * The blend sweep is not merely unnecessary now, it was never informative:
+   * it was flat to four decimals across every w in every window it ever ran. */
+  console.log("\n================ NRFI BACKTEST ================");
   console.log(`window: last ${days} days of ${se}   games scored: ${n}`);
-  console.log(`sim path fired on ${simRows.length}/${n} (${pc(simRows.length / n)}) — the rest had no posted lineup`);
 
-  console.log("\n============ AS SHIPPED (whatever path the app took) ============");
+  console.log("\n============ AS SHIPPED ============");
   show("shipped", metrics(samples, P));
-
-  console.log("\n============ PAIRED HEAD-TO-HEAD (sim-eligible games only) ============");
-  console.log("Same games, same inputs, only the path differs. This is the comparison");
-  console.log("that means something; everything else is confounded by lineup availability.");
-  if (simRows.length < 25) {
-    console.log(`\n  !! only ${simRows.length} sim-eligible games — too thin to conclude. Run more days.`);
-  }
-  if (simRows.length) {
-    const sSim = metrics(simRows, P), sLam = metrics(simRows, L);
-    show("SIM path", sSim);
-    show("LAMBDA path (same games)", sLam);
-    const dB = sSim.brier - sLam.brier, dA = (sSim.auc || 0) - (sLam.auc || 0);
-    console.log("\n  verdict on the pair:");
-    console.log(`    Brier   sim ${sSim.brier.toFixed(4)} vs lambda ${sLam.brier.toFixed(4)}   -> ${dB < 0 ? "SIM better" : "LAMBDA better"} by ${Math.abs(dB).toFixed(4)}`);
-    console.log(`    AUC     sim ${(sSim.auc || 0).toFixed(4)} vs lambda ${(sLam.auc || 0).toFixed(4)}   -> ${dA > 0 ? "SIM better" : "LAMBDA better"} by ${Math.abs(dA).toFixed(4)}`);
-    console.log(`    seed c  sim ${sSim.c.toFixed(3)} vs lambda ${sLam.c.toFixed(3)}   (shipped NRFI_CALIB_SEED.c = ${SHIPPED_C.toFixed(3)})`);
-    const near = (x) => Math.abs(x - 0.05);
-    console.log(`    -> the shipped seed sits closer to the ${near(sSim.c) < near(sLam.c) ? "SIM" : "LAMBDA"} path's own fit`);
-    const disagree = simRows.filter((r) => (P(r) >= 0.5) !== (L(r) >= 0.5));
-    console.log(`\n    the two paths pick different sides on ${disagree.length}/${simRows.length} games`);
-    if (disagree.length) {
-      const simWins = disagree.filter((r) => (P(r) >= 0.5) === (r.actual === 1)).length;
-      console.log(`    on those, sim was right ${simWins}/${disagree.length}, lambda ${disagree.length - simWins}/${disagree.length}`);
-    }
-    const md = simRows.reduce((a, r) => a + Math.abs(P(r) - L(r)), 0) / simRows.length;
-    console.log(`    mean |sim - lambda| = ${(md * 100).toFixed(2)} pts`);
-    console.log("\n  reliability, SIM path:"); reliability(simRows, P);
-    console.log("\n  reliability, LAMBDA path (same games):"); reliability(simRows, L);
-  }
+  console.log("\n  reliability:"); reliability(samples, P);
 
   // ---- the two things a user actually notices ----
   // "more accurate" is Brier/AUC above. "more common picks" is this: the ladder
-  // only fires above 52/55/57/63, so a path that compresses toward 50 produces
+  // only fires above 52/55/57/63, so a model that compresses toward 50 produces
   // fewer playable games even when its accuracy is unchanged. Report volume and
   // hit-rate together, because either alone is easy to move in a useless way.
   const LADDER = [["LEAN 52+", 0.52], ["BET 55+", 0.55], ["STRONG 57+", 0.57], ["STRONGEST 63+", 0.63]];
@@ -384,57 +361,26 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
         `   total ${String(nr.length + yr.length).padStart(3)}`);
     }
   }
-  if (simRows.length) {
-    console.log("\n============ PLAYABLE VOLUME AND HIT RATE BY TIER ============");
-    console.log("Same games. If one path shows fewer playable games at similar hit rates,");
-    console.log("that is the 'fewer picks' complaint, and it is a spread problem, not a skill one.");
-    ladder(simRows, P, "SIM path:");
-    ladder(simRows, L, "LAMBDA path (same games):");
+  console.log("\n============ PLAYABLE VOLUME AND HIT RATE BY TIER ============");
+  ladder(samples, P, "as shipped:");
 
-    // What the SHIPPED seed does to each path. NRFI_CALIB_SEED is a single
-    // constant applied regardless of which path produced the number, so if the
-    // two paths need different shifts, one of them is being actively mis-set.
-    console.log("\n============ THE SHIPPED SEED, APPLIED TO EACH PATH ============");
-    console.log(`NRFI_CALIB_SEED.c = ${SHIPPED_C.toFixed(3)} is applied to both paths indiscriminately.`);
-    for (const [name, get] of [["SIM", P], ["LAMBDA", L]]) {
-      const raw = metrics(simRows, get);
-      const shifted = simRows.map((r) => ({ actual: r.actual, p: unlogit(logit(cl(get(r))) + SHIPPED_C) }));
-      const bShift = shifted.reduce((a, r) => a + (r.p - r.actual) ** 2, 0) / shifted.length;
-      const meanShift = shifted.reduce((a, r) => a + r.p, 0) / shifted.length;
-      console.log(`  ${name.padEnd(7)} own fit c=${raw.c.toFixed(3)}  |  under shipped c: mean ${pc(meanShift)} ` +
-        `(actual ${pc(raw.actualRate)}, bias ${((meanShift - raw.actualRate) * 100).toFixed(1)} pts), ` +
-        `Brier ${bShift.toFixed(4)} vs ${raw.brier.toFixed(4)} raw -> ${bShift < raw.brier ? "helped" : "HURT"}`);
-    }
+  /* What the SHIPPED seed does to this window. NRFI_CALIB_SEED is one constant
+   * fit on one past window and applied to everything, so the useful question is
+   * whether it still lands the mean where the games actually landed. It used to
+   * be asked separately of the sim and lambda columns, on the theory that two
+   * paths with different biases cannot share one shift — which was a real
+   * concern while there were two paths. */
+  console.log("\n============ THE SHIPPED SEED, APPLIED TO THIS WINDOW ============");
+  {
+    const raw = metrics(samples, P);
+    const shifted = samples.map((r) => ({ actual: r.actual, p: unlogit(logit(cl(P(r))) + SHIPPED_C) }));
+    const bShift = shifted.reduce((a, r) => a + (r.p - r.actual) ** 2, 0) / shifted.length;
+    const meanShift = shifted.reduce((a, r) => a + r.p, 0) / shifted.length;
+    console.log(`  this window's own fit c=${raw.c.toFixed(3)}, shipped c=${SHIPPED_C.toFixed(3)}`);
+    console.log(`  under shipped c: mean ${pc(meanShift)} (actual ${pc(raw.actualRate)}, ` +
+      `bias ${((meanShift - raw.actualRate) * 100).toFixed(1)} pts), ` +
+      `Brier ${bShift.toFixed(4)} vs ${raw.brier.toFixed(4)} raw -> ${bShift < raw.brier ? "helped" : "HURT"}`);
   }
-
-  // ---- what mix of the two paths is actually best? ----
-  // The app currently sets w=1.00 (sim wins outright the moment lineups post).
-  // That was never measured. Sweep the blend in logit space -- averaging
-  // probabilities directly would drag every blend toward 0.5 and make the
-  // midpoint look good for the wrong reason. Report Brier, AUC and playable
-  // volume together, because a mix that wins Brier by compressing toward the
-  // base rate has bought accuracy with the picks you actually wanted.
-  if (simRows.length) {
-    console.log("\n============ BLEND SWEEP: w*sim + (1-w)*lambda, in logit space ============");
-    console.log("  w      Brier     AUC      pick-acc   BET55+ vol   mean pred");
-    let best = null;
-    for (let w = 0; w <= 1.0001; w += 0.1) {
-      const get = (r) => unlogit(w * logit(cl(P(r))) + (1 - w) * logit(cl(L(r))));
-      const m = metrics(simRows, get);
-      const vol = simRows.filter((r) => get(r) >= 0.55 || 1 - get(r) >= 0.55).length;
-      const flag = Math.abs(w - 1) < 1e-6 ? "  <- shipped" : "";
-      console.log(`  ${w.toFixed(1)}  ${m.brier.toFixed(4)}  ${(m.auc || 0).toFixed(4)}   ${pc(m.pickAcc).padStart(6)}` +
-        `     ${String(vol).padStart(3)}       ${pc(m.meanPred)}${flag}`);
-      if (!best || m.brier < best.brier) best = { w, brier: m.brier, auc: m.auc, vol };
-    }
-    console.log(`\n  best Brier at w=${best.w.toFixed(1)} (${best.brier.toFixed(4)}, AUC ${best.auc.toFixed(4)}, ${best.vol} playable at BET55+)`);
-    console.log("  NOTE: this is an in-sample optimum over one 30-day window. Treat a");
-    console.log("  shallow minimum as 'anything in this range is fine', not as a precise w.");
-  }
-
-  console.log("\n============ LAMBDA PATH OVER EVERY GAME ============");
-  show("lambda, full window", metrics(samples, L));
-  console.log("\n  reliability:"); reliability(samples, L);
 
   /* Is an intercept-only calibration enough?
    *
@@ -512,9 +458,8 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
   const seed = { c: Math.round(shipped.c * 1000) / 1000, n, active: n >= 25 };
   console.log("\ncalibration seed for the SHIPPED mix (NRFI_CALIB_SEED):");
   console.log("  " + JSON.stringify(seed));
-  console.log("  NOTE: this is a blended fit over two paths with different biases.");
-  console.log("  If the paired section shows their implied c's far apart, one seed");
-  console.log("  cannot serve both and the seed should be made path-aware.");
+  console.log("  This is an IN-SAMPLE fit and will always look good on its own window.");
+  console.log("  Settle it out of sample with scripts/nrfi-calib-walk.js before shipping it.");
   fs.writeFileSync(path.join(__dirname, OUT), JSON.stringify({
     ...seed, at: new Date().toISOString(), days, season: se,
     // modelSig travels with the rows, so a reader can tell whether these scores
@@ -523,13 +468,16 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
     // tout cache carries one, and that guard is what stopped nrfi-calib-fit.js
     // from fitting a live constant on scores from a model two commits old.
     modelSig, pitMode: PIT_MODE, pitStats: ps, ablations: ABLATIONS || null,
-    shipped, lambdaAll: metrics(samples, L), platt,
-    paired: simRows.length ? { sim: metrics(simRows, P), lambda: metrics(simRows, L) } : null,
+    shipped, platt,
     // The per-game rows the seed was fit on. Without them the seed is a number
     // with a provenance story attached, and every re-derivation (a slope check,
     // a reliability curve, a bucketed fit) needs another 20-minute API walk to
     // ask a question of data that was already in hand.
-    rows: samples.map((s) => ({ id: s.id, k: s.key, p: +s.pModel.toFixed(4), l: +s.pLam.toFixed(4), a: s.actual, m: s.method })),
+    //
+    // Artifacts written before the sim was removed also carry an `l` column (the
+    // lambda path on the same game) and a `paired` section. Readers that want
+    // those must handle their absence rather than assume a stale file.
+    rows: samples.map((s) => ({ id: s.id, k: s.key, p: +s.pModel.toFixed(4), a: s.actual, m: s.method })),
   }, null, 2));
   console.log("  (written to scripts/" + OUT + ")" +
     (ABLATIONS ? "  -- ABLATED RUN (" + ABLATIONS + "), not a shipped seed" : ""));
