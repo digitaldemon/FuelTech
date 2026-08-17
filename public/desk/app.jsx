@@ -11893,27 +11893,6 @@ function FirstInning() {
       {err && <p className="help" style={{ color: "var(--rose)" }}>Couldn't build the board: {err}</p>}
       {phase === "done" && sellers.length > 0 && sellers.every((s) => !s.active) && <p className="help" style={{ color: "var(--amber)" }}>No active seller subscriptions — showing the model board only.</p>}
       {phase === "done" && rows.length === 0 && <p className="help">No MLB games on today's slate.</p>}
-      {rows.length > 0 && (
-        <div style={{ marginTop: 6, marginBottom: 2, padding: "8px 12px", background: "rgba(255,255,255,0.04)", borderRadius: 6, fontSize: 12, color: "var(--dim)", lineHeight: 1.7 }}>
-          <div><b style={{ color: "var(--fg)" }}>Confidence:</b>{" "}
-            <b style={{ color: "var(--moss)" }}>★ BET</b> ≥63% · <b style={{ color: "var(--moss)" }}>BET</b> ≥57% · <b style={{ color: "var(--amber)" }}>LEAN</b> ≥52% · <b style={{ color: "var(--dim)" }}>PASS</b> = too close.
-            {" "}<b style={{ color: "var(--fg)" }}>NRFI</b> = no run in the 1st inning. <b style={{ color: "var(--fg)" }}>YRFI</b> = a run scores.
-          </div>
-          <div><b style={{ color: "var(--fg)" }}>Pitcher badge</b> (e.g. <span style={{ fontWeight: 700, fontSize: 11, color: "var(--moss)", border: "1px solid var(--moss)", borderRadius: 3, padding: "0 3px" }}>A+</span>): 1st-inning grade — A+/A = elite suppressor, B = solid, C = average, D/F = hitter-friendly. Hover for detail.</div>
-          <div><b style={{ color: "var(--fg)" }}>Park badge:</b>{" "}
-            <span style={{ color: "var(--moss)", fontWeight: 700 }}>PITCHER FRIENDLY</span> = park+weather suppress runs ·{" "}
-            <span style={{ color: "var(--rose)", fontWeight: 700 }}>HITTER FRIENDLY</span> = park+weather inflate runs. Hover for detail.
-          </div>
-          {/* Said "model uses projected order" until the projected sim was removed.
-              There is no projected order any more — the model simply runs without
-              the top-of-order OBP factor, which is a smaller and more honest claim
-              than the one this line used to make. */}
-          <div><span style={{ color: "var(--amber)", fontWeight: 700 }}>⚠ LINEUPS PENDING</span> = official lineup not yet posted; the top-of-order OBP adjustment is sitting out, so the offense side is on team season rates alone.</div>
-          <div><b style={{ color: "var(--fg)" }}>Bet Size</b> (shown per card) = suggested wager as % of bankroll, sized to your edge. Larger edge = larger recommended bet. Enter your bankroll in Bankroll Builder above to see dollar amounts.</div>
-          <div><b style={{ color: "var(--fg)" }}>1st-inn offense</b> = each team's season YRFI rate (Poisson estimate from avg runs scored in the 1st). Red = high-scoring, green = low-scoring team.</div>
-          <div><b style={{ color: "var(--fg)" }}>↑/↓ MKT</b> = market moved ≥5 pts since first page load. Indicates smart money flow between your sessions.</div>
-        </div>
-      )}
       {parlayPairs.length > 0 && (
         <div className="panel" style={{ marginTop: 12, border: "1px solid rgba(80,160,80,0.3)", background: "rgba(80,160,80,0.04)" }}>
           <p className="sect" style={{ margin: 0, color: "var(--moss)" }}>Correlated NRFI parlays ({parlayPairs.length} pair{parlayPairs.length !== 1 ? "s" : ""})</p>
