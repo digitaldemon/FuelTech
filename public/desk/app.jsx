@@ -5450,9 +5450,44 @@ const NRFI_LG_TOP3_OBP = 0.3467;
  * dome but Coors' non-dome self. That effect measured x1.09 with an interval
  * spanning the baseline, so nothing significant is now unmodelled — but the
  * justification for that removal no longer holds, and restoring it would need its
- * own measurement rather than this comment as cover. */
+ * own measurement rather than this comment as cover.
+ *
+ * COL RAISED 1.14 -> 1.23 on 2026-08-17. The value was inherited from a
+ * full-game park factor "compressed toward 1 for a single inning" and had never
+ * been fit on first innings. Converting the residual above to the multiplier
+ * this table actually applies — lambda = -ln(clean), league clean 71.1%, so
+ * -5.31pp lands at -ln(0.658)/-ln(0.711) — gives 1.23, interval [1.16, 1.30]
+ * from the +-1.51pp band. 1.14 sat below the bottom of that interval.
+ *
+ * Use the RESIDUALISED 1.23, not the raw one. Comparing Coors NRFI to every
+ * other park head-on gives 41.3% vs 51.0% (z -4.15), which implies 1.31
+ * [1.23, 1.51] — but Coors hosts Colorado's pitching, and the pitcher term
+ * already prices that. The residual model holds it out; the raw split does not.
+ * The gap between 1.31 and 1.23 is roughly what the arms were being blamed for.
+ *
+ * WHAT IT FIXES: the model was over-predicting NRFI at Coors by 20pp
+ * [7.8, 32.4] against 4.1pp everywhere else, so those cards were badly wrong.
+ *
+ * WHAT IT COSTS: MORE Coors exposure, not less, and on the YRFI side. The rungs
+ * key off max(p, 1-p), so pushing P(NRFI) down at Coors does not quiet the board
+ * there — it flips it. Across the 1555-game backtest 9 of 51 Coors games already
+ * cleared NRFI_BET_MIN as YRFI at 1.14 (6-3); projecting p^(1.23/1.14), since env
+ * multiplies lambda, that becomes ~19. In-window those 19 hit 78.9% against a
+ * 72.5% Coors YRFI base rate, but the window is the one the effect was measured
+ * on and 2026 is an extreme Coors year (25.4% NRFI vs 41-48% in 2021-25), so
+ * treat the rate as description, not confirmation.
+ *
+ * DO NOT cite this as agreeing with NRFIKINGKY's hard COORS exclusion. It is the
+ * opposite trade: he refuses the park, this model leans into it from the other
+ * side. Both can be right — his edge is a starter-quality score that Coors makes
+ * meaningless, ours is a park term that Coors makes loud — but they are not the
+ * same rule and an earlier note in this repo claimed they were.
+ *
+ * DO NOT PUSH PAST 1.30 without re-running nrfi-park-table-check.js. Above that
+ * you are outside the measured interval, and the failure is silent — Coors calls
+ * simply stop appearing, so the board looks disciplined rather than broken. */
 const NRFI_PARK = {
-  COL: 1.14,
+  COL: 1.23,
 };
 const nClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 
@@ -7245,7 +7280,7 @@ async function teamOffenseRolling(teamId, todayStr, season) {
  * temp x wind, raw, no weight, no clamp — and env multiplies lambda in both
  * halves, so P(NRFI) took the whole product twice. A 93-degree day with the wind
  * out to centre reached x1.19 on temp and wind alone before a park factor that
- * goes to ~1.12 at Coors. Everywhere else in the model, adjustments are blended
+ * goes to 1.23 at Coors. Everywhere else in the model, adjustments are blended
  * by deviation-from-neutral and weighted; this now matches.
  *
  * Bands refit against 1,821 games (scripts/nrfi-env-measure.js), all measured on
@@ -7398,12 +7433,25 @@ function weatherPark(game, homeAbbr) {
   // All three components are independently measured, already shrunk, and blended
   // by deviation rather than multiplied, so the old blowup this defended against
   // cannot occur. Worst case with every component simultaneously at its own
-  // extreme is 0.750 (SF park 0.93, temp clamped 0.91, wind in 0.91) and 1.280
-  // (COL park 1.14, temp clamped 1.09, wind out 1.05); both still clamp, so the
+  // extreme is 0.750 (SF park 0.93, temp clamped 0.91, wind in 0.91) and 1.370
+  // (COL park 1.23, temp clamped 1.09, wind out 1.05); both still clamp, so the
   // bound is doing real work at the tail and nothing in the body of the
   // distribution. env multiplies lambda in BOTH halves, so these stay tight.
+  //
+  // UPPER BOUND 1.20 -> 1.30 on 2026-08-17, forced by NRFI_PARK.COL 1.14 -> 1.23.
+  // At 1.23 the park deviation alone exceeded the old ceiling, so EVERY Coors
+  // game pinned to exactly 1.20 and temperature and wind stopped moving it at
+  // all — the clamp had migrated from the tail into the body, which is the same
+  // failure that widened these bounds the last time (see the SF case above).
+  //
+  // This is a Coors-only change BY CONSTRUCTION, not by measurement: temp clamps
+  // at 1.09 and wind tops out at 1.05, so without a park factor the sum reaches
+  // 1.14 and cannot touch either ceiling. COL is the only entry in NRFI_PARK, so
+  // no other game in the league can reach 1.20, let alone 1.30. Re-check that
+  // claim before adding a second park — a table with more entries can put
+  // ordinary games against this bound again.
   const factor = nClamp(1 + (parkFactor - 1) * ENV_W_PARK + (tFactor - 1) * ENV_W_TEMP +
-    (wFactor - 1) * ENV_W_WIND, 0.82, 1.20);
+    (wFactor - 1) * ENV_W_WIND, 0.82, 1.30);
   return { factor, park: parkFactor, temp: tFactor, wind: wFactor, note: note || "neutral" };
 }
 
