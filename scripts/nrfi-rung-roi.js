@@ -238,9 +238,46 @@ for (const g of RUNGS) {
     ((u >= 0 ? "+" : "") + u.toFixed(1)).padStart(9));
 }
 
+/* PRICE GATE.
+ *
+ * The board has no ceiling on what it will pay. The LEAN rung above is the
+ * result: it wins ~50.5% and is charged ~51.6%, so it bleeds regardless of how
+ * accurate it is. That is not an accuracy problem and no amount of model work
+ * fixes it — a rung that is right slightly less often than the price implies
+ * loses by construction.
+ *
+ * A gate is the cheap repair: refuse the contract when the market already
+ * charges more than a ceiling, whatever the model thinks. Swept rather than
+ * fitted — the point is to see whether the curve has a shape at all, not to
+ * pick the argmax off this window and ship it. Anything picked here is
+ * in-window and inherits the same caveat as NRFI_BET_MIN.
+ *
+ * NOTE the two columns move in opposite directions on purpose: a tighter gate
+ * raises ROI per contract while cutting the number of contracts, so units fall.
+ * A gate that "improves ROI" by leaving one bet standing has improved nothing.
+ */
+const CEILINGS = [0.50, 0.52, 0.54, 0.56, 0.58, 0.60, 0.65, 1.00];
+console.log("\nprice gate — refuse to buy above a cost ceiling (LEAN-or-better, >=" + LEAN + ")");
+console.log("ceiling      n  slates    hit%   mkt paid     ROI  95% interval        t    units");
+for (const c of CEILINGS) {
+  const f = (g) => g.pMax >= LEAN && g.cost <= c + 1e-9;
+  const r = boot(f, roiOf);
+  if (!r) { console.log(("  <=" + c.toFixed(2)).padEnd(11) + "  no games"); continue; }
+  const h = boot(f, hitOf), p = boot(f, priceOf);
+  const t = r.se > 0 ? r.obs / r.se : 0;
+  const u = unitsOf(graded.map((_, i) => i).filter((i) => f(graded[i])));
+  console.log(("  <=" + c.toFixed(2) + (c === 1 ? " (none)" : "")).padEnd(11) +
+    String(r.n).padStart(5) + String(r.slates).padStart(7) +
+    (h.obs.toFixed(1) + "%").padStart(8) + (p.obs.toFixed(1) + "%").padStart(11) +
+    ((r.obs >= 0 ? "+" : "") + r.obs.toFixed(1) + "%").padStart(8) +
+    `  [${r.lo.toFixed(1)}, ${r.hi.toFixed(1)}]`.padEnd(18) +
+    ((t >= 0 ? "+" : "") + t.toFixed(2)).padStart(6) +
+    ((u >= 0 ? "+" : "") + u.toFixed(1)).padStart(9));
+}
+
 console.log(`
   hit%     = how often the called side won
-  mkt paid = the implied probability we bought it at, 100*(1 - mean cost)
+  mkt paid = the implied probability we bought it at, 100 * mean cost
   ROI      = per contract staked, settling winners at 1.00
   P(<=0)   = share of slate-bootstrap draws that failed to break even
   units    = total profit staking one contract per game, in contracts. This is
