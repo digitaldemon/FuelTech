@@ -95,10 +95,12 @@ for (const r of art.rows) {
 }
 const days = [...byDay.keys()].sort();
 
-/* The artifact's own n is the row count it wrote, and for nrfi-backtest.json
- * that count is one too high — gamePk 824912 was listed under two dates and
- * scored twice. The rows here are deduped; take n from them rather than from
- * the header, so the seed weight matches the games it was actually fit on. */
+/* The artifact's own n can be one too high: gamePk 824912 was suspended on
+ * 2026-06-16 and resumed on 06-17, so the schedule listed it under both dates
+ * and desk-nrfi-backtest.js scored it twice. Fixed at the source (that script
+ * now filters on officialDate), but artifacts written before that fix still
+ * carry the inflated header. Take n from the rows rather than the header, so
+ * the seed weight matches the games it was actually fit on. */
 const REFIT_N = art.rows.length;
 
 const ARMS = [

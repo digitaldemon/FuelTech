@@ -176,9 +176,22 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
   const dates = []; for (let d = 1; d <= days; d++) { const dt = new Date(Date.now() - d * 864e5); dates.push(dt.toISOString().slice(0, 10)); }
   const { by: periBy, lg } = await savant(se);
   const samples = [];
+  const seenPk = new Set(), dupPk = [];
   for (const date of dates) {
     let sch; try { sch = await J(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}&hydrate=probablePitcher,linescore,team,lineups,weather,venue,officials`); } catch { continue; }
-    const games = (sch.dates?.[0]?.games || []).filter((g) => g.status?.abstractGameState === "Final" && g.linescore?.innings?.[0]);
+    // officialDate, not the date we queried. A SUSPENDED game appears on the
+    // schedule twice: once under the date it started and again under the date it
+    // resumed. gamePk 824912 (SF@ATL, suspended 2026-06-16, resumed 06-17) was
+    // therefore scored twice, once with splits rewound to each date, producing
+    // two different probabilities (0.4202 and 0.4448) for one outcome — and
+    // inflating `n`, which is what the calibration seed's weight is measured in.
+    // officialDate is the API's own answer for which day a game belongs to; it
+    // is present on all 498 finals in a 40-day window and diverges from the
+    // queried date only in exactly this case. Keeping the officialDate row is
+    // also the correct one on the merits: the first inning was played on the
+    // original date, so that is the day whose splits should be rewound.
+    const games = (sch.dates?.[0]?.games || []).filter((g) => g.status?.abstractGameState === "Final" &&
+      g.linescore?.innings?.[0] && (!g.officialDate || g.officialDate === date));
     const rows = await mapLimit(games, 5, async (g) => {
       const a = g.teams?.away, h = g.teams?.home;
       const ctx = await buildCtx(g, date, se, periBy);
@@ -197,8 +210,17 @@ const logit = (p) => Math.log(p / (1 - p)), unlogit = (x) => 1 / (1 + Math.exp(-
       return { pModel: ev.pNRFI, method: ev.method, id: g.gamePk,
         actual: runs === 0 ? 1 : 0, key: date + " " + a.team.abbreviation + "@" + h.team.abbreviation };
     });
-    for (const r of rows) if (r) samples.push(r);
-    process.stderr.write(`  ${date}: ${rows.filter(Boolean).length} games (total ${samples.length})\n`);
+    // Belt and braces: the officialDate filter above should make this
+    // unreachable, but a gamePk scored twice is silent corruption — it survives
+    // into every artifact and quietly changes `n`. Cheap to assert, so assert.
+    let dup = 0;
+    for (const r of rows) if (r) { if (seenPk.has(r.id)) { dup++; dupPk.push(r.id); } else { seenPk.add(r.id); samples.push(r); } }
+    process.stderr.write(`  ${date}: ${rows.filter(Boolean).length} games (total ${samples.length})` +
+      (dup ? ` !! dropped ${dup} already scored under an earlier date` : "") + "\n");
+  }
+  if (dupPk.length) {
+    console.error(`\n!! ${dupPk.length} duplicate gamePk(s) reached the sample loop: ${dupPk.join(", ")}`);
+    console.error("!! officialDate did not catch them — check the filter before trusting n.\n");
   }
 
   // Fail loudly. This file spent an unknown number of commits reporting
