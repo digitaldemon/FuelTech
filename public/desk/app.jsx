@@ -8820,7 +8820,9 @@ function nrfiWhy(r) {
   // exactly the cards that are bets. Everything else here argues the side; this
   // is the only line that argues the wager.
   pros.unshift(...value);
-  if (!r.lineupPosted) blockers.push("Lineups not posted — batting orders are projected");
+  // Not "projected" — there is no projected order since the sim was removed.
+  // The top-of-order OBP factor simply sits out until the real lineup lands.
+  if (!r.lineupPosted) blockers.push("Lineups not posted — top-of-order OBP is sitting out");
 
   return { pros, cons, blockers };
 }
@@ -9941,13 +9943,32 @@ function FirstInning() {
         recl.unshift(e); changed.push(e);
       } else if (e && e.result == null && !e.skipped) {
         // Track the market for CLV: update the live price pregame, freeze it at first pitch.
-        if (mktSide != null && !started && e.mktLatest !== r1(mktSide)) { e.mktLatest = r1(mktSide); changed.push(e); }
+        // Stamp every pregame observation, not only the ones that moved the price.
+        // A market watched all afternoon that never budged is a genuine CLV of
+        // zero; one never watched at all is no observation. Without this field
+        // those two rows are identical, and the CLV average silently counts the
+        // second kind as evidence of no edge.
+        if (mktSide != null && !started) {
+          const mNow = r1(mktSide);
+          if (e.mktLatest !== mNow || e.mktLatestAt == null) { e.mktLatest = mNow; e.mktLatestAt = Date.now(); changed.push(e); }
+        }
         if (e.mktAtClose == null && started) { e.mktAtClose = e.mktLatest != null ? e.mktLatest : (mktSide != null ? r1(mktSide) : null); if (e.mktAtClose != null) changed.push(e); }
-        // Lineups posted: upgrade from λ-model to sim, re-evaluate with real batter rates.
-        if (!started && r.method === "sim" && e.method !== "sim") {
+        /* Lineups posted after the pick was logged: re-evaluate, so the entry
+         * carries the top-of-order OBP instead of team season rates.
+         *
+         * This was keyed on `r.method === "sim"`, which was how the projected
+         * base-out sim announced itself. Removing that sim left the condition
+         * permanently false — `method` is now always "model" — so a pick logged
+         * before lineups kept its pre-lineup probability forever while the card
+         * beside it showed the post-lineup number, and the graded record graded
+         * the stale one. Key it on the input that actually changed instead.
+         *
+         * isBet is still only ever narrowed, never widened: a game that was not
+         * a bet when you could act on it does not become one retroactively. */
+        if (!started && r.lineupPosted && e.lineupUpdatedAt == null) {
           const v2 = nrfiVerdict({ ...r, pMax, call, market: recMarket });
           e.prob = r1(pMax); e.call = call; e.strength = v2.strength; e.isBet = e.isBet && v2.isBet; e.thinPass = v2.thinPass;
-          e.method = "sim"; e.lineupUpdatedAt = Date.now();
+          e.lineupUpdatedAt = Date.now();
           if (!changed.includes(e)) changed.push(e);
         }
       }
@@ -10427,9 +10448,41 @@ function FirstInning() {
       }
     }
   }
-  // Closing-line value on graded picks: did the market move toward our side after we logged it?
-  const clvSet = (rec || []).filter((r) => r.source !== "kalshi-import" && r.mktAtPick != null && r.mktAtClose != null && (r.result === "won" || r.result === "lost"));
-  const avgCLV = clvSet.length ? clvSet.reduce((a, r) => a + (r.mktAtClose - r.mktAtPick), 0) / clvSet.length : null;
+  /* Closing-line value: did the market move toward our side after we logged it?
+   *
+   * mktAtPick/mktAtClose are OUR SIDE's price, not always NRFI's (see mktSide
+   * above: `call === "NRFI" ? marketNRFI : 100 - marketNRFI`), so the plain
+   * difference is signed correctly for YRFI calls too and needs no flip.
+   *
+   * MODEL PICKS ONLY, and that exclusion is load-bearing rather than tidy:
+   * kalshi-import/route.ts sets `mktAtClose: mktAtPick` because an imported bet
+   * carries no record of where the market closed. Those rows have CLV of
+   * exactly zero by construction, not by measurement, so averaging them in
+   * would drag the mean toward zero mechanically and manufacture the very
+   * "no edge" result we would then read off the tile.
+   *
+   * Same reason mktLatestAt is required: if the desk was not open between the
+   * pick and first pitch, mktLatest never advanced past mktAtPick and the
+   * freeze at line 9945 records a close equal to the entry — indistinguishable
+   * from a price that genuinely never moved, and a fabricated zero either way.
+   * Rows predating that field are excluded rather than assumed good. */
+  const clvOf = (set) => {
+    const v = set.filter((r) => r.mktAtPick != null && r.mktAtClose != null &&
+      r.source !== "kalshi-import" && r.mktLatestAt != null);
+    if (!v.length) return null;
+    const d = v.map((r) => r.mktAtClose - r.mktAtPick);
+    const mean = d.reduce((a, b) => a + b, 0) / d.length;
+    // se on the mean, so a tile can never imply precision it does not have.
+    const se = d.length > 1 ? Math.sqrt(d.reduce((a, b) => a + (b - mean) ** 2, 0) / (d.length - 1) / d.length) : null;
+    return { n: d.length, mean, se, beat: d.filter((x) => x > 0).length };
+  };
+  const clvAll = clvOf(modelSettled), clvBet = clvOf(betSettled), clvLean = clvOf(leanSettled);
+  const clvTxt = (c) => c == null ? null : "CLV " + (c.mean > 0 ? "+" : "") + c.mean.toFixed(1) + "%";
+  const clvTitle = (c, label) => c == null
+    ? label + ": no closing price captured yet — CLV needs the desk open between the pick and first pitch."
+    : label + ": mean CLV " + (c.mean > 0 ? "+" : "") + c.mean.toFixed(2) + "%" +
+      (c.se != null ? " ± " + c.se.toFixed(2) + " (se)" : "") + " across " + c.n + " settled picks; " +
+      "beat the close " + c.beat + "/" + c.n + ". CLV predicts future edge — hit rate over a few dozen picks is mostly variance.";
   const byConf = (a, b) => b.pMax - a.pMax;
   // A game you have money on is pinned to the top of the board and stays there,
   // whatever today's verdict says about it. The sections below are a shopping
@@ -11208,10 +11261,11 @@ function FirstInning() {
           const tot = wins + losses; const pct = tot > 0 ? Math.round(wins / tot * 100) : null;
           const color = pct == null ? "var(--dim)" : pct >= 55 ? "var(--moss)" : pct >= 45 ? "var(--bone)" : "var(--rose)";
           return (
-            <div title="All model picks where a Kalshi market was available (LEAN + BET + STRONG). Excludes no-market games and PASS entries." style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div title={"All model picks where a Kalshi market was available (LEAN + BET + STRONG). Excludes no-market games and PASS entries.\n\n" + clvTitle(clvAll, "All picks")} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 5 }}>ALL PICKS</div>
               <div style={{ fontSize: 17, fontWeight: 800, color }}>{tot > 0 ? wins + "W / " + losses + "L" : "—"}</div>
               {pct != null && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{pct}% · {tot} graded</div>}
+              {clvAll && <div style={{ fontSize: 11, fontWeight: 700, marginTop: 2, color: clvAll.mean > 0 ? "var(--moss)" : "var(--rose)" }}>{clvTxt(clvAll)} <span style={{ color: "var(--dim)", fontWeight: 400 }}>n={clvAll.n}</span></div>}
             </div>
           );
         })()}
@@ -11223,7 +11277,7 @@ function FirstInning() {
           const sTot = strongWins2 + strongLosses2; const sPct = sTot > 0 ? Math.round(strongWins2 / sTot * 100) : null;
           const bTot = pureBetWins + pureBetLosses; const bPct = bTot > 0 ? Math.round(pureBetWins / bTot * 100) : null;
           return (
-            <div title={"BET and STRONG quality picks (model prob ≥ " + NRFI_BET_MIN + "%). STRONG = cal ≥ " + NRFI_STRONG_MIN + "%, BET = cal " + NRFI_BET_MIN + "–" + (NRFI_STRONG_MIN - 1) + "%." + (partTxt ? " Participation: " + partTxt + " (matched to your Kalshi imports by date + call direction)." : "")} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div title={"BET and STRONG quality picks (model prob ≥ " + NRFI_BET_MIN + "%). STRONG = cal ≥ " + NRFI_STRONG_MIN + "%, BET = cal " + NRFI_BET_MIN + "–" + (NRFI_STRONG_MIN - 1) + "%." + (partTxt ? " Participation: " + partTxt + " (matched to your Kalshi imports by date + call direction)." : "") + "\n\n" + clvTitle(clvBet, "BET signals")} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 5 }}>BET SIGNALS</div>
               <div style={{ fontSize: 17, fontWeight: 800, color }}>{tot > 0 ? betWins + "W / " + betLosses + "L" : "—"}</div>
               {pct != null && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{pct}%{partTxt ? " · " + partTxt : ""}</div>}
@@ -11233,6 +11287,7 @@ function FirstInning() {
                   {bTot > 0 && <span style={{ fontSize: 10, color: bPct >= 55 ? "var(--moss)" : bPct >= 45 ? "var(--dim)" : "var(--rose)" }} title={"BET (cal " + NRFI_BET_MIN + "–" + (NRFI_STRONG_MIN - 1) + "%): " + pureBetWins + "W/" + pureBetLosses + "L"}>BET {bPct}%</span>}
                 </div>
               )}
+              {clvBet && <div style={{ fontSize: 11, fontWeight: 700, marginTop: 2, color: clvBet.mean > 0 ? "var(--moss)" : "var(--rose)" }}>{clvTxt(clvBet)} <span style={{ color: "var(--dim)", fontWeight: 400 }}>n={clvBet.n}</span></div>}
               {tot === 0 && betSignalCount > 0 && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{betSignalCount} signal{betSignalCount !== 1 ? "s" : ""} · none settled</div>}
             </div>
           );
@@ -11242,10 +11297,11 @@ function FirstInning() {
           const tot = leanWins + leanLosses; const pct = tot > 0 ? Math.round(leanWins / tot * 100) : null;
           const color = pct == null ? "var(--dim)" : pct >= 55 ? "var(--moss)" : pct >= 45 ? "var(--bone)" : "var(--rose)";
           return (
-            <div title="LEAN picks only (model prob 57–62%). Lower conviction — track separately to see if they add value over BET-only." style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div title={"LEAN picks only (model prob 57–62%). Lower conviction — track separately to see if they add value over BET-only.\n\n" + clvTitle(clvLean, "LEAN picks") + "\n\nThis is the tile to watch: LEANs carry most of the volume, so if their CLV sits at or below zero while BET signals stay positive, the ladder is firing too often and the fix is the threshold, not the model."} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 5 }}>LEAN PICKS</div>
               <div style={{ fontSize: 17, fontWeight: 800, color }}>{tot > 0 ? leanWins + "W / " + leanLosses + "L" : "—"}</div>
               {pct != null && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{pct}% · {tot} graded</div>}
+              {clvLean && <div style={{ fontSize: 11, fontWeight: 700, marginTop: 2, color: clvLean.mean > 0 ? "var(--moss)" : "var(--rose)" }}>{clvTxt(clvLean)} <span style={{ color: "var(--dim)", fontWeight: 400 }}>n={clvLean.n}</span></div>}
               {tot === 0 && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>none graded yet</div>}
             </div>
           );
@@ -11254,11 +11310,19 @@ function FirstInning() {
         {(() => {
           const tot = kWins + kLosses; const pct = tot > 0 ? Math.round(kWins / tot * 100) : null;
           const color = pct == null ? "var(--dim)" : pct >= 55 ? "var(--moss)" : pct >= 45 ? "var(--bone)" : "var(--rose)";
+          /* This tile used to print the model's CLV next to your Kalshi W/L and
+           * call it "your real financial record". Two different populations: the
+           * W/L is imported bets, and the CLV excluded them by construction.
+           * Imported rows get `mktAtClose: mktAtPick` at import because Kalshi
+           * does not hand back where the market closed, so their CLV is a
+           * fabricated zero — there is no honest number to put here until
+           * closing prices are captured at first pitch. Say that instead of
+           * borrowing one that means something else. */
           return (
-            <div title={"Your actual Kalshi bets imported from your account. This is your real financial record — " + (avgCLV != null ? "avg CLV " + (avgCLV > 0 ? "+" : "") + avgCLV.toFixed(1) + "% across " + clvSet.length + " settled bets." : "CLV tracked as bets settle.")} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div title={"Your actual Kalshi bets imported from your account — real money, graded on the real 1st-inning score.\n\nNo CLV: an imported bet carries its entry price but no record of where the market closed, so closing-line value cannot be computed for these. The CLV on the model tiles is a different population — the desk's own logged picks."} style={{ cursor: "help", background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em", marginBottom: 5 }}>YOUR KALSHI</div>
               <div style={{ fontSize: 17, fontWeight: 800, color }}>{tot > 0 ? kWins + "W / " + kLosses + "L" : "—"}</div>
-              {pct != null && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{pct}%{avgCLV != null ? " · CLV " + (avgCLV > 0 ? "+" : "") + avgCLV.toFixed(1) + "%" : ""}</div>}
+              {pct != null && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{pct}% · {tot} settled</div>}
               {tot === 0 && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>import to track</div>}
             </div>
           );
