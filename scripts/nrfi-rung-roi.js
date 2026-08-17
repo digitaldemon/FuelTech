@@ -160,6 +160,15 @@ const roiOf = (idx) => {
   const ret = idx.reduce((t, i) => t + graded[i].win, 0);
   return cost > 0 ? 100 * (ret - cost) / cost : 0;
 };
+/* Total profit in contracts, staking one per game. ROI alone is per contract
+ * staked and therefore says nothing about how many contracts there were to
+ * stake — a change that thins the edge but widens the board can lower ROI while
+ * raising total take, and the two columns then point opposite ways. That is not
+ * hypothetical: NRFI_PIT_REG 75 -> 50 cut BET-or-better ROI from 27.0% to 23.8%
+ * while lifting profit from 21.9 to 25.0 units, because n went 147 -> 192.
+ * Report both or the comparison is unreadable. */
+const unitsOf = (idx) =>
+  idx.reduce((t, i) => t + graded[i].win - graded[i].cost, 0);
 const hitOf = (idx) => 100 * mean(idx.map((i) => graded[i].win));
 /* The implied probability we bought at IS the cost: a contract costing $0.55 and
  * settling at $1.00 is the market charging 55%. Do NOT write 1 - cost here — an
@@ -212,7 +221,7 @@ if (Math.abs(rate - 0.5) < 0.4) {
   process.exitCode = 1;
 }
 
-console.log("\nrung                    n  slates    hit%   mkt paid     ROI  95% interval        t    P(<=0)");
+console.log("\nrung                    n  slates    hit%   mkt paid     ROI  95% interval        t    P(<=0)    units");
 for (const g of RUNGS) {
   if (!g) { console.log(""); continue; }
   const r = boot(g.f, roiOf);
@@ -220,11 +229,13 @@ for (const g of RUNGS) {
   const h = boot(g.f, hitOf), p = boot(g.f, priceOf);
   const t = r.se > 0 ? r.obs / r.se : 0;
   const pneg = r.draws.filter((d) => d <= 0).length / r.draws.length;
+  const u = unitsOf(graded.map((_, i) => i).filter((i) => g.f(graded[i])));
   console.log("  " + g.name.padEnd(18) + String(r.n).padStart(5) + String(r.slates).padStart(7) +
     (h.obs.toFixed(1) + "%").padStart(8) + (p.obs.toFixed(1) + "%").padStart(11) +
     ((r.obs >= 0 ? "+" : "") + r.obs.toFixed(1) + "%").padStart(8) +
     `  [${r.lo.toFixed(1)}, ${r.hi.toFixed(1)}]`.padEnd(18) +
-    ((t >= 0 ? "+" : "") + t.toFixed(2)).padStart(6) + pc(pneg).padStart(9));
+    ((t >= 0 ? "+" : "") + t.toFixed(2)).padStart(6) + pc(pneg).padStart(9) +
+    ((u >= 0 ? "+" : "") + u.toFixed(1)).padStart(9));
 }
 
 console.log(`
@@ -232,6 +243,9 @@ console.log(`
   mkt paid = the implied probability we bought it at, 100*(1 - mean cost)
   ROI      = per contract staked, settling winners at 1.00
   P(<=0)   = share of slate-bootstrap draws that failed to break even
+  units    = total profit staking one contract per game, in contracts. This is
+             the column that survives a change in board width: ROI can fall
+             while units rise if the rung got bigger.
 
 EDGE IS hit% MINUS mkt paid, NOT hit% MINUS 50. A rung that wins 70% of the
 time and is charged 70% for the privilege earns nothing. Read the two columns

@@ -5330,8 +5330,30 @@ const NRFI_LG_P0 = 0.72;      // league P(no run in a half-inning) -> ~52% NRFI
    nominal backtest units fall with it. Those units were partly the leak.
 
    Re-run the fit before moving this. The curve is flat between about 50 and 150,
-   so anything in that range is defensible and precision beyond that is fake. */
-const NRFI_PIT_REG = 75;
+   so anything in that range is defensible and precision beyond that is fake.
+
+   MOVED 75 -> 50 ON 2026-08-17, DELIBERATELY, AT THE AGGRESSIVE EDGE OF THAT
+   INTERVAL. The brief was to weight pitching as heavily as possible; 50 is as
+   far as this measurement goes, not a new optimum. The fit was re-run first
+   rather than trusted from this comment (nrfi-pitreg-fit.js, same 7,207
+   walk-forward starts) and it still puts the best weight at 75 with a bootstrap
+   CI over arms of [50, 160]. Held-out cost of the move is about +0.0003 MSE
+   against a curve that is flat to +0.00003 between 60 and 80 — i.e. below
+   anything this data can resolve, which is the only reason it is defensible.
+   In practice a 20-start arm now keeps 20/(20+50) = 29% of his own first-inning
+   rate instead of 21%, so the starter's own record carries ~35% more of the
+   baseline.
+
+   DO NOT GO BELOW 50. That leaves the interval, and the cost curve stops being
+   flat: 25 is +0.0032 held-out and 12 is +0.0113, both clearly worse. If a
+   backtest tells you otherwise it is the leak talking — see the paragraph above
+   about nrfi-ladder-sweep.js, and note that the same script's leak-left-in arm
+   puts the optimum at reg = 1. "Trust the arm harder" is exactly the direction
+   contamination pushes, so a result in that direction is the least trustworthy
+   kind there is. The two numbers to reproduce before overriding this are the
+   clean optimum (75) and the leaky one (1); if your harness cannot tell them
+   apart it cannot settle this constant. */
+const NRFI_PIT_REG = 50;
 /* Regression weight on a team's own 1st-inning runs per game (app.jsx:6721-6722).
    Was 6, which at ~110 games played kept 95% of the team's observed rate.
 
@@ -7706,9 +7728,12 @@ function nrfiEvaluate(ctx) {
     // This voted on (awayPitBase + homePitBase)/2 against 0.60/0.42. Those
     // numbers are right for a RAW first-inning run rate, which runs 0.00 to 2.00
     // across starters with a median near 0.44. But pitBase is nrfiRegress'd
-    // against NRFI_LG_LAMBDA at NRFI_PIT_REG = 75, and a starter with the
-    // typical ~23 first innings therefore carries only 23/(23+75) ≈ 24% of his
-    // own rate. Averaging the two starters compresses it further.
+    // against NRFI_LG_LAMBDA at NRFI_PIT_REG, and a starter with the typical ~23
+    // first innings therefore carries only 23/(23+NRFI_PIT_REG) of his own rate
+    // — 32% at the current 50, and it was 24% when this note was written against
+    // 75. The constant is not spelled out here on purpose: it has moved twice,
+    // and a comment that restates it goes stale silently while still looking
+    // authoritative. Averaging the two starters compresses it further.
     //
     // Measured over 338 games (scripts/nrfi-check-votes.js and the pitProfiles
     // rate/sample it exposes): the average spans 0.433 to 0.627, median 0.513,
