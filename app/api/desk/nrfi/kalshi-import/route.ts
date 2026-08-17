@@ -38,22 +38,46 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-// Parse teams and date from a KXMLBRFI ticker.
-// Tickers look like: KXMLBRFI-25AUG13-NYYMETS or KXMLBRFI-25AUG13-NYY-BOS
+/* Parse teams and date from a KXMLBRFI ticker.
+ *
+ * THE LIVE FORMAT HAS ONE DASH, NOT TWO: KXMLBRFI-26AUG151915MILLAD, i.e.
+ * yy MON dd hhmm away+home all in a single part. The dashed shapes this
+ * function used to describe (KXMLBRFI-25AUG13-NYYMETS) do not occur — checked
+ * against scripts/nrfi-kalshi-prices.json, where 855 of 855 tickers have
+ * exactly one dash.
+ *
+ * That mattered, because the old regex was /^(\d{2})([A-Z]{3})(\d{2})$/ with a
+ * hard $ anchor, tested against "26AUG151915MILLAD". It never matched, so date
+ * fell through to "" on EVERY import the account has ever done. Nothing threw
+ * and nothing looked wrong on the record card, because the only visible field
+ * that parseTicker feeds is `game`, and `game` is overridden by Kalshi's own
+ * settlement title a line later. The blank date stayed invisible until the
+ * BET SIGNALS tile tried to join on it and reported "0 of 15 taken" against a
+ * real 18W/9L.
+ *
+ * Both shapes are accepted below anyway: matching the date prefix WITHOUT the
+ * end anchor covers the live format and the legacy one in the same expression.
+ */
 function parseTicker(ticker: string): { date: string; game: string } {
   const parts = ticker.split("-").slice(1); // drop series prefix
   const datePart = parts[0] || "";
-  // Convert e.g. "25AUG13" -> "20250813"
   const mo: Record<string, string> = {
     JAN: "01", FEB: "02", MAR: "03", APR: "04", MAY: "05", JUN: "06",
     JUL: "07", AUG: "08", SEP: "09", OCT: "10", NOV: "11", DEC: "12",
   };
-  let dateStr = "";
-  const dm = datePart.match(/^(\d{2})([A-Z]{3})(\d{2})$/);
-  if (dm) {
-    dateStr = "20" + dm[1] + (mo[dm[2]] || "00") + dm[3];
-  }
-  const teams = parts.slice(1).join(" @ ") || ticker;
+  // No $ anchor: "25AUG13" and "26AUG151915MILLAD" both start with the date.
+  const dm = datePart.match(/^(\d{2})([A-Z]{3})(\d{2})/);
+  const dateStr = dm && mo[dm[2]] ? "20" + dm[1] + mo[dm[2]] + dm[3] : "";
+
+  /* Teams. In the live format the remainder after the 4-digit time is the two
+   * codes CONCATENATED, and they cannot be split reliably: codes run 2-3 chars,
+   * so "MILLAD" is MIL+LAD or MI+LLAD with nothing in the string to decide.
+   * nrfi-vs-kalshi.js only gets away with splitting because it already knows the
+   * matchup and can build the expected suffix; here there is no such label. So
+   * return the blob unsplit rather than inventing an " @ " in the wrong place —
+   * this value is a fallback for Kalshi's settlement title and rarely shown. */
+  const rest = dm ? datePart.slice(dm[0].length).replace(/^\d{4}/, "") : "";
+  const teams = parts.slice(1).join(" @ ") || rest || ticker;
   return { date: dateStr, game: teams };
 }
 
@@ -117,6 +141,26 @@ export async function GET(req: Request) {
     );
 
     const existing = await readStore<NrfiRec[]>("nrfi_record", []);
+
+    /* Repair records written while parseTicker was returning "" (see above).
+     * Fixing the parser alone would strand them: the loop below skips anything
+     * whose id is already present, so a bet imported with a blank date keeps it
+     * forever and stays invisible to the participation join. The ticker is
+     * recoverable either from the field or from the id, which is "nrfi-k-" plus
+     * the ticker, so no Kalshi round trip is needed.
+     *
+     * Only ever FILLS A BLANK. A record that already carries a date is left
+     * alone, so this cannot rewrite history that was correct to begin with. */
+    let repaired = 0;
+    for (const e of existing) {
+      if (e.source !== "kalshi-import" || e.date) continue;
+      // NrfiRec is Record<string, unknown>, so coerce rather than trust the shape.
+      const tk = String(e.ticker || (e.id.startsWith("nrfi-k-") ? e.id.slice(7) : ""));
+      if (!tk) continue;
+      const d = parseTicker(tk).date;
+      if (d) { e.date = d; repaired++; }
+    }
+
     const existingIds = new Set(existing.map((e) => e.id));
     const toUpsert: NrfiRec[] = [];
     let skipped = 0;
@@ -180,19 +224,27 @@ export async function GET(req: Request) {
       toUpsert.push(rec);
     }
 
-    if (toUpsert.length) {
+    // `repaired` counts in-place edits to `existing`, so a run that imports
+    // nothing but fixes dates still has to write. Testing only toUpsert.length
+    // would silently drop the backfill.
+    if (toUpsert.length || repaired) {
       // Upsert via the existing nrfi route logic: prepend new, keep ≤1000.
       const updated = [...toUpsert, ...existing].slice(0, 1000);
       await writeStore("nrfi_record", updated);
     }
 
+    const repairNote = repaired
+      ? " Backfilled the missing date on " + repaired + " previously imported bet" +
+        (repaired === 1 ? "" : "s") + "."
+      : "";
     return Response.json({
       imported: toUpsert.length,
       skipped,
+      repaired,
       total: nrfiRows.length,
-      message: toUpsert.length
+      message: (toUpsert.length
         ? "Imported " + toUpsert.length + " NRFI bet" + (toUpsert.length === 1 ? "" : "s") + " from Kalshi."
-        : "No new bets to import (" + skipped + " already in history or unresolved).",
+        : "No new bets to import (" + skipped + " already in history or unresolved).") + repairNote,
     });
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
