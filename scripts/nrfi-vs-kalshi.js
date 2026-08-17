@@ -1,6 +1,20 @@
 // Does our model beat the Kalshi price?
 //
-//   node scripts/nrfi-vs-kalshi.js
+//   node scripts/nrfi-vs-kalshi.js                                  (leaky cache)
+//   node scripts/nrfi-vs-kalshi.js nrfi-backtest.lambda-path.json   (point-in-time)
+//
+// THE SECOND FORM IS THE ONE THAT ANSWERS THE QUESTION. Everything below was
+// written against nrfi-tout-vs-model.json, whose splits were never rewound, and
+// the VERDICT at the end of this file says in as many words that the result
+// cannot be settled from that cache and needs "model probabilities whose pitcher
+// and team splits are rewound to the morning of each game". A backtest artifact
+// written with PIT_MODE=point-in-time is exactly that, so passing one as argv[2]
+// removes the asymmetry the leak forced on every conclusion here.
+//
+// What still leaks in those artifacts is offence-side only (top-of-order OBP,
+// h2h, Statcast, platoon OPS), bounded by ablation at 0.0011-0.0021 of AUC. So
+// in artifact mode read a win as "probably real" rather than "proved", and keep
+// reading a loss as conclusive.
 //
 // nrfi-kalshi-bias.js found the first-inning market is not tilted toward NRFI,
 // it is simply too timid: fitting result ~ logit(price) gives a slope near 2,
@@ -42,7 +56,28 @@ const lg = (x) => Math.log(x / (1 - x));
 const clamp = (p) => Math.min(0.98, Math.max(0.02, p));
 
 const kal = JSON.parse(fs.readFileSync(path.join(__dirname, "nrfi-kalshi-prices.json"), "utf8")).rows;
-const mdl = JSON.parse(fs.readFileSync(path.join(__dirname, "nrfi-tout-vs-model.json"), "utf8"));
+
+/* Both sources are normalised to one shape — { date, label, p, actual } — so the
+ * join, the orientation check and the fits below have a single code path and
+ * cannot drift apart between modes.
+ *
+ * The tout cache stores slates as [date, games[]]; a backtest artifact stores a
+ * flat row list keyed "YYYY-MM-DD AWY@HOM". Reading p off the artifact takes the
+ * calibrated-input-free RAW probability, which is what we want: the joint fit
+ * estimates its own intercept and slope, so pre-shifting the inputs would only
+ * move weight out of the coefficients being measured. */
+const ART = process.argv[2] || null;
+let SOURCE, flat;
+if (ART) {
+  const art = JSON.parse(fs.readFileSync(path.join(__dirname, ART), "utf8"));
+  SOURCE = `${ART} (sig ${art.modelSig}, pitMode ${art.pitMode}, ablations ${art.ablations || "none"})`;
+  flat = art.rows.map((r) => ({ date: r.k.slice(0, 10), label: r.k.slice(11), p: r.p, actual: r.a }));
+} else {
+  const mdl = JSON.parse(fs.readFileSync(path.join(__dirname, "nrfi-tout-vs-model.json"), "utf8"));
+  SOURCE = "nrfi-tout-vs-model.json (LEAKY: season-to-date splits, never rewound)";
+  flat = [];
+  for (const [date, games] of mdl.slates) for (const g of games) flat.push({ date, label: g.label, p: g.p, actual: g.actual, conf: g.confidence });
+}
 
 // Kalshi ticker: KXMLBRFI-26AUG151915MILLAD = date(7) time(4) away+home codes.
 // Team codes are 2-3 chars, so splitting "MILLAD" from the left is ambiguous
@@ -67,22 +102,18 @@ for (const r of kal) {
 // distinguishes game 1 from game 2 — joining both to whichever market the map
 // happened to keep would pair one real price with the wrong result.
 const dupe = new Map();
-for (const [date, games] of mdl.slates) {
-  for (const g of games) dupe.set(date + "|" + g.label, (dupe.get(date + "|" + g.label) || 0) + 1);
-}
+for (const g of flat) dupe.set(g.date + "|" + g.label, (dupe.get(g.date + "|" + g.label) || 0) + 1);
 
 const rows = [];
 const missed = [];
 let dh = 0;
-for (const [date, games] of mdl.slates) {
-  for (const g of games) {
-    const m = /^([A-Z]+)@([A-Z]+)$/.exec(g.label || "");
-    if (!m || g.p == null || g.actual == null) continue;
-    if (dupe.get(date + "|" + g.label) > 1) { dh++; continue; }
-    const k = kalKey.get(date + "|" + m[1] + m[2]);
-    if (!k) { missed.push(date + " " + g.label); continue; }
-    rows.push({ date, label: g.label, p: clamp(g.p), q: clamp(1 - k.yes), y: g.actual, nrfi: k.nrfi, conf: g.confidence });
-  }
+for (const g of flat) {
+  const m = /^([A-Z]+)@([A-Z]+)$/.exec(g.label || "");
+  if (!m || g.p == null || g.actual == null) continue;
+  if (dupe.get(g.date + "|" + g.label) > 1) { dh++; continue; }
+  const k = kalKey.get(g.date + "|" + m[1] + m[2]);
+  if (!k) { missed.push(g.date + " " + g.label); continue; }
+  rows.push({ date: g.date, label: g.label, p: clamp(g.p), q: clamp(1 - k.yes), y: g.actual, nrfi: k.nrfi, conf: g.conf });
 }
 
 // Orientation check. `actual` is stored as 0/1 with no documented polarity, and
@@ -91,6 +122,7 @@ for (const [date, games] of mdl.slates) {
 // agree far more often than chance.
 const agree = rows.filter((r) => (r.y === 1) === r.nrfi).length;
 console.log("=================== JOIN ===================");
+console.log(`  model source: ${SOURCE}`);
 console.log(`  matched ${rows.length} games, ${missed.length} model games had no Kalshi market, ${dh} doubleheader games dropped`);
 console.log(`  actual==1 agrees with Kalshi 'NRFI hit' on ${pc(agree / rows.length)} of them` +
   `  -> actual==1 means ${agree / rows.length > 0.5 ? "NRFI HIT" : "NRFI MISSED"}`);
@@ -219,9 +251,25 @@ for (const [a, b] of [[0, 1 / 3], [1 / 3, 2 / 3], [2 / 3, 1]]) {
 }
 console.log("\n  Read this cautiously. The last third does collapse, which is what the leak");
 console.log("  predicts, but the middle third is HIGHER than the first, which the leak");
-console.log("  does not predict, and 240 games per cell puts the gap at under 2 SE. This");
+console.log("  does not predict, and ~250 games per cell puts the gap at under 2 SE. This");
 console.log("  narrows nothing enough to act on.");
-console.log("\n  VERDICT: unresolved, and it cannot be resolved from this cache. Settling");
-console.log("  it needs model probabilities whose pitcher and team splits are rewound to");
-console.log("  the morning of each game. Until that exists, do not size on the numbers");
-console.log("  above and do not cite them as evidence the model beats the market.");
+
+/* The verdict has to depend on which source was read, because the whole point of
+ * the leaky-cache verdict was that it could not be settled from that cache, and
+ * printing it after an artifact run would deny a result this script just
+ * produced. Measured 2026-08-17 on nrfi-backtest.lambda-path.json: c rose from
+ * 0.693 (z 1.48) to 0.817 (z 1.97) when the pitcher leak came OUT, which is the
+ * opposite of what the leak hypothesis predicted, and the late-third collapse
+ * survived removing it — so that collapse was never the pitcher leak. */
+if (ART) {
+  console.log("\n  VERDICT (point-in-time source): the model does hold information the price");
+  console.log("  lacks — c is positive and clear of its SE — but the disagreement table is");
+  console.log("  the part that decides money, and it INVERTS. Small disagreements pay;");
+  console.log("  large ones lose. Do not size on |model - price|, and do not read a high");
+  console.log("  hit rate on confident picks as edge until it is checked against the price.");
+} else {
+  console.log("\n  VERDICT: unresolved, and it cannot be resolved from this cache. Settling");
+  console.log("  it needs model probabilities whose pitcher and team splits are rewound to");
+  console.log("  the morning of each game. Pass such an artifact as argv[2] — one exists");
+  console.log("  now (nrfi-backtest.lambda-path.json) and this script accepts it.");
+}

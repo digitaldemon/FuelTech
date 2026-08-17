@@ -1083,9 +1083,43 @@ const NRFI_LG_P0=0.72;// league P(no run in a half-inning) -> ~52% NRFI
  * is a guard against a broken stat line rather than a routine truncation.
  *
  * Re-measure this if the weights in topOrder change; it is the mean of that
- * specific statistic, not a league rate that can be looked up. */const NRFI_LG_TOP3_OBP=0.3467;// Run-scoring park factors by home-team abbreviation (1.0 = neutral,
-// directional estimates compressed toward 1 for a single inning).
-const NRFI_PARK={COL:1.14,BOS:1.06,CIN:1.06,KC:1.04,ARI:1.04,BAL:1.03,PHI:1.03,TEX:1.02,TOR:1.02,LAA:1.02,MIN:1.02,ATL:1.01,HOU:1.01,CHC:1.01,NYY:1.01,WSH:1.01,MIL:1.00,CWS:1.00,LAD:0.99,STL:0.99,PIT:0.99,TB:0.98,CLE:0.98,DET:0.97,NYM:0.97,OAK:0.97,ATH:0.97,SAC:0.97,MIA:0.95,SEA:0.94,SD:0.94,SF:0.93};const nClamp=(x,lo,hi)=>Math.max(lo,Math.min(hi,x));const _pitI01=new Map();// pid:season -> {rate,sample,era,whip}
+ * specific statistic, not a league rate that can be looked up. */const NRFI_LG_TOP3_OBP=0.3467;/* Run-scoring park factor by home-team abbreviation (1.0 = neutral). COORS ONLY,
+ * BY DELIBERATE CHOICE — and the measurement did not ask for that, so read this
+ * before restoring the old table or trimming this one further.
+ *
+ * Measured 2026-08-17, scripts/nrfi-park-table-check.js: 14,009 games / 28,018
+ * half-innings from 2021, residualised against the walk-forward pitcher model so
+ * a park that hosts good pitching is not credited for it, bootstrap clustered on
+ * game. Effects in pp of clean-first-inning rate; negative = run-friendly.
+ *
+ *   COL  -5.31 +- 1.51  t -3.51   <- kept
+ *   LAD  -4.14 +- 1.53  t -2.71   <- dropped, and it was WRONG-SIGNED at 0.99
+ *   BOS  -3.63 +- 1.51  t -2.40   <- dropped
+ *   SEA  +3.69 +- 1.38  t +2.68   <- dropped
+ *   every other park    |t| < 1.7, individually indistinguishable from neutral
+ *
+ * The full table was NOT noise: correlation between (shipped - 1) and measured
+ * residual was r = -0.623, the right sign, and nrfi-park-rest.js puts park's true
+ * spread at 1.29pp against a 1.53pp sampling floor — park is one of the few
+ * candidate terms that survives its noise floor at all, where pitcher rest and
+ * team first-inning offence both died. So this is a simplification chosen for the
+ * product, against the evidence, not a term that failed a test. Three parks with
+ * |t| > 2.4 were given up to get it. If first-inning calls at Fenway, Dodger
+ * Stadium or T-Mobile start looking systematically off, that is the first place
+ * to look, and the numbers above are the replacement values.
+ *
+ * KEYS MUST MATCH statsapi's team.abbreviation, which is what homeAbbr carries
+ * (see the assignment near the schedule mapper). The old table shipped ARI, OAK
+ * and SAC — none of which statsapi ever returns; it uses AZ and ATH. So Chase
+ * Field silently ran at neutral all season through `|| 1` while a 1.04 sat in the
+ * table looking applied. Do not reintroduce ARI/OAK/SAC.
+ *
+ * One knock-on: the indoors special case was removed earlier on the grounds that
+ * "dome parks already carry it in NRFI_PARK", which is no longer true for any
+ * dome but Coors' non-dome self. That effect measured x1.09 with an interval
+ * spanning the baseline, so nothing significant is now unmodelled — but the
+ * justification for that removal no longer holds, and restoring it would need its
+ * own measurement rather than this comment as cover. */const NRFI_PARK={COL:1.14};const nClamp=(x,lo,hi)=>Math.max(lo,Math.min(hi,x));const _pitI01=new Map();// pid:season -> {rate,sample,era,whip}
 const _teamI01=new Map();// teamId:season -> {rate,sample,ops}
 const _obpCache=new Map();const _travelCache=new Map();const _linescore=new Map();// gamePk -> Promise<linescore>
 const _rolling=new Map();// pid:season -> rolling NRFI windows
