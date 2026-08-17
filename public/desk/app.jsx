@@ -11904,7 +11904,11 @@ function FirstInning() {
             <span style={{ color: "var(--moss)", fontWeight: 700 }}>PITCHER FRIENDLY</span> = park+weather suppress runs ·{" "}
             <span style={{ color: "var(--rose)", fontWeight: 700 }}>HITTER FRIENDLY</span> = park+weather inflate runs. Hover for detail.
           </div>
-          <div><span style={{ color: "var(--amber)", fontWeight: 700 }}>⚠ LINEUPS PENDING</span> = official lineup not yet posted; model uses projected order (less reliable).</div>
+          {/* Said "model uses projected order" until the projected sim was removed.
+              There is no projected order any more — the model simply runs without
+              the top-of-order OBP factor, which is a smaller and more honest claim
+              than the one this line used to make. */}
+          <div><span style={{ color: "var(--amber)", fontWeight: 700 }}>⚠ LINEUPS PENDING</span> = official lineup not yet posted; the top-of-order OBP adjustment is sitting out, so the offense side is on team season rates alone.</div>
           <div><b style={{ color: "var(--fg)" }}>Bet Size</b> (shown per card) = suggested wager as % of bankroll, sized to your edge. Larger edge = larger recommended bet. Enter your bankroll in Bankroll Builder above to see dollar amounts.</div>
           <div><b style={{ color: "var(--fg)" }}>1st-inn offense</b> = each team's season YRFI rate (Poisson estimate from avg runs scored in the 1st). Red = high-scoring, green = low-scoring team.</div>
           <div><b style={{ color: "var(--fg)" }}>↑/↓ MKT</b> = market moved ≥5 pts since first page load. Indicates smart money flow between your sessions.</div>
