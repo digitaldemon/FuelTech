@@ -10964,6 +10964,27 @@ function FirstInning() {
             <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>
               {r.call === "NRFI" ? "No run scores in the 1st inning" : "A run scores in the 1st inning"}
             </div>
+            {/* The two models disagree on this card and it has to say so.
+                KING MODE swaps the SCORE only — the bet above stays ours — so a
+                Coors game rendered "BET YRFI" in the same bar as a FLAGGED king
+                badge, i.e. the card recommended a game his model refuses to
+                grade. Reading the badge alone, that looks like a bug in one of
+                the two numbers rather than a real difference of opinion, which
+                is the same failure the dsOf comment warns about.
+
+                Only when he actually auto-passes: on the games where both
+                models are live there is nothing to reconcile and this line would
+                be noise on every card. */}
+            {kingMode && kingHere.gates.length > 0 && (
+              <div title={"NRFIKINGKY auto-passes this game: " +
+                kingHere.gates.map((g) => g.why).join("; ") +
+                ".\n\nThe call above is OUR model, which does not use his gates. " +
+                "KING MODE changes the score on this card, not the bet."}
+                style={{ cursor: "help", fontSize: 10, color: "var(--violet)", marginTop: 5,
+                  letterSpacing: "0.04em" }}>
+                HIS MODEL PASSES · {kingHere.gates.map((g) => g.tag).join(" · ")}
+              </div>
+            )}
           </div>
           {/* ── Dual score, on the FRONT of the card ──
                It had been moved into the details fold with the rest of DSHeader
