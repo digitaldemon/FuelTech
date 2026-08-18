@@ -9524,6 +9524,97 @@ function dsTier(ds, th) {
   return { label: "RED", color: "var(--rose)" };
 }
 
+/* ===== KING MODE ==========================================================
+ *
+ * NRFIKINGKY's published method, run instead of ours. He states his whole rule
+ * structure on his card, and this is that structure: the starter's clean-first-
+ * inning rate over SZN/L50/L30/L10 as the ONLY input, four hard auto-passes, a
+ * +-2% park flag on three named parks, and a per-tier price gate. No offence,
+ * lineups, weather, bullpen, Statcast, travel or rest — he uses none of them, so
+ * this uses none of them.
+ *
+ * THE SCORE IS OURS AND MUST STAY LABELLED THAT WAY. His DS equation is not
+ * published — the card shows inputs and output, never the mapping — and it is
+ * not recoverable from a slate: his 2026-08-17 board gives 9 usable games
+ * against 8 features, so a linear fit is underdetermined and reproduces that day
+ * while meaning nothing. A constrained 2-parameter fit lands R2 0.707 with a
+ * 5.5-point residual against tier boundaries 0.7 points apart (GREEN 64.5 vs
+ * YELLOW 63.8), so an approximation cannot even reproduce his tiers. KING MODE
+ * therefore prints KS, not DS, and the UI says the number will not match his.
+ *
+ * WHAT IT MEASURES TO, and this is the reason the toggle defaults OFF:
+ * scripts/nrfi-king-mode.js runs exactly this over 14,009 games. The score does
+ * not separate. Deciles run 51.8% at the top to 48.2% at the bottom with every
+ * interval overlapping, and the extreme top is flat too (top 1% 55.7% on n=61,
+ * CI [42.9, 67.7]). Of the four gates only COORS separates, at 41.3% against a
+ * 50.7% base rate. Ship it because it is worth SEEING what his rules say about
+ * tonight, not because it is worth betting.
+ *
+ * Windows are TEAM GAMES — the starts inside the last N games his club has
+ * played. Not days, not starts. pitcherRollingNRFI already emits them that way
+ * and its comment records the cell-by-cell verification against his own card;
+ * read that before touching this. */
+const KING_PARK_ADJ = { CIN: -2, CHC: -2, PIT: +2 }; // his three named parks, his +-2%
+const KING_W = { SZN: 0.25, L50: 0.25, L30: 0.35, L10: 0.15 }; // L30 is his headline
+const KING_LG = 71.1;  // league clean-1st rate, the shrink target
+const KING_K = 6;      // shrink strength in starts
+
+/* One arm. Blends whichever windows have data, renormalising over them, then
+ * shrinks on the L30 start count — the count his card prints and gates on. */
+function kingArm(rolling, parkAdj) {
+  const wins = (rolling && rolling.windows) || [];
+  const by = {};
+  for (const w of wins) by[w.key] = w;
+  let num = 0, den = 0;
+  for (const k of Object.keys(KING_W)) {
+    const w = by[k];
+    if (!w || w.pct == null) continue;
+    num += KING_W[k] * w.pct; den += KING_W[k];
+  }
+  const l30n = by.L30 ? (by.L30.n || 0) : 0;
+  const l30pct = by.L30 ? by.L30.pct : null;
+  if (!den) return { pct: null, n: l30n, l30: l30pct };
+  const raw = num / den;
+  const shrunk = (l30n * raw + KING_K * KING_LG) / (l30n + KING_K);
+  return { pct: Math.max(0, Math.min(100, shrunk + parkAdj)), n: l30n, l30: l30pct };
+}
+
+/* His gates, in his words. All four key off the L30 window, which is the one his
+ * card headlines. THIN is 1-3 starts, not 2-3: his card flags "home 0% on 1
+ * starts" as THIN, and reading it as 2-3 leaves every n=1 arm ungated — those
+ * sit at 0% or 100% by construction and pile into both ends of the score. */
+function kingEvaluate(r) {
+  const pp = r.pitProfiles || {};
+  const homeAbbr = r.homeAbbr || r.home;
+  const adj = KING_PARK_ADJ[homeAbbr] || 0;
+  const a = kingArm(pp.away && pp.away.rolling, adj);
+  const h = kingArm(pp.home && pp.home.rolling, adj);
+
+  const gates = [];
+  const nm = (p) => (p && p.name) || "starter";
+  if (a.n === 0) gates.push({ tag: "BLIND", why: "blind half — away " + nm(pp.away) + " 0 starts" });
+  if (h.n === 0) gates.push({ tag: "BLIND", why: "blind half — home " + nm(pp.home) + " 0 starts" });
+  const minN = Math.min(a.n, h.n);
+  if (minN >= 1 && minN <= 3) {
+    gates.push({ tag: "THIN", why: "thin sample — " + (a.n <= h.n ? "away " + a.n : "home " + h.n) + " starts" });
+  }
+  if (a.l30 != null && a.l30 < 50)
+    gates.push({ tag: "LEAK", why: "one-sided leak — away " + nm(pp.away) + " " + a.l30 + "% L30 under 50%" });
+  if (h.l30 != null && h.l30 < 50)
+    gates.push({ tag: "LEAK", why: "one-sided leak — home " + nm(pp.home) + " " + h.l30 + "% L30 under 50%" });
+  // He does not dock Coors, he refuses it. That is why COL is absent above.
+  if (homeAbbr === "COL")
+    gates.push({ tag: "COORS", why: "Coors Field — the model excludes this park regardless of score" });
+
+  const score = a.pct != null && h.pct != null ? (a.pct / 100) * (h.pct / 100) * 100 : null;
+  return { score, gates, away: a, home: h, parkAdj: adj };
+}
+
+/* Per-tier price ceiling, his numbers. A tier that does not appear here has no
+ * gate because it is not playable at any price — "no gate (tier no-play)" on his
+ * card means the tier already refused it, not that the price passed. */
+const KING_PRICE_GATE = { ELITE: -170, GREEN: -160, YELLOW: -140 };
+
 /* A window cell. n rides on every cell and drives how loudly it is allowed to
  * speak: at the measured k=87.6 a 2-start window is ~2% reliable, so colouring
  * a 100%-on-2g cell green would render sampling dust as form. Thin cells go
@@ -9810,11 +9901,17 @@ function GraveMotif({ call, isBet, strength }) {
   );
 }
 
-function DSHeader({ r, leadDS, thresholds, priceOv }) {
+function DSHeader({ r, leadDS, thresholds, priceOv, kingMode }) {
   const pp = r.pitProfiles || {};
+  /* In KING MODE the number on this card is HIS rules, not ours — a different
+   * quantity from a different input set, so it is labelled KS and never DS. Our
+   * calibrated probability is not shown alongside it on purpose: two numbers in
+   * the same slot with the same styling is how a reader ends up comparing them
+   * as if they were the same measurement. */
+  const king = kingMode ? kingEvaluate(r) : null;
   // DS is P(NRFI) on our calibrated number, pre market-blend, so DS vs BE stays a
   // genuine model-against-market comparison rather than the market against itself.
-  const ds = r.pCal != null ? r.pCal * 100 : null;
+  const ds = king ? king.score : (r.pCal != null ? r.pCal * 100 : null);
   /* A saved override REPLACES the Kalshi break-even rather than sitting beside
    * it. Showing both would be worse than showing either: the edge is a single
    * number and it has to be against the price you can actually get. When an
@@ -9835,17 +9932,68 @@ function DSHeader({ r, leadDS, thresholds, priceOv }) {
         <div style={{ marginTop: 8 }}>
           <div style={{ fontSize: 8, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>WHY NOT LEAD</div>
           <div style={{ fontSize: 11, color: "var(--dim)" }}>
-            dual score trails lead by {behind.toFixed(1)}pts (DS {Math.round(ds)})
+            {king ? "king score" : "dual score"} trails lead by {behind.toFixed(1)}pts
+            {" (" + (king ? "KS " : "DS ") + Math.round(ds) + ")"}
+          </div>
+        </div>
+      )}
+      {/* A gated game is a PASS at any score, so the gates go above the number
+          rather than beside it. Every gate he fires is listed, not just the
+          first: his own card stacks them ("COORS; thin sample; one-sided leak")
+          and the stack is the explanation. */}
+      {king && king.gates.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 3 }}>
+            {king.gates.map((g, i) => (
+              <span key={i} style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em",
+                color: "var(--rose)", border: "1px solid var(--rose)", borderRadius: 4, padding: "1px 5px" }}>
+                {g.tag}
+              </span>
+            ))}
+            <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em", color: "var(--rose)" }}>AUTO PASS</span>
+          </div>
+          <div style={{ fontSize: 10, color: "var(--dim)", lineHeight: 1.4 }}>
+            {king.gates.map((g) => g.why).join("; ")}
           </div>
         </div>
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 22, fontWeight: 800, color: tier.color }}>
+        <span style={{ fontSize: 22, fontWeight: 800,
+          color: king && king.gates.length ? "var(--dim)" : tier.color,
+          textDecoration: king && king.gates.length ? "line-through" : "none" }}>
           {ds == null ? "—" : ds.toFixed(1)}
         </span>
-        <span style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>DS</span>
-        <span style={{ fontSize: 9, fontWeight: 700, color: tier.color, border: "1px solid " + tier.color,
-          borderRadius: 4, padding: "1px 5px", letterSpacing: "0.06em" }}>{tier.label}</span>
+        {/* KS, never DS. Different inputs, different equation, and his real DS is
+            not reproducible here — see the KING MODE header comment. */}
+        <span title={king
+          ? "KING SCORE — NRFIKINGKY's published rules: starter clean-1st% over SZN/L50/L30/L10 and nothing else.\n\nThis is NOT his DS number and will not match his card. His equation is not published and is not recoverable from one slate.\n\nMeasured over 14,009 games this score does not separate NRFI outcomes at any selectivity."
+          : "DUAL SCORE — our calibrated P(NRFI), pre market-blend."}
+          style={{ cursor: "help", fontSize: 9, fontWeight: 700, color: king ? "var(--violet)" : "var(--dim)", letterSpacing: "0.08em" }}>
+          {king ? "KS" : "DS"}
+        </span>
+        <span style={{ fontSize: 9, fontWeight: 700,
+          color: king && king.gates.length ? "var(--dim)" : tier.color,
+          border: "1px solid " + (king && king.gates.length ? "var(--dim)" : tier.color),
+          borderRadius: 4, padding: "1px 5px", letterSpacing: "0.06em" }}>
+          {king && king.gates.length ? "NO PLAY" : tier.label}
+        </span>
+        {/* His price gate: a ceiling per tier, and no gate at all below YELLOW
+            because the tier already refused the game. */}
+        {king && !king.gates.length && be != null && (() => {
+          const ceil = KING_PRICE_GATE[tier.label];
+          if (ceil == null) {
+            return <span style={{ fontSize: 9, color: "var(--dim)" }}>no gate (tier no-play)</span>;
+          }
+          const ceilPct = dsImplied(ceil);
+          const ok = ceilPct != null && be <= ceilPct;
+          return (
+            <span title={"His price gate for " + tier.label + " is " + ceil + " (" +
+              (ceilPct == null ? "?" : ceilPct.toFixed(1)) + "%). This game is at " + be.toFixed(1) + "%."}
+              style={{ cursor: "help", fontSize: 9, fontWeight: 700, color: ok ? "var(--moss)" : "var(--rose)" }}>
+              {ok ? "price inside " + ceil + " gate" : "price outside " + ceil + " gate"}
+            </span>
+          );
+        })()}
         <span style={{ fontSize: 10, color: "var(--dim)" }}>
           {be == null ? "no market" : (
             "N " + dsAmerican(be) + " · Y " + dsAmerican(100 - be) + " · BE " + be.toFixed(1) + "%"
@@ -9948,6 +10096,20 @@ function FirstInning() {
   function saveDsTh(next) {
     setDsTh(next);
     try { localStorage.setItem("nrfi.ds.tiers", JSON.stringify(next)); } catch { /* private mode */ }
+  }
+
+  /* KING MODE: score the board on NRFIKINGKY's published rules instead of ours.
+   * DEFAULTS OFF and should stay that way — scripts/nrfi-king-mode.js measures
+   * this exact construction over 14,009 games and it does not separate at any
+   * selectivity (deciles 51.8% down to 48.2%, all intervals overlapping). It is
+   * a viewer for what his rules say about tonight, not a second opinion with
+   * standing. Persisted so the choice survives a reload, like the tiers. */
+  const [kingMode, setKingMode] = useState(() => {
+    try { return localStorage.getItem("nrfi.kingMode") === "1"; } catch { return false; }
+  });
+  function saveKingMode(on) {
+    setKingMode(on);
+    try { localStorage.setItem("nrfi.kingMode", on ? "1" : "0"); } catch { /* private mode */ }
   }
 
   /* Hand-typed prices, keyed by gamePk, same in-state-and-in-storage pattern as
@@ -10619,7 +10781,16 @@ function FirstInning() {
    * bucketed Bets/Leans/Pass and sorted by confidence inside each, and silently
    * reordering the thing the user reads every day is a bigger change than adding
    * a number to it. Both orderings are now visible; the sort can follow later. */
-  const dsOf = (r) => (r.pCal != null ? r.pCal * 100 : null);
+  /* KING MODE swaps the score at the SOURCE, not just on the card, so the tier
+   * counts, the lead and the DS rank all describe the number actually printed.
+   * Doing it only in DSHeader was the first version and it produced a board whose
+   * summary line and cards disagreed — the surest way to get a real difference
+   * filed as a rendering bug. A gated game returns null: he auto-passes it, so it
+   * has no playable score, and null is already the "not a decision" value here. */
+  const dsOf = (r) => {
+    if (kingMode) { const k = kingEvaluate(r); return k.gates.length ? null : k.score; }
+    return r.pCal != null ? r.pCal * 100 : null;
+  };
   const dsEdgeOf = (r) => { const d = dsOf(r); return d != null && r.market ? d - r.market.marketNRFI : null; };
   const leadDS = validRows.reduce((m, r) => { const d = dsOf(r); return d != null && (m == null || d > m) ? d : m; }, null);
   const dsRank = new Map(validRows.filter((r) => dsEdgeOf(r) != null)
@@ -10877,7 +11048,7 @@ function FirstInning() {
              board no longer requires reading all of them. ── */}
         {isOpen && (<>
         <div style={{ marginBottom: 12 }}>
-          <DSHeader r={r} leadDS={leadDS} thresholds={dsTh} priceOv={priceOv[String(r.gamePk)]} />
+          <DSHeader r={r} leadDS={leadDS} thresholds={dsTh} priceOv={priceOv[String(r.gamePk)]} kingMode={kingMode} />
         </div>
 
         {/* ── Verdict graphic + battle bar ── */}
@@ -11608,7 +11779,9 @@ function FirstInning() {
               {" · "}<span style={{ color: "var(--moss)" }}>{counts.GREEN} green</span>
               {" · "}<span style={{ color: "var(--amber)" }}>{counts.YELLOW} yellow</span>
               {" · "}<span style={{ color: "var(--rose)" }}>{counts.RED} red</span>
-              {counts["NO DS"] > 0 ? " · " + counts["NO DS"] + " no DS" : ""}
+              {counts["NO DS"] > 0
+                ? " · " + counts["NO DS"] + (kingMode ? " no play" : " no DS")
+                : ""}
             </span>
             {!isDefault && (
               <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: "2px 7px" }}
@@ -11620,6 +11793,40 @@ function FirstInning() {
               title="The badge is a threshold on the DS level. It is NOT the edge over the break-even price — his DS 60.0 against BE 51.5% is an +8.5pt edge and still YELLOW, while DS 64.7 at +5.2 is GREEN. The board's #N badge is what carries the edge ordering.">
               badge = DS level, not edge
             </span>
+            {/* ── KING MODE toggle ──
+                Parked at the end of the tier row because it reinterprets every
+                number to its left: the cutoffs stay put but the quantity being
+                cut changes from our calibrated probability to his score.
+                The label says OFF explicitly rather than just going dark. A
+                toggle that only signals ON is a toggle you leave on by accident,
+                and this one is measured NOT to work — the tooltip carries that
+                finding so it is unavoidable at the point of switching, not
+                buried in a comment nobody reads. */}
+            <button className="btn btn-ghost btn-sm"
+              onClick={() => saveKingMode(!kingMode)}
+              title={"KING MODE — score the slate by NRFIKINGKY's published rules instead of ours.\n\n" +
+                "His inputs and nothing else: the starter's clean-1st% over SZN/L50/L30/L10 " +
+                "(windows are TEAM GAMES), his four auto-passes (BLIND / THIN 1-3 starts / " +
+                "one-sided LEAK / COORS), his ±2% flag on GABP, Wrigley and PNC, and his " +
+                "per-tier price ceiling. No offence, weather, bullpen, travel or rest — he uses none.\n\n" +
+                "The number prints as KS, not DS. It is NOT his DS and will not match his card: " +
+                "his equation is unpublished and is not recoverable from one slate.\n\n" +
+                "MEASURED, and the reason this is off by default — over 14,009 games " +
+                "(scripts/nrfi-king-mode.js) this score does not separate NRFI outcomes at any " +
+                "selectivity. Deciles run 51.8% down to 48.2% with every interval overlapping, " +
+                "and the sharp end is flat too (top 1% 55.7% on n=61, CI [42.9, 67.7]) against a " +
+                "50.7% base rate and a 53.1% break-even at −113. Only one gate separates: COORS, " +
+                "at 41.3%. Use this to SEE what his rules say about tonight, not to bet it."}
+              style={{ fontSize: 11, padding: "2px 8px", letterSpacing: "0.06em", fontWeight: 700,
+                color: kingMode ? "var(--violet)" : "var(--dim)",
+                borderColor: kingMode ? "var(--violet)" : undefined }}>
+              KING MODE {kingMode ? "ON" : "OFF"}
+            </button>
+            {kingMode && (
+              <span style={{ fontSize: 10, color: "var(--violet)" }}>
+                scoring by his rules · KS, not DS · does not match his card
+              </span>
+            )}
           </div>
         );
       })()}
