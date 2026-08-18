@@ -29,7 +29,7 @@ function slice(startRe, label) {
 }
 const dsTierSrc = slice(/^function dsTier\(/, "dsTier");
 const kingSrc = [
-  raw.split(/\r?\n/).filter((l) => /^const KING_(PARK_ADJ|ADJ_CAP|W|LG|K|TIERS|YRFI_FLIP)\b/.test(l)).join("\n"),
+  raw.split(/\r?\n/).filter((l) => /^const KING_(PARK_ADJ|ADJ_CAP|W|LG|K|TIERS|YRFI_FLIP|THIN_GS)\b/.test(l)).join("\n"),
   slice(/^function kingArm\(/, "kingArm"),
   slice(/^function kingEvaluate\(/, "kingEvaluate"),
   slice(/^function kingTier\(/, "kingTier"),
@@ -110,16 +110,24 @@ console.log("\nGATES (hard) AND FLAGS (soft)");
 const G = (home, a, h) => ({ homeAbbr: home,
   pitProfiles: { away: { name: "A", rolling: a }, home: { name: "H", rolling: h } } });
 const tags = (k) => k.gates.map((x) => x.tag);
-const ftags = (k) => k.flags.map((x) => x.tag);
+const ftags = (k) => (k.flags || []).map((x) => x.tag);
 
-eq("0 starts -> BLIND", tags(mod.kingEvaluate(G("SEA", arm(null, 0, null, 0), arm(80, 20, 80, 6)))), ["BLIND"]);
-eq("1 start  -> THIN (not 2-3)", tags(mod.kingEvaluate(G("SEA", arm(100, 1, 100, 1), arm(80, 20, 80, 6)))), ["THIN"]);
-eq("3 starts -> THIN", tags(mod.kingEvaluate(G("SEA", arm(80, 3, 80, 3), arm(80, 20, 80, 6)))), ["THIN"]);
-eq("4 starts -> no gate", tags(mod.kingEvaluate(G("SEA", arm(80, 4, 80, 4), arm(80, 20, 80, 6)))), []);
+/* Every count below is SEASON GS, which is the cell his own THIN messages quote
+ * ("away 75% on 4 starts" is Klassen at SZN 75%/4GS). The two n=6 arguments are
+ * L30 counts and must NOT gate anything — keying off them gated SEA@MIL and
+ * blinded NYY@BAL on his 2026-08-18 board, both of which he scores. */
+eq("0 season starts -> BLIND", tags(mod.kingEvaluate(G("SEA", arm(null, 0, null, 0), arm(80, 20, 80, 6)))), ["BLIND"]);
+eq("1 season start  -> THIN", tags(mod.kingEvaluate(G("SEA", arm(100, 1, 100, 1), arm(80, 20, 80, 6)))), ["THIN"]);
+eq("4 season starts -> THIN (his widest)", tags(mod.kingEvaluate(G("SEA", arm(75, 4, 100, 2), arm(83, 6, 100, 3)))), ["THIN"]);
+eq("6 season starts -> no gate", tags(mod.kingEvaluate(G("SEA", arm(80, 6, 80, 4), arm(80, 20, 80, 6)))), []);
+// A full season arm whose L30 window is thin or missing must still score.
+eq("19 GS but only 2 in L30 -> no gate", tags(mod.kingEvaluate(G("MIL", arm(79, 14, 60, 5), arm(79, 19, 100, 2)))), []);
+eq("9 GS with no L30 cell   -> no gate", tags(mod.kingEvaluate(G("BAL", arm(67, 9, null, 0), arm(63, 24, 83, 6)))), []);
 {
+  // His board files LEAK under "HARD AUTO-PASSES" and the card reads "WHY NO BET".
   const k = mod.kingEvaluate(G("SEA", arm(70, 20, 40, 6), arm(80, 20, 80, 6)));
-  eq("leaky arm is NOT a hard gate", tags(k), []);
-  eq("leaky arm IS a soft flag", ftags(k), ["LEAK"]);
+  eq("leaky arm IS a hard gate", tags(k), ["LEAK"]);
+  eq("  and is not also a soft flag", ftags(k), []);
 }
 
 console.log("\nTIER LADDER, on his cutoffs");
@@ -135,16 +143,17 @@ eq("two 78% arms (score 60.8) -> YELLOW", tierFor(78, 78), "YELLOW");
 eq("two 70% arms (score 52.3) -> RED", tierFor(70, 70), "RED");
 eq("two 65% arms (score 47.2) -> RED", tierFor(65, 65), "RED");
 {
-  // Strong pair, one leaky arm -> a flagged game never shows green.
+  /* Strong pair, one leaky arm. He does not cap it at yellow — he refuses it and
+   * still prints the number, exactly as WSH@TEX shows 68.0 under FLAGGED. */
   const k = mod.kingEvaluate(G("SEA", arm(95, 25, 40, 6), arm(95, 25, 95, 6)));
-  eq("flagged strong game capped at YELLOW", mod.kingTier(k).label, "YELLOW");
-  eq("  and marked as capped", !!mod.kingTier(k).capped, true);
+  eq("gated strong game -> FLAGGED", mod.kingTier(k).label, "FLAGGED");
+  near("  and keeps its score (74.43 x 90.14)", k.score, 67.092, 0.01);
 }
 {
-  // Low score, exactly one leaky arm -> flips.
+  // Low score, exactly one leaky arm -> gated here, and it IS his YRFI board.
   const k = mod.kingEvaluate(G("SEA", arm(45, 25, 30, 6), arm(75, 25, 75, 6)));
-  eq("under 52 + one leak -> YRFI", mod.kingTier(k).label, "YRFI");
-  eq("  side reported", k.side, "YRFI");
+  eq("under 52 + one leak -> FLAGGED", mod.kingTier(k).label, "FLAGGED");
+  eq("  side flips so the YRFI book survives", k.side, "YRFI");
 }
 {
   // Low score, BOTH arms leaky -> not his setup, no flip.
@@ -157,9 +166,13 @@ eq("two 65% arms (score 47.2) -> RED", tierFor(65, 65), "RED");
   eq("one leak but score >= 52 -> no flip", k.side, "NRFI");
 }
 {
-  // A gated game has no tier at all, which must agree with dsOf() returning null.
+  /* Coors is refused, but he still prints its score — LAD@COL reads 41.6 under
+   * FLAGGED. Only an arm with nothing to grade produces no number at all. */
   const k = mod.kingEvaluate(G("COL", arm(95, 25, 95, 6), arm(95, 25, 95, 6)));
-  eq("gated game has no tier", mod.kingTier(k).label, "NO DS");
+  eq("Coors -> FLAGGED, not blank", mod.kingTier(k).label, "FLAGGED");
+  eq("  score still computed", k.score != null, true);
+  const blind = mod.kingEvaluate(G("PHI", arm(null, 0, null, 0), arm(85, 20, 83, 6)));
+  eq("no arm to grade -> NO DS", mod.kingTier(blind).label, "NO DS");
 }
 
 console.log(fails === 0 ? "\nALL PASS" : "\n" + fails + " FAILURES");

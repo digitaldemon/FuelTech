@@ -1,0 +1,66 @@
+{
+  "_source": "https://nrfi-edge.replit.app/ captured 2026-08-18T04:14:30.646Z (his own AS OF stamp)",
+  "_note": "His full 15-game board: every window cell he prints, his DS, his gate, his tier, his price. Window cells are [pct, games] exactly as displayed. He rounds pct to whole percents, which floors any fit against this board at roughly 0.5-0.9 RMSE -- see nrfi-king-fit.js. n on SZN is season GS, which is the shrink denominator.",
+  "_tabs": "LEAK games (DET@PIT, ATL@MIN) are hard auto-passes on the NRFI board AND are the entire YRFI board. Both tabs still print their DS.",
+  "games": [
+    { "g": "TOR@TB", "home": "TB", "park": 0, "ds": 68.7, "tier": "ELITE", "gates": [], "price": -136,
+      "a": { "who": "Jose Soriano",   "SZN": [75, 24], "L50": [100, 8],  "L30": [100, 4], "L10": [100, 2] },
+      "h": { "who": "Nick Martinez",  "SZN": [87, 23], "L50": [75, 8],   "L30": [80, 5],  "L10": [100, 1] } },
+
+    { "g": "ARI@BOS", "home": "BOS", "park": 0, "ds": 60.7, "tier": "YELLOW", "gates": [], "price": -122,
+      "a": { "who": "Merrill Kelly",  "SZN": [68, 22], "L50": [80, 10],  "L30": [83, 6],  "L10": [100, 2] },
+      "h": { "who": "Ranger Suarez",  "SZN": [76, 21], "L50": [71, 7],   "L30": [100, 4], "L10": [100, 1] } },
+
+    { "g": "SEA@MIL", "home": "MIL", "park": 0, "ds": 60.0, "tier": "YELLOW", "gates": [], "price": -128,
+      "a": { "who": "Bryce Miller",   "SZN": [79, 14], "L50": [67, 9],   "L30": [60, 5],  "L10": [50, 2] },
+      "h": { "who": "Kyle Harrison",  "SZN": [79, 19], "L50": [80, 5],   "L30": [100, 2], "L10": [100, 1] } },
+
+    { "g": "SD@NYM", "home": "NYM", "park": 0, "ds": 57.6, "tier": "RED", "gates": [], "price": -111,
+      "a": { "who": "Robbie Ray",     "SZN": [83, 23], "L50": [89, 9],   "L30": [100, 5], "L10": [100, 2] },
+      "h": { "who": "Zac Thornton",   "SZN": [50, 8],  "L50": [57, 7],   "L30": [67, 6],  "L10": [100, 2] } },
+
+    { "g": "STL@CIN", "home": "CIN", "park": -2, "ds": 55.2, "tier": "RED", "gates": [], "price": -113,
+      "a": { "who": "Kyle Leahy",     "SZN": [83, 23], "L50": [100, 9],  "L30": [100, 5], "L10": [100, 1] },
+      "h": { "who": "Andrew Abbott",  "SZN": [56, 25], "L50": [56, 9],   "L30": [80, 5],  "L10": [0, 1] } },
+
+    { "g": "NYY@BAL", "home": "BAL", "park": 0, "ds": 53.6, "tier": "RED", "gates": [], "price": -113,
+      "a": { "who": "Carlos Rodon",   "SZN": [67, 9],  "L50": [100, 2],  "L30": null,     "L10": null },
+      "h": { "who": "Shane Baz",      "SZN": [63, 24], "L50": [70, 10],  "L30": [83, 6],  "L10": [50, 2] } },
+
+    { "g": "SF@CLE", "home": "CLE", "park": 0, "ds": 50.9, "tier": "RED", "gates": [], "price": -132,
+      "a": { "who": "C. Whisenhunt",  "SZN": [67, 6],  "L50": [60, 5],   "L30": [50, 4],  "L10": [100, 2] },
+      "h": { "who": "Foster Griffin", "SZN": [79, 24], "L50": [78, 9],   "L30": [60, 5],  "L10": [50, 2] } },
+
+    { "g": "WSH@TEX", "home": "TEX", "park": 0, "ds": 68.0, "tier": "FLAGGED", "gates": ["THIN"], "price": -113,
+      "a": { "who": "Jackson Kent",   "SZN": [100, 1], "L50": [100, 1],  "L30": [100, 1], "L10": [100, 1] },
+      "h": { "who": "Cal Quantrill",  "SZN": [88, 8],  "L50": [88, 8],   "L30": [100, 4], "L10": [100, 1] } },
+
+    { "g": "LAA@HOU", "home": "HOU", "park": 0, "ds": 65.7, "tier": "FLAGGED", "gates": ["THIN"], "price": -102,
+      "a": { "who": "George Klassen", "SZN": [75, 4],  "L50": [100, 2],  "L30": [100, 2], "L10": [100, 2] },
+      "h": { "who": "Cristian Javier","SZN": [83, 6],  "L50": [100, 3],  "L30": [100, 3], "L10": [100, 1] } },
+
+    { "g": "ATH@KC", "home": "KC", "park": 0, "ds": 52.8, "tier": "FLAGGED", "gates": ["THIN"], "price": null,
+      "a": { "who": "Jack Perkins",   "SZN": [55, 11], "L50": [63, 8],   "L30": [60, 5],  "L10": [100, 2] },
+      "h": { "who": "Daniel Lynch IV","SZN": [100, 2], "L50": [100, 2],  "L30": [100, 2], "L10": [100, 2] } },
+
+    { "g": "DET@PIT", "home": "PIT", "park": 2, "ds": 51.8, "tier": "FLAGGED", "gates": ["LEAK"], "price": -128,
+      "a": { "who": "Keider Montero", "SZN": [85, 20], "L50": [57, 7],   "L30": [40, 5],  "L10": [50, 2] },
+      "h": { "who": "B. Ashcraft",    "SZN": [75, 24], "L50": [44, 9],   "L30": [60, 5],  "L10": [100, 1] } },
+
+    { "g": "LAD@COL", "home": "COL", "park": 0, "ds": 41.6, "tier": "FLAGGED", "gates": ["COORS"], "price": 130,
+      "a": { "who": "Eric Lauer",     "SZN": [56, 16], "L50": [67, 6],   "L30": [50, 4],  "L10": [100, 1] },
+      "h": { "who": "Ryan Feltner",   "SZN": [67, 18], "L50": [67, 9],   "L30": [60, 5],  "L10": [50, 2] } },
+
+    { "g": "ATL@MIN", "home": "MIN", "park": 0, "ds": 37.7, "tier": "FLAGGED", "gates": ["LEAK"], "price": -102,
+      "a": { "who": "Tyler Mahle",    "SZN": [65, 20], "L50": [67, 9],   "L30": [80, 5],  "L10": [100, 2] },
+      "h": { "who": "Zebby Matthews", "SZN": [44, 16], "L50": [44, 9],   "L30": [20, 5],  "L10": [0, 2] } },
+
+    { "g": "MIA@PHI", "home": "PHI", "park": 0, "ds": null, "tier": "FLAGGED", "gates": ["BLIND"], "price": -113,
+      "a": { "who": "Cade Gibson",    "SZN": [null, 0], "L50": null,     "L30": null,     "L10": null },
+      "h": { "who": "Zack Wheeler",   "SZN": [85, 20], "L50": [90, 10],  "L30": [83, 6],  "L10": [100, 2] } },
+
+    { "g": "CWS@CHC", "home": "CHC", "park": -2, "ds": null, "tier": "FLAGGED", "gates": ["TBD"], "price": null,
+      "a": { "who": "TBD",            "SZN": [null, 0], "L50": null,     "L30": null,     "L10": null },
+      "h": { "who": "Kevin Gausman",  "SZN": [64, 25], "L50": [56, 9],   "L30": [60, 5],  "L10": [50, 2] } }
+  ]
+}

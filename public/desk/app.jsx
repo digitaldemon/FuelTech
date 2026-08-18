@@ -9590,6 +9590,7 @@ const KING_LG = 78;    // his league scoreless-1st rate, the shrink target
 const KING_K = 10;     // his 10 phantom league-average starts
 const KING_TIERS = { elite: 68, green: 64, yellow: 58 };
 const KING_YRFI_FLIP = 52; // below this with one leaky arm, he takes the other side
+const KING_THIN_GS = 4; // season starts 1-4 are THIN; his widest printed THIN is 4
 
 /* One arm. Blend, shrink, adjust — his three steps in his order.
  *
@@ -9618,21 +9619,25 @@ function kingArm(rolling, adj) {
   return { pct: Math.max(0, Math.min(100, shrunk + adj)), n: l30n, szn: sznN, l30: l30pct };
 }
 
-/* His gates, in his words. BLIND, THIN and COORS key off the L30 window, which
- * is the one his card headlines. THIN is 1-3 starts, not 2-3: his card flags
- * "home 0% on 1 starts" as THIN, and reading it as 2-3 leaves every n=1 arm
- * ungated — those sit at 0% or 100% by construction and pile into both ends of
- * the score.
+/* His gates, in his words, checked against his live board (2026-08-18) rather
+ * than inferred — scripts/nrfi-king-compare.js runs this function over that
+ * board and every rule below is pinned by a game on it.
  *
- * LEAK IS NOT AN AUTO-PASS AND USED TO BE ONE HERE. His dialog is explicit: a
- * hard flag stops a game showing green, and separately "<52 with one leaky arm
- * flips to a YRFI candidate". A leaky arm is how he FINDS the other side, so
- * treating it as a refusal deleted his entire YRFI book. That is the same error
- * shape as filtering a board on p>=threshold and reporting zero Coors bets —
- * this model takes both sides, and a filter that only counts one is a filter
- * that reports a confident zero. LEAK therefore returns as a soft flag: it caps
- * the tier at YELLOW, and under 52 with exactly ONE leaky arm it flips the side.
- * Two leaky arms is not his setup — that is a bad game, not a lopsided one. */
+ * BLIND AND THIN KEY OFF SEASON GS, NOT THE L30 COUNT. His own THIN messages
+ * quote the season cell every time: "away 100% on 1 starts" is Kent at SZN
+ * 100%/1GS, "away 75% on 4 starts" is Klassen at SZN 75%/4GS. Keying off L30
+ * broke this both ways on one board — it gated SEA@MIL, where Harrison has 19
+ * season starts but only 2 in the L30 window, and it called NYY@BAL blind
+ * because Rodon has no L30 cell at all despite 9 season starts. He scores both.
+ * THIN is 1-4 season starts: Klassen at 4 is the widest THIN he prints.
+ *
+ * LEAK IS A HARD AUTO-PASS. His board files it under "HARD AUTO-PASSES (8)" and
+ * both leak games read "WHY NO BET: one-sided leak". This was soft here, on the
+ * reasoning that gating it would delete his YRFI book — the reasoning was right
+ * and the conclusion was wrong. He does not fold YRFI into the NRFI list; he
+ * keeps a SEPARATE YRFI BOARD, and on 2026-08-18 that board is exactly the two
+ * LEAK games. So a leaky arm is still how he finds the other side, but it is a
+ * refusal on this side. `side` carries the flip so the YRFI book survives. */
 function kingEvaluate(r) {
   const pp = r.pitProfiles || {};
   const homeAbbr = r.homeAbbr || r.home;
@@ -9645,13 +9650,13 @@ function kingEvaluate(r) {
   const a = kingArm(pp.away && pp.away.rolling, adj);
   const h = kingArm(pp.home && pp.home.rolling, adj);
 
-  const gates = [], flags = [];
+  const gates = [];
   const nm = (p) => (p && p.name) || "starter";
-  if (a.n === 0) gates.push({ tag: "BLIND", why: "blind half — away " + nm(pp.away) + " 0 starts" });
-  if (h.n === 0) gates.push({ tag: "BLIND", why: "blind half — home " + nm(pp.home) + " 0 starts" });
-  const minN = Math.min(a.n, h.n);
-  if (minN >= 1 && minN <= 3) {
-    gates.push({ tag: "THIN", why: "thin sample — " + (a.n <= h.n ? "away " + a.n : "home " + h.n) + " starts" });
+  if (a.szn === 0) gates.push({ tag: "BLIND", why: "blind half — away " + nm(pp.away) + " 0 starts" });
+  if (h.szn === 0) gates.push({ tag: "BLIND", why: "blind half — home " + nm(pp.home) + " 0 starts" });
+  const minN = Math.min(a.szn, h.szn);
+  if (minN >= 1 && minN <= KING_THIN_GS) {
+    gates.push({ tag: "THIN", why: "thin sample — " + (a.szn <= h.szn ? "away " + a.szn : "home " + h.szn) + " starts" });
   }
   // He does not dock Coors, he refuses it. That is why COL is absent from the
   // park table — the park table is for parks he still plays.
@@ -9659,29 +9664,29 @@ function kingEvaluate(r) {
     gates.push({ tag: "COORS", why: "Coors Field — the model excludes this park regardless of score" });
 
   const aLeak = a.l30 != null && a.l30 < 50, hLeak = h.l30 != null && h.l30 < 50;
-  if (aLeak) flags.push({ tag: "LEAK", why: "leaky arm — away " + nm(pp.away) + " " + a.l30 + "% L30 under 50%" });
-  if (hLeak) flags.push({ tag: "LEAK", why: "leaky arm — home " + nm(pp.home) + " " + h.l30 + "% L30 under 50%" });
+  if (aLeak) gates.push({ tag: "LEAK", why: "one-sided leak — away " + nm(pp.away) + " " + a.l30 + "% L30 under 50%" });
+  if (hLeak) gates.push({ tag: "LEAK", why: "one-sided leak — home " + nm(pp.home) + " " + h.l30 + "% L30 under 50%" });
 
   const score = a.pct != null && h.pct != null ? (a.pct / 100) * (h.pct / 100) * 100 : null;
   const side = score != null && score < KING_YRFI_FLIP && (aLeak !== hLeak) ? "YRFI" : "NRFI";
-  return { score, gates, flags, side, away: a, home: h, parkAdj: adj };
+  return { score, gates, side, away: a, home: h, parkAdj: adj };
 }
 
 /* His tier ladder, on his cutoffs — NOT the DS sliders, which are set against
  * our calibrated probability and would badge his scale wrong in both directions.
- * A soft flag caps the badge at YELLOW ("a flagged game never shows green"), and
- * a flipped game is badged for the side he would actually take. */
+ *
+ * A gated game is FLAGGED, and he still prints its score: WSH@TEX shows 68.0 —
+ * an ELITE number — under a FLAGGED badge, because the gate refuses the bet, not
+ * the arithmetic. Only an arm with no starts has no score to print. Suppressing
+ * the number here read as "we could not grade this", which is a different and
+ * more alarming claim than his "we graded it and are not betting it".
+ *
+ * FLAGGED is its own bucket in his summary ("1 elite · 0 green · 2 yellow · 4
+ * red · 8 flagged"), so a gated game must not also land in a colour tier. */
 function kingTier(k) {
-  // A hard gate is an auto-pass, so it has no tier at all — not a low one. This
-  // has to agree with dsOf(), which returns null for the same rows, or the board
-  // summary and the cards will report different slates.
-  if (k.score == null || k.gates.length) return { label: "NO DS", color: "var(--dim)" };
-  if (k.side === "YRFI") return { label: "YRFI", color: "var(--violet)" };
-  const t = dsTier(k.score, KING_TIERS);
-  if (k.flags.length && (t.label === "ELITE" || t.label === "GREEN")) {
-    return { label: "YELLOW", color: "var(--amber)", capped: true };
-  }
-  return t;
+  if (k.score == null) return { label: "NO DS", color: "var(--dim)" };
+  if (k.gates.length) return { label: "FLAGGED", color: "var(--dim)", flagged: true };
+  return dsTier(k.score, KING_TIERS);
 }
 
 /* Per-tier price ceiling, his numbers. A tier that does not appear here has no
@@ -10024,7 +10029,7 @@ function DSHeader({ r, leadDS, thresholds, priceOv, kingMode }) {
           rather than beside it. Every gate he fires is listed, not just the
           first: his own card stacks them ("COORS; thin sample; one-sided leak")
           and the stack is the explanation. */}
-      {king && (king.gates.length > 0 || king.flags.length > 0) && (
+      {king && king.gates.length > 0 && (
         <div style={{ marginTop: 8 }}>
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 3 }}>
             {king.gates.map((g, i) => (
@@ -10033,27 +10038,19 @@ function DSHeader({ r, leadDS, thresholds, priceOv, kingMode }) {
                 {g.tag}
               </span>
             ))}
-            {king.gates.length > 0 && (
-              <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em", color: "var(--rose)" }}>AUTO PASS</span>
-            )}
-            {/* Soft flags are amber, not rose, and carry their own consequence
-                rather than borrowing the auto-pass label. A leaky arm does not
-                refuse the game — it caps the badge, and under 52 it is the
-                thing that puts him on YRFI. */}
-            {king.flags.map((f, i) => (
-              <span key={"f" + i} style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em",
-                color: "var(--amber)", border: "1px solid var(--amber)", borderRadius: 4, padding: "1px 5px" }}>
-                {f.tag}
-              </span>
-            ))}
-            {king.gates.length === 0 && king.flags.length > 0 && (
-              <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em", color: "var(--amber)" }}>
-                {king.side === "YRFI" ? "FLIP TO YRFI" : "CAPPED AT YELLOW"}
+            <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em", color: "var(--rose)" }}>AUTO PASS</span>
+            {/* A leaked game is refused HERE and is the whole of his YRFI board,
+                so the card has to say which side it went to or the pass reads as
+                "no bet" when he does in fact have a bet on it. */}
+            {king.side === "YRFI" && (
+              <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em",
+                color: "var(--violet)", border: "1px solid var(--violet)", borderRadius: 4, padding: "1px 5px" }}>
+                ON HIS YRFI BOARD
               </span>
             )}
           </div>
           <div style={{ fontSize: 10, color: "var(--dim)", lineHeight: 1.4 }}>
-            {king.gates.concat(king.flags).map((g) => g.why).join("; ")}
+            {king.gates.map((g) => g.why).join("; ")}
             {king.side === "YRFI" && " — under " + KING_YRFI_FLIP + " with one leaky arm, so he takes YRFI here"}
           </div>
         </div>
@@ -10068,7 +10065,7 @@ function DSHeader({ r, leadDS, thresholds, priceOv, kingMode }) {
             not implemented, so it tracks his card without matching it exactly —
             see the KING MODE header comment. */}
         <span title={king
-          ? "KING SCORE — NRFIKINGKY's published equation.\n\nPer arm: blend 60% season + 40% L30, shrink toward the 78% league rate by adding 10 phantom starts on the SEASON start count, then a capped ±3% park adjustment. The score is the product of both arms.\n\nThis tracks his card to about 1.4 points (leave-one-out over 10 of his boards) but will not match it exactly: his ±3% adjustment also includes an opposing-lineup YRFI term that could not be recovered from his published numbers, so only the park half is implemented.\n\nMeasured over 14,009 games at his own constants, this score does not separate NRFI outcomes at any selectivity."
+          ? "KING SCORE — NRFIKINGKY's published equation.\n\nPer arm: blend 60% season + 40% L30, shrink toward the 78% league rate by adding 10 phantom starts on the SEASON start count, then a capped ±3% park adjustment. The score is the product of both arms. BLIND/THIN/LEAK/COORS are auto-passes; a passed game still shows its score under a FLAGGED badge, exactly as his card does.\n\nChecked against his own live board (2026-08-18, 15 games): every gate agrees, 14 of 15 tiers agree, and the score tracks his to 1.4 points. We run about a point HIGH, which is his ±3% opposing-lineup term — the half we do not implement, because it could not be recovered from his published numbers without fitting a backwards sign.\n\nMeasured over 14,009 games at his own constants, this score does not separate NRFI outcomes at any selectivity."
           : "DUAL SCORE — our calibrated P(NRFI), pre market-blend."}
           style={{ cursor: "help", fontSize: 9, fontWeight: 700, color: king ? "var(--violet)" : "var(--dim)", letterSpacing: "0.08em" }}>
           {king ? "KS" : "DS"}
@@ -11020,7 +11017,9 @@ function FirstInning() {
      * edge that describes neither model. KING MODE is a scoring view, not a
      * re-derivation of the bet. */
     const kingHere = kingMode ? kingEvaluate(r) : null;
-    const badgeDS = kingMode ? (kingHere.gates.length ? null : kingHere.score) : dsVal;
+    // A gated game keeps its number under a FLAGGED badge — his WSH@TEX shows
+    // 68.0 while refusing the bet. Only an ungradeable arm shows nothing.
+    const badgeDS = kingMode ? kingHere.score : dsVal;
     const badgeTier = badgeDS == null ? null
       : (kingMode ? kingTier(kingHere) : dsTier(badgeDS, dsTh));
     const callBe = beNRFI == null ? null : (r.call === "NRFI" ? beNRFI : 100 - beNRFI);
@@ -11147,9 +11146,11 @@ function FirstInning() {
               </div>
             </div>
           )}
-          {/* A game he auto-passes has no score to print, and leaving the slot
-              empty would read as missing data rather than as his decision. */}
-          {kingMode && kingHere.gates.length > 0 && (
+          {/* Only for a game with nothing to grade — a scored auto-pass already
+              printed its number above under a FLAGGED badge, and rendering both
+              put a "43.5" and a "—" on the same Coors card. Leaving the slot
+              empty here would read as missing data rather than as his decision. */}
+          {kingMode && badgeDS == null && kingHere.gates.length > 0 && (
             <div title={"NRFIKINGKY auto-passes this game: " +
               kingHere.gates.map((g) => g.why).join("; ") + "."}
               style={{ cursor: "help", textAlign: "right", flexShrink: 0, paddingRight: 12,
@@ -11920,7 +11921,7 @@ function FirstInning() {
         /* YRFI only ever fills in KING MODE — it is his flip, not a DS tier — but
          * the key is always present so the ++ below can never land on undefined
          * and turn the whole summary line into NaN. */
-        const counts = { ELITE: 0, GREEN: 0, YELLOW: 0, RED: 0, YRFI: 0, "NO DS": 0 };
+        const counts = { ELITE: 0, GREEN: 0, YELLOW: 0, RED: 0, FLAGGED: 0, YRFI: 0, "NO DS": 0 };
         for (const r of validRows) {
           // Badge each row exactly as its card will badge it: his ladder and his
           // flag cap in KING MODE, the sliders otherwise.
@@ -11984,9 +11985,14 @@ function FirstInning() {
               {counts.YRFI > 0 && (
                 <span style={{ color: "var(--violet)" }}>{" · " + counts.YRFI + " yrfi"}</span>
               )}
-              {counts["NO DS"] > 0
-                ? " · " + counts["NO DS"] + (kingMode ? " no play" : " no DS")
-                : ""}
+              {/* He reports one "flagged" bucket covering every auto-pass, scored
+                * or not — "1 elite · 0 green · 2 yellow · 4 red · 8 flagged". A
+                * blind arm is flagged too; it just has no number to show. */}
+              {kingMode
+                ? (counts.FLAGGED + counts["NO DS"] > 0
+                    ? " · " + (counts.FLAGGED + counts["NO DS"]) + " flagged"
+                    : "")
+                : (counts["NO DS"] > 0 ? " · " + counts["NO DS"] + " no DS" : "")}
             </span>
             {!isDefault && !kingMode && (
               <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: "2px 7px" }}
