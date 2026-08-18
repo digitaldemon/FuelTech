@@ -1,0 +1,677 @@
+2026-08-18
+
+AS OF: 2026-08-18T04:14:30.646Z · ODDS AS OF: 2026-08-18T04:14:27.938Z
+
+THE DAILY VERDICT
+★ LEAD: TOR @ TB
+ELITE dual profile (69/100). home 80% / away 100% NRFI L30 at -136. One play only.
+WHY THIS GAME
+DS 69 tops the board — Soriano 100% L30/4gs / Martinez 80% L30/5gs. price -136 inside the -170 gate. Runner-up Diamondbacks @ Sox (DS 61): dual score trails lead by 8pts (DS 61).
+ARI @ BOS
+dual score trails lead by 8pts (DS 61)
+SEA @ MIL
+Miller at 60% L30 — soft away half
+RULES APPLIED
+15 games — 8 auto-passed, 6 red/yellow, 0 green, 1 elite
+SCORE TIERS
+1 elite · 0 green · 2 yellow · 4 red · 8 flagged
+TOR@TB: DS 68.7 → ELITE
+ARI@BOS: DS 60.7 → YELLOW
+SEA@MIL: DS 60.0 → YELLOW
+SD@NYM: DS 57.6 → NO PLAY — math says no
+STL@CIN: DS 55.2 → NO PLAY — math says no
+NYY@BAL: DS 53.6 → NO PLAY — math says no
+SF@CLE: DS 50.9 → NO PLAY — math says no
+HARD AUTO-PASSES (8)
+LEAK DET@PIT: one-sided leak — away Keider Montero 40% L30 under 50%
+BLIND MIA@PHI: blind half — away Cade Gibson 0 starts
+THIN ATH@KC: thin sample — home 100% on 2 starts
+LEAK ATL@MIN: one-sided leak — home Zebby Matthews 20% L30 under 50%
+THIN WSH@TEX: thin sample — away 100% on 1 starts
+TBD CWS@CHC: away starter TBD — no arm to grade
+THIN LAA@HOU: thin sample — away 75% on 4 starts
+COORS LAD@COL: Coors Field — the model excludes this park regardless of score
+PARK FLAGS (3)
+DET@PIT: PNC — pitcher friendly, arms bumped 2%
+STL@CIN: Great American Bal — hitter risk, arms docked 2%
+CWS@CHC: Wrigley — hitter risk, arms docked 2%
+PRICE GATE (7 PRICED)
+NYY@BAL: price -113 no gate (tier no-play)
+SF@CLE: price -132 no gate (tier no-play)
+STL@CIN: price -113 no gate (tier no-play)
+TOR@TB: price -136 inside -170 gate — ok
+ARI@BOS: price -122 inside -140 gate — ok
+SD@NYM: price -111 no gate (tier no-play)
+SEA@MIL: price -128 inside -140 gate — ok
+DOUBLEHEADERS (0)
+no doubleheaders today
+NRFI
+YRFI
+TODAY'S TOP PICKS
+3
+#1
+LEAD PLAY
+TOR @ TB
+6:40 PM · Tropicana
+AWAY
+José Soriano
+100%
+NRFI L30 · 24GS
+SZN
+75%
+24g
+L50
+100%
+8g
+L30
+100%
+4g
+L10
+100%
+2g
+HOME
+Nick Martinez
+80%
+NRFI L30 · 23GS
+SZN
+87%
+23g
+L50
+75%
+8g
+L30
+80%
+5g
+L10
+100%
+1g
+WHY IT MADE THE CUT
+Soriano 100% clean 1st innings (L30) · Martinez 80% clean 1st innings (L30) · score 68.7 (ELITE)
+68.7
+DS
+ELITE
+N -136 · Y +106 · BE 57.6%
+#2
+TOP PICK
+ARI @ BOS
+7:10 PM · Fenway
+AWAY
+Merrill Kelly
+83%
+NRFI L30 · 22GS
+SZN
+68%
+22g
+L50
+80%
+10g
+L30
+83%
+6g
+L10
+100%
+2g
+HOME
+Ranger Suarez
+100%
+NRFI L30 · 21GS
+SZN
+76%
+21g
+L50
+71%
+7g
+L30
+100%
+4g
+L10
+100%
+1g
+WHY IT MADE THE CUT
+Kelly 83% clean 1st innings (L30) · Suarez 100% clean 1st innings (L30) · score 60.7 (YELLOW)
+60.7
+DS
+YELLOW
+N -122 · Y -104 · BE 55.0%
+#3
+TOP PICK
+SEA @ MIL
+7:40 PM · American Family
+AWAY
+Bryce Miller
+60%
+NRFI L30 · 14GS
+SZN
+79%
+14g
+L50
+67%
+9g
+L30
+60%
+5g
+L10
+50%
+2g
+HOME
+Kyle Harrison
+100%
+NRFI L30 · 19GS
+SZN
+79%
+19g
+L50
+80%
+5g
+L30
+100%
+2g
+L10
+100%
+1g
+WHY IT MADE THE CUT
+Miller 60% clean 1st innings (L30) · Harrison 100% clean 1st innings (L30) · score 60.0 (YELLOW)
+60.0
+DS
+YELLOW
+N -128 · Y +100 · BE 56.1%
+REST OF THE BOARD — NO BETS
+12
+WSH @ TEX
+8:05 PM · Globe Life
+THIN
+AWAY
+THIN
+Jackson Kent
+100%
+NRFI L30 · 1GS
+SZN
+100%
+1g
+L50
+100%
+1g
+L30
+100%
+1g
+L10
+100%
+1g
+HOME
+Cal Quantrill
+100%
+NRFI L30 · 8GS
+SZN
+88%
+8g
+L50
+88%
+8g
+L30
+100%
+4g
+L10
+100%
+1g
+WHY NO BET
+thin sample — away 100% on 1 starts
+68.0
+DS
+FLAGGED
+N -113 · Y -113 · BE 53.1%
+LAA @ HOU
+8:10 PM · Daikin
+THIN
+AWAY
+THIN
+George Klassen
+100%
+NRFI L30 · 4GS
+SZN
+75%
+4g
+L50
+100%
+2g
+L30
+100%
+2g
+L10
+100%
+2g
+HOME
+Cristian Javier
+100%
+NRFI L30 · 6GS
+SZN
+83%
+6g
+L50
+100%
+3g
+L30
+100%
+3g
+L10
+100%
+1g
+WHY NO BET
+thin sample — away 75% on 4 starts
+65.7
+DS
+FLAGGED
+N -102 · Y -125 · BE 50.5%
+SD @ NYM
+7:10 PM · Citi
+AWAY
+Robbie Ray
+100%
+NRFI L30 · 23GS
+SZN
+83%
+23g
+L50
+89%
+9g
+L30
+100%
+5g
+L10
+100%
+2g
+HOME
+Zac Thornton
+67%
+NRFI L30 · 8GS
+SZN
+50%
+8g
+L50
+57%
+7g
+L30
+67%
+6g
+L10
+100%
+2g
+WHY NO BET
+Score too low — 57.6 lands below the playable range, so the model sits this one out
+57.6
+DS
+NO PLAY
+N -111 · Y -115 · BE 52.6%
+STL @ CIN
+6:40 PM · Great American Bal
+HITTER FRIENDLY
+AWAY
+Kyle Leahy
+100%
+NRFI L30 · 23GS
+SZN
+83%
+23g
+L50
+100%
+9g
+L30
+100%
+5g
+L10
+100%
+1g
+HOME
+Andrew Abbott
+80%
+NRFI L30 · 25GS
+SZN
+56%
+25g
+L50
+56%
+9g
+L30
+80%
+5g
+L10
+0%
+1g
+WHY NO BET
+Score too low — 55.2 lands below the playable range, so the model sits this one out
+55.2
+DS
+NO PLAY
+N -113 · Y -113 · BE 53.1%
+NYY @ BAL
+6:35 PM · Oriole Park at Cam
+AWAY
+Carlos Rodón
+67%
+NRFI L30 · 9GS
+SZN
+67%
+9g
+L50
+100%
+2g
+L30
+—
+–
+L10
+—
+–
+HOME
+Shane Baz
+83%
+NRFI L30 · 24GS
+SZN
+63%
+24g
+L50
+70%
+10g
+L30
+83%
+6g
+L10
+50%
+2g
+WHY NO BET
+Score too low — 53.6 lands below the playable range, so the model sits this one out
+53.6
+DS
+NO PLAY
+N -113 · Y -113 · BE 53.1%
+ATH @ KC
+7:40 PM · Kauffman
+THIN
+AWAY
+Jack Perkins
+60%
+NRFI L30 · 11GS
+SZN
+55%
+11g
+L50
+63%
+8g
+L30
+60%
+5g
+L10
+100%
+2g
+HOME
+UNCONFIRMED
+THIN
+Daniel Lynch IV
+100%
+NRFI L30 · 2GS
+SZN
+100%
+2g
+L50
+100%
+2g
+L30
+100%
+2g
+L10
+100%
+2g
+WHY NO BET
+thin sample — home 100% on 2 starts
+52.8
+DS
+FLAGGED
+NO FEED PRICE — ENTER MANUALLY
+DET @ PIT
+6:40 PM · PNC
+LEAK
+PITCHER FRIENDLY
+AWAY
+Keider Montero
+40%
+NRFI L30 · 20GS
+SZN
+85%
+20g
+L50
+57%
+7g
+L30
+40%
+5g
+L10
+50%
+2g
+HOME
+Braxton Ashcraft
+60%
+NRFI L30 · 24GS
+SZN
+75%
+24g
+L50
+44%
+9g
+L30
+60%
+5g
+L10
+100%
+1g
+WHY NO BET
+one-sided leak — away Keider Montero 40% L30 under 50%
+51.8
+DS
+FLAGGED
+N -128 · Y +100 · BE 56.1%
+SF @ CLE
+6:40 PM · Progressive
+AWAY
+Carson Whisenhunt
+50%
+NRFI L30 · 6GS
+SZN
+67%
+6g
+L50
+60%
+5g
+L30
+50%
+4g
+L10
+100%
+2g
+HOME
+Foster Griffin
+60%
+NRFI L30 · 24GS
+SZN
+79%
+24g
+L50
+78%
+9g
+L30
+60%
+5g
+L10
+50%
+2g
+WHY NO BET
+Score too low — 50.9 lands below the playable range, so the model sits this one out
+50.9
+DS
+NO PLAY
+N -132 · Y +104 · BE 56.9%
+LAD @ COL
+8:40 PM · Coors
+COORS
+AUTO PASS
+AWAY
+Eric Lauer
+50%
+NRFI L30 · 16GS
+SZN
+56%
+16g
+L50
+67%
+6g
+L30
+50%
+4g
+L10
+100%
+1g
+HOME
+Ryan Feltner
+60%
+NRFI L30 · 18GS
+SZN
+67%
+18g
+L50
+67%
+9g
+L30
+60%
+5g
+L10
+50%
+2g
+WHY NO BET
+Coors Field — the model excludes this park regardless of score
+41.6
+DS
+FLAGGED
+N +130 · Y -166 · BE 43.5%
+ATL @ MIN
+7:40 PM · Target
+LEAK
+AWAY
+Tyler Mahle
+80%
+NRFI L30 · 20GS
+SZN
+65%
+20g
+L50
+67%
+9g
+L30
+80%
+5g
+L10
+100%
+2g
+HOME
+Zebby Matthews
+20%
+NRFI L30 · 16GS
+SZN
+44%
+16g
+L50
+44%
+9g
+L30
+20%
+5g
+L10
+0%
+2g
+WHY NO BET
+one-sided leak — home Zebby Matthews 20% L30 under 50%
+37.7
+DS
+FLAGGED
+N -102 · Y -125 · BE 50.5%
+MIA @ PHI
+6:40 PM · Citizens Bank
+BLIND
+AWAY
+BLIND
+Cade Gibson
+—
+NRFI L30 · 0GS
+SZN
+—
+–
+L50
+—
+–
+L30
+—
+–
+L10
+—
+–
+HOME
+Zack Wheeler
+83%
+NRFI L30 · 20GS
+SZN
+85%
+20g
+L50
+90%
+10g
+L30
+83%
+6g
+L10
+100%
+2g
+WHY NO BET
+blind half — away Cade Gibson 0 starts
+—
+DS
+FLAGGED
+N -113 · Y -113 · BE 53.1%
+CWS @ CHC
+8:05 PM · Wrigley
+TBD
+HITTER FRIENDLY
+AWAY
+TBD
+TBD
+—
+NRFI L30 · 0GS
+SZN
+—
+–
+L50
+—
+–
+L30
+—
+–
+L10
+—
+–
+HOME
+Kevin Gausman
+60%
+NRFI L30 · 25GS
+SZN
+64%
+25g
+L50
+56%
+9g
+L30
+60%
+5g
+L10
+50%
+2g
+WHY NO BET
+away starter TBD — no arm to grade
+—
+DS
+FLAGGED
+N -113 · Y -113 · BE 53.1%
