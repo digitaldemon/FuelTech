@@ -249,11 +249,6 @@ details.fold > summary:hover { color:var(--bone); }
              0 0 34px -8px rgba(116,203,148,.30), 0 8px 26px rgba(0,0,0,.42); }
 .pick.t-strong { border-left-color:var(--moss); }
 .pick.t-lean { border-left-color:var(--amber); }
-/* --crest is the club-mark box, read by TeamLogo. It lives HERE and not in the
-   card's inline style because the breakpoints below have to be able to step it
-   down, and an inline custom property outranks a stylesheet one — setting it
-   inline would have silently pinned every viewport to the desktop size. */
-.card-mid { --crest:46px; }
 .tierbox { text-align:center; flex:0 0 auto; min-width:76px; padding:8px 10px; border-radius:11px;
   border:1px solid; font-family:'JetBrains Mono',monospace; background:rgba(0,0,0,.18); }
 .tierbox .pct { font-size:20px; font-weight:700; display:block; line-height:1.02;
@@ -432,17 +427,8 @@ table.tbl tbody tr:hover td { background:rgba(255,255,255,.025); }
   .pit-grid { grid-template-columns:1fr !important; }
   .pit-windows { grid-template-columns:repeat(2,1fr) !important; }
   .nrfi-stats { grid-template-columns:repeat(2,1fr) !important; }
-  /* On a phone the verdict bar has no dead space to fill, so the logos and the
-     headstone stop being decoration and start being a squeeze. Drop the epitaph
-     text first and keep the marks; the bar is still readable at 360px. */
-  .card-mid { gap:7px !important; --crest:36px; }
-  .card-mid .rip { display:none; }
 }
 @media (max-width:380px) {
-  /* 36 + 34 + 36 of marks plus two gaps is 113px of the 360px row, and the
-     verdict label needs the rest. Last step down before the crests would have
-     to go entirely. */
-  .card-mid { --crest:30px; }
   .cd-title { font-size:18px; }
   .tabs button { font-size:11px; padding:5px 7px; }
   .cmp-row { grid-template-columns:1fr; gap:4px; }
@@ -9878,108 +9864,6 @@ function WhyBlock({ why, isBet }) {
  * you will use to shop a line before first pitch. This still reads the override
  * and still flags MANUAL, so the DS/BE/edge shown here and the edge shown on
  * the card are computed against the same price. */
-/* Club logo off MLB's own static host, keyed by the statsapi team id we already
- * carry. No bundled art, no licence question, no build step — and if the host
- * ever 404s the <img> hides itself and the row closes up around it rather than
- * leaving a broken-image glyph on a card that is meant to look composed. */
-/* Deliberately NOT loading="lazy". Measured on the live board: with lazy set,
- * these never load at all — currentSrc stays empty and complete stays false
- * even with the element scrolled to the middle of the viewport, so every card
- * carried two blank 30px holes. Setting loading="eager" on the very same
- * element makes it decode in 3ms off disk cache. Lazy was the wrong tool here
- * regardless: there are ~15 of these on a slate, they are 2-5KB SVGs, and they
- * are the thing the eye lands on first.
- *
- * On a genuine load failure fall back to the abbreviation rather than to
- * nothing, so the card keeps its shape instead of collapsing asymmetrically. */
-function TeamLogo({ id, abbr, size }) {
-  const [dead, setDead] = useState(false);
-  if (id == null) return null;
-  /* The box is `size` unless an ancestor sets --crest, which lets the crest
-   * shrink at a breakpoint without this component learning anything about
-   * viewports. All of this app's responsive work lives in one media block, so a
-   * JS matchMedia hook for a single number would be a second mechanism doing
-   * the same job. `size` stays a NUMBER either way — it is still the width and
-   * height ATTRIBUTE, so the box is reserved at the right ratio before the SVG
-   * decodes, and it is still what the fallback chip measures its type against. */
-  const box = "var(--crest, " + size + "px)";
-  if (dead) {
-    return (
-      <span className="mono" title={abbr || ""} style={{
-        width: box, height: box, flexShrink: 0, display: "flex", alignItems: "center",
-        justifyContent: "center", fontSize: size <= 24 ? 8 : 9, fontWeight: 700,
-        color: "var(--dim)", border: "1px solid var(--slate-600)", borderRadius: 6,
-      }}>{(abbr || "").slice(0, 3)}</span>
-    );
-  }
-  /* team-cap-on-dark, not the plain /team-logos/<id>.svg, for two measured
-   * reasons on the obsidian floor:
-   *
-   * 1. SIZE. The plain marks share a 150px height but their widths run 94-150
-   *    (checked across 30 clubs), so inside one square box object-fit:contain
-   *    scales a narrow mark like SEA down to about two thirds of a wide one
-   *    like HOU. Side by side on the same card that reads as a rendering fault.
-   *    Every cap-on-dark mark is exactly 150x150, so they all land the same.
-   * 2. CONTRAST. The plain marks are drawn for white. The Yankees' navy NY is
-   *    the worst case and is very nearly invisible against #06080D; the
-   *    cap-on-dark NY is white.
-   *
-   * All 30 club ids were fetched and confirmed 150x150 before this switch. */
-  return (
-    <img src={"https://www.mlbstatic.com/team-logos/team-cap-on-dark/" + id + ".svg"}
-      alt={abbr || ""} title={abbr || ""} width={size} height={size}
-      loading="eager" decoding="async" onError={() => setDead(true)}
-      style={{ width: box, height: box, objectFit: "contain", flexShrink: 0 }} />
-  );
-}
-
-/* The headstone.
- *
- * It fills the dead space in the middle of the verdict bar, and it earns the
- * space by saying something: the epitaph names WHO the call expects to die in
- * the first inning. NRFI is a prediction that the bats get buried, YRFI that the
- * arms do, and a PASS is the desk admitting the only casualty is its own edge.
- * The card already talks like this — "COIN FLIP ENERGY · GOD HELP US ALL" ships
- * two blocks down — so this is the house voice, not a new one.
- *
- * Drawn inline: cartoon, four colours, no asset to host and nothing to load. */
-function GraveMotif({ call, isBet, strength }) {
-  const dead = strength === "PASS" ? "MY EDGE" : call === "NRFI" ? "THE BATS" : "THE ARMS";
-  const tint = strength === "PASS" ? "var(--dim)" : isBet ? "var(--moss)" : "var(--amber)";
-  const quip = strength === "PASS"
-    ? "Nobody dies here. No edge at this price — the desk is passing."
-    : call === "NRFI"
-      ? "Here lie the bats: the desk expects a scoreless 1st inning."
-      : "Here lie the arms: the desk expects a run in the 1st inning.";
-  return (
-    <div title={quip} style={{ cursor: "help", display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
-      <svg width="34" height="38" viewBox="0 0 34 38" aria-hidden="true">
-        {/* mound */}
-        <ellipse cx="17" cy="35" rx="15" ry="3.2" fill={tint} opacity="0.18" />
-        {/* slab */}
-        <path d="M4 35 V14 a13 13 0 0 1 26 0 V35 Z" fill="rgba(255,255,255,0.07)"
-          stroke={tint} strokeWidth="1.4" strokeLinejoin="round" />
-        {/* skull */}
-        <circle cx="17" cy="15" r="6.1" fill={tint} opacity="0.92" />
-        <ellipse cx="14.7" cy="14.3" rx="1.5" ry="1.9" fill="#0d1016" />
-        <ellipse cx="19.3" cy="14.3" rx="1.5" ry="1.9" fill="#0d1016" />
-        <path d="M15 19.4 h4 M16 18.2 v2.4 M18 18.2 v2.4" stroke="#0d1016" strokeWidth="0.9" />
-        {/* jaw */}
-        <path d="M13.4 19.9 q3.6 3.1 7.2 0" fill="none" stroke={tint} strokeWidth="1.2" opacity="0.92" />
-        {/* epitaph rule */}
-        <path d="M9 26.5 h16 M11 29.5 h12" stroke={tint} strokeWidth="1.1" opacity="0.42" strokeLinecap="round" />
-        {/* two drips, because gruesome was the brief */}
-        <path d="M11 35 v2.2 a1 1 0 0 0 2 0 V35" fill="var(--rose)" opacity="0.75" />
-        <path d="M22 35 v3.0 a1 1 0 0 0 2 0 V35" fill="var(--rose)" opacity="0.55" />
-      </svg>
-      <div className="rip" style={{ lineHeight: 1.15 }}>
-        <div style={{ fontSize: 8, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.14em" }}>R.I.P.</div>
-        <div style={{ fontSize: 10.5, fontWeight: 800, color: tint, letterSpacing: "0.03em" }}>{dead}</div>
-      </div>
-    </div>
-  );
-}
-
 function DSHeader({ r, leadDS, thresholds, priceOv, kingMode }) {
   const pp = r.pitProfiles || {};
   /* In KING MODE the number on this card is HIS rules, not ours — a different
@@ -11071,30 +10955,15 @@ function FirstInning() {
              count and the check names now appear as sentences in WHY, and the
              tier word was a restatement of the colour it was printed in. ── */}
         <div title={r.v.blurb} style={{ cursor: "help", display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", marginBottom: 12, borderRadius: 10, border: "1px solid " + r.v.color + "66", background: r.v.color + "12" }}>
-          <div style={{ minWidth: 0 }}>
+          {/* flex:1 lives here again now that the club marks and the headstone
+               are gone from the middle — the label block absorbs the slack so
+               the numbers stay pinned right. The matchup is already the 20px
+               line at the top of the card, so the crests were saying it twice. */}
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 900, fontSize: 15, color: r.v.color, letterSpacing: "0.04em", textTransform: "uppercase", lineHeight: 1.2 }}>{r.v.label}</div>
             <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>
               {r.call === "NRFI" ? "No run scores in the 1st inning" : "A run scores in the 1st inning"}
             </div>
-          </div>
-          {/* ── The middle, which used to be a hole ──
-               Verdict on the left, numbers on the right, and 400px of nothing in
-               between. Club marks either side of the headstone read as the
-               matchup and give the bar a centre of gravity. `flex: 1` moved off
-               the label block and onto this one so the growth happens HERE and
-               the label stays snug against its own text.
-
-               Crest size is --crest, set in the stylesheet so the breakpoints
-               can reach it. At 30 the marks sat UNDER the 34x38 headstone and
-               read as ornament hung off it; at 46 they clear it and the matchup
-               becomes the thing the eye lands on, which is the whole reason
-               they are here. The bar only grows ~8px, not 16, because the
-               headstone was previously the tallest thing in it. ── */}
-          <div className="card-mid" style={{ flex: 1, display: "flex", alignItems: "center",
-            justifyContent: "center", gap: 14, minWidth: 0 }}>
-            <TeamLogo id={r.awayId} abbr={r.awayAbbr || r.away} size={30} />
-            <GraveMotif call={r.call} isBet={r.v.isBet} strength={r.v.strength} />
-            <TeamLogo id={r.homeId} abbr={r.homeAbbr || r.home} size={30} />
           </div>
           {/* ── Dual score, on the FRONT of the card ──
                It had been moved into the details fold with the rest of DSHeader
