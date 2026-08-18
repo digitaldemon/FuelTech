@@ -21,11 +21,23 @@
  * not trying to. Do not relabel it "DS" in the UI or someone will compare the
  * two numbers and file the difference as a bug.
  *
- * THE WINDOWS ARE DAYS, NOT STARTS. His card reads "100% L30 · 5gs" — five games
- * inside L30. A 30-START window would be most of two seasons and could never
- * show 5. Reading it as starts makes his THIN gate (2-3 starts) almost unfirable
- * and collapses the LEAK gate to 508 games instead of 1255; both were measured
- * that way first and it was wrong.
+ * THE WINDOWS ARE TEAM GAMES. Not starts, and not days either. "L30" is the
+ * pitcher's starts inside the last thirty games HIS TEAM has played.
+ *
+ * This was already decoded and verified in app.jsx (see the comment on
+ * pitcherRollingNRFI): for Woo and Brown on 2026-08-16, all eight cells
+ * (SZN/L50/L30/L10, pct and n) reproduce exactly under team games and under no
+ * other reading. This script was first written on DAYS, which is the reading
+ * app.jsx had already tested and rejected — Woo has an 11-day gap in July, so 50
+ * days is 7 starts where 50 team games is 9. Days is close enough to look right
+ * on a summary table and wrong on any individual arm.
+ *
+ * Starts is the reading to rule out first and is obviously wrong: a 30-START
+ * window is most of two seasons and could never show the "5gs" his card prints.
+ *
+ * Team games also hold ~5-6 starts for any healthy rotation regular regardless
+ * of off-days, rainouts or the All-Star break, where a day window swings 5 to 7
+ * on schedule shape alone. Stable n is the entire point of gating on n.
  *
  * Windows are computed from PRIOR games only, and the arm's own current game is
  * appended after the row is emitted, so nothing here sees its own outcome.
@@ -41,12 +53,12 @@ const { games } = JSON.parse(
   fs.readFileSync(path.join(__dirname, "nrfi-leakfree-games.json"), "utf8"));
 games.sort((a, b) => a.date.localeCompare(b.date) || a.pk - b.pk);
 
-/* His four windows. SZN is season-to-date; the rest are trailing DAYS. */
+/* His four windows. SZN is season-to-date; the rest are trailing TEAM GAMES. */
 const WINDOWS = [
-  { name: "SZN", days: null, w: 0.25 },
-  { name: "L50", days: 50, w: 0.25 },
-  { name: "L30", days: 30, w: 0.35 }, // headline window on his card, weighted most
-  { name: "L10", days: 10, w: 0.15 },
+  { name: "SZN", tg: null, w: 0.25 },
+  { name: "L50", tg: 50, w: 0.25 },
+  { name: "L30", tg: 30, w: 0.35 }, // headline window on his card, weighted most
+  { name: "L10", tg: 10, w: 0.15 },
 ];
 
 /* Park flags, exactly the three he names and exactly +-2%, applied to the arms.
@@ -55,20 +67,44 @@ const PARK_ADJ = { 113: -0.02, 112: -0.02, 134: +0.02 }; // GABP, Wrigley, PNC
 const COORS = 19;
 
 const D = (d) => Date.parse(d + "T00:00:00Z");
-const hist = new Map(); // pid -> [{t, season, c}]
+const hist = new Map(); // pid -> [{date, season, c}]
+
+/* Every date each club played, in order — the ruler the windows are measured
+ * against. A doubleheader legitimately counts twice: it is two team games, and
+ * that is what "last thirty games the team has played" means. Built up as the
+ * walk proceeds so it never contains future dates. */
+const teamDates = new Map();
+const pushTeamDate = (tid, date) => {
+  if (!teamDates.has(tid)) teamDates.set(tid, []);
+  teamDates.get(tid).push(date);
+};
+/* Cut-off date for the last n games of team tid. Starts on or after this date
+ * are inside the window. Returns null when the club has not yet played n games,
+ * in which case the window is simply everything so far. */
+const cutFor = (tid, n) => {
+  const ds = teamDates.get(tid) || [];
+  return ds.length ? ds[Math.max(0, ds.length - n)] : null;
+};
 
 /* Shrink toward the league rate by start count. This is what makes his
  * thin-sample games rank below their raw mean, and it is why LAD@COL (raw mean
  * 70) sits under STL@CIN G1 (raw mean 50) on his own board. */
 const shrink = (r, n) => (n > 0 ? (n * r + K * LG) / (n + K) : null);
 
-function armWindows(pid, t, season) {
+function armWindows(pid, tid, season) {
   const h = hist.get(pid) || [];
   const out = {};
   for (const w of WINDOWS) {
-    const sel = w.days === null
-      ? h.filter((x) => x.season === season)
-      : h.filter((x) => t - x.t <= w.days * 864e5);
+    let sel;
+    if (w.tg === null) {
+      sel = h.filter((x) => x.season === season);
+    } else {
+      const cut = cutFor(tid, w.tg);
+      // A start made for a PREVIOUS club still counts against the current club's
+      // schedule after a trade: the window is "recent form", not a team stat, and
+      // dropping those starts loses real innings. Same choice app.jsx documents.
+      sel = cut === null ? h.slice() : h.filter((x) => x.date >= cut);
+    }
     out[w.name] = { n: sel.length,
       r: sel.length ? sel.reduce((a, b) => a + b.c, 0) / sel.length : null };
   }
@@ -91,8 +127,10 @@ function armScore(win, parkAdj) {
 
 const rows = [];
 for (const g of games) {
-  const t = D(g.date), adj = PARK_ADJ[g.venue] || 0;
-  const aw = armWindows(g.ap, t, g.season), hw = armWindows(g.hp, t, g.season);
+  const adj = PARK_ADJ[g.venue] || 0;
+  // Windows read the schedule BEFORE this game is added to it, so the ruler
+  // never includes the game being predicted.
+  const aw = armWindows(g.ap, g.away, g.season), hw = armWindows(g.hp, g.home, g.season);
   const aS = armScore(aw, adj), hS = armScore(hw, adj);
 
   /* His gates, in his words. BLIND and THIN key off the L30 game count, which is
@@ -113,8 +151,10 @@ for (const g of games) {
   rows.push({ date: g.date, nrfi: g.nrfi, gates,
     score: aS !== null && hS !== null ? 100 * aS * hS : null });
 
-  hist.set(g.ap, (hist.get(g.ap) || []).concat({ t, season: g.season, c: g.apClean }));
-  hist.set(g.hp, (hist.get(g.hp) || []).concat({ t, season: g.season, c: g.hpClean }));
+  hist.set(g.ap, (hist.get(g.ap) || []).concat({ date: g.date, season: g.season, c: g.apClean }));
+  hist.set(g.hp, (hist.get(g.hp) || []).concat({ date: g.date, season: g.season, c: g.hpClean }));
+  pushTeamDate(g.away, g.date);
+  pushTeamDate(g.home, g.date);
 }
 
 // ---- reporting -------------------------------------------------------------
