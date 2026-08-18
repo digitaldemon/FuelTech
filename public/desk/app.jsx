@@ -9526,42 +9526,78 @@ function dsTier(ds, th) {
 
 /* ===== KING MODE ==========================================================
  *
- * NRFIKINGKY's published method, run instead of ours. He states his whole rule
- * structure on his card, and this is that structure: the starter's clean-first-
- * inning rate over SZN/L50/L30/L10 as the ONLY input, four hard auto-passes, a
- * +-2% park flag on three named parks, and a per-tier price gate. No offence,
- * lineups, weather, bullpen, Statcast, travel or rest — he uses none of them, so
- * this uses none of them.
+ * NRFIKINGKY's method, run instead of ours. His equation IS PUBLISHED — it is
+ * stated verbatim in the "How the dual score works" dialog behind the ⓘ on his
+ * board — and this is a direct implementation of it, not an approximation:
  *
- * THE SCORE IS OURS AND MUST STAY LABELLED THAT WAY. His DS equation is not
- * published — the card shows inputs and output, never the mapping — and it is
- * not recoverable from a slate: his 2026-08-17 board gives 9 usable games
- * against 8 features, so a linear fit is underdetermined and reproduces that day
- * while meaning nothing. A constrained 2-parameter fit lands R2 0.707 with a
- * 5.5-point residual against tier boundaries 0.7 points apart (GREEN 64.5 vs
- * YELLOW 63.8), so an approximation cannot even reproduce his tiers. KING MODE
- * therefore prints KS, not DS, and the UI says the number will not match his.
+ *   PER ARM   1. blend 60% season + 40% L30   (L10 is display-only on his card:
+ *                it drives flags, never the score)
+ *             2. shrink toward the 78% league scoreless rate by adding 10
+ *                phantom league-average starts
+ *             3. capped +-3% adjustment for park tier and opposing-lineup YRFI
+ *   SCORE     product of the two adjusted arms, x100
+ *   TIERS     ELITE >=68, GREEN 64-67.9, YELLOW 58-63.9, RED <58,
+ *             and <52 with exactly one leaky arm flips to a YRFI candidate
+ *   GATES     BLIND / THIN / COORS auto-pass; a flagged game never shows green
  *
- * WHAT IT MEASURES TO, and this is the reason the toggle defaults OFF:
- * scripts/nrfi-king-mode.js runs exactly this over 14,009 games. The score does
- * not separate. Deciles run 51.8% at the top to 48.2% at the bottom with every
- * interval overlapping, and the extreme top is flat too (top 1% 55.7% on n=61,
- * CI [42.9, 67.7]). Of the four gates only COORS separates, at 41.3% against a
- * 50.7% base rate. Ship it because it is worth SEEING what his rules say about
- * tonight, not because it is worth betting.
+ * A PRIOR VERSION OF THIS COMMENT SAID HIS EQUATION WAS UNPUBLISHED AND
+ * UNRECOVERABLE. That was wrong and it was wrong for a specific reason worth
+ * keeping: the claim rested on "his tier boundaries are 0.7 points apart (GREEN
+ * 64.5 vs YELLOW 63.8)", which misread two GAMES' SCORES as a boundary. His
+ * bands are 4-6 points wide. Believing they were sub-point made every candidate
+ * fit look useless and stopped the search one click short of the dialog that
+ * spells the whole thing out. If a target looks impossible to hit, check the
+ * target before concluding the method is unrecoverable.
+ *
+ * THE ONE THING THE DIALOG DOES NOT SETTLE is what the 10 phantom starts are
+ * added TO. Fitted against 10 of his boards: shrinking on the SEASON start count
+ * lands RMSE 2.21, shrinking on the L30 count lands 6.53. Season GS, and his own
+ * worked examples then reproduce exactly — a 100% arm over 5 starts shrinks to
+ * 85.3 ("~85"), over 1 start to 80.0 ("~80").
+ *
+ * HOW CLOSE THIS GETS, leave-one-out cross-validated over those 10 boards:
+ *
+ *   published equation alone   (0 free params)  LOO RMSE 2.21, his tiers 9/10
+ *   + park at 1.00/flag-unit   (1 free param)   LOO RMSE 1.36, his tiers 9/10
+ *   + a lineup-YRFI term       (3 free params)  LOO RMSE 0.98, his tiers 10/10
+ *
+ * This ships the middle one. The lineup term is left out on purpose despite the
+ * better number: it fits with a BACKWARDS SIGN and its intercept pins to the
+ * edge of the search, so it is absorbing a constant offset rather than measuring
+ * a lineup effect. His card prints SZN and L30 as whole percents, which puts a
+ * ~0.5-0.9 RMSE floor under anything fitted from the board — model three is
+ * fitting inside the rounding. So his lineup component is real and is NOT
+ * implemented here; the score will run a point or two off his on some cards.
+ *
+ * WHAT IT MEASURES TO, and this is still the reason the toggle defaults OFF:
+ * scripts/nrfi-king-mode.js runs exactly this over 14,009 games, scoring every
+ * row on the SIDE it takes. The score does not separate, and it is now clearly
+ * flat rather than weakly ordered: the top decile wins 51.2% and the BOTTOM
+ * decile wins 52.4%, every interval overlapping, top 1% 52.8% [42.3, 63.9], top
+ * 5% 52.3%, top 20% 51.1% — against 51.4% across all playable games and a 53.1%
+ * break-even at -113. Only COORS separates, at 43.7%. Getting the equation right
+ * did not rescue it; if anything it removed the last hint of a gradient. Ship it
+ * because it is worth SEEING what his rules say about tonight, not to bet.
  *
  * Windows are TEAM GAMES — the starts inside the last N games his club has
  * played. Not days, not starts. pitcherRollingNRFI already emits them that way
  * and its comment records the cell-by-cell verification against his own card;
  * read that before touching this. */
 const KING_PARK_ADJ = { CIN: -2, CHC: -2, PIT: +2 }; // his three named parks, his +-2%
-const KING_W = { SZN: 0.25, L50: 0.25, L30: 0.35, L10: 0.15 }; // L30 is his headline
-const KING_LG = 71.1;  // league clean-1st rate, the shrink target
-const KING_K = 6;      // shrink strength in starts
+const KING_ADJ_CAP = 3; // his stated cap on the whole park+lineup adjustment
+const KING_W = { SZN: 0.60, L30: 0.40 }; // his blend. L10 and L50 do not score.
+const KING_LG = 78;    // his league scoreless-1st rate, the shrink target
+const KING_K = 10;     // his 10 phantom league-average starts
+const KING_TIERS = { elite: 68, green: 64, yellow: 58 };
+const KING_YRFI_FLIP = 52; // below this with one leaky arm, he takes the other side
 
-/* One arm. Blends whichever windows have data, renormalising over them, then
- * shrinks on the L30 start count — the count his card prints and gates on. */
-function kingArm(rolling, parkAdj) {
+/* One arm. Blend, shrink, adjust — his three steps in his order.
+ *
+ * The shrink denominator is the SEASON start count, not the L30 count. That is
+ * the single thing his dialog leaves open and it is worth 4.3 RMSE points; see
+ * the header. It also has to be this way for his own examples to work, since he
+ * describes "a 100% arm over 5 starts" without reference to any window. */
+function kingArm(rolling, adj) {
   const wins = (rolling && rolling.windows) || [];
   const by = {};
   for (const w of wins) by[w.key] = w;
@@ -9573,24 +9609,43 @@ function kingArm(rolling, parkAdj) {
   }
   const l30n = by.L30 ? (by.L30.n || 0) : 0;
   const l30pct = by.L30 ? by.L30.pct : null;
-  if (!den) return { pct: null, n: l30n, l30: l30pct };
+  const sznN = by.SZN ? (by.SZN.n || 0) : 0;
+  if (!den) return { pct: null, n: l30n, szn: sznN, l30: l30pct };
+  // Renormalise over whichever windows have data: an arm with a season line but
+  // no L30 (long IL stint) still scores off the season, it does not go blind.
   const raw = num / den;
-  const shrunk = (l30n * raw + KING_K * KING_LG) / (l30n + KING_K);
-  return { pct: Math.max(0, Math.min(100, shrunk + parkAdj)), n: l30n, l30: l30pct };
+  const shrunk = (sznN * raw + KING_K * KING_LG) / (sznN + KING_K);
+  return { pct: Math.max(0, Math.min(100, shrunk + adj)), n: l30n, szn: sznN, l30: l30pct };
 }
 
-/* His gates, in his words. All four key off the L30 window, which is the one his
- * card headlines. THIN is 1-3 starts, not 2-3: his card flags "home 0% on 1
- * starts" as THIN, and reading it as 2-3 leaves every n=1 arm ungated — those
- * sit at 0% or 100% by construction and pile into both ends of the score. */
+/* His gates, in his words. BLIND, THIN and COORS key off the L30 window, which
+ * is the one his card headlines. THIN is 1-3 starts, not 2-3: his card flags
+ * "home 0% on 1 starts" as THIN, and reading it as 2-3 leaves every n=1 arm
+ * ungated — those sit at 0% or 100% by construction and pile into both ends of
+ * the score.
+ *
+ * LEAK IS NOT AN AUTO-PASS AND USED TO BE ONE HERE. His dialog is explicit: a
+ * hard flag stops a game showing green, and separately "<52 with one leaky arm
+ * flips to a YRFI candidate". A leaky arm is how he FINDS the other side, so
+ * treating it as a refusal deleted his entire YRFI book. That is the same error
+ * shape as filtering a board on p>=threshold and reporting zero Coors bets —
+ * this model takes both sides, and a filter that only counts one is a filter
+ * that reports a confident zero. LEAK therefore returns as a soft flag: it caps
+ * the tier at YELLOW, and under 52 with exactly ONE leaky arm it flips the side.
+ * Two leaky arms is not his setup — that is a bad game, not a lopsided one. */
 function kingEvaluate(r) {
   const pp = r.pitProfiles || {};
   const homeAbbr = r.homeAbbr || r.home;
-  const adj = KING_PARK_ADJ[homeAbbr] || 0;
+  /* His stated adjustment is park tier AND opposing-lineup YRFI, capped together
+   * at +-3%. Only the park half is implemented — his lineup component could not
+   * be recovered from his boards without fitting a backwards sign into the
+   * display rounding (see header). The cap is applied anyway so that adding the
+   * lineup half later cannot silently exceed his stated ceiling. */
+  const adj = Math.max(-KING_ADJ_CAP, Math.min(KING_ADJ_CAP, KING_PARK_ADJ[homeAbbr] || 0));
   const a = kingArm(pp.away && pp.away.rolling, adj);
   const h = kingArm(pp.home && pp.home.rolling, adj);
 
-  const gates = [];
+  const gates = [], flags = [];
   const nm = (p) => (p && p.name) || "starter";
   if (a.n === 0) gates.push({ tag: "BLIND", why: "blind half — away " + nm(pp.away) + " 0 starts" });
   if (h.n === 0) gates.push({ tag: "BLIND", why: "blind half — home " + nm(pp.home) + " 0 starts" });
@@ -9598,16 +9653,35 @@ function kingEvaluate(r) {
   if (minN >= 1 && minN <= 3) {
     gates.push({ tag: "THIN", why: "thin sample — " + (a.n <= h.n ? "away " + a.n : "home " + h.n) + " starts" });
   }
-  if (a.l30 != null && a.l30 < 50)
-    gates.push({ tag: "LEAK", why: "one-sided leak — away " + nm(pp.away) + " " + a.l30 + "% L30 under 50%" });
-  if (h.l30 != null && h.l30 < 50)
-    gates.push({ tag: "LEAK", why: "one-sided leak — home " + nm(pp.home) + " " + h.l30 + "% L30 under 50%" });
-  // He does not dock Coors, he refuses it. That is why COL is absent above.
+  // He does not dock Coors, he refuses it. That is why COL is absent from the
+  // park table — the park table is for parks he still plays.
   if (homeAbbr === "COL")
     gates.push({ tag: "COORS", why: "Coors Field — the model excludes this park regardless of score" });
 
+  const aLeak = a.l30 != null && a.l30 < 50, hLeak = h.l30 != null && h.l30 < 50;
+  if (aLeak) flags.push({ tag: "LEAK", why: "leaky arm — away " + nm(pp.away) + " " + a.l30 + "% L30 under 50%" });
+  if (hLeak) flags.push({ tag: "LEAK", why: "leaky arm — home " + nm(pp.home) + " " + h.l30 + "% L30 under 50%" });
+
   const score = a.pct != null && h.pct != null ? (a.pct / 100) * (h.pct / 100) * 100 : null;
-  return { score, gates, away: a, home: h, parkAdj: adj };
+  const side = score != null && score < KING_YRFI_FLIP && (aLeak !== hLeak) ? "YRFI" : "NRFI";
+  return { score, gates, flags, side, away: a, home: h, parkAdj: adj };
+}
+
+/* His tier ladder, on his cutoffs — NOT the DS sliders, which are set against
+ * our calibrated probability and would badge his scale wrong in both directions.
+ * A soft flag caps the badge at YELLOW ("a flagged game never shows green"), and
+ * a flipped game is badged for the side he would actually take. */
+function kingTier(k) {
+  // A hard gate is an auto-pass, so it has no tier at all — not a low one. This
+  // has to agree with dsOf(), which returns null for the same rows, or the board
+  // summary and the cards will report different slates.
+  if (k.score == null || k.gates.length) return { label: "NO DS", color: "var(--dim)" };
+  if (k.side === "YRFI") return { label: "YRFI", color: "var(--violet)" };
+  const t = dsTier(k.score, KING_TIERS);
+  if (k.flags.length && (t.label === "ELITE" || t.label === "GREEN")) {
+    return { label: "YELLOW", color: "var(--amber)", capped: true };
+  }
+  return t;
 }
 
 /* Per-tier price ceiling, his numbers. A tier that does not appear here has no
@@ -9919,8 +9993,17 @@ function DSHeader({ r, leadDS, thresholds, priceOv, kingMode }) {
    * masquerade as a live market quote. */
   const ovBe = dsImplied(priceOv);
   const be = ovBe != null ? ovBe : (r.market ? r.market.marketNRFI : null);
-  const edge = ds != null && be != null ? ds - be : null;
-  const tier = dsTier(ds, thresholds);
+  /* Edge is against the side actually being taken. On a YRFI flip the bet is the
+   * other contract, so the comparison is (100-ds) against (100-be) — printing
+   * ds-be there would show a large NEGATIVE edge on the game he likes most, which
+   * is the same one-sided reading that once had this board reporting zero Coors
+   * bets while nine were live. */
+  const yrfi = !!(king && king.side === "YRFI");
+  const edge = ds == null || be == null ? null : (yrfi ? be - ds : ds - be);
+  // His cutoffs for his score, ours for ours. The DS sliders are anchored to our
+  // calibrated distribution (which tops out near 67), so badging his 0-100 rating
+  // through them would call half his board elite.
+  const tier = king ? kingTier(king) : dsTier(ds, thresholds);
   const behind = leadDS != null && ds != null ? leadDS - ds : null;
   return (
     <div style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: 8, marginBottom: 8 }}>
@@ -9941,19 +10024,37 @@ function DSHeader({ r, leadDS, thresholds, priceOv, kingMode }) {
           rather than beside it. Every gate he fires is listed, not just the
           first: his own card stacks them ("COORS; thin sample; one-sided leak")
           and the stack is the explanation. */}
-      {king && king.gates.length > 0 && (
+      {king && (king.gates.length > 0 || king.flags.length > 0) && (
         <div style={{ marginTop: 8 }}>
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 3 }}>
             {king.gates.map((g, i) => (
-              <span key={i} style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em",
+              <span key={"g" + i} style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em",
                 color: "var(--rose)", border: "1px solid var(--rose)", borderRadius: 4, padding: "1px 5px" }}>
                 {g.tag}
               </span>
             ))}
-            <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em", color: "var(--rose)" }}>AUTO PASS</span>
+            {king.gates.length > 0 && (
+              <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em", color: "var(--rose)" }}>AUTO PASS</span>
+            )}
+            {/* Soft flags are amber, not rose, and carry their own consequence
+                rather than borrowing the auto-pass label. A leaky arm does not
+                refuse the game — it caps the badge, and under 52 it is the
+                thing that puts him on YRFI. */}
+            {king.flags.map((f, i) => (
+              <span key={"f" + i} style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em",
+                color: "var(--amber)", border: "1px solid var(--amber)", borderRadius: 4, padding: "1px 5px" }}>
+                {f.tag}
+              </span>
+            ))}
+            {king.gates.length === 0 && king.flags.length > 0 && (
+              <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.06em", color: "var(--amber)" }}>
+                {king.side === "YRFI" ? "FLIP TO YRFI" : "CAPPED AT YELLOW"}
+              </span>
+            )}
           </div>
           <div style={{ fontSize: 10, color: "var(--dim)", lineHeight: 1.4 }}>
-            {king.gates.map((g) => g.why).join("; ")}
+            {king.gates.concat(king.flags).map((g) => g.why).join("; ")}
+            {king.side === "YRFI" && " — under " + KING_YRFI_FLIP + " with one leaky arm, so he takes YRFI here"}
           </div>
         </div>
       )}
@@ -9963,10 +10064,11 @@ function DSHeader({ r, leadDS, thresholds, priceOv, kingMode }) {
           textDecoration: king && king.gates.length ? "line-through" : "none" }}>
           {ds == null ? "—" : ds.toFixed(1)}
         </span>
-        {/* KS, never DS. Different inputs, different equation, and his real DS is
-            not reproducible here — see the KING MODE header comment. */}
+        {/* KS, not DS. It is his published equation, but his lineup adjustment is
+            not implemented, so it tracks his card without matching it exactly —
+            see the KING MODE header comment. */}
         <span title={king
-          ? "KING SCORE — NRFIKINGKY's published rules: starter clean-1st% over SZN/L50/L30/L10 and nothing else.\n\nThis is NOT his DS number and will not match his card. His equation is not published and is not recoverable from one slate.\n\nMeasured over 14,009 games this score does not separate NRFI outcomes at any selectivity."
+          ? "KING SCORE — NRFIKINGKY's published equation.\n\nPer arm: blend 60% season + 40% L30, shrink toward the 78% league rate by adding 10 phantom starts on the SEASON start count, then a capped ±3% park adjustment. The score is the product of both arms.\n\nThis tracks his card to about 1.4 points (leave-one-out over 10 of his boards) but will not match it exactly: his ±3% adjustment also includes an opposing-lineup YRFI term that could not be recovered from his published numbers, so only the park half is implemented.\n\nMeasured over 14,009 games at his own constants, this score does not separate NRFI outcomes at any selectivity."
           : "DUAL SCORE — our calibrated P(NRFI), pre market-blend."}
           style={{ cursor: "help", fontSize: 9, fontWeight: 700, color: king ? "var(--violet)" : "var(--dim)", letterSpacing: "0.08em" }}>
           {king ? "KS" : "DS"}
@@ -9980,6 +10082,16 @@ function DSHeader({ r, leadDS, thresholds, priceOv, kingMode }) {
         {/* His price gate: a ceiling per tier, and no gate at all below YELLOW
             because the tier already refused the game. */}
         {king && !king.gates.length && be != null && (() => {
+          /* He publishes no ceiling for the YRFI flip — it is a "candidate", and
+             the tier ladder he gates on describes NRFI plays. Say that rather
+             than borrowing the YELLOW number, which would be an invented rule
+             wearing his tier's name. */
+          if (tier.label === "YRFI") {
+            return <span style={{ fontSize: 9, color: "var(--violet)" }}
+              title={"YRFI candidate at " + dsAmerican(100 - be) + " (break-even " +
+                (100 - be).toFixed(1) + "%). He publishes no price ceiling for the flip."}>
+              no published gate (YRFI flip)</span>;
+          }
           const ceil = KING_PRICE_GATE[tier.label];
           if (ceil == null) {
             return <span style={{ fontSize: 9, color: "var(--dim)" }}>no gate (tier no-play)</span>;
@@ -9988,7 +10100,10 @@ function DSHeader({ r, leadDS, thresholds, priceOv, kingMode }) {
           const ok = ceilPct != null && be <= ceilPct;
           return (
             <span title={"His price gate for " + tier.label + " is " + ceil + " (" +
-              (ceilPct == null ? "?" : ceilPct.toFixed(1)) + "%). This game is at " + be.toFixed(1) + "%."}
+              (ceilPct == null ? "?" : ceilPct.toFixed(1)) + "%). This game is at " + be.toFixed(1) + "%." +
+              (tier.capped ? "\n\nThis badge is CAPPED at YELLOW by a soft flag — the raw score is " +
+                ds.toFixed(1) + ", which is " + dsTier(ds, KING_TIERS).label +
+                ". A flagged game never shows green, so it is gated as YELLOW." : "")}
               style={{ cursor: "help", fontSize: 9, fontWeight: 700, color: ok ? "var(--moss)" : "var(--rose)" }}>
               {ok ? "price inside " + ceil + " gate" : "price outside " + ceil + " gate"}
             </span>
@@ -9998,7 +10113,8 @@ function DSHeader({ r, leadDS, thresholds, priceOv, kingMode }) {
           {be == null ? "no market" : (
             "N " + dsAmerican(be) + " · Y " + dsAmerican(100 - be) + " · BE " + be.toFixed(1) + "%"
           )}
-          {edge != null && (edge >= 0 ? "  ·  +" : "  ·  ") + edge.toFixed(1) + " edge"}
+          {edge != null && (edge >= 0 ? "  ·  +" : "  ·  ") + edge.toFixed(1) +
+            (yrfi ? " edge (YRFI side)" : " edge")}
           {ovBe != null && (
             <span title={"Break-even is coming from your typed price (" + priceOv +
               "), not from Kalshi" + (r.market ? " (Kalshi has " + r.market.marketNRFI.toFixed(1) + "%)" : "") +
@@ -10098,12 +10214,13 @@ function FirstInning() {
     try { localStorage.setItem("nrfi.ds.tiers", JSON.stringify(next)); } catch { /* private mode */ }
   }
 
-  /* KING MODE: score the board on NRFIKINGKY's published rules instead of ours.
-   * DEFAULTS OFF and should stay that way — scripts/nrfi-king-mode.js measures
-   * this exact construction over 14,009 games and it does not separate at any
-   * selectivity (deciles 51.8% down to 48.2%, all intervals overlapping). It is
-   * a viewer for what his rules say about tonight, not a second opinion with
-   * standing. Persisted so the choice survives a reload, like the tiers. */
+  /* KING MODE: score the board on NRFIKINGKY's published equation instead of
+   * ours. DEFAULTS OFF and should stay that way — scripts/nrfi-king-mode.js
+   * measures this exact construction over 14,009 games and it does not separate
+   * at any selectivity (top decile 51.2%, bottom decile 52.4%, every interval
+   * overlapping). It is a viewer for what his rules say about tonight, not a
+   * second opinion with standing. Persisted so the choice survives a reload,
+   * like the tiers. */
   const [kingMode, setKingMode] = useState(() => {
     try { return localStorage.getItem("nrfi.kingMode") === "1"; } catch { return false; }
   });
@@ -10791,7 +10908,14 @@ function FirstInning() {
     if (kingMode) { const k = kingEvaluate(r); return k.gates.length ? null : k.score; }
     return r.pCal != null ? r.pCal * 100 : null;
   };
-  const dsEdgeOf = (r) => { const d = dsOf(r); return d != null && r.market ? d - r.market.marketNRFI : null; };
+  /* Edge on the side being taken, so a KING MODE YRFI flip ranks by the bet he
+   * would actually make rather than by how badly it loses as an NRFI. */
+  const dsEdgeOf = (r) => {
+    const d = dsOf(r);
+    if (d == null || !r.market) return null;
+    const be = r.market.marketNRFI;
+    return kingMode && kingEvaluate(r).side === "YRFI" ? be - d : d - be;
+  };
   const leadDS = validRows.reduce((m, r) => { const d = dsOf(r); return d != null && (m == null || d > m) ? d : m; }, null);
   const dsRank = new Map(validRows.filter((r) => dsEdgeOf(r) != null)
     .sort((a, b) => dsEdgeOf(b) - dsEdgeOf(a))
@@ -10877,7 +11001,23 @@ function FirstInning() {
     const ovBe = dsImplied(priceOv[String(r.gamePk)]);
     const beNRFI = ovBe != null ? ovBe : (r.market ? r.market.marketNRFI : null);
     const dsVal = r.pCal != null ? r.pCal * 100 : null;
-    const dsTierNow = dsVal == null ? null : dsTier(dsVal, dsTh);
+    /* The DS badge follows KING MODE; the bet card below it does NOT.
+     *
+     * This split is deliberate and the two halves are different questions. The
+     * badge IS the dual score, so in KING MODE it has to show his — it read
+     * `r.pCal * 100` directly instead of going through dsOf(), which meant a
+     * Coors game he auto-passes still printed a DS and a tier while the summary
+     * line above counted it as "no play". Same class of bug the dsOf comment
+     * warns about, in the one place that had been missed.
+     *
+     * callDS / callEdge stay on OUR number on purpose: `r.call` is our verdict,
+     * and pricing our YRFI call against his NRFI-oriented score would print an
+     * edge that describes neither model. KING MODE is a scoring view, not a
+     * re-derivation of the bet. */
+    const kingHere = kingMode ? kingEvaluate(r) : null;
+    const badgeDS = kingMode ? (kingHere.gates.length ? null : kingHere.score) : dsVal;
+    const badgeTier = badgeDS == null ? null
+      : (kingMode ? kingTier(kingHere) : dsTier(badgeDS, dsTh));
     const callBe = beNRFI == null ? null : (r.call === "NRFI" ? beNRFI : 100 - beNRFI);
     const callDS = dsVal == null ? null : (r.call === "NRFI" ? dsVal : 100 - dsVal);
     const callEdge = callBe != null && callDS != null ? callDS - callBe : null;
@@ -10964,29 +11104,57 @@ function FirstInning() {
                otherwise. DS is calibrated P(NRFI) BEFORE the market blend, always
                on the NRFI side. OUR NUMBER is post-blend and on the called side,
                so on a YRFI call the two sit on opposite sides of 50 by design. ── */}
-          {dsVal != null && dsTierNow && (
-            <div title={"DUAL SCORE " + dsVal.toFixed(1) + " — our calibrated chance of a clean 1st inning, " +
-              "before any blend toward the market price. Tier " + dsTierNow.label + "." +
-              (callBe != null ? "\n\nBreak-even on this price is " + callBe.toFixed(1) + "%." : "") +
-              "\n\nNot the same number as OUR NUMBER beside it: DS is pre-blend and always on NRFI, " +
-              "OUR NUMBER is post-blend and on the side we actually call." +
-              "\n\nDS is on OUR scale and is not comparable cell-for-cell with a tout board's dual " +
-              "score. Ours is a probability (this season it runs about 38-67, median 54); theirs is a " +
-              "0-100 rating with its own floor. The tier bands are what were fitted to line up." +
-              (leadDS != null && leadDS - dsVal > 0.05
-                ? "\n\nToday's board leader is DS " + leadDS.toFixed(1) + " — this trails by " +
-                  (leadDS - dsVal).toFixed(1) + "pts."
-                : leadDS != null ? "\n\nThis is the top DS on today's board." : "")}
+          {badgeDS != null && badgeTier && (
+            <div title={kingMode
+              ? "KING SCORE " + badgeDS.toFixed(1) + " — NRFIKINGKY's published equation, tier " +
+                badgeTier.label + " on his fixed ladder (68/64/58)." +
+                (badgeTier.capped ? " Capped from " + dsTier(badgeDS, KING_TIERS).label +
+                  " by a soft flag — a flagged game never shows green." : "") +
+                (kingHere.side === "YRFI" ? " Under 52 with one leaky arm, so he takes YRFI." : "") +
+                "\n\nThis is NOT the number in OUR NUMBER beside it, and it is not what the bet " +
+                "card below is based on — that stays on our model. Turn KING MODE off to see ours." +
+                (leadDS != null && leadDS - badgeDS > 0.05
+                  ? "\n\nToday's best king score is " + leadDS.toFixed(1) + " — this trails by " +
+                    (leadDS - badgeDS).toFixed(1) + "pts." : "")
+              : "DUAL SCORE " + badgeDS.toFixed(1) + " — our calibrated chance of a clean 1st inning, " +
+                "before any blend toward the market price. Tier " + badgeTier.label + "." +
+                (callBe != null ? "\n\nBreak-even on this price is " + callBe.toFixed(1) + "%." : "") +
+                "\n\nNot the same number as OUR NUMBER beside it: DS is pre-blend and always on NRFI, " +
+                "OUR NUMBER is post-blend and on the side we actually call." +
+                "\n\nDS is on OUR scale and is not comparable cell-for-cell with a tout board's dual " +
+                "score. Ours is a probability (this season it runs about 38-67, median 54); theirs is a " +
+                "0-100 rating with its own floor. The tier bands are what were fitted to line up." +
+                (leadDS != null && leadDS - badgeDS > 0.05
+                  ? "\n\nToday's board leader is DS " + leadDS.toFixed(1) + " — this trails by " +
+                    (leadDS - badgeDS).toFixed(1) + "pts."
+                  : leadDS != null ? "\n\nThis is the top DS on today's board." : "")}
               style={{ cursor: "help", textAlign: "right", flexShrink: 0, paddingRight: 12,
                 marginRight: 4, borderRight: "1px solid rgba(255,255,255,0.09)" }}>
-              <div style={{ fontWeight: 800, fontSize: 22, color: dsTierNow.color, lineHeight: 1 }}>
-                {dsVal.toFixed(1)}
+              <div style={{ fontWeight: 800, fontSize: 22, color: badgeTier.color, lineHeight: 1 }}>
+                {badgeDS.toFixed(1)}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 5, justifyContent: "flex-end", marginTop: 4 }}>
-                <span style={{ fontSize: 9, color: "var(--dim)", letterSpacing: "0.08em" }}>DS</span>
-                <span style={{ fontSize: 8, fontWeight: 700, color: dsTierNow.color,
-                  border: "1px solid " + dsTierNow.color, borderRadius: 3, padding: "0 4px",
-                  letterSpacing: "0.06em" }}>{dsTierNow.label}</span>
+                <span style={{ fontSize: 9, color: kingMode ? "var(--violet)" : "var(--dim)",
+                  letterSpacing: "0.08em" }}>{kingMode ? "KS" : "DS"}</span>
+                <span style={{ fontSize: 8, fontWeight: 700, color: badgeTier.color,
+                  border: "1px solid " + badgeTier.color, borderRadius: 3, padding: "0 4px",
+                  letterSpacing: "0.06em" }}>{badgeTier.label}</span>
+              </div>
+            </div>
+          )}
+          {/* A game he auto-passes has no score to print, and leaving the slot
+              empty would read as missing data rather than as his decision. */}
+          {kingMode && kingHere.gates.length > 0 && (
+            <div title={"NRFIKINGKY auto-passes this game: " +
+              kingHere.gates.map((g) => g.why).join("; ") + "."}
+              style={{ cursor: "help", textAlign: "right", flexShrink: 0, paddingRight: 12,
+                marginRight: 4, borderRight: "1px solid rgba(255,255,255,0.09)" }}>
+              <div style={{ fontWeight: 800, fontSize: 22, color: "var(--dim)", lineHeight: 1 }}>—</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, justifyContent: "flex-end", marginTop: 4 }}>
+                <span style={{ fontSize: 9, color: "var(--violet)", letterSpacing: "0.08em" }}>KS</span>
+                <span style={{ fontSize: 8, fontWeight: 700, color: "var(--rose)",
+                  border: "1px solid var(--rose)", borderRadius: 3, padding: "0 4px",
+                  letterSpacing: "0.06em" }}>{kingHere.gates.map((g) => g.tag).join(" ")}</span>
               </div>
             </div>
           )}
@@ -10998,10 +11166,14 @@ function FirstInning() {
         {/* His board prints this line and it is the honest framing of a good
             number that still is not the play — "third best today" is a thing our
             ladder cannot say in a verdict, so it says it here instead. */}
-        {dsVal != null && leadDS != null && leadDS - dsVal > 0.05 && (
+        {/* Measured against the badge, not against dsVal — leadDS is the best
+            score on the board under whichever mode is active, so comparing it to
+            our pCal in KING MODE would subtract two different quantities. */}
+        {badgeDS != null && leadDS != null && leadDS - badgeDS > 0.05 && (
           <div style={{ fontSize: 10, color: "var(--dim)", marginTop: -6, marginBottom: 12 }}>
             <span style={{ fontWeight: 700, letterSpacing: "0.08em" }}>WHY NOT LEAD</span>
-            {" · dual score trails today's lead by " + (leadDS - dsVal).toFixed(1) + "pts (lead DS " + leadDS.toFixed(1) + ")"}
+            {" · " + (kingMode ? "king score" : "dual score") + " trails today's lead by " +
+              (leadDS - badgeDS).toFixed(1) + "pts (lead " + (kingMode ? "KS " : "DS ") + leadDS.toFixed(1) + ")"}
           </div>
         )}
 
@@ -11740,8 +11912,15 @@ function FirstInning() {
           otherwise. Live counts sit next to the inputs so moving a cutoff shows
           its consequence on today's slate rather than on a remembered one. */}
       {(() => {
-        const counts = { ELITE: 0, GREEN: 0, YELLOW: 0, RED: 0, "NO DS": 0 };
-        for (const r of validRows) counts[dsTier(dsOf(r), dsTh).label]++;
+        /* YRFI only ever fills in KING MODE — it is his flip, not a DS tier — but
+         * the key is always present so the ++ below can never land on undefined
+         * and turn the whole summary line into NaN. */
+        const counts = { ELITE: 0, GREEN: 0, YELLOW: 0, RED: 0, YRFI: 0, "NO DS": 0 };
+        for (const r of validRows) {
+          // Badge each row exactly as its card will badge it: his ladder and his
+          // flag cap in KING MODE, the sliders otherwise.
+          counts[kingMode ? kingTier(kingEvaluate(r)).label : dsTier(dsOf(r), dsTh).label]++;
+        }
         const isDefault = dsTh.elite === DS_TIER_DEFAULTS.elite &&
           dsTh.green === DS_TIER_DEFAULTS.green && dsTh.yellow === DS_TIER_DEFAULTS.yellow;
         /* Clamp on commit, not on keystroke, and clamp against BOTH neighbours:
@@ -11766,12 +11945,30 @@ function FirstInning() {
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center",
             margin: "0 0 8px", padding: "7px 10px", background: "rgba(255,255,255,0.03)",
             border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: "var(--dim)" }}>DUAL SCORE TIERS</span>
-            {num("ELITE ≥", dsTh.elite, setElite, "var(--cyan)",
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: "var(--dim)" }}>
+              {kingMode ? "KING SCORE TIERS" : "DUAL SCORE TIERS"}</span>
+            {/* In KING MODE the ladder is HIS, fixed, and the sliders do not apply
+                — they are anchored to our calibrated distribution, which tops out
+                near 67, so his 68 would fire zero times on it and his 58 would
+                catch most of the board. Show the fixed numbers instead of leaving
+                three inputs on screen that silently stop affecting anything; a
+                control that looks live and is not is worse than no control. */}
+            {kingMode ? (
+              <span style={{ fontSize: 11, color: "var(--dim)", fontVariantNumeric: "tabular-nums" }}
+                title={"NRFIKINGKY's published cutoffs, fixed: ELITE ≥68, GREEN 64-67.9, YELLOW 58-63.9, RED <58, and under " +
+                  KING_YRFI_FLIP + " with exactly one leaky arm he flips to the YRFI side.\n\nThe DS sliders are hidden here because they do not apply — they are set against our calibrated probability, not his 0-100 rating. Turn KING MODE off to get them back."}>
+                <span style={{ color: "var(--cyan)" }}>ELITE ≥{KING_TIERS.elite}</span>
+                {" · "}<span style={{ color: "var(--moss)" }}>GREEN ≥{KING_TIERS.green}</span>
+                {" · "}<span style={{ color: "var(--amber)" }}>YELLOW ≥{KING_TIERS.yellow}</span>
+                {" · "}<span style={{ color: "var(--violet)" }}>YRFI &lt;{KING_YRFI_FLIP} + 1 leak</span>
+                {"  (his, fixed)"}
+              </span>
+            ) : null}
+            {!kingMode && num("ELITE ≥", dsTh.elite, setElite, "var(--cyan)",
               "Top 4.5% of the slate; 69.0% NRFI on 58 cached games. NOT his 68 — his DS is a 0-100 rating, ours is a calibrated probability that maxed at 67.2 over 1283 games, so his cutoff would fire zero times ever. This is set where OUR distribution is as selective as he is. He drops to ELITE-only on a thin board (\"Tough board today. Only playing MIL@LAD\").")}
-            {num("GREEN ≥", dsTh.green, setGreen, "var(--moss)",
+            {!kingMode && num("GREEN ≥", dsTh.green, setGreen, "var(--moss)",
               "GREEN-or-better is 19.4% of the slate, matching his real 19.0% play rate (2.59 of 13.6 games a day). The band itself hits 56.0% on 191 cached games. This is a selectivity anchor, not a reading of his number — see scripts/nrfi-ds-tier-brackets.js for his own cutoffs on his own scale.")}
-            {num("YELLOW ≥", dsTh.yellow, setYellow, "var(--amber)",
+            {!kingMode && num("YELLOW ≥", dsTh.yellow, setYellow, "var(--amber)",
               "Roughly our median p (54.2). Splits the half of the slate we are lukewarm on from the half we are against: yellow band 51.8%, red band 45.3%, base rate 50.0%. The weakest of the three cuts — nothing he publishes is ever red, so his behaviour cannot anchor it.")}
             <span style={{ fontSize: 11, color: "var(--dim)", fontVariantNumeric: "tabular-nums" }}
               title="How today's board splits at the cutoffs above. Held games and settled games are not counted — they are not decisions.">
@@ -11779,24 +11976,29 @@ function FirstInning() {
               {" · "}<span style={{ color: "var(--moss)" }}>{counts.GREEN} green</span>
               {" · "}<span style={{ color: "var(--amber)" }}>{counts.YELLOW} yellow</span>
               {" · "}<span style={{ color: "var(--rose)" }}>{counts.RED} red</span>
+              {counts.YRFI > 0 && (
+                <span style={{ color: "var(--violet)" }}>{" · " + counts.YRFI + " yrfi"}</span>
+              )}
               {counts["NO DS"] > 0
                 ? " · " + counts["NO DS"] + (kingMode ? " no play" : " no DS")
                 : ""}
             </span>
-            {!isDefault && (
+            {!isDefault && !kingMode && (
               <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: "2px 7px" }}
                 onClick={() => saveDsTh({ ...DS_TIER_DEFAULTS })}
                 title={"Back to " + DS_TIER_DEFAULTS.elite + " / " + DS_TIER_DEFAULTS.green +
                   " / " + DS_TIER_DEFAULTS.yellow}>Reset</button>
             )}
-            <span style={{ fontSize: 10, color: "var(--dim)" }}
-              title="The badge is a threshold on the DS level. It is NOT the edge over the break-even price — his DS 60.0 against BE 51.5% is an +8.5pt edge and still YELLOW, while DS 64.7 at +5.2 is GREEN. The board's #N badge is what carries the edge ordering.">
-              badge = DS level, not edge
-            </span>
+            {!kingMode && (
+              <span style={{ fontSize: 10, color: "var(--dim)" }}
+                title="The badge is a threshold on the DS level. It is NOT the edge over the break-even price — his DS 60.0 against BE 51.5% is an +8.5pt edge and still YELLOW, while DS 64.7 at +5.2 is GREEN. The board's #N badge is what carries the edge ordering.">
+                badge = DS level, not edge
+              </span>
+            )}
             {/* ── KING MODE toggle ──
                 Parked at the end of the tier row because it reinterprets every
-                number to its left: the cutoffs stay put but the quantity being
-                cut changes from our calibrated probability to his score.
+                number to its left: the cutoffs change to his and the quantity
+                being cut changes from our calibrated probability to his score.
                 The label says OFF explicitly rather than just going dark. A
                 toggle that only signals ON is a toggle you leave on by accident,
                 and this one is measured NOT to work — the tooltip carries that
@@ -11804,19 +12006,26 @@ function FirstInning() {
                 buried in a comment nobody reads. */}
             <button className="btn btn-ghost btn-sm"
               onClick={() => saveKingMode(!kingMode)}
-              title={"KING MODE — score the slate by NRFIKINGKY's published rules instead of ours.\n\n" +
-                "His inputs and nothing else: the starter's clean-1st% over SZN/L50/L30/L10 " +
-                "(windows are TEAM GAMES), his four auto-passes (BLIND / THIN 1-3 starts / " +
-                "one-sided LEAK / COORS), his ±2% flag on GABP, Wrigley and PNC, and his " +
-                "per-tier price ceiling. No offence, weather, bullpen, travel or rest — he uses none.\n\n" +
-                "The number prints as KS, not DS. It is NOT his DS and will not match his card: " +
-                "his equation is unpublished and is not recoverable from one slate.\n\n" +
+              title={"KING MODE — score the slate by NRFIKINGKY's published equation instead of ours.\n\n" +
+                "PER ARM: blend 60% season + 40% L30 clean-1st% (windows are TEAM GAMES), shrink " +
+                "toward the 78% league rate by adding 10 phantom league starts on the SEASON start " +
+                "count, then a capped ±3% park adjustment (his ±2% on GABP, Wrigley and PNC). " +
+                "The score is the product of both arms.\n\n" +
+                "TIERS: his, fixed — ELITE ≥68, GREEN 64-67.9, YELLOW 58-63.9, RED <58, and under " +
+                "52 with exactly one leaky arm it flips to a YRFI candidate. Auto-passes: BLIND, " +
+                "THIN (1-3 starts), COORS. A leaky arm is a soft flag that caps the badge at " +
+                "YELLOW — it is not a refusal, it is how he finds the other side.\n\n" +
+                "It prints as KS because it is not exactly his DS: his ±3% adjustment also carries " +
+                "an opposing-lineup YRFI term that could not be recovered from his published " +
+                "numbers, so only the park half is here. Leave-one-out against 10 of his boards, " +
+                "this lands within 1.4 points and reproduces his tier 9 times in 10.\n\n" +
                 "MEASURED, and the reason this is off by default — over 14,009 games " +
-                "(scripts/nrfi-king-mode.js) this score does not separate NRFI outcomes at any " +
-                "selectivity. Deciles run 51.8% down to 48.2% with every interval overlapping, " +
-                "and the sharp end is flat too (top 1% 55.7% on n=61, CI [42.9, 67.7]) against a " +
-                "50.7% base rate and a 53.1% break-even at −113. Only one gate separates: COORS, " +
-                "at 41.3%. Use this to SEE what his rules say about tonight, not to bet it."}
+                "(scripts/nrfi-king-mode.js), scoring every row on the side it takes, the score " +
+                "does not separate at any selectivity. The top decile wins 51.2% and the BOTTOM " +
+                "decile wins 52.4%, every interval overlapping; top 1% is 52.8% [42.3, 63.9], " +
+                "top 5% 52.3%, top 20% 51.1% — against 51.4% across all playable games and a " +
+                "53.1% break-even at −113. Only COORS separates, at 43.7%. Use this to SEE what " +
+                "his rules say about tonight, not to bet it."}
               style={{ fontSize: 11, padding: "2px 8px", letterSpacing: "0.06em", fontWeight: 700,
                 color: kingMode ? "var(--violet)" : "var(--dim)",
                 borderColor: kingMode ? "var(--violet)" : undefined }}>
@@ -11824,7 +12033,7 @@ function FirstInning() {
             </button>
             {kingMode && (
               <span style={{ fontSize: 10, color: "var(--violet)" }}>
-                scoring by his rules · KS, not DS · does not match his card
+                his equation, his tiers · KS, not DS · lineup term not implemented
               </span>
             )}
           </div>
