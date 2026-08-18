@@ -8,12 +8,18 @@
  * that the blend is wrong. This tests the candidates ONE FREE PARAMETER AT A
  * TIME, leave-one-out, because 13 observations will happily fit four.
  *
- * Read the LOO column, not the in-sample column. A candidate that only wins
- * in-sample is fitting his display rounding (he prints whole percents, which
- * floors RMSE here around 0.5-0.9 no matter what the model is). */
+ * Read the LOO column, not the in-sample column.
+ *
+ * This used to carry the caveat "he prints whole percents, so ~0.5-0.9 of any
+ * RMSE here is unrecoverable rounding". THAT WAS WRONG. He prints the
+ * denominator beside every percent, so nrfi-king-cells.js inverts each cell to
+ * its exact k/n (all 110 cells on this board invert uniquely). Swapping exact
+ * cells in moves RMSE 1.424 -> 1.403 and bias +1.00 -> +0.95, i.e. the residual
+ * was never rounding. There is no display floor to hide behind here. */
+const { exact } = require("./nrfi-king-cells.js");
 const B = require("./nrfi-king-board-2026-08-18.json").games.filter((g) => g.ds != null);
 
-const pct = (c) => (c ? c[0] : null);
+const pct = (c) => exact(c);
 const raw = (p, wS) => {
   const s = pct(p.SZN), l = pct(p.L30);
   if (s == null && l == null) return null;
@@ -77,7 +83,7 @@ for (const [name, key, grid] of MODELS) {
     ((bias(B, p) >= 0 ? "+" : "") + bias(B, p).toFixed(2)).padStart(7));
 }
 console.log("-".repeat(68));
-console.log("floor: he prints whole percents, so ~0.5-0.9 of this is unrecoverable.");
+console.log("cells are exact (k/n recovered), so there is NO display floor here.");
 
 console.log("\nper-game residual, shipped:");
 for (const g of B) {

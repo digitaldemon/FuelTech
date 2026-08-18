@@ -1,3 +1,9 @@
+THE WAR ROOM
+
+BOARD
+RECORD
+ACCOUNT
+SIGN OUT
 2026-08-18
 
 AS OF: 2026-08-18T04:14:30.646Z · ODDS AS OF: 2026-08-18T04:14:27.938Z
@@ -91,6 +97,15 @@ Soriano 100% clean 1st innings (L30) · Martinez 80% clean 1st innings (L30) · 
 DS
 ELITE
 N -136 · Y +106 · BE 57.6%
+TEAM 1ST-INN RATES (YRFI%)
+TOR
+21.4%
+TB
+32.3%
+K-BB% (away)
+13.0%
+K-BB% (home)
+10.5%
 #2
 TOP PICK
 ARI @ BOS
@@ -133,6 +148,15 @@ Kelly 83% clean 1st innings (L30) · Suarez 100% clean 1st innings (L30) · scor
 DS
 YELLOW
 N -122 · Y -104 · BE 55.0%
+TEAM 1ST-INN RATES (YRFI%)
+ARI
+31.0%
+BOS
+24.0%
+K-BB% (away)
+5.4%
+K-BB% (home)
+17.8%
 #3
 TOP PICK
 SEA @ MIL
@@ -175,6 +199,15 @@ Miller 60% clean 1st innings (L30) · Harrison 100% clean 1st innings (L30) · s
 DS
 YELLOW
 N -128 · Y +100 · BE 56.1%
+TEAM 1ST-INN RATES (YRFI%)
+SEA
+28.8%
+MIL
+28.0%
+K-BB% (away)
+20.4%
+K-BB% (home)
+23.4%
 REST OF THE BOARD — NO BETS
 12
 WSH @ TEX
@@ -219,6 +252,15 @@ thin sample — away 100% on 1 starts
 DS
 FLAGGED
 N -113 · Y -113 · BE 53.1%
+TEAM 1ST-INN RATES (YRFI%)
+WSH
+34.1%
+TEX
+29.6%
+K-BB% (away)
+5.3%
+K-BB% (home)
+12.8%
 LAA @ HOU
 8:10 PM · Daikin
 THIN
@@ -261,6 +303,15 @@ thin sample — away 75% on 4 starts
 DS
 FLAGGED
 N -102 · Y -125 · BE 50.5%
+TEAM 1ST-INN RATES (YRFI%)
+LAA
+33.6%
+HOU
+33.6%
+K-BB% (away)
+-1.3%
+K-BB% (home)
+-0.9%
 SD @ NYM
 7:10 PM · Citi
 AWAY
@@ -301,6 +352,15 @@ Score too low — 57.6 lands below the playable range, so the model sits this on
 DS
 NO PLAY
 N -111 · Y -115 · BE 52.6%
+TEAM 1ST-INN RATES (YRFI%)
+SD
+23.0%
+NYM
+27.8%
+K-BB% (away)
+7.9%
+K-BB% (home)
+9.0%
 STL @ CIN
 6:40 PM · Great American Bal
 HITTER FRIENDLY
@@ -342,6 +402,15 @@ Score too low — 55.2 lands below the playable range, so the model sits this on
 DS
 NO PLAY
 N -113 · Y -113 · BE 53.1%
+TEAM 1ST-INN RATES (YRFI%)
+STL
+32.0%
+CIN
+27.2%
+K-BB% (away)
+14.1%
+K-BB% (home)
+6.6%
 NYY @ BAL
 6:35 PM · Oriole Park at Cam
 AWAY
@@ -382,6 +451,15 @@ Score too low — 53.6 lands below the playable range, so the model sits this on
 DS
 NO PLAY
 N -113 · Y -113 · BE 53.1%
+TEAM 1ST-INN RATES (YRFI%)
+NYY
+29.0%
+BAL
+25.0%
+K-BB% (away)
+13.4%
+K-BB% (home)
+12.5%
 ATH @ KC
 7:40 PM · Kauffman
 THIN
@@ -425,6 +503,15 @@ thin sample — home 100% on 2 starts
 DS
 FLAGGED
 NO FEED PRICE — ENTER MANUALLY
+TEAM 1ST-INN RATES (YRFI%)
+ATH
+28.0%
+KC
+30.2%
+K-BB% (away)
+15.1%
+K-BB% (home)
+15.0%
 DET @ PIT
 6:40 PM · PNC
 LEAK
@@ -467,6 +554,15 @@ one-sided leak — away Keider Montero 40% L30 under 50%
 DS
 FLAGGED
 N -128 · Y +100 · BE 56.1%
+TEAM 1ST-INN RATES (YRFI%)
+DET
+33.9%
+PIT
+30.7%
+K-BB% (away)
+9.8%
+K-BB% (home)
+21.3%
 SF @ CLE
 6:40 PM · Progressive
 AWAY
@@ -507,6 +603,15 @@ Score too low — 50.9 lands below the playable range, so the model sits this on
 DS
 NO PLAY
 N -132 · Y +104 · BE 56.9%
+TEAM 1ST-INN RATES (YRFI%)
+SF
+23.2%
+CLE
+27.2%
+K-BB% (away)
+3.1%
+K-BB% (home)
+16.3%
 LAD @ COL
 8:40 PM · Coors
 COORS
@@ -549,6 +654,15 @@ Coors Field — the model excludes this park regardless of score
 DS
 FLAGGED
 N +130 · Y -166 · BE 43.5%
+TEAM 1ST-INN RATES (YRFI%)
+LAD
+30.2%
+COL
+32.8%
+K-BB% (away)
+8.0%
+K-BB% (home)
+6.5%
 ATL @ MIN
 7:40 PM · Target
 LEAK
@@ -590,6 +704,15 @@ one-sided leak — home Zebby Matthews 20% L30 under 50%
 DS
 FLAGGED
 N -102 · Y -125 · BE 50.5%
+TEAM 1ST-INN RATES (YRFI%)
+ATL
+31.7%
+MIN
+32.5%
+K-BB% (away)
+14.7%
+K-BB% (home)
+12.1%
 MIA @ PHI
 6:40 PM · Citizens Bank
 BLIND
@@ -632,6 +755,15 @@ blind half — away Cade Gibson 0 starts
 DS
 FLAGGED
 N -113 · Y -113 · BE 53.1%
+TEAM 1ST-INN RATES (YRFI%)
+MIA
+28.6%
+PHI
+32.0%
+K-BB% (away)
+—
+K-BB% (home)
+23.8%
 CWS @ CHC
 8:05 PM · Wrigley
 TBD
@@ -674,4 +806,13 @@ away starter TBD — no arm to grade
 —
 DS
 FLAGGED
-N -113 · Y -113 · BE 53.1%
+NO FEED PRICE — ENTER MANUALLY
+TEAM 1ST-INN RATES (YRFI%)
+CWS
+33.1%
+CHC
+25.4%
+K-BB% (away)
+—
+K-BB% (home)
+17.0%

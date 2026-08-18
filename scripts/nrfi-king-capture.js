@@ -94,13 +94,33 @@ for (let s = 0; s < starts.length; s++) {
   const tier = di > 0 ? (card[di + 1] || "").toUpperCase() : "";
   const pm = card.map((l) => /^N ([+-]\d+)/.exec(l)).find(Boolean);
 
+  /* The opposing-lineup inputs, which only exist on an EXPANDED card:
+   *
+   *     TEAM 1ST-INN RATES (YRFI%)
+   *     STL / 32.0%  ·  CIN / 27.2%
+   *     K-BB% (away) 14.1%  ·  K-BB% (home) 6.6%
+   *
+   * These are the numbers his ±3% lineup term must be built from, and unlike
+   * the arm cells he prints them to ONE DECIMAL -- so they do not carry the
+   * whole-percent rounding floor that caps a fit against the rest of the card.
+   * A card is collapsed by default, so a capture taken without clicking every
+   * matchup header simply has no panel and these come back null. Signed: the
+   * K-BB% cells go negative on weak arms (LAA -1.3%). */
+  const li = card.findIndex((l) => /^TEAM 1ST-INN RATES/.test(l));
+  const num = (s) => (s == null || DASH.test(s) ? null
+    : (/^(-?[\d.]+)%$/.test(s) ? parseFloat(s.slice(0, -1)) : null));
+  const lineup = li < 0 ? null : {
+    yrfiA: num(card[li + 2]), yrfiH: num(card[li + 4]),
+    kbbA: num(card[li + 6]), kbbH: num(card[li + 8]),
+  };
+
   games.push({
     g: key, home, park: parkBy[key] || 0,
     ds: Number.isFinite(ds) ? ds : null,
     tier: tier === "NO PLAY" ? "RED" : tier,
     gates: gatesBy[key] || [],
     price: pm ? parseInt(pm[1], 10) : null,
-    a, h,
+    a, h, lineup,
   });
 }
 
@@ -117,7 +137,13 @@ const scored = games.filter((g) => g.ds != null).length;
 console.log("wrote " + path.basename(out));
 console.log("  " + games.length + " games, " + scored + " scored, " +
   games.filter((g) => g.gates.length).length + " gated, " +
-  Object.keys(parkBy).length + " park flags");
+  Object.keys(parkBy).length + " park flags, " +
+  games.filter((g) => g.lineup).length + " lineup panels");
+if (!games.some((g) => g.lineup)) {
+  console.log("  ?? no lineup panels — the cards were captured COLLAPSED. Click");
+  console.log("     every matchup header before copying the page, or the board");
+  console.log("     cannot be used to fit the opposing-lineup term.");
+}
 for (const g of games) {
   if (!g.a.SZN || !g.h.SZN) console.log("  ?? " + g.g + " missing an arm");
   if (g.ds == null && !g.gates.length) console.log("  ?? " + g.g + " has no score and no gate");

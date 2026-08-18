@@ -47,6 +47,12 @@
      1
     ],
     "who": "Nick Martinez"
+   },
+   "lineup": {
+    "yrfiA": 21.4,
+    "yrfiH": 32.3,
+    "kbbA": 13,
+    "kbbH": 10.5
    }
   },
   {
@@ -94,6 +100,12 @@
      1
     ],
     "who": "Ranger Suarez"
+   },
+   "lineup": {
+    "yrfiA": 31,
+    "yrfiH": 24,
+    "kbbA": 5.4,
+    "kbbH": 17.8
    }
   },
   {
@@ -141,6 +153,12 @@
      1
     ],
     "who": "Kyle Harrison"
+   },
+   "lineup": {
+    "yrfiA": 28.8,
+    "yrfiH": 28,
+    "kbbA": 20.4,
+    "kbbH": 23.4
    }
   },
   {
@@ -190,6 +208,12 @@
      1
     ],
     "who": "Cal Quantrill"
+   },
+   "lineup": {
+    "yrfiA": 34.1,
+    "yrfiH": 29.6,
+    "kbbA": 5.3,
+    "kbbH": 12.8
    }
   },
   {
@@ -239,6 +263,12 @@
      1
     ],
     "who": "Cristian Javier"
+   },
+   "lineup": {
+    "yrfiA": 33.6,
+    "yrfiH": 33.6,
+    "kbbA": -1.3,
+    "kbbH": -0.9
    }
   },
   {
@@ -286,6 +316,12 @@
      2
     ],
     "who": "Zac Thornton"
+   },
+   "lineup": {
+    "yrfiA": 23,
+    "yrfiH": 27.8,
+    "kbbA": 7.9,
+    "kbbH": 9
    }
   },
   {
@@ -333,6 +369,12 @@
      1
     ],
     "who": "Andrew Abbott"
+   },
+   "lineup": {
+    "yrfiA": 32,
+    "yrfiH": 27.2,
+    "kbbA": 14.1,
+    "kbbH": 6.6
    }
   },
   {
@@ -374,6 +416,12 @@
      2
     ],
     "who": "Shane Baz"
+   },
+   "lineup": {
+    "yrfiA": 29,
+    "yrfiH": 25,
+    "kbbA": 13.4,
+    "kbbH": 12.5
    }
   },
   {
@@ -423,6 +471,12 @@
      2
     ],
     "who": "Daniel Lynch IV"
+   },
+   "lineup": {
+    "yrfiA": 28,
+    "yrfiH": 30.2,
+    "kbbA": 15.1,
+    "kbbH": 15
    }
   },
   {
@@ -472,6 +526,12 @@
      1
     ],
     "who": "Braxton Ashcraft"
+   },
+   "lineup": {
+    "yrfiA": 33.9,
+    "yrfiH": 30.7,
+    "kbbA": 9.8,
+    "kbbH": 21.3
    }
   },
   {
@@ -519,6 +579,12 @@
      2
     ],
     "who": "Foster Griffin"
+   },
+   "lineup": {
+    "yrfiA": 23.2,
+    "yrfiH": 27.2,
+    "kbbA": 3.1,
+    "kbbH": 16.3
    }
   },
   {
@@ -568,6 +634,12 @@
      2
     ],
     "who": "Ryan Feltner"
+   },
+   "lineup": {
+    "yrfiA": 30.2,
+    "yrfiH": 32.8,
+    "kbbA": 8,
+    "kbbH": 6.5
    }
   },
   {
@@ -617,6 +689,12 @@
      2
     ],
     "who": "Zebby Matthews"
+   },
+   "lineup": {
+    "yrfiA": 31.7,
+    "yrfiH": 32.5,
+    "kbbA": 14.7,
+    "kbbH": 12.1
    }
   },
   {
@@ -657,6 +735,12 @@
      2
     ],
     "who": "Zack Wheeler"
+   },
+   "lineup": {
+    "yrfiA": 28.6,
+    "yrfiH": 32,
+    "kbbA": null,
+    "kbbH": 23.8
    }
   },
   {
@@ -668,7 +752,7 @@
    "gates": [
     "TBD"
    ],
-   "price": -113,
+   "price": null,
    "a": {
     "SZN": [
      null,
@@ -697,6 +781,12 @@
      2
     ],
     "who": "Kevin Gausman"
+   },
+   "lineup": {
+    "yrfiA": 33.1,
+    "yrfiH": 25.4,
+    "kbbA": null,
+    "kbbH": 17
    }
   }
  ]
