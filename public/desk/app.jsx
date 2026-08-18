@@ -10262,10 +10262,15 @@ function FirstInning() {
   async function loadOpenPositions() {
     setLoadingPositions(true);
     try {
-      const d = await fetch("/api/desk/nrfi/kalshi-positions").then((r) => r.json());
-      if (d.positions) setOpenPositions(d);
-      else setOpenPositions({ error: d.error || "Failed to load", positions: [] });
-    } catch { setOpenPositions({ error: "Network error", positions: [] }); }
+      const r = await fetch("/api/desk/nrfi/kalshi-positions");
+      const body = await r.text();
+      let d = null;
+      try { d = JSON.parse(body); } catch { /* not JSON: an HTML login redirect or a gateway error page */ }
+      if (d && d.positions) setOpenPositions(d);
+      else if (d && d.error) setOpenPositions({ error: d.error, positions: [] });
+      else if (r.status === 401 || r.status === 403) setOpenPositions({ error: "Signed out — reload the page and sign in again", positions: [] });
+      else setOpenPositions({ error: "Server sent " + r.status + ", not JSON — the API route didn't answer", positions: [] });
+    } catch (e) { setOpenPositions({ error: "Can't reach the server — " + ((e && e.message) || "network error"), positions: [] }); }
     setLoadingPositions(false);
   }
   function saveBankrollSettings(patch) {
