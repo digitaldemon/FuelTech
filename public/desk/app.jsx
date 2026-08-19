@@ -9680,81 +9680,6 @@ function kingTier(k) {
  * card means the tier already refused it, not that the price passed. */
 const KING_PRICE_GATE = { ELITE: -170, GREEN: -160, YELLOW: -140 };
 
-/* A window cell. n rides on every cell and drives how loudly it is allowed to
- * speak: at the measured k=87.6 a 2-start window is ~2% reliable, so colouring
- * a 100%-on-2g cell green would render sampling dust as form. Thin cells go
- * grey — the number is still shown, it just is not dressed up as a signal. */
-function DSCell({ w }) {
-  const thin = w.n < 3, semi = w.n >= 3 && w.n < 5;
-  const color = w.pct == null || thin ? "var(--dim)"
-    : w.pct >= 75 ? "var(--moss)" : w.pct >= 60 ? "var(--amber)" : "var(--rose)";
-  const span = w.key === "SZN" ? "the full season"
-    : "the last " + w.key.slice(1) + " games his TEAM has played";
-  return (
-    <div title={"Clean 1st innings in " + span + ": " + w.n + " start" +
-      (w.n === 1 ? "" : "s") + (w.pct == null ? "" : ", " + w.pct + "% scoreless") +
-      (w.runsPerStart != null ? ", " + w.runsPerStart + " runs allowed per start" : "") +
-      (thin ? "\n\nTHIN: under 3 starts is sampling dust, not form — greyed out for that reason."
-        : semi ? "\n\nThin sample — dimmed." : "")}
-      style={{ cursor: "help", flex: "0 0 auto", minWidth: 46, textAlign: "center", padding: "4px 6px",
-      background: "rgba(255,255,255,0.03)", borderRadius: 6, opacity: semi ? 0.72 : 1 }}>
-      <div style={{ fontSize: 8, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.06em" }}>{w.key}</div>
-      <div style={{ fontSize: 12, fontWeight: 800, color }}>{w.pct == null ? "—" : w.pct + "%"}</div>
-      <div style={{ fontSize: 8, color: "var(--dim)" }}>{w.n}g</div>
-    </div>
-  );
-}
-
-function DSArm({ label, prof }) {
-  const rolling = prof && prof.rolling;
-  const wins = (rolling && rolling.windows) || [];
-  const l30 = wins.find((w) => w.key === "L30");
-  const szn = wins.find((w) => w.key === "SZN");
-  const big = l30 && l30.pct != null ? l30.pct : (szn ? szn.pct : null);
-  const bigColor = big == null ? "var(--dim)"
-    : big >= 75 ? "var(--moss)" : big >= 60 ? "var(--amber)" : "var(--rose)";
-  return (
-    <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ fontSize: 8, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>{label}</div>
-      <div style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden",
-        textOverflow: "ellipsis" }}>{(prof && prof.name) || "TBD"}</div>
-      <div style={{ fontSize: 26, fontWeight: 800, color: bigColor, lineHeight: 1.1 }}>
-        {big == null ? "—" : big + "%"}
-      </div>
-      <div title={"Big number = clean 1st-inning rate over the last 30 games this team has played" +
-        (l30 && l30.n ? " (" + l30.n + " start" + (l30.n === 1 ? "" : "s") + ")" : "") +
-        ". GS = starts on the season." +
-        "\n\nWindows are TEAM GAMES, not days — that holds the start count steady through " +
-        "off-days and the All-Star break, and it is the same definition the tout boards use."}
-        style={{ cursor: "help", fontSize: 9, color: "var(--dim)" }}>
-        NRFI L30 · {szn ? szn.n : 0}GS
-      </div>
-      {/* K-BB% on batters faced, first-inning split. League 1st-inn is ~11%, so
-        * single digits is a contact pitcher and the mid-teens is a bat-misser.
-        * Greyed under 30 batters faced for the same reason the window cells grey
-        * out thin samples: a rate off 20 hitters is not a reading. */}
-      {prof && prof.kbbPct != null && (
-        <div title={"K-BB% = (strikeouts - walks) / batters faced, 1st inning only" +
-          (prof.bf != null ? ", on " + prof.bf + " batters faced" : "") +
-          ". League 1st-inn average is roughly 11%. Higher = misses bats and does not walk people = better for NRFI." +
-          (prof.bf != null && prof.bf < 30 ? "\n\nTHIN: under 30 batters faced, treat as noise." : "")}
-          style={{ cursor: "help", fontSize: 9, marginTop: 2,
-            color: prof.bf != null && prof.bf < 30 ? "var(--dim)"
-              : prof.kbbPct >= 15 ? "var(--moss)" : prof.kbbPct < 6 ? "var(--rose)" : "var(--dim)",
-            opacity: prof.bf != null && prof.bf < 30 ? 0.5 : 1 }}>
-          K-BB {prof.kbbPct.toFixed(1)}%
-        </div>
-      )}
-      {/* Horizontally scrollable, like his — the strip runs past the card edge. */}
-      <div title="Clean 1st-inning rate by window. L50/L30/L20/L10 count TEAM GAMES, not days."
-        style={{ display: "flex", gap: 4, marginTop: 6, overflowX: "auto", paddingBottom: 2 }}>
-        {wins.length ? wins.map((w) => <DSCell key={w.key} w={w} />)
-          : <div style={{ fontSize: 10, color: "var(--dim)" }}>no game log</div>}
-      </div>
-    </div>
-  );
-}
-
 /* TEAM 1ST-INN RATES, lifted out of the badge row and onto the card proper.
  *
  * This is the same reading that used to sit in a pill below the fold, with the
@@ -9865,7 +9790,6 @@ function WhyBlock({ why, isBet }) {
  * and still flags MANUAL, so the DS/BE/edge shown here and the edge shown on
  * the card are computed against the same price. */
 function DSHeader({ r, leadDS, thresholds, priceOv, kingMode }) {
-  const pp = r.pitProfiles || {};
   /* In KING MODE the number on this card is HIS rules, not ours — a different
    * quantity from a different input set, so it is labelled KS and never DS. Our
    * calibrated probability is not shown alongside it on purpose: two numbers in
@@ -9896,10 +9820,6 @@ function DSHeader({ r, leadDS, thresholds, priceOv, kingMode }) {
   const behind = leadDS != null && ds != null ? leadDS - ds : null;
   return (
     <div style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: 8, marginBottom: 8 }}>
-      <div style={{ display: "flex", gap: 12 }}>
-        <DSArm label="AWAY" prof={pp.away} />
-        <DSArm label="HOME" prof={pp.home} />
-      </div>
       {behind != null && behind > 0.05 && (
         <div style={{ marginTop: 8 }}>
           <div style={{ fontSize: 8, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>WHY NOT LEAD</div>
@@ -11109,69 +11029,6 @@ function FirstInning() {
           </span>
         </div>
 
-        {/* ── Everything below is detail, and stays folded until asked for.
-             The four blocks that follow — the tagline band, the two starter
-             panels, the stats strip and the badge row — were the card. They are
-             still every number they were; what changed is that reading the
-             board no longer requires reading all of them. ── */}
-        {isOpen && (<>
-        <div style={{ marginBottom: 12 }}>
-          <DSHeader r={r} leadDS={leadDS} thresholds={dsTh} priceOv={priceOv[String(r.gamePk)]} kingMode={kingMode} />
-        </div>
-
-        {/* ── Verdict graphic + battle bar ── */}
-        <div style={{ marginBottom: 12, padding: "10px 13px", background: vg.bg, borderRadius: 9, border: "1px solid " + vg.c + "30" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: avgPitHP != null || avgOffHP != null ? 10 : 0 }}>
-            <span style={{ fontSize: 22, lineHeight: 1 }}>{vg.e}</span>
-            <span style={{ fontSize: 11, fontWeight: 800, color: vg.c, letterSpacing: "0.04em", textTransform: "uppercase" }}>{vg.tag}</span>
-          </div>
-          {(avgPitHP != null || avgOffHP != null) && (
-            <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {/* Pitcher bar */}
-                <div
-                  title={"PITCHING DOMINANCE — how likely both starters are to keep the 1st inning scoreless, based on their clean-inning rates. " + (avgPitHP != null ? avgPitHP + "% = " + (avgPitHP >= 65 ? "elite shutdown stuff" : avgPitHP >= 50 ? "solid control" : "vulnerable early") + ". Green = pitcher-friendly, amber = 50/50, red = starters are leaking." : "")}
-                  style={{ flex: 1, cursor: "help" }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
-                    <span style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.06em" }}>🛡️ PITCHING</span>
-                    {avgPitHP != null && <span style={{ fontSize: 10, fontWeight: 800, color: avgPitHP >= 60 ? "var(--moss)" : avgPitHP >= 45 ? "var(--amber)" : "var(--rose)" }}>{avgPitHP}%</span>}
-                  </div>
-                  <div style={{ height: 7, borderRadius: 4, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: (avgPitHP || 0) + "%", background: avgPitHP >= 60 ? "linear-gradient(90deg,#2d6a3f,var(--moss))" : avgPitHP >= 45 ? "linear-gradient(90deg,#8a6500,var(--amber))" : "linear-gradient(90deg,#7a1a1a,var(--rose))", borderRadius: 4, transition: "width 1s cubic-bezier(.2,1,.3,1)" }} />
-                  </div>
-                  <div style={{ fontSize: 8, color: "var(--dim)", marginTop: 2 }}>
-                    {avgPitHP >= 65 ? "elite — starters shutting it down" : avgPitHP >= 50 ? "solid — starters in control" : "shaky — vulnerable to early runs"}
-                  </div>
-                </div>
-                {/* Center icon with label */}
-                <div style={{ textAlign: "center", flexShrink: 0 }}>
-                  <div style={{ fontSize: 18, lineHeight: 1 }}>{pitWinning === true ? "⚔️" : pitWinning === false ? "💥" : "⚾"}</div>
-                  <div style={{ fontSize: 7, fontWeight: 800, color: pitWinning === true ? "var(--moss)" : pitWinning === false ? "var(--rose)" : "var(--dim)", letterSpacing: "0.04em", marginTop: 2, whiteSpace: "nowrap" }}>
-                    {pitWinning === true ? "ARM WINS" : pitWinning === false ? "BAT WINS" : "TOSS UP"}
-                  </div>
-                </div>
-                {/* Offense bar (fills right-to-left to oppose) */}
-                <div
-                  title={"OFFENSIVE THREAT — how aggressive both lineups are in the 1st inning based on their season YRFI scoring rates. " + (avgOffHP != null ? avgOffHP + "% = " + (avgOffHP >= 60 ? "dangerous bats, run likely" : avgOffHP >= 40 ? "average scoring threat" : "cold bats, tough to score early") + ". Red = offense-friendly, amber = 50/50, green = offense is quiet." : "")}
-                  style={{ flex: 1, cursor: "help" }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
-                    {avgOffHP != null && <span style={{ fontSize: 10, fontWeight: 800, color: avgOffHP >= 60 ? "var(--rose)" : avgOffHP >= 40 ? "var(--amber)" : "var(--moss)" }}>{avgOffHP}%</span>}
-                    <span style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.06em", marginLeft: "auto" }}>OFFENSE ⚡</span>
-                  </div>
-                  <div style={{ height: 7, borderRadius: 4, background: "rgba(255,255,255,0.08)", overflow: "hidden", transform: "scaleX(-1)" }}>
-                    <div style={{ height: "100%", width: (avgOffHP || 0) + "%", background: avgOffHP >= 60 ? "linear-gradient(90deg,#7a1a1a,var(--rose))" : avgOffHP >= 40 ? "linear-gradient(90deg,#8a6500,var(--amber))" : "linear-gradient(90deg,#2d6a3f,var(--moss))", borderRadius: 4, transition: "width 1s cubic-bezier(.2,1,.3,1)" }} />
-                  </div>
-                  <div style={{ fontSize: 8, color: "var(--dim)", marginTop: 2, textAlign: "right" }}>
-                    {avgOffHP >= 60 ? "hot bats — scoring threat is real" : avgOffHP >= 40 ? "average — could go either way" : "cold lineup — quiet early innings"}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* ── Pitcher panels ── */}
         {r.pitProfiles && (
           <div className="pit-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
@@ -11292,7 +11149,7 @@ function FirstInning() {
                   {windows.length > 0 && (
                     <div className="pit-windows" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 3, marginBottom: 9 }}>
                       {windows.map((w) => (
-                        <div key={w.label} title={"Clean 1st-inning rate over " + w.span + " — " + (w.pct != null ? w.pct + "% clean in " + w.n + " starts" + (w.runsPerStart != null ? ", avg " + w.runsPerStart.toFixed(2) + " runs allowed in 1st" : "") : "no data") + (w.label === "5 STARTS" ? "\n\nSharpest recent signal, and the noisiest — five starts is not a rate." : "") + "\n\nThese count STARTS. The window strip at the top of the card counts TEAM GAMES, so the two will not agree."} style={{ cursor: "help", textAlign: "center", background: w.label === "5 STARTS" ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.04)", borderRadius: 6, padding: "4px 0", border: w.label === "5 STARTS" ? "1px solid rgba(255,255,255,0.1)" : "none" }}>
+                        <div key={w.label} title={"Clean 1st-inning rate over " + w.span + " — " + (w.pct != null ? w.pct + "% clean in " + w.n + " starts" + (w.runsPerStart != null ? ", avg " + w.runsPerStart.toFixed(2) + " runs allowed in 1st" : "") : "no data") + (w.label === "5 STARTS" ? "\n\nSharpest recent signal, and the noisiest — five starts is not a rate." : "")} style={{ cursor: "help", textAlign: "center", background: w.label === "5 STARTS" ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.04)", borderRadius: 6, padding: "4px 0", border: w.label === "5 STARTS" ? "1px solid rgba(255,255,255,0.1)" : "none" }}>
                           <div style={{ fontSize: 9, color: "var(--dim)", marginBottom: 1 }}>{w.label}</div>
                           <div style={{ fontWeight: 700, fontSize: 12, color: w.pct != null ? pClr(w.pct) : "var(--dim)" }}>{w.pct != null ? w.pct + "%" : "—"}</div>
                           <div style={{ fontSize: 9, color: "var(--dim)", opacity: 0.7 }}>{w.n != null ? w.n + "g" : ""}{w.runsPerStart != null ? " · " + w.runsPerStart.toFixed(2) + "R" : ""}</div>
@@ -11359,6 +11216,69 @@ function FirstInning() {
             })}
           </div>
         )}
+
+        {/* ── Everything below is detail, and stays folded until asked for.
+             The starter panels above are the only piece that stays visible on
+             the collapsed card — the three blocks that follow (the tagline
+             band, the stats strip and the badge row) still fold, because
+             reading the board no longer requires reading all of them. ── */}
+        {isOpen && (<>
+        <div style={{ marginBottom: 12 }}>
+          <DSHeader r={r} leadDS={leadDS} thresholds={dsTh} priceOv={priceOv[String(r.gamePk)]} kingMode={kingMode} />
+        </div>
+
+        {/* ── Verdict graphic + battle bar ── */}
+        <div style={{ marginBottom: 12, padding: "10px 13px", background: vg.bg, borderRadius: 9, border: "1px solid " + vg.c + "30" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: avgPitHP != null || avgOffHP != null ? 10 : 0 }}>
+            <span style={{ fontSize: 22, lineHeight: 1 }}>{vg.e}</span>
+            <span style={{ fontSize: 11, fontWeight: 800, color: vg.c, letterSpacing: "0.04em", textTransform: "uppercase" }}>{vg.tag}</span>
+          </div>
+          {(avgPitHP != null || avgOffHP != null) && (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {/* Pitcher bar */}
+                <div
+                  title={"PITCHING DOMINANCE — how likely both starters are to keep the 1st inning scoreless, based on their clean-inning rates. " + (avgPitHP != null ? avgPitHP + "% = " + (avgPitHP >= 65 ? "elite shutdown stuff" : avgPitHP >= 50 ? "solid control" : "vulnerable early") + ". Green = pitcher-friendly, amber = 50/50, red = starters are leaking." : "")}
+                  style={{ flex: 1, cursor: "help" }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.06em" }}>🛡️ PITCHING</span>
+                    {avgPitHP != null && <span style={{ fontSize: 10, fontWeight: 800, color: avgPitHP >= 60 ? "var(--moss)" : avgPitHP >= 45 ? "var(--amber)" : "var(--rose)" }}>{avgPitHP}%</span>}
+                  </div>
+                  <div style={{ height: 7, borderRadius: 4, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: (avgPitHP || 0) + "%", background: avgPitHP >= 60 ? "linear-gradient(90deg,#2d6a3f,var(--moss))" : avgPitHP >= 45 ? "linear-gradient(90deg,#8a6500,var(--amber))" : "linear-gradient(90deg,#7a1a1a,var(--rose))", borderRadius: 4, transition: "width 1s cubic-bezier(.2,1,.3,1)" }} />
+                  </div>
+                  <div style={{ fontSize: 8, color: "var(--dim)", marginTop: 2 }}>
+                    {avgPitHP >= 65 ? "elite — starters shutting it down" : avgPitHP >= 50 ? "solid — starters in control" : "shaky — vulnerable to early runs"}
+                  </div>
+                </div>
+                {/* Center icon with label */}
+                <div style={{ textAlign: "center", flexShrink: 0 }}>
+                  <div style={{ fontSize: 18, lineHeight: 1 }}>{pitWinning === true ? "⚔️" : pitWinning === false ? "💥" : "⚾"}</div>
+                  <div style={{ fontSize: 7, fontWeight: 800, color: pitWinning === true ? "var(--moss)" : pitWinning === false ? "var(--rose)" : "var(--dim)", letterSpacing: "0.04em", marginTop: 2, whiteSpace: "nowrap" }}>
+                    {pitWinning === true ? "ARM WINS" : pitWinning === false ? "BAT WINS" : "TOSS UP"}
+                  </div>
+                </div>
+                {/* Offense bar (fills right-to-left to oppose) */}
+                <div
+                  title={"OFFENSIVE THREAT — how aggressive both lineups are in the 1st inning based on their season YRFI scoring rates. " + (avgOffHP != null ? avgOffHP + "% = " + (avgOffHP >= 60 ? "dangerous bats, run likely" : avgOffHP >= 40 ? "average scoring threat" : "cold bats, tough to score early") + ". Red = offense-friendly, amber = 50/50, green = offense is quiet." : "")}
+                  style={{ flex: 1, cursor: "help" }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
+                    {avgOffHP != null && <span style={{ fontSize: 10, fontWeight: 800, color: avgOffHP >= 60 ? "var(--rose)" : avgOffHP >= 40 ? "var(--amber)" : "var(--moss)" }}>{avgOffHP}%</span>}
+                    <span style={{ fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.06em", marginLeft: "auto" }}>OFFENSE ⚡</span>
+                  </div>
+                  <div style={{ height: 7, borderRadius: 4, background: "rgba(255,255,255,0.08)", overflow: "hidden", transform: "scaleX(-1)" }}>
+                    <div style={{ height: "100%", width: (avgOffHP || 0) + "%", background: avgOffHP >= 60 ? "linear-gradient(90deg,#7a1a1a,var(--rose))" : avgOffHP >= 40 ? "linear-gradient(90deg,#8a6500,var(--amber))" : "linear-gradient(90deg,#2d6a3f,var(--moss))", borderRadius: 4, transition: "width 1s cubic-bezier(.2,1,.3,1)" }} />
+                  </div>
+                  <div style={{ fontSize: 8, color: "var(--dim)", marginTop: 2, textAlign: "right" }}>
+                    {avgOffHP >= 60 ? "hot bats — scoring threat is real" : avgOffHP >= 40 ? "average — could go either way" : "cold lineup — quiet early innings"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* ── Stats strip ── */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 0, alignItems: "stretch", fontSize: 12, marginBottom: 8, background: "rgba(255,255,255,0.04)", borderRadius: 10, border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
