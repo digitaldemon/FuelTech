@@ -161,6 +161,17 @@ export async function GET(req: Request) {
       if (d) { e.date = d; repaired++; }
     }
 
+    /* Repair contract counts written while *_count_fp was read raw (×100).
+     * Counts from the plain field were integers; fp-derived ones carry a
+     * fractional part, which is the tell. Only ever shrinks a fractional
+     * value, so an integer row — correct to begin with — is never touched. */
+    let rescaled = 0;
+    for (const e of existing) {
+      if (e.source !== "kalshi-import") continue;
+      const c = typeof e.contracts === "number" ? e.contracts : null;
+      if (c != null && c > 0 && c % 1 !== 0) { e.contracts = Math.round(c) / 100; rescaled++; }
+    }
+
     const existingIds = new Set(existing.map((e) => e.id));
     const toUpsert: NrfiRec[] = [];
     let skipped = 0;
@@ -170,8 +181,14 @@ export async function GET(req: Request) {
       if (res !== "yes" && res !== "no") { skipped++; continue; } // unresolved
 
       const ticker = String(s.ticker || "");
-      const yc = num(s.yes_count_fp ?? s.yes_count) ?? 0;
-      const nc = num(s.no_count_fp ?? s.no_count) ?? 0;
+      // *_count_fp is fixed-point (×100) — same scaling kalshi-positions
+      // already handles for position_fp. Preferring the fp field RAW stored
+      // 100× the real contract count on every import, which poisons any P&L
+      // computed from these rows (the Bankroll Manager compounds on them).
+      const ycFp = num(s.yes_count_fp);
+      const ncFp = num(s.no_count_fp);
+      const yc = num(s.yes_count) ?? (ycFp != null ? ycFp / 100 : 0);
+      const nc = num(s.no_count) ?? (ncFp != null ? ncFp / 100 : 0);
       if (yc <= 0 && nc <= 0) { skipped++; continue; } // no position held
 
       const side = yc >= nc ? "YES" : "NO";
@@ -224,23 +241,27 @@ export async function GET(req: Request) {
       toUpsert.push(rec);
     }
 
-    // `repaired` counts in-place edits to `existing`, so a run that imports
-    // nothing but fixes dates still has to write. Testing only toUpsert.length
-    // would silently drop the backfill.
-    if (toUpsert.length || repaired) {
+    // `repaired`/`rescaled` count in-place edits to `existing`, so a run that
+    // imports nothing but fixes old rows still has to write. Testing only
+    // toUpsert.length would silently drop the backfill.
+    if (toUpsert.length || repaired || rescaled) {
       // Upsert via the existing nrfi route logic: prepend new, keep ≤1000.
       const updated = [...toUpsert, ...existing].slice(0, 1000);
       await writeStore("nrfi_record", updated);
     }
 
-    const repairNote = repaired
+    const repairNote = (repaired
       ? " Backfilled the missing date on " + repaired + " previously imported bet" +
         (repaired === 1 ? "" : "s") + "."
-      : "";
+      : "") + (rescaled
+      ? " Rescaled the fixed-point contract count on " + rescaled + " previously imported bet" +
+        (rescaled === 1 ? "" : "s") + "."
+      : "");
     return Response.json({
       imported: toUpsert.length,
       skipped,
       repaired,
+      rescaled,
       total: nrfiRows.length,
       message: (toUpsert.length
         ? "Imported " + toUpsert.length + " NRFI bet" + (toUpsert.length === 1 ? "" : "s") + " from Kalshi."
