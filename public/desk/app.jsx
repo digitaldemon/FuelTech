@@ -5987,6 +5987,10 @@ function NrfiWatch({ gamePk, away, home, awayAbbr, homeAbbr, side, held, pos, st
     let stop = false, timer = null, inFlight = false;
     async function tick() {
       if (stop) return;
+      // Converge to one timer chain: a visibility catch-up can start a second
+      // tick while the first is mid-fetch, and without this each would go on
+      // scheduling its own successors.
+      if (timer) { clearTimeout(timer); timer = null; }
       if (!inFlight) {
         inFlight = true;
         let f = null;
@@ -6015,11 +6019,25 @@ function NrfiWatch({ gamePk, away, home, awayAbbr, homeAbbr, side, held, pos, st
       }
       const cur = liveRef.current;
       if (cur && cur.past1) return; // settled — nothing left to poll for
-      timer = setTimeout(tick, cur && cur.inning === 1 ? 1200 : 15000);
+      /* Cadence by phase. 800ms while the 1st is live: this is ONE game on one
+       * screen, so half the board interval is affordable and shaves ~200ms of
+       * average detection lag off the only game the viewer cares about. 2s once
+       * first pitch is due inside ten minutes — the old flat 15s could sit
+       * through the entire first at-bat before noticing the game had started,
+       * which is a real delay in a screen whose whole job is the first inning.
+       * 15s only while the game is still comfortably in the future. */
+      const soon = startUtc && new Date(startUtc).getTime() - Date.now() < 10 * 60 * 1000;
+      timer = setTimeout(tick, cur && cur.inning === 1 ? 800 : soon ? 2000 : 15000);
     }
     tick();
-    return () => { stop = true; if (timer) clearTimeout(timer); };
-  }, [gamePk]);
+    /* Coming back to the tab lands on the live edge NOW, not after whatever is
+     * left of an interval that may have been throttled to a minute while
+     * hidden. The main callout loop does the same; a watch screen that reads
+     * "12s ago" while showing two-pitch-old bases would be lying politely. */
+    const onVis = () => { if (!document.hidden) tick(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { stop = true; if (timer) clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); };
+  }, [gamePk, startUtc]);
 
   // Score inside the 1st: the plays carry the cumulative game score, and in
   // the 1st inning cumulative IS the inning. Preview games have no plays.
@@ -11015,15 +11033,32 @@ function FirstInning() {
       }
       spoken.current.set(r.gamePk, st);
     }
+    /* Fast lane for the focused game. The metronome runs at HALF the poll
+     * interval: even beats poll the whole board (the same CALLOUT_POLL_MS
+     * cadence as before), odd beats poll only the game being listened to or
+     * watched — so that one game runs at 600ms while the board stays at 1200.
+     *
+     * Why this is worth doing when the header note says lowering the interval
+     * is not the lever: that note is about the BOARD — halving fifteen games'
+     * polls doubles the request rate for 300ms of average gain. The focused
+     * game is ONE game, the one whose latency the listener actually feels,
+     * and its extra cost is bounded at ~50 requests/min against a feed that
+     * was measured tolerating 250ms polls. The in-flight set already makes
+     * overlapping nudges free. */
+    let beat = 0;
     function tick() {
       // Not awaited and deliberately not Promise.all'd: each game gates itself
       // through the in-flight set above, so a tick is just a nudge to every
       // game that is currently free to poll. Errors are per-game and already
       // swallowed inside fetchFirstInning, which returns null on failure.
-      for (const r of tracked()) pollGame(r);
+      beat++;
+      const wholeBoard = beat % 2 === 0;
+      for (const r of tracked()) {
+        if (wholeBoard || focusRef.current === r.gamePk) pollGame(r);
+      }
     }
     tick();
-    const stopMetronome = calloutMetronome(CALLOUT_POLL_MS, tick);
+    const stopMetronome = calloutMetronome(CALLOUT_POLL_MS / 2, tick);
     /* Foregrounding the tab re-anchors the call immediately rather than waiting
      * out the rest of an interval. This mattered enormously when the metronome
      * was a main-thread setInterval and a hidden tab got one wake a minute; with
