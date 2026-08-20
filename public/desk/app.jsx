@@ -12627,6 +12627,64 @@ function FirstInning() {
           })}
         </div>
       )}
+      {/* Daily record — model accuracy by day. Built from the SAME settled
+          arrays as the headline tiles (modelSettled/betSettled/leanSettled/
+          kalshiSettled), so this table and the tiles cannot disagree. */}
+      {modelSettled.length > 0 && (() => {
+        const dayKeyOf = (r) => String(r.date || "").replace(/-/g, "").slice(0, 8);
+        const blank = () => ({ all: [0, 0], bets: [0, 0], leans: [0, 0], kalshi: [0, 0], pending: 0 });
+        const days = {};
+        const tally = (arr, k) => { for (const r of arr) { const d = dayKeyOf(r); if (!d) continue; (days[d] = days[d] || blank())[k][r.result === "won" ? 0 : 1]++; } };
+        tally(modelSettled, "all"); tally(betSettled, "bets"); tally(leanSettled, "leans"); tally(kalshiSettled, "kalshi");
+        for (const r of rec || []) {
+          if (r.source !== "kalshi-import" && !r.skipped && !r.result && isModelPick(r)) {
+            const d = dayKeyOf(r); if (d) (days[d] = days[d] || blank()).pending++;
+          }
+        }
+        const keys = Object.keys(days).sort((a, b) => b.localeCompare(a));
+        const dateLabel = (k) => new Date(+k.slice(0, 4), +k.slice(4, 6) - 1, +k.slice(6, 8)).toLocaleDateString([], { month: "short", day: "numeric" });
+        const pctColor = (w, l) => { const t = w + l; if (!t) return "var(--dim)"; const p = w / t; return p >= 0.55 ? "var(--moss)" : p >= 0.45 ? "var(--bone)" : "var(--rose)"; };
+        const cell = ([w, l], width) => (
+          <span style={{ width, textAlign: "right", fontWeight: 600, color: pctColor(w, l) }}>
+            {w + l > 0 ? w + "-" + l : "·"}
+          </span>
+        );
+        const pctCell = ([w, l]) => (
+          <span style={{ width: 44, textAlign: "right", fontWeight: 700, color: pctColor(w, l) }}>
+            {w + l > 0 ? Math.round(w / (w + l) * 100) + "%" : ""}
+          </span>
+        );
+        const header = (t, width) => <span style={{ width, textAlign: "right", fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>{t}</span>;
+        return (
+          <div className="panel" style={{ marginTop: 12 }}>
+            <p className="sect" style={{ margin: 0 }}>Daily record</p>
+            <p style={{ fontSize: 11, color: "var(--dim)", margin: "4px 0 8px" }}>
+              Model picks graded by day — same counting rules as the tiles up top (PASS, thin-data and
+              no-market games excluded). YOUR KALSHI is what you actually placed, win–loss only.
+            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0 5px", borderBottom: "1px solid rgba(120,130,150,.2)" }}>
+              <span style={{ flex: 1, fontSize: 9, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>DAY</span>
+              {header("ALL", 52)}{header("WIN%", 44)}{header("BETS", 44)}{header("LEANS", 44)}{header("KALSHI", 52)}
+            </div>
+            {keys.map((k, i) => {
+              const d = days[k];
+              return (
+                <div key={k} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "5px 0", borderTop: i > 0 ? "1px solid rgba(120,130,150,.12)" : "none" }}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    {dateLabel(k)}
+                    {d.pending > 0 && <span style={{ marginLeft: 6, fontSize: 10, color: "var(--dim)" }}>· {d.pending} pending</span>}
+                  </span>
+                  {cell(d.all, 52)}{pctCell(d.all)}{cell(d.bets, 44)}{cell(d.leans, 44)}{cell(d.kalshi, 52)}
+                </div>
+              );
+            })}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "6px 0 2px", borderTop: "1px solid rgba(120,130,150,.25)", fontWeight: 700 }}>
+              <span style={{ flex: 1 }}>All days</span>
+              {cell([wins, losses], 52)}{pctCell([wins, losses])}{cell([betWins, betLosses], 44)}{cell([leanWins, leanLosses], 44)}{cell([kWins, kLosses], 52)}
+            </div>
+          </div>
+        );
+      })()}
       {rec && rec.length > 0 && (
         <div className="panel" style={{ marginTop: 12 }}>
           <p className="sect" style={{ margin: "0 0 6px" }}>Daily Profit Tracker</p>
