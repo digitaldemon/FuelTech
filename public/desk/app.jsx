@@ -10019,6 +10019,19 @@ function FirstInning() {
   // to twice.
   const [bankrollAnchorAt, setBankrollAnchorAt] = useState(null);
   const saveBankrollTimer = useRef(null);
+  /* Live bankroll: auto-sync equity (cash + open NRFI cost, the Sync button's
+   * exact formula) from Kalshi on mount and every minute, so the tracked
+   * figure follows the account instead of waiting to be typed. Typing a
+   * number switches to manual so a sync never overwrites an override. */
+  // null = settings not loaded yet; the auto-sync effect stays idle until the
+  // saved preference arrives, so a mount-time sync can never overwrite a
+  // manual figure the user chose to keep.
+  const [liveSync, setLiveSync] = useState(null);
+  const [bankrollHistory, setBankrollHistory] = useState([]);
+  const [lastLiveSync, setLastLiveSync] = useState(null);
+  const liveSyncBusy = useRef(false);
+  const bankrollRef = useRef(null);
+  useEffect(() => { bankrollRef.current = bankroll; }, [bankroll]);
   const [syncingBalance, setSyncingBalance] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
   const [openPositions, setOpenPositions] = useState(null);
@@ -10107,9 +10120,57 @@ function FirstInning() {
         // settled bet in history would be added on top of a number that
         // already reflected most of it.
         else if (d.settings.startingBankroll != null && d.settings.lastUpdated != null) setBankrollAnchorAt(d.settings.lastUpdated);
-      }
+        setLiveSync(d.settings.liveSync != null ? !!d.settings.liveSync : true);
+      } else if (d && !d.error) setLiveSync(true); // fresh account, no settings yet
+      if (d && Array.isArray(d.history)) setBankrollHistory(d.history);
     } catch { /* ignore */ }
   }
+  /* One sync pass: read cash + open positions, stamp equity if it moved, and
+   * post a history snapshot. Runs from an interval, so every mutable read goes
+   * through a ref — the interval's closure is frozen at mount. Refuses to
+   * stamp unless BOTH reads succeeded: cash alone would crater the figure by
+   * the whole open exposure. */
+  async function syncBankrollLive() {
+    if (liveSyncBusy.current) return;
+    liveSyncBusy.current = true;
+    try {
+      const [bal, pos] = await Promise.all([
+        fetch("/api/desk/nrfi/kalshi-balance").then((r) => r.json()),
+        fetch("/api/desk/nrfi/kalshi-positions").then((r) => r.json()).catch(() => null),
+      ]);
+      const posOk = pos && !pos.error && pos.totalExposure != null;
+      if (posOk) setOpenPositions(pos);
+      if (bal && bal.balance != null && posOk) {
+        const cash = Math.round(bal.balance * 100) / 100;
+        const exposure = Math.round(pos.totalExposure * 100) / 100;
+        const equity = Math.round((cash + exposure) * 100) / 100;
+        const at = Date.now();
+        setLastLiveSync({ at, ok: true, cash, exposure, equity });
+        if (bankrollRef.current == null || Math.abs(equity - bankrollRef.current) >= 0.01) {
+          setBankroll(equity); setBankrollAnchorAt(at);
+          saveBankrollSettings({ startingBankroll: equity, anchorAt: at, liveSync: true });
+        }
+        // Snapshot goes direct, not through the debounced settings save — a
+        // later settings patch would replace it in the timer and drop it.
+        fetch("/api/desk/nrfi/bankroll", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ snapshot: { at, equity, cash, exposure } }) }).catch(() => {});
+        setBankrollHistory((h) => {
+          const last = h[h.length - 1];
+          if (last && at - last.at < 10 * 60 * 1000 && Math.abs(equity - last.equity) < 1) return h;
+          return [...h.slice(-499), { at, equity, cash, exposure }];
+        });
+      } else {
+        setLastLiveSync({ at: Date.now(), ok: false, text: (bal && bal.error) || (pos && pos.error) || "sync failed" });
+      }
+    } catch { setLastLiveSync({ at: Date.now(), ok: false, text: "network error" }); }
+    liveSyncBusy.current = false;
+  }
+  useEffect(() => {
+    if (liveSync !== true) return;
+    syncBankrollLive();
+    const id = setInterval(syncBankrollLive, 60 * 1000);
+    return () => clearInterval(id);
+  }, [liveSync]);
   async function loadOpenPositions() {
     setLoadingPositions(true);
     try {
@@ -12022,11 +12083,14 @@ function FirstInning() {
         const histWins = gradedHistory.filter((r) => r.result === "won").length;
         const histWinRate = gradedHistory.length >= 5 ? histWins / gradedHistory.length : null;
 
-        function stampBankroll(v) {
+        // ls: which sync mode this stamp should persist — typing passes false
+        // (a manual figure must survive reloads), everything else keeps the
+        // current mode.
+        function stampBankroll(v, ls = liveSync) {
           setBankroll(v);
           const at = Date.now();
           setBankrollAnchorAt(at);
-          saveBankrollSettings({ startingBankroll: v, riskLevel, growthSpeed, betCapPct, dayCapPct, anchorAt: at });
+          saveBankrollSettings({ startingBankroll: v, riskLevel, growthSpeed, betCapPct, dayCapPct, anchorAt: at, liveSync: !!ls });
         }
 
         const openTickerSet = new Set((openPositions && !openPositions.error ? openPositions.positions : []).map((p) => p.ticker));
@@ -12219,7 +12283,29 @@ function FirstInning() {
               <span style={{ fontSize: 13, fontWeight: 800, color: "var(--moss)" }}>Bankroll Manager</span>
               <span style={{ fontSize: 11, color: "var(--dim)" }}>— %/bet and %/day caps, rank-and-cut sizing across NRFI + YRFI, auto-compounding</span>
               <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                {historySinceAnchor.length > 0 && (
+                {bankrollHistory.length >= 2 && (() => {
+                  const first = bankrollHistory[0], last = bankrollHistory[bankrollHistory.length - 1];
+                  const delta = last.equity - first.equity;
+                  const sinceTxt = new Date(first.at).toLocaleDateString([], { month: "numeric", day: "numeric" });
+                  return (
+                    <span title={"Tracked equity, " + bankrollHistory.length + " snapshots since " + sinceTxt + ". Every live sync that moves the figure is recorded server-side — this is the bankroll's actual path, not an estimate."} style={{ cursor: "help", display: "flex", alignItems: "center", gap: 8 }}>
+                      <Spark points={bankrollHistory.map((s) => ({ p: s.equity }))} w={90} h={22} />
+                      <span style={{ fontSize: 12, fontWeight: 700, color: delta >= 0 ? "var(--moss)" : "var(--rose)" }}>
+                        {delta >= 0 ? "+" : ""}${delta.toFixed(2)} <span style={{ color: "var(--dim)", fontWeight: 400 }}>since {sinceTxt}</span>
+                      </span>
+                    </span>
+                  );
+                })()}
+                {liveSync === true && lastLiveSync && (lastLiveSync.ok ? (
+                  <span title={"Auto-synced from Kalshi every minute: $" + lastLiveSync.cash.toFixed(2) + " cash + $" + lastLiveSync.exposure.toFixed(2) + " in open NRFI positions."} style={{ cursor: "help", fontSize: 11, color: "var(--dim)" }}>
+                    ● synced {Math.max(0, Math.floor((now - lastLiveSync.at) / 1000))}s ago
+                  </span>
+                ) : (
+                  <span title="The last automatic sync could not read your Kalshi balance or positions. Sizing keeps using the last saved figure until a sync succeeds." style={{ cursor: "help", fontSize: 11, color: "var(--rose)", fontWeight: 700 }}>
+                    sync failed {Math.floor((now - lastLiveSync.at) / 60000)}m ago — using last saved
+                  </span>
+                ))}
+                {liveSync !== true && historySinceAnchor.length > 0 && (
                   <span title={"Realized P&L from " + historySinceAnchor.length + " settled bet" + (historySinceAnchor.length === 1 ? "" : "s") + " since the bankroll figure was last set (typed in or synced), net of estimated taker fees. This is what's compounding on top of it."} style={{ cursor: "help", fontSize: 12, color: realizedSinceAnchor >= 0 ? "var(--moss)" : "var(--rose)", fontWeight: 700 }}>
                     Compounded: {realizedSinceAnchor >= 0 ? "+" : ""}${realizedSinceAnchor.toFixed(2)}
                   </span>
@@ -12258,7 +12344,7 @@ function FirstInning() {
                   disabled={syncingBalance}
                   style={{ fontSize: 11, padding: "4px 10px", background: "rgba(80,160,80,0.12)", border: "1px solid rgba(80,160,80,0.35)", borderRadius: 6, color: "var(--moss)", cursor: syncingBalance ? "not-allowed" : "pointer", fontWeight: 700, opacity: syncingBalance ? 0.6 : 1 }}
                 >
-                  {syncingBalance ? "Syncing…" : "↻ Sync Kalshi Balance"}
+                  {syncingBalance ? "Syncing…" : liveSync === true ? "↻ Sync now" : "↻ Sync Kalshi Balance"}
                 </button>
                 {syncMsg && <span style={{ fontSize: 11, color: syncMsg.ok ? "var(--moss)" : "var(--rose)" }}>{syncMsg.text}</span>}
               </div>
@@ -12267,10 +12353,20 @@ function FirstInning() {
             {/* Row 1: inputs */}
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 }}>
               <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span title="Total equity — cash plus the cost of open NRFI positions (Sync computes exactly that; positions in other Kalshi markets are not counted). Compounding builds on top of it: editing or syncing stamps a new anchor time, and only bets settled after that point add to it." style={{ cursor: "help", fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>BANKROLL</span>
-                <div style={{ display: "flex", alignItems: "center", background: "var(--bg)", border: "1px solid rgba(120,130,150,.4)", borderRadius: 6, overflow: "hidden" }}>
+                <span title={"Total equity — cash plus the cost of open NRFI positions (positions in other Kalshi markets are not counted). LIVE mode re-reads it from your Kalshi account every minute and re-sizes everything from the real figure; typing a number switches to manual and stops the auto-sync. Compounding builds on top of it: every stamp anchors a new time, and only bets settled after that point add to it."} style={{ cursor: "help", fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>
+                  BANKROLL
+                  <button onClick={() => { const v = liveSync !== true; setLiveSync(v); saveBankrollSettings({ startingBankroll: bankroll, riskLevel, growthSpeed, betCapPct, dayCapPct, anchorAt: bankrollAnchorAt, liveSync: v }); }}
+                    title={liveSync === true ? "Tracking your Kalshi equity automatically — click for manual" : "Manual figure — click to track your Kalshi equity automatically"}
+                    style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, letterSpacing: "0.06em", padding: "1px 6px", borderRadius: 4, cursor: "pointer",
+                      background: liveSync === true ? "rgba(80,160,80,0.15)" : "transparent",
+                      color: liveSync === true ? "var(--moss)" : "var(--dim)",
+                      border: "1px solid " + (liveSync === true ? "rgba(80,160,80,0.5)" : "rgba(120,130,150,0.4)") }}>
+                    {liveSync === true ? "● LIVE" : "○ MANUAL"}
+                  </button>
+                </span>
+                <div style={{ display: "flex", alignItems: "center", background: "var(--bg)", border: "1px solid " + (liveSync === true ? "rgba(80,160,80,0.4)" : "rgba(120,130,150,.4)"), borderRadius: 6, overflow: "hidden" }}>
                   <span style={{ padding: "0 8px", color: "var(--dim)", fontWeight: 700, borderRight: "1px solid rgba(120,130,150,.3)", lineHeight: "34px" }}>$</span>
-                  <input type="number" min="0" placeholder="3000" value={bankroll || ""} onChange={(e) => stampBankroll(Number(e.target.value) || null)}
+                  <input type="number" min="0" placeholder="3000" value={bankroll || ""} onChange={(e) => { setLiveSync(false); stampBankroll(Number(e.target.value) || null, false); }}
                     style={{ width: 80, fontSize: 14, padding: "6px 8px", background: "transparent", border: "none", color: "var(--fg)", fontWeight: 700, outline: "none" }} />
                 </div>
               </label>
