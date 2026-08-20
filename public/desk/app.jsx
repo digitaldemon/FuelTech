@@ -12065,9 +12065,23 @@ function FirstInning() {
 
         const betCapFrac = betCapPct / 100;
         const dayCapFrac = dayCapPct / 100;
+        /* %/day means per DAY, not per visit. Money already committed today —
+         * open NRFI positions plus the stakes on bets that already settled
+         * today (visible once imported) — comes out of the day cap before
+         * anything new is offered. Without this, betting the cap at 4pm and
+         * returning at 9pm after those games settled re-armed the full cap. */
+        const todayET = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }).replace(/-/g, "");
+        const settledTodayStake = (rec || []).reduce((s, e) => {
+          if (e.source !== "kalshi-import" || e.date !== todayET || !(e.contracts > 0) || !(e.mktAtPick > 0)) return s;
+          if (e.result !== "won" && e.result !== "lost") return s;
+          const pr = Math.min(0.99, Math.max(0.01, e.mktAtPick / 100));
+          return s + e.contracts * pr + nrfiKalshiFee(e.contracts, pr);
+        }, 0);
+        const todayCommitted = (liveExposure || 0) + settledTodayStake;
         const dayCapDollars = currentBankroll != null ? dayCapFrac * currentBankroll : null;
-        const budgetDollars = dayCapDollars != null ? Math.min(dayCapDollars, remaining) : null;
-        const cashLimited = dayCapDollars != null && remaining < dayCapDollars - 1e-9;
+        const capLeftToday = dayCapDollars != null ? Math.max(0, dayCapDollars - todayCommitted) : null;
+        const budgetDollars = capLeftToday != null ? Math.min(capLeftToday, remaining) : null;
+        const cashLimited = capLeftToday != null && remaining < capLeftToday - 1e-9;
         const betRows = [];
         const skippedRows = [];
         let usedDollars = 0;
@@ -12327,6 +12341,11 @@ function FirstInning() {
               <div><span style={{ color: "var(--dim)", fontWeight: 700 }}>{sCfg.label}:</span> <span style={{ color: "var(--fg)" }}>{sCfg.desc}</span><span style={{ color: "var(--dim)", marginLeft: 6 }}>· rec. {sCfg.betsRec} bets/day</span></div>
               <div style={{ color: "var(--dim)", opacity: 0.4 }}>|</div>
               <div><span style={{ color: "var(--dim)", fontWeight: 700 }}>Caps:</span> <span style={{ color: "var(--fg)" }}>{betCapPct}% per bet, {dayCapPct}% per day</span></div>
+              {todayCommitted > 0 && dayCapDollars != null && (
+                <div title={"Open NRFI positions ($" + (liveExposure || 0).toFixed(2) + ") plus stakes on bets settled today ($" + settledTodayStake.toFixed(2) + ", refreshes when you import). The day cap covers the whole day, not each visit — this comes out of it first."} style={{ cursor: "help", color: capLeftToday <= 0 ? "var(--amber)" : "var(--dim)" }}>
+                  ${todayCommitted.toFixed(0)} of the ${dayCapDollars.toFixed(0)} day cap already committed today{capLeftToday <= 0 ? " — cap used up" : ""}
+                </div>
+              )}
             </div>
 
             {/* Live stats strip */}
@@ -12334,7 +12353,7 @@ function FirstInning() {
               <div style={{ display: "flex", gap: 0, flexWrap: "wrap", background: "rgba(255,255,255,0.04)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden", marginBottom: 10 }}>
                 {[
                   { label: "GAMES TODAY", value: betRows.length + (skippedRows.length > 0 ? " (+" + skippedRows.length + " skipped)" : ""), color: "var(--moss)", tip: "Games taken by rank-and-cut, in order of expected return per dollar, until the day budget was used up." },
-                  { label: "TOTAL AT RISK", value: hasDollars ? "$" + totalBetAmt.toFixed(0) + " (" + (totalBetPct * 100).toFixed(1) + "%)" : (totalBetPct * 100).toFixed(1) + "%", color: "var(--fg)", tip: hasDollars ? "Sum of all picked bets. Day budget: $" + budgetDollars.toFixed(0) + (cashLimited ? " (limited by available cash, not the " + dayCapPct + "% day cap)" : " (" + dayCapPct + "% of current bankroll)") : "Percent of bankroll — enter a bankroll for dollars." },
+                  { label: "TOTAL AT RISK", value: hasDollars ? "$" + totalBetAmt.toFixed(0) + " (" + (totalBetPct * 100).toFixed(1) + "%)" : (totalBetPct * 100).toFixed(1) + "%", color: "var(--fg)", tip: hasDollars ? "Sum of all picked bets. Day budget: $" + budgetDollars.toFixed(0) + (cashLimited ? " (limited by available cash, not the " + dayCapPct + "% day cap)" : " (" + dayCapPct + "% of current bankroll" + (todayCommitted > 0 ? ", minus $" + todayCommitted.toFixed(0) + " already committed today" : "") + ")") : "Percent of bankroll — enter a bankroll for dollars." },
                   { label: "AVG BET", value: hasDollars ? "$" + (totalBetAmt / betRows.length).toFixed(0) : ((totalBetPct / betRows.length) * 100).toFixed(1) + "%", color: "var(--fg)", tip: "Average bet per game. Per-bet cap: " + betCapPct + "% of bankroll." },
                   { label: "AVG EDGE", value: "+" + avgEdgePct.toFixed(1) + "%", color: avgEdgePct >= 5 ? "var(--moss)" : avgEdgePct >= 2 ? "var(--fg)" : "var(--dim)", tip: "Average model edge over market across today's picked games" },
                 ].map((stat, i) => (
