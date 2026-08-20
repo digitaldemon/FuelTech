@@ -6073,11 +6073,14 @@ function NrfiWatch({ gamePk, away, home, awayAbbr, homeAbbr, side, held, pos, st
   };
   const title = (awayAbbr || away) + " @ " + (homeAbbr || home);
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.72)",
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.85)",
       display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
+      {/* Solid hex, not var(--bg): the theme variable can carry translucency,
+          and a see-through card over a busy board made the transcript
+          unreadable — the one thing this screen exists to show. */}
       <div onClick={(e) => e.stopPropagation()} style={{ width: "min(560px, 100%)", maxHeight: "92vh",
-        display: "flex", flexDirection: "column", background: "var(--bg, #0b0f0d)", borderRadius: 14,
-        border: "1px solid rgba(80,160,80,0.35)", boxShadow: "0 18px 60px rgba(0,0,0,0.6)", overflow: "hidden" }}>
+        display: "flex", flexDirection: "column", background: "#10151a", borderRadius: 14,
+        border: "1px solid rgba(80,160,80,0.45)", boxShadow: "0 18px 60px rgba(0,0,0,0.8)", overflow: "hidden" }}>
         {/* Header: matchup, the wager, the honest latency, the voice, close. */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexWrap: "wrap" }}>
           <div style={{ minWidth: 0 }}>
