@@ -8,6 +8,8 @@ type BankrollSettings = {
   dayCapPct: number | null;
   anchorAt: number | null;
   liveSync: boolean;
+  dayStopPct: number | null;
+  streakBrake: boolean;
   createdAt: number;
   lastUpdated: number;
 };
@@ -24,7 +26,7 @@ const HISTORY_RETURN = 500;
 const MIN_SPACING_MS = 10 * 60 * 1000;
 const MIN_DELTA = 1;
 
-const SETTINGS_FIELDS = ["startingBankroll", "riskLevel", "growthSpeed", "betCapPct", "dayCapPct", "anchorAt", "liveSync"] as const;
+const SETTINGS_FIELDS = ["startingBankroll", "riskLevel", "growthSpeed", "betCapPct", "dayCapPct", "anchorAt", "liveSync", "dayStopPct", "streakBrake"] as const;
 
 export async function GET(req: Request) {
   if (!(await requireDeskUser(req)))
@@ -54,6 +56,8 @@ export async function POST(req: Request) {
       dayCapPct: body.dayCapPct ?? existing?.dayCapPct ?? null,
       anchorAt: body.anchorAt ?? existing?.anchorAt ?? null,
       liveSync: body.liveSync ?? existing?.liveSync ?? true,
+      dayStopPct: body.dayStopPct ?? existing?.dayStopPct ?? 15,
+      streakBrake: body.streakBrake ?? existing?.streakBrake ?? true,
       createdAt: existing?.createdAt ?? Date.now(),
       lastUpdated: Date.now(),
     };

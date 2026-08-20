@@ -8284,6 +8284,103 @@ function nrfiKalshiFee(contracts, priceDollars) {
   return Math.ceil(0.07 * contracts * priceDollars * (1 - priceDollars) * 100) / 100;
 }
 
+/* The Bankroll Manager's rank-and-cut planner, pulled to module scope so the
+ * test suite can slice it. rows come pre-sorted by expected return per dollar
+ * (the fractional-knapsack order); each is {key, kelly, confidence, p,
+ * priceCents, ret}. opts: bankroll + budget (both null in planning mode),
+ * dayCapFrac, betCapFrac, riskMult, cashLimited (labels the budget-skip
+ * reason), stakeMult (protection shrink — 1 normally, 0.5 under the
+ * loss-streak brake; applied AFTER the per-bet cap so a brake halves whatever
+ * would actually have been bet). Returns {bets, skips, usedDollars, usedFrac}
+ * with rows referenced by key — the caller reattaches its own objects. */
+function nrfiBetPlan(rows, opts) {
+  const { bankroll, budget, dayCapFrac, betCapFrac, riskMult, cashLimited } = opts;
+  const stakeMult = opts.stakeMult != null ? opts.stakeMult : 1;
+  const bets = [], skips = [];
+  let usedDollars = 0;
+  let usedFrac = 0; // planning-mode accounting when no bankroll is set
+  for (const c of rows) {
+    // A bet that loses money after fees is never worth placing at any
+    // size — caught before it can consume budget or be mislabeled as
+    // a cap skip.
+    if (c.ret <= 0) { skips.push({ key: c.key, reason: "no edge left after Kalshi fees" }); continue; }
+    // betCapFrac is the user's own explicit per-bet ceiling — the only
+    // hard cap on top of the risk level's Kelly fraction. confMult is
+    // the same thin-data shrink the bet cards apply (down to ×0.30 on
+    // limited data); without it here the manager quoted a BIGGER stake
+    // than the card for exactly the games the model knows least about.
+    const confMult = c.confidence != null ? Math.max(0.30, c.confidence) : 1;
+    const idealFrac = Math.min(c.kelly * riskMult * confMult, betCapFrac) * stakeMult;
+    if (idealFrac <= 0) { skips.push({ key: c.key, reason: "no sizeable edge at current risk level" }); continue; }
+    const priceDollars = c.priceCents / 100;
+    if (budget == null) {
+      // No bankroll entered — still rank and cut in fractions, so the
+      // tab shows which games make the day, just without dollars.
+      if (usedFrac + idealFrac > dayCapFrac + 1e-9) { skips.push({ key: c.key, reason: "day cap reached" }); continue; }
+      usedFrac += idealFrac;
+      bets.push({ key: c.key, frac: idealFrac, priceCents: c.priceCents, priceDollars, contracts: null, actualCost: null, fee: null, evDollars: null, p: c.p });
+      continue;
+    }
+    const idealDollars = idealFrac * bankroll;
+    // usedDollars accrues ACTUAL cost (post whole-contract rounding,
+    // fee included), so the budget check is exact, not an estimate.
+    if (usedDollars + idealDollars > budget + 0.005) {
+      skips.push({ key: c.key, reason: cashLimited ? "available cash used up" : "day cap reached" });
+      continue;
+    }
+    // Largest contract count whose contracts + taker fee fit in the
+    // sized stake. The fee is tiny, so this backs off at most a step
+    // or two from the fee-free count.
+    let contracts = Math.floor(idealDollars / priceDollars);
+    while (contracts >= 1 && contracts * priceDollars + nrfiKalshiFee(contracts, priceDollars) > idealDollars + 1e-9) contracts--;
+    if (contracts < 1) { skips.push({ key: c.key, reason: "sized stake is below one contract" }); continue; }
+    const fee = nrfiKalshiFee(contracts, priceDollars);
+    const actualCost = contracts * priceDollars + fee;
+    // p×contracts − cost: the dollar form of the same Kelly edge
+    // (cost×(p·b−(1−p))) the bet was sized on, with whole-contract
+    // rounding and the entry fee accounted for.
+    const evDollars = c.p * contracts - actualCost;
+    if (evDollars <= 0) { skips.push({ key: c.key, reason: "no edge left after Kalshi fees" }); continue; }
+    usedDollars += actualCost;
+    bets.push({ key: c.key, frac: idealFrac, priceCents: c.priceCents, priceDollars, contracts, actualCost, fee, evDollars, p: c.p });
+  }
+  return { bets, skips, usedDollars, usedFrac };
+}
+
+/* Real-money result of today's settled NRFI bets: kalshi-import entries only
+ * (model picks carry no dollars), stake = entry cost + taker fee at the
+ * recorded fill, pnl = payout − that cost. stake feeds the day cap so a
+ * settled morning bet still counts against the afternoon; pnl feeds the daily
+ * stop-loss. */
+function nrfiTodayPnl(rec, todayET) {
+  let stake = 0, pnl = 0, bets = 0;
+  for (const e of rec || []) {
+    if (e.source !== "kalshi-import" || e.date !== todayET || !(e.contracts > 0) || !(e.mktAtPick > 0)) continue;
+    if (e.result !== "won" && e.result !== "lost") continue;
+    const pr = Math.min(0.99, Math.max(0.01, e.mktAtPick / 100));
+    const cost = e.contracts * pr + nrfiKalshiFee(e.contracts, pr);
+    stake += cost;
+    pnl += e.result === "won" ? e.contracts - cost : -cost;
+    bets++;
+  }
+  return { stake, pnl, bets };
+}
+
+// Peak equity, current drawdown from that peak, and the deepest drawdown on
+// record, from the bankroll_history snapshots. Fractions, not percents.
+function bankrollDrawdown(history) {
+  if (!history || history.length === 0) return null;
+  let peak = -Infinity, maxDD = 0;
+  for (const s of history) {
+    if (s.equity > peak) peak = s.equity;
+    const dd = peak > 0 ? (peak - s.equity) / peak : 0;
+    if (dd > maxDD) maxDD = dd;
+  }
+  const last = history[history.length - 1];
+  const curDD = peak > 0 ? (peak - last.equity) / peak : 0;
+  return { peak, curDD, maxDD };
+}
+
 // Verdict ladder cut-points, on the blended pMax. One definition — the tier
 // badge, the verdict and the record accounting all read these, because they
 // drifted apart last time they were written out as literals in four places.
@@ -10027,6 +10124,13 @@ function FirstInning() {
   // saved preference arrives, so a mount-time sync can never overwrite a
   // manual figure the user chose to keep.
   const [liveSync, setLiveSync] = useState(null);
+  /* Protection knobs, persisted with the other settings. dayStopPct: once
+   * today's realized NRFI losses reach this % of bankroll, the plan offers
+   * nothing until tomorrow (0 = off). streakBrake: 3+ straight graded losses
+   * halve every stake until a win lands. Defaults are ON — the manager's job
+   * is stopping the bad day from becoming the bad week. */
+  const [dayStopPct, setDayStopPct] = useState(15);
+  const [streakBrake, setStreakBrake] = useState(true);
   const [bankrollHistory, setBankrollHistory] = useState([]);
   const [lastLiveSync, setLastLiveSync] = useState(null);
   const liveSyncBusy = useRef(false);
@@ -10121,6 +10225,8 @@ function FirstInning() {
         // already reflected most of it.
         else if (d.settings.startingBankroll != null && d.settings.lastUpdated != null) setBankrollAnchorAt(d.settings.lastUpdated);
         setLiveSync(d.settings.liveSync != null ? !!d.settings.liveSync : true);
+        if (d.settings.dayStopPct != null) setDayStopPct(d.settings.dayStopPct);
+        if (d.settings.streakBrake != null) setStreakBrake(!!d.settings.streakBrake);
       } else if (d && !d.error) setLiveSync(true); // fresh account, no settings yet
       if (d && Array.isArray(d.history)) setBankrollHistory(d.history);
     } catch { /* ignore */ }
@@ -12149,68 +12255,37 @@ function FirstInning() {
          * anything new is offered. Without this, betting the cap at 4pm and
          * returning at 9pm after those games settled re-armed the full cap. */
         const todayET = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }).replace(/-/g, "");
-        const settledTodayStake = (rec || []).reduce((s, e) => {
-          if (e.source !== "kalshi-import" || e.date !== todayET || !(e.contracts > 0) || !(e.mktAtPick > 0)) return s;
-          if (e.result !== "won" && e.result !== "lost") return s;
-          const pr = Math.min(0.99, Math.max(0.01, e.mktAtPick / 100));
-          return s + e.contracts * pr + nrfiKalshiFee(e.contracts, pr);
-        }, 0);
-        const todayCommitted = (liveExposure || 0) + settledTodayStake;
+        const todayPnl = nrfiTodayPnl(rec, todayET);
+        const todayCommitted = (liveExposure || 0) + todayPnl.stake;
         const dayCapDollars = currentBankroll != null ? dayCapFrac * currentBankroll : null;
         const capLeftToday = dayCapDollars != null ? Math.max(0, dayCapDollars - todayCommitted) : null;
         const budgetDollars = capLeftToday != null ? Math.min(capLeftToday, remaining) : null;
         const cashLimited = capLeftToday != null && remaining < capLeftToday - 1e-9;
-        const betRows = [];
-        const skippedRows = [];
-        let usedDollars = 0;
-        let usedFrac = 0; // planning-mode accounting when no bankroll is set
-        for (const { r, ret } of candidates) {
-          // A bet that loses money after fees is never worth placing at any
-          // size — caught before it can consume budget or be mislabeled as
-          // a cap skip.
-          if (ret <= 0) { skippedRows.push({ r, reason: "no edge left after Kalshi fees" }); continue; }
-          // betCapPct is the user's own explicit per-bet ceiling — the only
-          // hard cap on top of the risk level's Kelly fraction. confMult is
-          // the same thin-data shrink the bet cards apply (down to ×0.30 on
-          // limited data); without it here the manager quoted a BIGGER stake
-          // than the card for exactly the games the model knows least about.
-          const confMult = r.confidence != null ? Math.max(0.30, r.confidence) : 1;
-          const idealFrac = Math.min(r.kelly * riskMult * confMult, betCapFrac);
-          if (idealFrac <= 0) { skippedRows.push({ r, reason: "no sizeable edge at current risk level" }); continue; }
-          const p = sideProb(r);
-          const priceCents = contractPriceCents(r);
-          const priceDollars = priceCents / 100;
-          if (budgetDollars == null) {
-            // No bankroll entered — still rank and cut in fractions, so the
-            // tab shows which games make the day, just without dollars.
-            if (usedFrac + idealFrac > dayCapFrac + 1e-9) { skippedRows.push({ r, reason: "day cap reached" }); continue; }
-            usedFrac += idealFrac;
-            betRows.push({ r, frac: idealFrac, priceCents, priceDollars, contracts: null, actualCost: null, fee: null, evDollars: null, p });
-            continue;
-          }
-          const idealDollars = idealFrac * currentBankroll;
-          // usedDollars accrues ACTUAL cost (post whole-contract rounding,
-          // fee included), so the budget check is exact, not an estimate.
-          if (usedDollars + idealDollars > budgetDollars + 0.005) {
-            skippedRows.push({ r, reason: cashLimited ? "available cash used up" : "day cap reached" });
-            continue;
-          }
-          // Largest contract count whose contracts + taker fee fit in the
-          // sized stake. The fee is tiny, so this backs off at most a step
-          // or two from the fee-free count.
-          let contracts = Math.floor(idealDollars / priceDollars);
-          while (contracts >= 1 && contracts * priceDollars + nrfiKalshiFee(contracts, priceDollars) > idealDollars + 1e-9) contracts--;
-          if (contracts < 1) { skippedRows.push({ r, reason: "sized stake is below one contract" }); continue; }
-          const fee = nrfiKalshiFee(contracts, priceDollars);
-          const actualCost = contracts * priceDollars + fee;
-          // p×contracts − cost: the dollar form of the same Kelly edge
-          // (cost×(p·b−(1−p))) the bet was sized on, with whole-contract
-          // rounding and the entry fee accounted for.
-          const evDollars = p * contracts - actualCost;
-          if (evDollars <= 0) { skippedRows.push({ r, reason: "no edge left after Kalshi fees" }); continue; }
-          usedDollars += actualCost;
-          betRows.push({ r, frac: idealFrac, priceCents, priceDollars, contracts, actualCost, fee, evDollars, p });
-        }
+
+        /* Protection, decided before any sizing. The streak reads the same
+         * graded series the insights quote; the stop-loss reads today's
+         * realized kalshi-import P&L against the user's % limit. Both are
+         * loud in the UI — a silently shrunk stake would read as a bug. */
+        const nrfiGraded = (rec || []).filter((r) => r.result === "won" || r.result === "lost");
+        let streak = 0;
+        const streakDir = nrfiGraded.length > 0 ? nrfiGraded[0].result : null;
+        for (const rg of nrfiGraded) { if (rg.result === streakDir) streak++; else break; }
+        const brakeActive = streakBrake && streakDir === "lost" && streak >= 3;
+        const stopLossDollars = dayStopPct > 0 && currentBankroll ? (dayStopPct / 100) * currentBankroll : null;
+        const stopHit = stopLossDollars != null && todayPnl.pnl <= -stopLossDollars;
+
+        const planRows = candidates.map(({ r, ret }) => ({ key: String(r.gamePk), kelly: r.kelly, confidence: r.confidence, p: sideProb(r), priceCents: contractPriceCents(r), ret }));
+        const byKey = new Map(candidates.map(({ r }) => [String(r.gamePk), r]));
+        const plan = nrfiBetPlan(stopHit ? [] : planRows, {
+          bankroll: currentBankroll, budget: budgetDollars, dayCapFrac, betCapFrac, riskMult,
+          cashLimited, stakeMult: brakeActive ? 0.5 : 1,
+        });
+        const betRows = plan.bets.map((b) => Object.assign({}, b, { r: byKey.get(b.key) }));
+        const skippedRows = stopHit
+          ? candidates.map(({ r }) => ({ r, reason: "daily stop-loss hit" }))
+          : plan.skips.map((s) => ({ r: byKey.get(s.key), reason: s.reason }));
+        const usedDollars = plan.usedDollars;
+        const usedFrac = plan.usedFrac;
         const hasDollars = budgetDollars != null;
         const totalBetAmt = usedDollars;
         const totalBetPct = hasDollars && currentBankroll > 0 ? usedDollars / currentBankroll : usedFrac;
@@ -12233,17 +12308,14 @@ function FirstInning() {
           };
         }
 
-        // AI insights
-        const nrfiGraded = (rec || []).filter((r) => r.result === "won" || r.result === "lost");
+        // AI insights — nrfiGraded/streak/streakDir already computed above for
+        // the protection gates; this block only reads them.
         const last10 = nrfiGraded.slice(0, 10);
         const wins10 = last10.filter((r) => r.result === "won").length;
         const roi10 = last10.length > 0 ? last10.reduce((s, r) => {
           if (r.mktAtPick == null) return s;
           return s + (r.result === "won" ? (100 - r.mktAtPick) / 100 : -r.mktAtPick / 100);
         }, 0) / last10.length * 100 : null;
-        let streak = 0;
-        const streakDir = nrfiGraded.length > 0 ? nrfiGraded[0].result : null;
-        for (const rg of nrfiGraded) { if (rg.result === streakDir) streak++; else break; }
         const aiInsights = [];
         if (last10.length >= 3) {
           const wr = (wins10 / last10.length * 100).toFixed(0);
@@ -12253,7 +12325,12 @@ function FirstInning() {
         if (streak >= 3 && streakDir === "won") {
           aiInsights.push({ type: "good", text: streak + "-bet win streak. Model is running hot — current risk level is appropriate." });
         } else if (streak >= 3 && streakDir === "lost") {
-          aiInsights.push({ type: "warn", text: streak + " consecutive losses. Recommend dropping to Conservative until the streak breaks." });
+          aiInsights.push({ type: "warn", text: streak + " consecutive losses. " + (brakeActive
+            ? "Loss-streak brake is on — every stake below is halved until a win lands."
+            : "Recommend dropping to Conservative until the streak breaks.") });
+        }
+        if (stopHit) {
+          aiInsights.push({ type: "warn", text: "Daily stop-loss hit: down $" + Math.abs(todayPnl.pnl).toFixed(2) + " on " + todayPnl.bets + " settled bet" + (todayPnl.bets === 1 ? "" : "s") + " today, past the " + dayStopPct + "% limit. No new bets until tomorrow." });
         }
         if (betRows.length > 0 && avgEdgePct >= 6) {
           aiInsights.push({ type: "good", text: "Strong edge today (avg +" + avgEdgePct.toFixed(1) + "%). Good slate to press at current sizing." });
@@ -12428,6 +12505,24 @@ function FirstInning() {
                     style={{ width: 80, fontSize: 14, padding: "6px 8px", background: "transparent", border: "none", color: "var(--fg)", fontWeight: 700, outline: "none" }} />
                 </div>
               </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span title="Daily stop-loss: once today's realized NRFI losses reach this % of bankroll, the manager offers no more bets until tomorrow. 0 turns it off. Chasing a bad day at 2× Kelly is how a bad day becomes a bad week." style={{ cursor: "help", fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>STOP-LOSS / DAY</span>
+                <div style={{ display: "flex", alignItems: "center", background: "var(--bg)", border: "1px solid " + (stopHit ? "var(--rose)" : "rgba(120,130,150,.4)"), borderRadius: 6, overflow: "hidden" }}>
+                  <input type="number" min="0" max="100" step="1" value={dayStopPct} onChange={(e) => { const v = Math.max(0, Math.min(100, Number(e.target.value) || 0)); setDayStopPct(v); saveBankrollSettings({ dayStopPct: v }); }}
+                    style={{ width: 48, fontSize: 14, padding: "6px 8px", background: "transparent", border: "none", color: "var(--fg)", fontWeight: 700, outline: "none" }} />
+                  <span style={{ padding: "0 8px", color: "var(--dim)", fontWeight: 700, borderLeft: "1px solid rgba(120,130,150,.3)", lineHeight: "34px" }}>%</span>
+                </div>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span title="Loss-streak brake: after 3 straight graded losses, every stake is halved until a win lands. The half-sized bets still count wins, so the brake releases itself." style={{ cursor: "help", fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>STREAK BRAKE</span>
+                <button onClick={() => { const v = !streakBrake; setStreakBrake(v); saveBankrollSettings({ streakBrake: v }); }}
+                  style={{ height: 34, padding: "0 12px", fontSize: 12, fontWeight: 800, borderRadius: 6, cursor: "pointer",
+                    background: streakBrake ? (brakeActive ? "rgba(255,170,60,0.15)" : "rgba(80,160,80,0.12)") : "transparent",
+                    color: streakBrake ? (brakeActive ? "var(--amber)" : "var(--moss)") : "var(--dim)",
+                    border: "1px solid " + (streakBrake ? (brakeActive ? "rgba(255,170,60,0.5)" : "rgba(80,160,80,0.4)") : "rgba(120,130,150,0.4)") }}>
+                  {streakBrake ? (brakeActive ? "ACTIVE ×0.5" : "ARMED") : "OFF"}
+                </button>
+              </label>
               {currentBankroll != null && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, justifyContent: "flex-end" }}>
                   <span title="Bankroll + realized P&L since it was last set." style={{ cursor: "help", fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>CURRENT</span>
@@ -12452,10 +12547,38 @@ function FirstInning() {
               <div style={{ color: "var(--dim)", opacity: 0.4 }}>|</div>
               <div><span style={{ color: "var(--dim)", fontWeight: 700 }}>Caps:</span> <span style={{ color: "var(--fg)" }}>{betCapPct}% per bet, {dayCapPct}% per day</span></div>
               {todayCommitted > 0 && dayCapDollars != null && (
-                <div title={"Open NRFI positions ($" + (liveExposure || 0).toFixed(2) + ") plus stakes on bets settled today ($" + settledTodayStake.toFixed(2) + ", refreshes when you import). The day cap covers the whole day, not each visit — this comes out of it first."} style={{ cursor: "help", color: capLeftToday <= 0 ? "var(--amber)" : "var(--dim)" }}>
+                <div title={"Open NRFI positions ($" + (liveExposure || 0).toFixed(2) + ") plus stakes on bets settled today ($" + todayPnl.stake.toFixed(2) + ", refreshes when you import). The day cap covers the whole day, not each visit — this comes out of it first."} style={{ cursor: "help", color: capLeftToday <= 0 ? "var(--amber)" : "var(--dim)" }}>
                   ${todayCommitted.toFixed(0)} of the ${dayCapDollars.toFixed(0)} day cap already committed today{capLeftToday <= 0 ? " — cap used up" : ""}
                 </div>
               )}
+              <div style={{ color: "var(--dim)", opacity: 0.4 }}>|</div>
+              <div title={"Stop-loss: once today's realized NRFI losses reach " + (dayStopPct > 0 ? dayStopPct + "% of bankroll" + (stopLossDollars != null ? " ($" + stopLossDollars.toFixed(0) + ")" : "") : "the % you set") + ", the plan offers nothing until tomorrow. Brake: 3+ straight graded losses halve every stake until a win. Both configurable below."} style={{ cursor: "help" }}>
+                <span style={{ color: "var(--dim)", fontWeight: 700 }}>Protection:</span>{" "}
+                <span style={{ color: dayStopPct > 0 ? "var(--fg)" : "var(--dim)" }}>{dayStopPct > 0 ? "stop-loss " + dayStopPct + "%/day" : "stop-loss off"}</span>
+                <span style={{ color: "var(--dim)" }}> · </span>
+                <span style={{ color: streakBrake ? "var(--fg)" : "var(--dim)" }}>{streakBrake ? (brakeActive ? "brake ACTIVE" : "brake armed") : "brake off"}</span>
+              </div>
+              {(todayPnl.bets > 0 || bankrollHistory.length >= 2) && (() => {
+                const dd = bankrollDrawdown(bankrollHistory);
+                return (
+                  <div title={"Today: realized P&L on settled NRFI bets (fees estimated at the recorded fills). Peak and max drawdown come from the tracked equity history."} style={{ cursor: "help" }}>
+                    {todayPnl.bets > 0 && (
+                      <span>
+                        <span style={{ color: "var(--dim)", fontWeight: 700 }}>Today:</span>{" "}
+                        <span style={{ color: todayPnl.pnl >= 0 ? "var(--moss)" : "var(--rose)", fontWeight: 700 }}>{todayPnl.pnl >= 0 ? "+" : "−"}${Math.abs(todayPnl.pnl).toFixed(2)}</span>
+                        <span style={{ color: "var(--dim)" }}> on {todayPnl.bets} settled</span>
+                      </span>
+                    )}
+                    {dd && dd.peak > 0 && bankrollHistory.length >= 2 && (
+                      <span style={{ color: "var(--dim)" }}>
+                        {todayPnl.bets > 0 ? " · " : ""}peak ${dd.peak.toFixed(0)}
+                        {dd.curDD > 0.001 ? " · now −" + (dd.curDD * 100).toFixed(1) + "% off it" : " (at peak)"}
+                        {dd.maxDD > 0.001 ? " · worst dip −" + (dd.maxDD * 100).toFixed(1) + "%" : ""}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Live stats strip */}
@@ -12487,12 +12610,23 @@ function FirstInning() {
                 No bankroll set — showing fractions only. Enter a bankroll or press Sync to get dollar sizes and contract counts.
               </div>
             )}
-            {betRows.length === 0 && skippedRows.length === 0 && alreadyHeld.length === 0 && (
+            {stopHit && (
+              <div style={{ marginBottom: 10, padding: "12px 14px", background: "rgba(220,60,60,0.08)", borderRadius: 8, border: "1px solid rgba(220,60,60,0.35)", fontSize: 12, color: "var(--rose)", fontWeight: 700 }}>
+                🛑 Daily stop-loss hit — down ${Math.abs(todayPnl.pnl).toFixed(2)} on {todayPnl.bets} settled bet{todayPnl.bets === 1 ? "" : "s"} today, past your {dayStopPct}% limit (${stopLossDollars.toFixed(0)}). No bets offered until tomorrow.
+                <span style={{ fontWeight: 400, color: "var(--dim)" }}> Raise the limit or set it to 0 to override — but the limit was set for exactly this moment.</span>
+              </div>
+            )}
+            {!stopHit && brakeActive && betRows.length > 0 && (
+              <div style={{ marginBottom: 10, padding: "10px 14px", background: "rgba(255,170,60,0.08)", borderRadius: 8, border: "1px solid rgba(255,170,60,0.3)", fontSize: 12, color: "var(--amber)", fontWeight: 700 }}>
+                ⚠ Loss-streak brake: {streak} straight losses — every stake below is halved until a win lands.
+              </div>
+            )}
+            {betRows.length === 0 && skippedRows.length === 0 && alreadyHeld.length === 0 && !stopHit && (
               <div style={{ marginBottom: 10, padding: "10px 14px", background: "rgba(255,255,255,0.03)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.07)", fontSize: 12, color: "var(--dim)" }}>
                 No qualifying games today at the {sCfg.label} filter ({sCfg.desc}). Run a scan, or widen the growth speed.
               </div>
             )}
-            {betRows.length === 0 && alreadyHeld.length > 0 && (
+            {betRows.length === 0 && alreadyHeld.length > 0 && !stopHit && (
               <div style={{ marginBottom: 10, padding: "10px 14px", background: "rgba(80,160,80,0.06)", borderRadius: 8, border: "1px solid rgba(80,160,80,0.2)", fontSize: 12, color: "var(--moss)", fontWeight: 600 }}>
                 ✓ All {alreadyHeld.length} qualifying pick{alreadyHeld.length === 1 ? "" : "s"} {alreadyHeld.length === 1 ? "is" : "are"} already in your open positions — nothing left to place today.
               </div>

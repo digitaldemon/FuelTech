@@ -88,11 +88,17 @@ const code = [
   slice("const NRFI_BLEND = 0.35;", "const NRFI_BLEND = 0.35;"),
   slice("function nrfiBlend(", "\n}"),
   slice("function matchRFI(", "\n}"),
+  slice("function kellyNRFI(", "\n}"),
+  slice("const NRFI_RISK_MULT = {", "};"),
+  slice("function nrfiKalshiFee(", "\n}"),
+  slice("function nrfiBetPlan(", "\n}"),
+  slice("function nrfiTodayPnl(", "\n}"),
+  slice("function bankrollDrawdown(", "\n}"),
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI, kellyNRFI, nrfiKalshiFee, nrfiBetPlan, nrfiTodayPnl, bankrollDrawdown } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI, kellyNRFI, nrfiKalshiFee, nrfiBetPlan, nrfiTodayPnl, bankrollDrawdown })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -523,6 +529,78 @@ ok(positionAdvice(pos(), 66, null, { price: 66, bid: 0, ask: 100 }, { prob: 0, l
   ok(Number.isFinite(nrfiCalibration(allHit).liveC), "all-hit record yields a finite shift");
   const allMiss = Array.from({ length: 30 }, () => ({ pNRFI: 0.6, firstInningRuns: 1 }));
   ok(Number.isFinite(nrfiCalibration(allMiss).liveC), "all-miss record yields a finite shift");
+}
+
+{
+  // ---- Bankroll Manager: rank-and-cut planner ----
+  const row = (o) => Object.assign({ key: "g1", kelly: 0.10, confidence: 1, p: 0.60, priceCents: 55, ret: 0.05 }, o);
+  const base = { bankroll: 1000, budget: 250, dayCapFrac: 0.25, betCapFrac: 0.08, riskMult: 0.5, cashLimited: false };
+
+  // Single bet: kelly 0.10 × ½ Kelly = 5% of $1000 = $50 ideal. 55c contracts
+  // back off until contracts + taker fee fit inside the stake.
+  const p1 = nrfiBetPlan([row()], base);
+  ok(p1.bets.length === 1 && p1.skips.length === 0, "planner takes a clean positive-edge bet");
+  const b1 = p1.bets[0];
+  ok(b1.contracts === 88 && Math.abs(b1.actualCost - (88 * 0.55 + nrfiKalshiFee(88, 0.55))) < 1e-9,
+    "contract count backs off so cost + fee fits the sized stake (88 @ 55c)");
+  ok(b1.actualCost <= 50 + 1e-9 && (b1.contracts + 1) * 0.55 + nrfiKalshiFee(b1.contracts + 1, 0.55) > 50,
+    "stake is the LARGEST count that fits — one more contract would bust it");
+  ok(b1.evDollars > 0 && Math.abs(b1.evDollars - (0.6 * 88 - b1.actualCost)) < 1e-9, "EV is p×contracts − actual cost");
+
+  // Budget cut: second-ranked game is skipped whole, not diluted.
+  const p2 = nrfiBetPlan([row(), row({ key: "g2" })], Object.assign({}, base, { budget: 60 }));
+  ok(p2.bets.length === 1 && p2.skips.length === 1 && p2.skips[0].reason === "day cap reached",
+    "day budget takes games full-sized in rank order and names the cap skip");
+  ok(nrfiBetPlan([row(), row({ key: "g2" })], Object.assign({}, base, { budget: 60, cashLimited: true })).skips[0].reason === "available cash used up",
+    "cash-limited budget labels the skip as cash, not cap");
+  ok(p2.usedDollars <= 60 + 1e-9, "used dollars never exceed the budget");
+
+  // Guards.
+  ok(nrfiBetPlan([row({ ret: -0.01 })], base).skips[0].reason === "no edge left after Kalshi fees",
+    "fee-negative return is skipped before consuming budget");
+  ok(nrfiBetPlan([row()], Object.assign({}, base, { bankroll: 10, budget: 10 })).skips[0].reason === "sized stake is below one contract",
+    "tiny bankroll -> below-one-contract skip");
+
+  // Thin-data shrink: confidence 0.1 floors at ×0.30 -> 1.5% of bankroll.
+  const pConf = nrfiBetPlan([row({ confidence: 0.1 })], base);
+  ok(Math.abs(pConf.bets[0].frac - 0.015) < 1e-9 && pConf.bets[0].contracts < b1.contracts,
+    "confidence shrink floors at x0.30 and shrinks the stake");
+
+  // Per-bet cap binds before the risk multiplier can exceed it.
+  ok(Math.abs(nrfiBetPlan([row({ kelly: 0.5 })], base).bets[0].frac - 0.08) < 1e-9,
+    "per-bet cap binds a big Kelly at betCapFrac");
+
+  // Loss-streak brake: stakeMult halves the CAPPED stake.
+  const pBrake = nrfiBetPlan([row({ kelly: 0.5 })], Object.assign({}, base, { stakeMult: 0.5 }));
+  ok(Math.abs(pBrake.bets[0].frac - 0.04) < 1e-9, "stakeMult 0.5 halves even a cap-bound stake");
+
+  // Planning mode: no bankroll -> fractions accumulate against the day cap.
+  const pFrac = nrfiBetPlan(
+    [row({ kelly: 0.10 }), row({ key: "g2", kelly: 0.10 }), row({ key: "g3", kelly: 0.10 })],
+    { bankroll: null, budget: null, dayCapFrac: 0.10, betCapFrac: 0.05, riskMult: 1, cashLimited: false });
+  ok(pFrac.bets.length === 2 && Math.abs(pFrac.usedFrac - 0.10) < 1e-9 && pFrac.skips[0].reason === "day cap reached",
+    "planning mode ranks and cuts in fractions without dollars");
+  ok(pFrac.bets.every((b) => b.contracts === null && b.actualCost === null), "planning mode carries no dollar figures");
+
+  // ---- Today's realized P&L (stop-loss + day-cap input) ----
+  const rec = [
+    { source: "kalshi-import", date: "20260820", contracts: 100, mktAtPick: 60, result: "won" },
+    { source: "kalshi-import", date: "20260820", contracts: 50, mktAtPick: 40, result: "lost" },
+    { source: "kalshi-import", date: "20260819", contracts: 100, mktAtPick: 60, result: "lost" }, // other day
+    { source: "kalshi-import", date: "20260820", contracts: 80, mktAtPick: 55, result: null },    // pending
+    { date: "20260820", contracts: 100, mktAtPick: 60, result: "won" },                            // model pick, no dollars
+  ];
+  const t = nrfiTodayPnl(rec, "20260820");
+  const costW = 100 * 0.6 + nrfiKalshiFee(100, 0.6), costL = 50 * 0.4 + nrfiKalshiFee(50, 0.4);
+  ok(t.bets === 2, "today P&L counts only today's settled kalshi-import bets");
+  ok(Math.abs(t.stake - (costW + costL)) < 1e-9, "stake = entry cost + fee at the recorded fill");
+  ok(Math.abs(t.pnl - ((100 - costW) - costL)) < 1e-9, "pnl = payout − cost, loss = −cost");
+
+  // ---- Drawdown from equity history ----
+  const dd = bankrollDrawdown([{ equity: 100 }, { equity: 120 }, { equity: 90 }, { equity: 110 }]);
+  ok(dd.peak === 120 && Math.abs(dd.maxDD - 0.25) < 1e-9 && Math.abs(dd.curDD - 10 / 120) < 1e-9,
+    "drawdown: peak 120, worst dip 25%, currently 8.3% off peak");
+  ok(bankrollDrawdown([]) === null && bankrollDrawdown(null) === null, "empty history -> no drawdown stats");
 }
 
 console.log(fail ? fail + " FAILURES" : "ALL TESTS PASSED");
