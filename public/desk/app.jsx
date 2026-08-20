@@ -8289,9 +8289,10 @@ function nrfiKalshiFee(contracts, priceDollars) {
  * (the fractional-knapsack order); each is {key, kelly, confidence, p,
  * priceCents, ret}. opts: bankroll + budget (both null in planning mode),
  * dayCapFrac, betCapFrac, riskMult, cashLimited (labels the budget-skip
- * reason), stakeMult (protection shrink — 1 normally, 0.5 under the
- * loss-streak brake; applied AFTER the per-bet cap so a brake halves whatever
- * would actually have been bet). Returns {bets, skips, usedDollars, usedFrac}
+ * reason), stakeMult (protection/form scale — 1 normally; shrinks like the
+ * loss-streak brake or cold form apply AFTER the per-bet cap so they halve
+ * whatever would actually have been bet, while hot-form boosts above 1 are
+ * re-capped at the ceiling). Returns {bets, skips, usedDollars, usedFrac}
  * with rows referenced by key — the caller reattaches its own objects. */
 function nrfiBetPlan(rows, opts) {
   const { bankroll, budget, dayCapFrac, betCapFrac, riskMult, cashLimited } = opts;
@@ -8310,7 +8311,10 @@ function nrfiBetPlan(rows, opts) {
     // limited data); without it here the manager quoted a BIGGER stake
     // than the card for exactly the games the model knows least about.
     const confMult = c.confidence != null ? Math.max(0.30, c.confidence) : 1;
-    const idealFrac = Math.min(c.kelly * riskMult * confMult, betCapFrac) * stakeMult;
+    // stakeMult below 1 (brake, cold form) shrinks the capped stake; above 1
+    // (hot form) is re-capped — the per-bet ceiling is the user's explicit
+    // limit and no streak overrides it.
+    const idealFrac = Math.min(Math.min(c.kelly * riskMult * confMult, betCapFrac) * stakeMult, betCapFrac);
     if (idealFrac <= 0) { skips.push({ key: c.key, reason: "no sizeable edge at current risk level" }); continue; }
     const priceDollars = c.priceCents / 100;
     if (budget == null) {
@@ -8364,6 +8368,58 @@ function nrfiTodayPnl(rec, todayET) {
     bets++;
   }
   return { stake, pnl, bets };
+}
+
+/* Hot/cold form, measured against the model's own claims rather than raw
+ * streak length. Over the last `window` graded model picks, expected wins is
+ * Σp and its variance Σp(1−p); z = (actual − expected)/√variance. A 4-loss run
+ * on 72% picks and one on 53% picks are different animals, and z is the number
+ * that knows the difference. Bands are asymmetric on purpose: cold cuts hard
+ * because underperformance is evidence the probabilities are off and Kelly
+ * overbets on a broken p; hot boosts only ×1.2 because a hot run is usually
+ * luck and the planner re-caps the boost at the per-bet ceiling anyway.
+ * Under 10 graded picks there is no signal — mult 1, labeled calibrating. */
+function nrfiFormSignal(rec, window = 20) {
+  const graded = [];
+  for (const e of rec || []) {
+    if (e.result !== "won" && e.result !== "lost") continue;
+    if (e.source === "kalshi-import" || e.skipped || e.thinPass) continue;
+    const p = e.prob > 1 ? e.prob / 100 : e.prob;
+    if (!(p > 0 && p < 1)) continue;
+    graded.push({ p, won: e.result === "won" });
+    if (graded.length >= window) break;
+  }
+  if (graded.length < 10) return { n: graded.length, exp: null, act: null, z: 0, state: "NEUTRAL", mult: 1 };
+  const exp = graded.reduce((s, g) => s + g.p, 0);
+  const varSum = graded.reduce((s, g) => s + g.p * (1 - g.p), 0);
+  const act = graded.reduce((s, g) => s + (g.won ? 1 : 0), 0);
+  const z = varSum > 0 ? (act - exp) / Math.sqrt(varSum) : 0;
+  let state = "NEUTRAL", mult = 1;
+  if (z <= -2) { state = "COLD"; mult = 0.5; }
+  else if (z <= -1) { state = "COOL"; mult = 0.75; }
+  else if (z >= 2) { state = "HOT"; mult = 1.2; }
+  else if (z >= 1) { state = "WARM"; mult = 1.1; }
+  return { n: graded.length, exp, act, z, state, mult };
+}
+
+/* How likely was the current win/loss run under the model's own stated
+ * probabilities — the product of p (or 1−p) over the run. This is the honest
+ * answer to "is the model broken or is this variance": a 4-loss run of coin
+ * flips is a 6% event, of 72% picks a 0.6% one. Reads the same model-pick
+ * series as nrfiFormSignal so the two never disagree about what a run is. */
+function nrfiStreakChance(rec) {
+  const graded = (rec || []).filter((e) => (e.result === "won" || e.result === "lost") &&
+    e.source !== "kalshi-import" && !e.skipped && !e.thinPass && e.prob > 0);
+  if (!graded.length) return null;
+  const dir = graded[0].result;
+  let prob = 1, len = 0;
+  for (const e of graded) {
+    if (e.result !== dir) break;
+    const p = e.prob > 1 ? e.prob / 100 : e.prob;
+    prob *= dir === "won" ? p : 1 - p;
+    len++;
+  }
+  return { dir, len, prob };
 }
 
 // Peak equity, current drawdown from that peak, and the deepest drawdown on
@@ -10131,6 +10187,9 @@ function FirstInning() {
    * is stopping the bad day from becoming the bad week. */
   const [dayStopPct, setDayStopPct] = useState(15);
   const [streakBrake, setStreakBrake] = useState(true);
+  // Form-aware sizing: scale stakes by hot/cold form measured against the
+  // model's own probabilities (nrfiFormSignal). Off = flat ×1.
+  const [formAuto, setFormAuto] = useState(true);
   const [bankrollHistory, setBankrollHistory] = useState([]);
   const [lastLiveSync, setLastLiveSync] = useState(null);
   const liveSyncBusy = useRef(false);
@@ -10227,6 +10286,7 @@ function FirstInning() {
         setLiveSync(d.settings.liveSync != null ? !!d.settings.liveSync : true);
         if (d.settings.dayStopPct != null) setDayStopPct(d.settings.dayStopPct);
         if (d.settings.streakBrake != null) setStreakBrake(!!d.settings.streakBrake);
+        if (d.settings.formAuto != null) setFormAuto(!!d.settings.formAuto);
       } else if (d && !d.error) setLiveSync(true); // fresh account, no settings yet
       if (d && Array.isArray(d.history)) setBankrollHistory(d.history);
     } catch { /* ignore */ }
@@ -12273,12 +12333,19 @@ function FirstInning() {
         const brakeActive = streakBrake && streakDir === "lost" && streak >= 3;
         const stopLossDollars = dayStopPct > 0 && currentBankroll ? (dayStopPct / 100) * currentBankroll : null;
         const stopHit = stopLossDollars != null && todayPnl.pnl <= -stopLossDollars;
+        /* Form scale on top of the brake: when the brake is on, take the
+         * HARSHER of the two shrinks (a hot z can never override an active
+         * brake); otherwise form scales alone, boost included. */
+        const form = nrfiFormSignal(rec);
+        const runChance = nrfiStreakChance(rec);
+        const formMult = formAuto ? form.mult : 1;
+        const stakeMult = brakeActive ? Math.min(0.5, formMult) : formMult;
 
         const planRows = candidates.map(({ r, ret }) => ({ key: String(r.gamePk), kelly: r.kelly, confidence: r.confidence, p: sideProb(r), priceCents: contractPriceCents(r), ret }));
         const byKey = new Map(candidates.map(({ r }) => [String(r.gamePk), r]));
         const plan = nrfiBetPlan(stopHit ? [] : planRows, {
           bankroll: currentBankroll, budget: budgetDollars, dayCapFrac, betCapFrac, riskMult,
-          cashLimited, stakeMult: brakeActive ? 0.5 : 1,
+          cashLimited, stakeMult,
         });
         const betRows = plan.bets.map((b) => Object.assign({}, b, { r: byKey.get(b.key) }));
         const skippedRows = stopHit
@@ -12322,8 +12389,17 @@ function FirstInning() {
           aiInsights.push({ type: wins10 / last10.length >= 0.55 ? "good" : wins10 / last10.length <= 0.4 ? "warn" : "neutral",
             text: wr + "% win rate on last " + last10.length + " bets" + (roi10 != null ? " · avg " + (roi10 > 0 ? "+" : "") + roi10.toFixed(1) + "% ROI per bet" : "") + "." });
         }
+        if (formAuto && form.n >= 10 && form.state !== "NEUTRAL") {
+          aiInsights.push({ type: form.mult < 1 ? "warn" : "good",
+            text: "Form " + form.state.toLowerCase() + ": " + form.act + "W-" + (form.n - form.act) + "L on the last " + form.n + " picks vs " + form.exp.toFixed(1) + " wins the model's own probabilities expected (z " + (form.z > 0 ? "+" : "") + form.z.toFixed(1) + "). Stakes ×" + stakeMult.toFixed(2) + "." });
+        }
+        if (runChance && runChance.len >= 3) {
+          const pct = runChance.prob * 100;
+          aiInsights.push({ type: runChance.prob < 0.05 && runChance.dir === "lost" ? "warn" : "neutral",
+            text: runChance.len + " straight " + (runChance.dir === "won" ? "wins" : "losses") + " — a run this long is a " + (pct < 0.1 ? "<0.1" : pct.toFixed(1)) + "% event under the model's stated probabilities, " + (runChance.prob < 0.05 ? "beyond normal variance" + (runChance.dir === "lost" ? " — sizing is cut until it stabilizes" : " — enjoy it, but it says little about tomorrow") : "within normal variance") + "." });
+        }
         if (streak >= 3 && streakDir === "won") {
-          aiInsights.push({ type: "good", text: streak + "-bet win streak. Model is running hot — current risk level is appropriate." });
+          aiInsights.push({ type: "good", text: streak + "-bet win streak" + (formAuto && form.mult > 1 ? " — form sizing is already pressing it, inside your caps." : ". Streaks feel meaningful; the form meter above is the honest read.") });
         } else if (streak >= 3 && streakDir === "lost") {
           aiInsights.push({ type: "warn", text: streak + " consecutive losses. " + (brakeActive
             ? "Loss-streak brake is on — every stake below is halved until a win lands."
@@ -12523,6 +12599,21 @@ function FirstInning() {
                   {streakBrake ? (brakeActive ? "ACTIVE ×0.5" : "ARMED") : "OFF"}
                 </button>
               </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span title={"Form-aware sizing: recent graded picks are scored against the model's OWN probabilities — expected wins Σp vs actual, as a z-score. Running colder than the model claimed cuts stakes (×0.75 at z ≤ −1, ×0.5 at z ≤ −2 — underperformance is evidence the probabilities are off, and Kelly overbets on a broken p). Running hotter nudges ×1.1–1.2, never past your per-bet cap. A brake in force always wins over a hot read."} style={{ cursor: "help", fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>FORM SIZING</span>
+                {(() => {
+                  const fc = !formAuto ? "var(--dim)" : form.state === "COLD" ? "var(--rose)" : form.state === "COOL" ? "var(--amber)" : form.state === "NEUTRAL" ? "var(--moss)" : "var(--moss)";
+                  const bg = !formAuto ? "transparent" : form.state === "COLD" ? "rgba(220,60,60,0.12)" : form.state === "COOL" ? "rgba(255,170,60,0.12)" : "rgba(80,160,80,0.12)";
+                  const label = !formAuto ? "OFF" : form.n < 10 ? "CALIBRATING" : form.state + (form.mult !== 1 ? " ×" + form.mult.toFixed(2) : "");
+                  return (
+                    <button onClick={() => { const v = !formAuto; setFormAuto(v); saveBankrollSettings({ formAuto: v }); }}
+                      style={{ height: 34, padding: "0 12px", fontSize: 12, fontWeight: 800, borderRadius: 6, cursor: "pointer",
+                        background: bg, color: fc, border: "1px solid " + (formAuto ? fc : "rgba(120,130,150,0.4)") }}>
+                      {label}
+                    </button>
+                  );
+                })()}
+              </label>
               {currentBankroll != null && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, justifyContent: "flex-end" }}>
                   <span title="Bankroll + realized P&L since it was last set." style={{ cursor: "help", fontSize: 10, fontWeight: 700, color: "var(--dim)", letterSpacing: "0.08em" }}>CURRENT</span>
@@ -12557,6 +12648,21 @@ function FirstInning() {
                 <span style={{ color: dayStopPct > 0 ? "var(--fg)" : "var(--dim)" }}>{dayStopPct > 0 ? "stop-loss " + dayStopPct + "%/day" : "stop-loss off"}</span>
                 <span style={{ color: "var(--dim)" }}> · </span>
                 <span style={{ color: streakBrake ? "var(--fg)" : "var(--dim)" }}>{streakBrake ? (brakeActive ? "brake ACTIVE" : "brake armed") : "brake off"}</span>
+              </div>
+              <div style={{ color: "var(--dim)", opacity: 0.4 }}>|</div>
+              <div title={form.n >= 10
+                ? "Last " + form.n + " graded model picks: " + form.act + " wins vs " + form.exp.toFixed(1) + " the model's own probabilities predicted (z " + (form.z > 0 ? "+" : "") + form.z.toFixed(1) + ")."
+                  + (runChance && runChance.len >= 2 ? " Current run: " + runChance.len + " straight " + (runChance.dir === "won" ? "wins" : "losses") + " — a " + (runChance.prob * 100 < 0.1 ? "<0.1" : (runChance.prob * 100).toFixed(1)) + "% event under the model's stated probabilities." : "")
+                  + (formAuto ? " Stakes scaled ×" + stakeMult.toFixed(2) + "." : " Form sizing is off — shown for information only.")
+                : "Form needs 10 graded model picks to say anything (" + form.n + " so far)."} style={{ cursor: "help" }}>
+                <span style={{ color: "var(--dim)", fontWeight: 700 }}>Form:</span>{" "}
+                {form.n >= 10 ? (
+                  <span style={{ fontWeight: 700, color: form.state === "COLD" ? "var(--rose)" : form.state === "COOL" ? "var(--amber)" : form.state === "NEUTRAL" ? "var(--fg)" : "var(--moss)" }}>
+                    {form.state.toLowerCase()} <span style={{ color: "var(--dim)", fontWeight: 400 }}>· {form.act}W-{form.n - form.act}L last {form.n} vs {form.exp.toFixed(1)} expected (z {form.z > 0 ? "+" : ""}{form.z.toFixed(1)})</span>
+                  </span>
+                ) : (
+                  <span style={{ color: "var(--dim)" }}>calibrating ({form.n}/10 graded)</span>
+                )}
               </div>
               {(todayPnl.bets > 0 || bankrollHistory.length >= 2) && (() => {
                 const dd = bankrollDrawdown(bankrollHistory);
@@ -12616,9 +12722,22 @@ function FirstInning() {
                 <span style={{ fontWeight: 400, color: "var(--dim)" }}> Raise the limit or set it to 0 to override — but the limit was set for exactly this moment.</span>
               </div>
             )}
-            {!stopHit && brakeActive && betRows.length > 0 && (
-              <div style={{ marginBottom: 10, padding: "10px 14px", background: "rgba(255,170,60,0.08)", borderRadius: 8, border: "1px solid rgba(255,170,60,0.3)", fontSize: 12, color: "var(--amber)", fontWeight: 700 }}>
-                ⚠ Loss-streak brake: {streak} straight losses — every stake below is halved until a win lands.
+            {!stopHit && stakeMult < 1 && betRows.length > 0 && (
+              <div style={{ marginBottom: 10, padding: "10px 14px", background: brakeActive || stakeMult <= 0.5 ? "rgba(255,170,60,0.08)" : "rgba(255,170,60,0.06)", borderRadius: 8, border: "1px solid rgba(255,170,60,0.3)", fontSize: 12, color: "var(--amber)", fontWeight: 700 }}>
+                ⚠ {brakeActive
+                  ? "Loss-streak brake: " + streak + " straight losses — every stake below is ×" + stakeMult.toFixed(2) + " until a win lands."
+                  : "Cold form (z " + form.z.toFixed(1) + "): the model won " + form.act + " of the last " + form.n + " it expected " + form.exp.toFixed(1) + " from — stakes ×" + stakeMult.toFixed(2) + " until form recovers."}
+                {runChance && runChance.dir === "lost" && runChance.len >= 3 && (
+                  <span style={{ fontWeight: 400, color: "var(--dim)" }}>
+                    {" "}A {runChance.len}-loss run like this is a {runChance.prob * 100 < 0.1 ? "<0.1" : (runChance.prob * 100).toFixed(1)}% event under the model's own numbers — {runChance.prob < 0.05 ? "beyond normal variance, treat the model as suspect until it stabilizes." : "painful but within normal variance."}
+                  </span>
+                )}
+              </div>
+            )}
+            {!stopHit && stakeMult > 1 && betRows.length > 0 && (
+              <div style={{ marginBottom: 10, padding: "10px 14px", background: "rgba(80,160,80,0.06)", borderRadius: 8, border: "1px solid rgba(80,160,80,0.25)", fontSize: 12, color: "var(--moss)", fontWeight: 700 }}>
+                🔥 Hot form (z +{form.z.toFixed(1)}): {form.act} wins on the last {form.n} vs {form.exp.toFixed(1)} expected — stakes ×{stakeMult.toFixed(2)}, still capped at {betCapPct}% per bet.
+                <span style={{ fontWeight: 400, color: "var(--dim)" }}> Hot runs are usually luck; the boost is deliberately small.</span>
               </div>
             )}
             {betRows.length === 0 && skippedRows.length === 0 && alreadyHeld.length === 0 && !stopHit && (

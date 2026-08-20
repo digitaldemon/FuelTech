@@ -94,11 +94,13 @@ const code = [
   slice("function nrfiBetPlan(", "\n}"),
   slice("function nrfiTodayPnl(", "\n}"),
   slice("function bankrollDrawdown(", "\n}"),
+  slice("function nrfiFormSignal(", "\n}"),
+  slice("function nrfiStreakChance(", "\n}"),
 ].join("\n");
 // eval'd consts stay in the eval scope — return everything we test as an object.
 const { takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit,
-  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI, kellyNRFI, nrfiKalshiFee, nrfiBetPlan, nrfiTodayPnl, bankrollDrawdown } =
-  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI, kellyNRFI, nrfiKalshiFee, nrfiBetPlan, nrfiTodayPnl, bankrollDrawdown })");
+  tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI, kellyNRFI, nrfiKalshiFee, nrfiBetPlan, nrfiTodayPnl, bankrollDrawdown, nrfiFormSignal, nrfiStreakChance } =
+  eval('"use strict";\n' + code + "\n;({ takerFee, mlImplied, shinDevig, consensusDevig, teamCodes, codeHit, tickerDate, parlayMath, pickDecision, detectLeague, positionAdvice, matchOddsEvent, legsCombined, oddsSideMarket, oddsEventConsensus, gameWinnerAbbr, pickWon, totalLine, paceProjection, normCdf, pAbove, bucketProbs, ewmaSigma, trendStats, trendDrift, impliedSigma, blendProb, emaLast, intradayTech, techDrift, bestLadderWager, wagerType, settleHorizon, f15Blend, f15Call, nrfiRegress, halfNoRun, nrfiTier, nrfiVerdict, pitchSkillFactor, openerGameFactor, openerFactor, nrfiCalibration, applyCalibration, nrfiBlend, matchRFI, kellyNRFI, nrfiKalshiFee, nrfiBetPlan, nrfiTodayPnl, bankrollDrawdown, nrfiFormSignal, nrfiStreakChance })");
 
 let fail = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg); if (!cond) fail++; };
@@ -595,6 +597,39 @@ ok(positionAdvice(pos(), 66, null, { price: 66, bid: 0, ask: 100 }, { prob: 0, l
   ok(t.bets === 2, "today P&L counts only today's settled kalshi-import bets");
   ok(Math.abs(t.stake - (costW + costL)) < 1e-9, "stake = entry cost + fee at the recorded fill");
   ok(Math.abs(t.pnl - ((100 - costW) - costL)) < 1e-9, "pnl = payout − cost, loss = −cost");
+
+  // ---- Form signal: hot/cold measured against the model's own claims ----
+  const g = (p, res, extra) => Object.assign({ prob: p, result: res }, extra);
+  const cold = nrfiFormSignal(Array.from({ length: 20 }, () => g(60, "lost")));
+  ok(cold.state === "COLD" && cold.mult === 0.5 && cold.z < -2, "20 straight losses at 60% -> COLD, x0.5");
+  const hot = nrfiFormSignal(Array.from({ length: 20 }, () => g(60, "won")));
+  ok(hot.state === "HOT" && hot.mult === 1.2 && hot.z > 2, "20 straight wins at 60% -> HOT, x1.2");
+  const even = nrfiFormSignal(Array.from({ length: 20 }, (_, i) => g(60, i < 12 ? "won" : "lost")));
+  ok(even.state === "NEUTRAL" && even.mult === 1 && Math.abs(even.z) < 1e-9, "12 of 20 at 60% is exactly expected -> NEUTRAL, z 0");
+  ok(nrfiFormSignal(Array.from({ length: 8 }, () => g(60, "lost"))).mult === 1, "under 10 graded picks -> no signal, x1");
+  // The z knows the difference the raw streak count can't see: the same 6-loss
+  // run is COLD on 72% claims but only COOL on 55% coin flips.
+  const highClaim = nrfiFormSignal(Array.from({ length: 14 }, (_, i) => g(i < 6 ? 72 : 60, i < 6 ? "lost" : "won")));
+  const lowClaim = nrfiFormSignal(Array.from({ length: 14 }, (_, i) => g(i < 6 ? 55 : 60, i < 6 ? "lost" : "won")));
+  ok(highClaim.z < lowClaim.z, "losing 72% picks is colder than losing 55% picks");
+  const mixed = nrfiFormSignal([
+    g(60, "lost", { source: "kalshi-import" }), g(60, "lost", { thinPass: true }), g(60, "lost", { skipped: true }),
+    ...Array.from({ length: 12 }, (_, i) => g(60, i < 8 ? "won" : "lost")),
+  ]);
+  ok(mixed.n === 12, "imports, thin-pass, and skipped entries carry no form signal");
+  ok(nrfiFormSignal(Array.from({ length: 30 }, () => g(60, "won"))).n === 20, "window caps at the last 20 graded");
+
+  // Run-length probability under the model's own numbers.
+  const rc = nrfiStreakChance([g(60, "lost"), g(60, "lost"), g(60, "lost"), g(60, "won")]);
+  ok(rc.dir === "lost" && rc.len === 3 && Math.abs(rc.prob - 0.4 ** 3) < 1e-12, "3-loss run at 60% claims = 6.4% event");
+  const rcW = nrfiStreakChance([g(70, "won"), g(70, "won"), g(60, "lost")]);
+  ok(rcW.dir === "won" && rcW.len === 2 && Math.abs(rcW.prob - 0.49) < 1e-12, "2-win run at 70% = 49% event");
+
+  // Hot boost never breaches the user's per-bet cap; below it, the boost applies.
+  const pBoostCapped = nrfiBetPlan([row({ kelly: 0.5 })], Object.assign({}, base, { stakeMult: 1.2 }));
+  ok(Math.abs(pBoostCapped.bets[0].frac - 0.08) < 1e-9, "hot boost is re-capped at the per-bet ceiling");
+  const pBoost = nrfiBetPlan([row({ kelly: 0.10 })], Object.assign({}, base, { stakeMult: 1.2 }));
+  ok(Math.abs(pBoost.bets[0].frac - 0.06) < 1e-9, "hot boost applies when under the cap (5% -> 6%)");
 
   // ---- Drawdown from equity history ----
   const dd = bankrollDrawdown([{ equity: 100 }, { equity: 120 }, { equity: 90 }, { equity: 110 }]);

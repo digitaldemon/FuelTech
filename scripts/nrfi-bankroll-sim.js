@@ -22,10 +22,12 @@ const code = [
   slice("function nrfiBetPlan(", "\n}"),
   slice("function nrfiTodayPnl(", "\n}"),
   slice("function bankrollDrawdown(", "\n}"),
+  slice("function nrfiFormSignal(", "\n}"),
+  slice("function nrfiStreakChance(", "\n}"),
   slice("const NRFI_STRONG_MIN = 63,", ";"),
 ].join("\n");
-const { kellyNRFI, NRFI_RISK_MULT, nrfiKalshiFee, nrfiBetPlan, nrfiTodayPnl, bankrollDrawdown, NRFI_BET_MIN } =
-  eval('"use strict";\n' + code + "\n;({ kellyNRFI, NRFI_RISK_MULT, nrfiKalshiFee, nrfiBetPlan, nrfiTodayPnl, bankrollDrawdown, NRFI_BET_MIN })");
+const { kellyNRFI, NRFI_RISK_MULT, nrfiKalshiFee, nrfiBetPlan, nrfiTodayPnl, bankrollDrawdown, nrfiFormSignal, nrfiStreakChance, NRFI_BET_MIN } =
+  eval('"use strict";\n' + code + "\n;({ kellyNRFI, NRFI_RISK_MULT, nrfiKalshiFee, nrfiBetPlan, nrfiTodayPnl, bankrollDrawdown, nrfiFormSignal, nrfiStreakChance, NRFI_BET_MIN })");
 
 const BASE = process.env.DESK_BASE || "https://www.fueltechaipro.com";
 const SECRET = process.env.ADMIN_SECRET;
@@ -85,9 +87,22 @@ const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg);
   const stopLossDollars = st.dayStopPct > 0 && bankroll ? (st.dayStopPct / 100) * bankroll : null;
   const stopHit = stopLossDollars != null && todayPnl.pnl <= -stopLossDollars;
 
+  // Same protection stack as the tab: brake from the graded streak, form from
+  // the calibration z, harsher one wins while the brake is on.
+  const graded = rec.filter((e) => e.result === "won" || e.result === "lost");
+  const dir = graded.length ? graded[0].result : null;
+  let run = 0; for (const e of graded) { if (e.result === dir) run++; else break; }
+  const brakeActive = (st.streakBrake ?? true) && dir === "lost" && run >= 3;
+  const form = (st.formAuto ?? true) ? nrfiFormSignal(rec) : { n: 0, state: "OFF", z: 0, mult: 1, exp: null, act: null };
+  const stakeMult = brakeActive ? Math.min(0.5, form.mult) : form.mult;
+  const runChance = nrfiStreakChance(rec);
+  console.log("form: " + form.state + (form.n >= 10 ? " (" + form.act + "W-" + (form.n - form.act) + "L last " + form.n + " vs " + form.exp.toFixed(1) + " expected, z " + form.z.toFixed(2) + ")" : " (" + form.n + " graded)")
+    + " · brake " + (brakeActive ? "ACTIVE (" + run + " straight losses)" : "idle") + " · stakes ×" + stakeMult.toFixed(2)
+    + (runChance && runChance.len >= 2 ? " · run: " + runChance.len + " " + runChance.dir + " (" + (runChance.prob * 100).toFixed(1) + "% event)" : ""));
+
   const plan = nrfiBetPlan(stopHit ? [] : rows, {
     bankroll, budget, dayCapFrac, betCapFrac, riskMult,
-    cashLimited: capLeft != null && remaining < capLeft - 1e-9, stakeMult: 1,
+    cashLimited: capLeft != null && remaining < capLeft - 1e-9, stakeMult,
   });
 
   console.log("today P&L: " + (todayPnl.pnl >= 0 ? "+" : "") + "$" + todayPnl.pnl.toFixed(2) + " on " + todayPnl.bets + " settled · committed $" + (exposure + todayPnl.stake).toFixed(2)
@@ -111,6 +126,8 @@ const ok = (cond, msg) => { console.log((cond ? "PASS" : "FAIL") + " - " + msg);
   ok(rows.every((r, i) => i === 0 || rows[i - 1].ret >= r.ret - 1e-12), "candidates ranked by net return per dollar");
   ok(!stopHit || plan.bets.length === 0, "stop-loss empties the plan");
   ok(Number.isFinite(todayPnl.pnl) && Number.isFinite(todayPnl.stake), "today P&L is finite");
+  ok(stakeMult >= 0.3 && stakeMult <= 1.2, "combined stake multiplier stays in [0.3, 1.2]");
+  ok(plan.bets.every((b) => b.frac <= (st.betCapPct ?? 12) / 100 + 1e-9), "no stake breaches the per-bet cap even boosted");
   const dd = bankrollDrawdown(history);
   ok(history.length === 0 || (dd && Number.isFinite(dd.peak) && dd.curDD >= 0 && dd.maxDD >= dd.curDD - 1e-12), "drawdown stats are sane on the real history");
 
