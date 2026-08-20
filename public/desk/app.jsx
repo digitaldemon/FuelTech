@@ -11999,8 +11999,8 @@ function FirstInning() {
           patient:  { minProb: 63, betsRec: "1–2",  label: "Patient",   desc: "STRONG picks only (≥63%)" },
           selective:{ minProb: 57, betsRec: "2–4",  label: "Selective", desc: "BET + STRONG (≥57%)" },
           steady:   { minProb: 52, betsRec: "3–6",  label: "Steady",    desc: "All rated picks (≥52%)" },
-          fast:     { minProb: 57, betsRec: "4–8",  label: "Fast",      desc: "All picks, maximize volume" },
-          blitz:    { minProb: 50, betsRec: "all",  label: "Blitz",     desc: "Every game on slate" },
+          fast:     { minProb: 52, betsRec: "4–8",  label: "Fast",      desc: "All rated picks (≥52%), maximize volume" },
+          blitz:    { minProb: 50, betsRec: "all",  label: "Blitz",     desc: "Every rated pick — LEAN and up, no floor" },
         };
         const rCfg = RISK_CFG[riskLevel] || RISK_CFG.moderate;
         const sCfg = SPEED_CFG[growthSpeed] || SPEED_CFG.steady;
@@ -12057,11 +12057,25 @@ function FirstInning() {
           return (sideProb(r) - price - f) / (price + f);
         };
         const speedMinProb = sCfg.minProb / 100;
+        /* LEAN rows are admitted only when the chosen speed's floor sits below
+         * the BET line — isBet alone hard-limited every speed to BET+STRONG,
+         * which made Steady/Fast/Blitz identical to Selective no matter what
+         * their labels promised. A LEAN verdict already carries the model's own
+         * downgrades (confidence caps, split signals), and confMult plus the
+         * ret<=0 skip still guard each one, so the speed knob widens volume
+         * without bypassing any quality gate. */
+        const tierOk = (r) => r.v && (r.v.isBet || (r.v.strength === "LEAN" && sCfg.minProb < NRFI_BET_MIN));
         const candidates = validRows
-          .filter((r) => r.v && r.v.isBet && r.kelly != null && r.market && netRetPerDollar(r) != null && !openTickerSet.has(r.market.ticker) && sideProb(r) >= speedMinProb)
+          .filter((r) => tierOk(r) && r.kelly != null && r.market && netRetPerDollar(r) != null && !openTickerSet.has(r.market.ticker) && sideProb(r) >= speedMinProb)
           .map((r) => ({ r, ret: netRetPerDollar(r) }))
           .sort((a, b) => b.ret - a.ret);
-        const alreadyHeld = validRows.filter((r) => r.v && r.v.isBet && r.market && openTickerSet.has(r.market.ticker));
+        /* validRows excludes held games by construction, so filtering IT for
+         * held tickers always produced an empty list — the "✓ already in your
+         * open positions" state could never render, and an all-held slate fell
+         * through to the misleading "no qualifying games" message instead.
+         * Held rows live in `held`; a hold the model still rates at this
+         * speed's tier counts, whether or not its market is still quotable. */
+        const alreadyHeld = held.filter((r) => !decided(r) && tierOk(r) && sideProb(r) >= speedMinProb);
 
         const betCapFrac = betCapPct / 100;
         const dayCapFrac = dayCapPct / 100;
@@ -12282,8 +12296,8 @@ function FirstInning() {
                   <option value="patient">Patient — STRONG only (≥63%)</option>
                   <option value="selective">Selective — BET+ (≥57%)</option>
                   <option value="steady">Steady — all picks (≥52%)</option>
-                  <option value="fast">Fast — maximize volume</option>
-                  <option value="blitz">Blitz — every game</option>
+                  <option value="fast">Fast — all picks, max volume</option>
+                  <option value="blitz">Blitz — every rated pick</option>
                 </select>
               </label>
               <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
