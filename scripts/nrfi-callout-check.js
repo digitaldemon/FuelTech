@@ -361,6 +361,24 @@ const check = (ok, what, detail) => {
     "on iOS the American man is chosen over the default (Samantha)",
     "picked " + c.pickVoice(vs(IOS)).name + " on iOS — the phone is calling the game " +
     "in a different voice from the desk.");
+  /* The human-sounding iOS voices are downloads: Apple ships the phone with
+   * compact (robotic) voices only, and the neural builds appear to WebKit only
+   * after the user installs them in Settings. Once present, they must win —
+   * both when they carry their own name (Evan) and when they are an Enhanced
+   * copy of a name already in the rank (Tom vs "Tom (Enhanced)", where the
+   * substring match hits both and the tie-break has to pick the download). */
+  const IOS_ENH = [{ name: "Samantha", lang: "en-US", default: true }, "Aaron",
+    { name: "Evan (Enhanced)", lang: "en-US", localService: true }, "Nicky"];
+  check(/Evan \(Enhanced\)/.test(c.pickVoice(vs(IOS_ENH)).name),
+    "a downloaded Enhanced man is chosen over the stock compact voices on iOS",
+    "picked " + c.pickVoice(vs(IOS_ENH)).name + " with Evan (Enhanced) installed — the download is being ignored.");
+  // "Alex" is ranked bare, so a set holding both copies exercises the
+  // tie-break itself rather than a named rank entry: the substring match hits
+  // both and better() must pick the download over the compact local copy.
+  const TIE = ["Alex", { name: "Alex (Enhanced)", lang: "en-US", localService: true }];
+  check(/Alex \(Enhanced\)/.test(c.pickVoice(vs(TIE)).name),
+    "the Enhanced copy of a ranked name beats its compact copy via the tie-break",
+    "picked " + c.pickVoice(vs(TIE)).name + " — the tie-break is discarding the downloaded build.");
   const MACOS = [{ name: "Samantha", lang: "en-US", default: true }, "Alex", "Fred", "Victoria",
     { name: "Daniel", lang: "en-GB" }];
   check(/Alex/.test(c.pickVoice(vs(MACOS)).name),

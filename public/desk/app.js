@@ -1494,7 +1494,16 @@ const VOICE_RANK=[// Chosen by ear, on this machine, against the alternatives pl
 // inning. These four are the en-US male voices WebKit exposes: Aaron is the one
 // present on a stock iPhone, Alex and Fred are macOS, Tom is the older iOS
 // Vocalizer man. Ordered by how they read, not by how they rate on paper.
-"Aaron","Alex","Tom","Fred",// Then the best remaining man, then the browser default this list exists to
+//
+// THE HUMAN-SOUNDING iOS MEN SIT ABOVE THE STOCK ONES, AND ARE INVISIBLE
+// UNTIL DOWNLOADED. Apple ships the phone with compact voices only — the
+// robotic ones — and keeps the neural builds behind Settings → Accessibility
+// → Spoken Content → Voices → English (US), where each is a per-voice
+// download. Once installed they appear to WebKit with the qualifier in the
+// name, so they are ranked by that full string and can match nothing else.
+// Until the download exists there is nothing here to pick and the rank falls
+// through to Aaron below — no code makes a phone sound human without it.
+"Evan (Enhanced)","Nathan (Enhanced)","Tom (Enhanced)","Aaron (Enhanced)","Aaron","Alex","Tom","Fred",// Then the best remaining man, then the browser default this list exists to
 // avoid — David, the 1998 answering machine.
 //
 // ANDROID IS NOT SOLVED BY THIS LIST AND CANNOT BE. Chrome on Android
@@ -1527,7 +1536,12 @@ const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.f
    * formant voice that won an A/B against the smoother network man on the desk,
    * and a preference that outranked the list would quietly overturn that
    * measured result on spec-sheet reasoning — exactly what the note above it
-   * forbids. Rank still decides who; this only decides which copy of them. */const better=(a,b)=>a.localService===b.localService?a:a.localService===false?a:b;for(const want of VOICE_RANK){const hits=pool.filter(v=>String(v.name||"").includes(want));if(hits.length)return hits.reduce(better);}/* Fallback, for a platform no name in the rank reaches — in practice Android.
+   * forbids. Rank still decides who; this only decides which copy of them. */const better=(a,b)=>{/* An Enhanced/Premium copy of a ranked name is the downloaded neural build
+     * of the same man — "Tom" matches both "Tom" and "Tom (Enhanced)" by
+     * substring, and the quality gap between those two is the entire
+     * robotic-phone complaint. Checked before the network tie-break because
+     * Apple's enhanced voices are LOCAL: the old rule preferred a network copy
+     * or fell to enumeration order, either of which discards the download. */const enh=v=>/Enhanced|Premium/i.test(String(v.name||""));if(enh(a)!==enh(b))return enh(a)?a:b;return a.localService===b.localService?a:a.localService===false?a:b;};for(const want of VOICE_RANK){const hits=pool.filter(v=>String(v.name||"").includes(want));if(hits.length)return hits.reduce(better);}/* Fallback, for a platform no name in the rank reaches — in practice Android.
    *
    * The old line was `pool.find(v => v.default) || pool[0]`, and both halves of
    * it pick a woman on the platforms that get here: iOS defaults to Samantha,
@@ -1549,7 +1563,14 @@ const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.f
    * both more audible than a quality drop, and before `default` because the
    * Android default is usually the local voice — which is the entire problem.
    *
-   * Then, and only then, the browser default. Same last resort as before. */const narrow=(list,f)=>{const k=list.filter(f);return k.length?k:list;};let cand=narrow(pool,v=>/^en[-_]us$/i.test(String(v.lang||"").replace("_","-")));cand=narrow(cand,v=>!VOICE_AVOID.test(String(v.name||"")));cand=narrow(cand,v=>v.localService===false);return cand.find(v=>v.default)||cand[0]||pool[0]||null;}/* Delivery speed, and it has to depend on the voice.
+   * Then, and only then, the browser default. Same last resort as before. */const narrow=(list,f)=>{const k=list.filter(f);return k.length?k:list;};let cand=narrow(pool,v=>/^en[-_]us$/i.test(String(v.lang||"").replace("_","-")));cand=narrow(cand,v=>!VOICE_AVOID.test(String(v.name||"")));// A downloaded Enhanced/Premium voice outranks everything else left: it is
+// the one voice on the device the user explicitly installed for quality.
+// Deliberately NOT matching bare "Natural" here — that substring is Edge's
+// whole neural family and its first hit is usually a woman (see VOICE_RANK's
+// header note); Edge never reaches this fallback anyway. Platforms whose
+// names carry no qualifier (Android) leave the filter empty and narrow()
+// keeps the list, so nothing is lost where the marker does not exist.
+cand=narrow(cand,v=>/Enhanced|Premium/i.test(String(v.name||"")));cand=narrow(cand,v=>v.localService===false);return cand.find(v=>v.default)||cand[0]||pool[0]||null;}/* Delivery speed, and it has to depend on the voice.
  *
  * The original 1.02 was set because 1.1 clipped the ends of words — but that was
  * measured on the NEURAL voices, which read more slowly and more naturally than
