@@ -1741,10 +1741,15 @@ for(;;){item=_sayQ.shift();if(item==null)return;// Both gates, each on its own c
 const staleEvent=item.at>0&&Date.now()-item.at>SAY_STALE_MS;// `_sayQ.length` — i.e. only skip a line for having waited when there is a
 // FRESHER ONE BEHIND IT TO SKIP TO. See SAY_WAIT_MS: without this the gate
 // deletes the newest line of every batch and says the older ones instead.
-const staleWait=_sayQ.length>0&&Date.now()-item.qat>SAY_WAIT_MS;if(!staleEvent&&!staleWait)break;}const text=item.text;if(text==null)return;_sayOn=true;const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}u.rate=voiceRate(_voice);u.pitch=1;u.volume=1;const gen=++_sayGen;const done=()=>{// A late event from a cancelled or superseded utterance must not touch the
+const staleWait=_sayQ.length>0&&Date.now()-item.qat>SAY_WAIT_MS;if(!staleEvent&&!staleWait)break;}const text=item.text;if(text==null)return;_sayOn=true;const gen=++_sayGen;const done=()=>{// A late event from a cancelled or superseded utterance must not touch the
 // latch, the watchdog or the queue — all three now belong to whatever is
 // speaking instead.
-if(gen!==_sayGen||!_sayOn)return;_sayOn=false;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayDrain(s);};// A line that genuinely reached the speakers clears any standing complaint:
+if(gen!==_sayGen||!_sayOn)return;_sayOn=false;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayDrain(s);};/* The cloud mouth, when an Azure key is configured: same latch, same
+   * generation-guarded done, its own watchdog inside. typeof-guarded because
+   * desk-callout-queue-test.js slices THIS FUNCTION alone out of the file —
+   * a bare reference to something defined below the slice would throw through
+   * the whole suite, and the guard makes the harness exercise the browser
+   * path exactly as before. */if(typeof _cloudSpeak==="function"&&_cloudSpeak(text,done))return;const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}u.rate=voiceRate(_voice);u.pitch=1;u.volume=1;// A line that genuinely reached the speakers clears any standing complaint:
 // whatever was blocking audio is demonstrably no longer blocking it.
 u.onend=()=>{_setBlocked(null);done();};// An utterance that errors (or that Chrome silently drops, which it does after
 // a cancel) never fires end, and without this the latch stays set and the
@@ -1782,7 +1787,9 @@ if(s.paused)s.resume();}/* `at` is the event's own timestamp — when the pitch 
 if(!_voice&&!_voiceTried&&s.addEventListener){_voiceTried=true;s.addEventListener("voiceschanged",()=>{_voice=pickVoice(s);},{once:true});}}if(urgent){_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;// Revoke the outgoing utterance's events BEFORE cancelling, so the end event
 // cancel is about to fire arrives as a ghost and cannot reach into the
 // settle line that is about to start.
-_sayGen++;s.cancel();}/* Backstop: never say the same thing twice in a row.
+_sayGen++;s.cancel();// The cloud mouth has its own current line to cut. typeof-guarded for the
+// same slice-boundary reason as in _sayDrain.
+if(typeof _cloudStop==="function")_cloudStop();}/* Backstop: never say the same thing twice in a row.
    *
    * The measured cause of the repeat report was the two-strike foul, and that is
    * fixed where it belongs — in the words, not here. This exists because that was
@@ -1811,7 +1818,43 @@ function speakStop(){const s=typeof window!=="undefined"&&window.speechSynthesis
 // has started and drain the queue out from under it.
 _sayGen++;// A stop ends the session, so the next line is not a repeat of anything —
 // switching games and switching back must be able to re-announce the intro.
-_sayLast=null;if(s)s.cancel();}/* THE CALLOUT IS A POLL, AND CHROME STOPS POLLS IN HIDDEN TABS.
+_sayLast=null;if(s)s.cancel();if(typeof _cloudStop==="function")_cloudStop();}/* ---- The cloud mouth: Azure neural TTS, when a key is configured. --------
+ *
+ * The browser's speechSynthesis is a formant/compact engine on most phones and
+ * no amount of voice-picking makes it human. This swaps ONLY where the audio
+ * comes from: every line still flows through the same queue, staleness gates,
+ * dedupe and generation guards above — a line that reaches the mouth is
+ * fetched from /api/desk/tts (Azure neural MP3, server- and client-cached,
+ * since the callout repeats itself constantly) and played through ONE reusable
+ * <audio> element.
+ *
+ * One element, unlocked once, on purpose: play() must be allowed by the
+ * autoplay policy, and the permission attaches to the ELEMENT once it has
+ * played from a user gesture. cloudVoicePrime() runs inside the toggle's
+ * click, plays a silent WAV, and every later play() on that same element —
+ * which happens asynchronously after a fetch, far outside any gesture —
+ * inherits the unlock.
+ *
+ * Failure is a per-line fallback to the browser voice, never silence: the
+ * fetch erroring, Azure refusing, or play() rejecting hands the SAME line to
+ * a minimal utterance with the same generation-guarded done. The desk sounds
+ * worse for one line instead of going quiet.
+ *
+ * These sit OUTSIDE _sayDrain/speak/speakStop and are reached only through
+ * typeof guards, because desk-callout-queue-test.js slices those functions
+ * alone out of this file — the harness must keep running the browser path. */let _cloudCfg=null;// null = not asked yet; {configured, voice} after the probe
+let _cloudAudio=null;// the one unlocked element
+const _cloudCache=new Map();// text -> object URL of the synthesized MP3
+const CLOUD_CACHE_MAX=300;const CLOUD_SILENT_WAV="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";function cloudVoicePrime(){if(typeof window==="undefined")return;if(!_cloudAudio&&typeof window.Audio!=="undefined"){_cloudAudio=new window.Audio(CLOUD_SILENT_WAV);_cloudAudio.play().catch(()=>{/* unlock is best-effort; fallback voice still works */});}if(_cloudCfg==null){_cloudCfg={configured:false,probing:true};fetch("/api/desk/tts").then(r=>r.json()).then(d=>{_cloudCfg={configured:!!(d&&d.configured),voice:d&&d.voice};}).catch(()=>{_cloudCfg=null;/* ask again on the next prime */});}}function _cloudStop(){if(_cloudAudio&&!_cloudAudio.paused){try{_cloudAudio.pause();}catch{/* already stopped */}}}// The per-line fallback. Deliberately minimal — no watchdog re-arm loop, no
+// blocked-state bookkeeping — because it exists for the seconds where the
+// cloud hiccups, and done() is generation-guarded so its belt-and-braces
+// timeout can never double-drain.
+function _cloudFallbackUtter(text,done){try{const s=window.speechSynthesis;if(!s){done();return;}const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}u.rate=voiceRate(_voice);u.pitch=1;u.volume=1;u.onend=()=>done();u.onerror=()=>done();setTimeout(done,1500+text.length*90);s.speak(u);if(s.paused)s.resume();}catch{done();}}function _cloudSpeak(text,done){if(!_cloudCfg||!_cloudCfg.configured||!_cloudAudio)return false;// Watchdog on the whole round trip: a fetch that hangs or an MP3 whose
+// ended event never fires must not hold the latch. done() is
+// generation-guarded, so firing late is harmless.
+const guard=setTimeout(done,4000+text.length*90);(async()=>{try{let url=_cloudCache.get(text);if(!url){const r=await fetch("/api/desk/tts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});if(!r.ok)throw new Error("tts "+r.status);url=URL.createObjectURL(await r.blob());_cloudCache.set(text,url);if(_cloudCache.size>CLOUD_CACHE_MAX){const k=_cloudCache.keys().next().value;try{URL.revokeObjectURL(_cloudCache.get(k));}catch{/* already gone */}_cloudCache.delete(k);}}const a=_cloudAudio;a.onended=()=>{clearTimeout(guard);done();};a.onerror=()=>{clearTimeout(guard);done();};a.src=url;await a.play();// A line that genuinely reached the speakers clears any standing
+// complaint, same as the utterance path.
+_setBlocked(null);}catch{clearTimeout(guard);_cloudFallbackUtter(text,done);}})();return true;}/* THE CALLOUT IS A POLL, AND CHROME STOPS POLLS IN HIDDEN TABS.
  *
  * Measured on the live desk while the tab sat in the background, same 1200ms
  * interval the callout uses:
@@ -3647,7 +3690,7 @@ const CALLOUT_STALE_MS=45000;const[callout,setCallout]=useState(false);/* The br
    * ticket resolving and it is two seconds of audio. */const[focus,setFocus]=useState(null);const focusRef=useRef(null);/* Which wagered game the watch screen is open on (null = closed). The modal
    * renders from the component root so it works from either sub-tab. */const[watchPk,setWatchPk]=useState(null);/* The watch screen's voice button drives the SAME callout the board toggle
    * does — one broadcast, focused on the watched game. Must run inside the
-   * click gesture: speech and the keepalive AudioContext both need it. */function watchVoice(pk){if(callout&&focus===pk){sayKeepAlive(false);speakStop();setCallout(false);setFocus(null);return;}if(!callout){sayKeepAlive(true);speak("Digital Demons N-R-F-I. This is live coverage, on the air.");setCallout(true);}setFocus(pk);}const spoken=useRef(new Map());// gamePk -> { n: plays announced, opened, settled }
+   * click gesture: speech and the keepalive AudioContext both need it. */function watchVoice(pk){if(callout&&focus===pk){sayKeepAlive(false);speakStop();setCallout(false);setFocus(null);return;}if(!callout){cloudVoicePrime();sayKeepAlive(true);speak("Digital Demons N-R-F-I. This is live coverage, on the air.");setCallout(true);}setFocus(pk);}const spoken=useRef(new Map());// gamePk -> { n: plays announced, opened, settled }
 /* gamePk -> live count/base state for the diamond. THE ONLY PIECE OF THE POLL
    * THAT IS ALLOWED TO BE REACT STATE, and it is gated hard.
    *
@@ -3970,7 +4013,11 @@ const waitingCard=r=>{const gameTime=r.startUtc?new Date(r.startUtc).toLocaleTim
 // option and is worse: it is per-voice guesswork and it looks
 // like a typo to the next reader. Keep a copula in front of the
 // word if this line is ever reworded.
-if(next){sayKeepAlive(true);speak("Digital Demons N-R-F-I. This is live coverage, on the air.");}else{sayKeepAlive(false);speakStop();}setCallout(next);},title:voiceBlocked?"Your browser blocked audio for this page. Tap this button again to allow it — "+"speech has to start from a tap, and the desk will stay silent until it does.":"Digital Demons NRFI Live — the desk's own first-inning broadcast. Calls every game on the board "+"that has a call or a position, pitch by pitch, then the NRFI result. "+"Built off the MLB play feed, not a broadcast: league game audio is licensed per-subscriber and cannot be embedded here.\n\n"+// The call is late and always will be. Saying so is the difference between
+// cloudVoicePrime must run inside this click: it unlocks the
+// audio element autoplay rides on and probes whether an Azure
+// key is configured — with one, the broadcast speaks in the
+// neural voice from the first line.
+if(next){cloudVoicePrime();sayKeepAlive(true);speak("Digital Demons N-R-F-I. This is live coverage, on the air.");}else{sayKeepAlive(false);speakStop();}setCallout(next);},title:voiceBlocked?"Your browser blocked audio for this page. Tap this button again to allow it — "+"speech has to start from a tap, and the desk will stay silent until it does.":"Digital Demons NRFI Live — the desk's own first-inning broadcast. Calls every game on the board "+"that has a call or a position, pitch by pitch, then the NRFI result. "+"Built off the MLB play feed, not a broadcast: league game audio is licensed per-subscriber and cannot be embedded here.\n\n"+// The call is late and always will be. Saying so is the difference between
 // a listener hearing a 25s-old pitch and concluding the feature is broken,
 // and hearing it and knowing that is as live as the data goes.
 "RUNS ABOUT 25 SECONDS BEHIND THE PARK. statsapi does not publish a pitch when it lands — "+"measured 14 to 26 seconds after the fact, median 25. That lag is the feed's and no amount of "+"polling recovers it, so treat this as a delayed call, not a live one. Anything much later than "+"that is dropped rather than read out stale.",style:voiceBlocked&&callout?{color:"var(--rust, #c0632f)",borderColor:"var(--rust, #c0632f)"}:callout?{color:"var(--moss)",borderColor:"var(--moss)"}:undefined},voiceBlocked&&callout?"🔇 Blocked by browser · tap to allow":callout?"🔊 Digital Demons NRFI Live · on":"🔈 Digital Demons NRFI Live"),callout&&calloutGames.length>1&&/*#__PURE__*/React.createElement("span",{style:{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}},/*#__PURE__*/React.createElement("span",{style:{fontSize:11,color:"var(--dim)"}},"Listening to"),[{pk:null,label:"All"}].concat(calloutGames.map(r=>({pk:r.gamePk,label:(r.awayAbbr||r.away)+"@"+(r.homeAbbr||r.home)}))).map(g=>/*#__PURE__*/React.createElement("button",{key:String(g.pk),className:"btn btn-ghost btn-sm",onClick:()=>setFocus(g.pk),title:g.pk===null?"Call every game at once. On an overlapping slate they talk over each other.":"Call only this game. Others stay muted, but a run or a clean inning is still announced by name.",style:{fontSize:11,padding:"2px 7px",...(focus===g.pk?{color:"var(--moss)",borderColor:"var(--moss)"}:null)}},g.label))),(()=>{const w=enriched.filter(x=>x.gamePk&&!x.final&&calloutHeldSide(x,heldSides));if(!w.length)return null;return/*#__PURE__*/React.createElement("span",{style:{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}},/*#__PURE__*/React.createElement("span",{style:{fontSize:11,color:"var(--dim)"}},"Watch:"),w.map(x=>/*#__PURE__*/React.createElement("button",{key:x.gamePk,className:"btn btn-ghost btn-sm",onClick:()=>setWatchPk(x.gamePk),title:"Open the live watch screen \u2014 pitch by pitch, runners on, every play called out as fast as the feed publishes it.",style:{fontSize:11,padding:"2px 7px",color:"var(--moss)",borderColor:"rgba(80,160,80,0.4)"}},"\u25B6 ",(x.awayAbbr||x.away)+"@"+(x.homeAbbr||x.home))));})(),importMsg&&/*#__PURE__*/React.createElement("span",{style:{fontSize:12,color:importMsg.ok?"var(--moss)":"var(--rose)"}},importMsg.text)),callout&&(()=>{const shown=calloutGames.filter(r=>liveState[r.gamePk]&&(!focus||focus===r.gamePk));if(!shown.length)return null;return/*#__PURE__*/React.createElement("div",{style:{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}},shown.map(r=>/*#__PURE__*/React.createElement("div",{key:r.gamePk,onClick:()=>setWatchPk(r.gamePk),style:{cursor:"pointer"},title:"Tap to open the full watch screen \u2014 pitch by pitch with every play written out."},/*#__PURE__*/React.createElement(CalloutDiamond,{st:liveState[r.gamePk],half:liveState[r.gamePk].half,label:(r.awayAbbr||r.away)+" @ "+(r.homeAbbr||r.home)}))));})(),(()=>{/* YRFI only ever fills in KING MODE — it is his flip, not a DS tier — but

@@ -6576,9 +6576,6 @@ function _sayDrain(s) {
   const text = item.text;
   if (text == null) return;
   _sayOn = true;
-  const u = new window.SpeechSynthesisUtterance(text);
-  if (_voice) { u.voice = _voice; u.lang = _voice.lang || "en-US"; }
-  u.rate = voiceRate(_voice); u.pitch = 1; u.volume = 1;
   const gen = ++_sayGen;
   const done = () => {
     // A late event from a cancelled or superseded utterance must not touch the
@@ -6589,6 +6586,16 @@ function _sayDrain(s) {
     if (_sayGuard) { clearTimeout(_sayGuard); _sayGuard = null; }
     _sayDrain(s);
   };
+  /* The cloud mouth, when an Azure key is configured: same latch, same
+   * generation-guarded done, its own watchdog inside. typeof-guarded because
+   * desk-callout-queue-test.js slices THIS FUNCTION alone out of the file —
+   * a bare reference to something defined below the slice would throw through
+   * the whole suite, and the guard makes the harness exercise the browser
+   * path exactly as before. */
+  if (typeof _cloudSpeak === "function" && _cloudSpeak(text, done)) return;
+  const u = new window.SpeechSynthesisUtterance(text);
+  if (_voice) { u.voice = _voice; u.lang = _voice.lang || "en-US"; }
+  u.rate = voiceRate(_voice); u.pitch = 1; u.volume = 1;
   // A line that genuinely reached the speakers clears any standing complaint:
   // whatever was blocking audio is demonstrably no longer blocking it.
   u.onend = () => { _setBlocked(null); done(); };
@@ -6669,6 +6676,9 @@ function speak(text, urgent, at) {
     // settle line that is about to start.
     _sayGen++;
     s.cancel();
+    // The cloud mouth has its own current line to cut. typeof-guarded for the
+    // same slice-boundary reason as in _sayDrain.
+    if (typeof _cloudStop === "function") _cloudStop();
   }
   /* Backstop: never say the same thing twice in a row.
    *
@@ -6714,6 +6724,107 @@ function speakStop() {
   // switching games and switching back must be able to re-announce the intro.
   _sayLast = null;
   if (s) s.cancel();
+  if (typeof _cloudStop === "function") _cloudStop();
+}
+
+/* ---- The cloud mouth: Azure neural TTS, when a key is configured. --------
+ *
+ * The browser's speechSynthesis is a formant/compact engine on most phones and
+ * no amount of voice-picking makes it human. This swaps ONLY where the audio
+ * comes from: every line still flows through the same queue, staleness gates,
+ * dedupe and generation guards above — a line that reaches the mouth is
+ * fetched from /api/desk/tts (Azure neural MP3, server- and client-cached,
+ * since the callout repeats itself constantly) and played through ONE reusable
+ * <audio> element.
+ *
+ * One element, unlocked once, on purpose: play() must be allowed by the
+ * autoplay policy, and the permission attaches to the ELEMENT once it has
+ * played from a user gesture. cloudVoicePrime() runs inside the toggle's
+ * click, plays a silent WAV, and every later play() on that same element —
+ * which happens asynchronously after a fetch, far outside any gesture —
+ * inherits the unlock.
+ *
+ * Failure is a per-line fallback to the browser voice, never silence: the
+ * fetch erroring, Azure refusing, or play() rejecting hands the SAME line to
+ * a minimal utterance with the same generation-guarded done. The desk sounds
+ * worse for one line instead of going quiet.
+ *
+ * These sit OUTSIDE _sayDrain/speak/speakStop and are reached only through
+ * typeof guards, because desk-callout-queue-test.js slices those functions
+ * alone out of this file — the harness must keep running the browser path. */
+let _cloudCfg = null;   // null = not asked yet; {configured, voice} after the probe
+let _cloudAudio = null; // the one unlocked element
+const _cloudCache = new Map(); // text -> object URL of the synthesized MP3
+const CLOUD_CACHE_MAX = 300;
+const CLOUD_SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+function cloudVoicePrime() {
+  if (typeof window === "undefined") return;
+  if (!_cloudAudio && typeof window.Audio !== "undefined") {
+    _cloudAudio = new window.Audio(CLOUD_SILENT_WAV);
+    _cloudAudio.play().catch(() => { /* unlock is best-effort; fallback voice still works */ });
+  }
+  if (_cloudCfg == null) {
+    _cloudCfg = { configured: false, probing: true };
+    fetch("/api/desk/tts").then((r) => r.json())
+      .then((d) => { _cloudCfg = { configured: !!(d && d.configured), voice: d && d.voice }; })
+      .catch(() => { _cloudCfg = null; /* ask again on the next prime */ });
+  }
+}
+function _cloudStop() {
+  if (_cloudAudio && !_cloudAudio.paused) { try { _cloudAudio.pause(); } catch { /* already stopped */ } }
+}
+// The per-line fallback. Deliberately minimal — no watchdog re-arm loop, no
+// blocked-state bookkeeping — because it exists for the seconds where the
+// cloud hiccups, and done() is generation-guarded so its belt-and-braces
+// timeout can never double-drain.
+function _cloudFallbackUtter(text, done) {
+  try {
+    const s = window.speechSynthesis;
+    if (!s) { done(); return; }
+    const u = new window.SpeechSynthesisUtterance(text);
+    if (_voice) { u.voice = _voice; u.lang = _voice.lang || "en-US"; }
+    u.rate = voiceRate(_voice); u.pitch = 1; u.volume = 1;
+    u.onend = () => done();
+    u.onerror = () => done();
+    setTimeout(done, 1500 + text.length * 90);
+    s.speak(u);
+    if (s.paused) s.resume();
+  } catch { done(); }
+}
+function _cloudSpeak(text, done) {
+  if (!_cloudCfg || !_cloudCfg.configured || !_cloudAudio) return false;
+  // Watchdog on the whole round trip: a fetch that hangs or an MP3 whose
+  // ended event never fires must not hold the latch. done() is
+  // generation-guarded, so firing late is harmless.
+  const guard = setTimeout(done, 4000 + text.length * 90);
+  (async () => {
+    try {
+      let url = _cloudCache.get(text);
+      if (!url) {
+        const r = await fetch("/api/desk/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+        if (!r.ok) throw new Error("tts " + r.status);
+        url = URL.createObjectURL(await r.blob());
+        _cloudCache.set(text, url);
+        if (_cloudCache.size > CLOUD_CACHE_MAX) {
+          const k = _cloudCache.keys().next().value;
+          try { URL.revokeObjectURL(_cloudCache.get(k)); } catch { /* already gone */ }
+          _cloudCache.delete(k);
+        }
+      }
+      const a = _cloudAudio;
+      a.onended = () => { clearTimeout(guard); done(); };
+      a.onerror = () => { clearTimeout(guard); done(); };
+      a.src = url;
+      await a.play();
+      // A line that genuinely reached the speakers clears any standing
+      // complaint, same as the utterance path.
+      _setBlocked(null);
+    } catch {
+      clearTimeout(guard);
+      _cloudFallbackUtter(text, done);
+    }
+  })();
+  return true;
 }
 
 /* THE CALLOUT IS A POLL, AND CHROME STOPS POLLS IN HIDDEN TABS.
@@ -10956,7 +11067,7 @@ function FirstInning() {
    * click gesture: speech and the keepalive AudioContext both need it. */
   function watchVoice(pk) {
     if (callout && focus === pk) { sayKeepAlive(false); speakStop(); setCallout(false); setFocus(null); return; }
-    if (!callout) { sayKeepAlive(true); speak("Digital Demons N-R-F-I. This is live coverage, on the air."); setCallout(true); }
+    if (!callout) { cloudVoicePrime(); sayKeepAlive(true); speak("Digital Demons N-R-F-I. This is live coverage, on the air."); setCallout(true); }
     setFocus(pk);
   }
   const spoken = useRef(new Map()); // gamePk -> { n: plays announced, opened, settled }
@@ -12335,7 +12446,11 @@ function FirstInning() {
               // option and is worse: it is per-voice guesswork and it looks
               // like a typo to the next reader. Keep a copula in front of the
               // word if this line is ever reworded.
-              if (next) { sayKeepAlive(true); speak("Digital Demons N-R-F-I. This is live coverage, on the air."); }
+              // cloudVoicePrime must run inside this click: it unlocks the
+              // audio element autoplay rides on and probes whether an Azure
+              // key is configured — with one, the broadcast speaks in the
+              // neural voice from the first line.
+              if (next) { cloudVoicePrime(); sayKeepAlive(true); speak("Digital Demons N-R-F-I. This is live coverage, on the air."); }
               else { sayKeepAlive(false); speakStop(); }
               setCallout(next);
             }}
