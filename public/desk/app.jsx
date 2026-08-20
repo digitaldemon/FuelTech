@@ -5823,7 +5823,7 @@ async function fetchFirstInning(gamePk) {
  * Deliberately not a live-updating <canvas> or an animation: it re-renders on
  * state CHANGE only (see the publisher in the poll), which during a first
  * inning is roughly once per pitch, not once per 1.2s tick. */
-function CalloutDiamond({ label, half, st }) {
+function CalloutDiamond({ label, half, st, size = 54 }) {
   // rotate(45) on a square gives the base; drawing four rotated rects is
   // cheaper to read than four hand-computed diamond paths.
   const base = (cx, cy, on) => (
@@ -5843,7 +5843,7 @@ function CalloutDiamond({ label, half, st }) {
       style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 10px 6px 6px",
         background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
         borderRadius: 10 }}>
-      <svg viewBox="0 0 100 100" width={54} height={54} style={{ flex: "0 0 auto" }}>
+      <svg viewBox="0 0 100 100" width={size} height={size} style={{ flex: "0 0 auto" }}>
         <polygon points="50,84 79,55 50,26 21,55" fill="rgba(116,203,148,0.06)"
           stroke="rgba(255,255,255,0.13)" strokeWidth={2} />
         {base(79, 55, st.on1)}
@@ -5953,6 +5953,178 @@ function calloutHeld(openPositions) {
 // The side actually held, so a game can be followed for the money on it and
 // called against that side rather than against the model's read.
 function calloutHeldSide(r, held) { const h = matchRFI(r, held); return h ? h.call : null; }
+
+/* ---- The watch screen ----------------------------------------------------
+ * A per-game pitch-by-pitch view for a wagered game: the diamond, the count,
+ * and every pitch and play RENDERED as a transcript rather than only spoken.
+ * Rides the exact machinery the audio callout proved out — fetchFirstInning's
+ * field-projected feed, playCallout/pitchCallout wording, the 1.2s cadence —
+ * so the screen and the voice can never tell different stories.
+ *
+ * The transcript is REBUILT from the feed on every accepted poll instead of
+ * accumulated: statsapi re-delivers the whole 1st inning each time, so
+ * rebuilding is stateless, survives review rewinds (a challenged play just
+ * disappears and comes back re-worded), and needs no seen-sets. A key
+ * comparison gates the setState so the screen re-renders about once per pitch,
+ * not once per 1.2s tick.
+ *
+ * Unlike the voice — which drops anything older than 45s because reading it
+ * would put the call behind the park — the screen shows the WHOLE inning:
+ * opening it mid-inning should land on the story so far, not a blank page.
+ *
+ * Cadence: 1.2s while the 1st is live (the voice's own measured floor — see
+ * the CALLOUT_POLL_MS note: the feed itself publishes a pitch ~21s after it
+ * lands and no polling rate recovers that), 15s before first pitch, stopped
+ * once play moves past the 1st — the wager is settled and the verdict panel
+ * is the only thing left to show. */
+function NrfiWatch({ gamePk, away, home, awayAbbr, homeAbbr, side, held, pos, startUtc, voiceOn, onVoice, onClose }) {
+  const now = useNow(1000);
+  const [live, setLive] = useState(null);
+  const [lines, setLines] = useState([]);
+  const lastKey = useRef("");
+  const liveRef = useRef(null);
+  useEffect(() => {
+    let stop = false, timer = null, inFlight = false;
+    async function tick() {
+      if (stop) return;
+      if (!inFlight) {
+        inFlight = true;
+        let f = null;
+        try { f = await fetchFirstInning(gamePk); } catch { /* next tick retries */ }
+        inFlight = false;
+        if (stop) return;
+        if (f) {
+          liveRef.current = f;
+          const evs = [];
+          for (const p of f.pitches) evs.push({ id: "p" + p.id, ts: p.ts, kind: "pitch", text: p.text });
+          for (let i = 0; i < f.plays.length; i++) {
+            const text = playCallout(f.plays[i]);
+            if (!text) continue;
+            const t = Date.parse((f.plays[i].about && f.plays[i].about.endTime) || "");
+            evs.push({ id: "y" + i, ts: isFinite(t) ? t : NaN, kind: "play", text, runs: playRuns(f.plays[i], f.plays[i - 1]) });
+          }
+          // NaN timestamps sort as 0 and would jump to the top of a newest-first
+          // list; pin them to the neighbour they arrived with instead.
+          for (let i = 1; i < evs.length; i++) if (!isFinite(evs[i].ts)) evs[i].ts = evs[i - 1].ts;
+          evs.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+          const key = evs.map((e) => e.id).join(",") + "|" + (f.state
+            ? [f.state.balls, f.state.strikes, f.state.outs, f.state.on1, f.state.on2, f.state.on3, f.state.batter].join("|") : "")
+            + "|" + f.inning + "|" + f.half + "|" + f.past1;
+          if (key !== lastKey.current) { lastKey.current = key; setLive(f); setLines(evs.reverse()); }
+        }
+      }
+      const cur = liveRef.current;
+      if (cur && cur.past1) return; // settled — nothing left to poll for
+      timer = setTimeout(tick, cur && cur.inning === 1 ? 1200 : 15000);
+    }
+    tick();
+    return () => { stop = true; if (timer) clearTimeout(timer); };
+  }, [gamePk]);
+
+  // Score inside the 1st: the plays carry the cumulative game score, and in
+  // the 1st inning cumulative IS the inning. Preview games have no plays.
+  const lastPlay = live && live.plays.length ? live.plays[live.plays.length - 1] : null;
+  const awayRuns = lastPlay ? (lastPlay.result && lastPlay.result.awayScore) || 0 : 0;
+  const homeRuns = lastPlay ? (lastPlay.result && lastPlay.result.homeScore) || 0 : 0;
+  const totalRuns = awayRuns + homeRuns;
+  const settled = live && (live.past1 || (totalRuns > 0));
+  const yrfi = totalRuns > 0;
+  const won = settled ? (side === "YRFI") === yrfi : null;
+  const pre = live && live.inning === 0;
+  const ago = (ts) => {
+    if (!isFinite(ts)) return "";
+    const s = Math.max(0, Math.floor((now - ts) / 1000));
+    return s < 60 ? s + "s" : Math.floor(s / 60) + "m" + String(s % 60).padStart(2, "0") + "s";
+  };
+  const title = (awayAbbr || away) + " @ " + (homeAbbr || home);
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.72)",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(560px, 100%)", maxHeight: "92vh",
+        display: "flex", flexDirection: "column", background: "var(--bg, #0b0f0d)", borderRadius: 14,
+        border: "1px solid rgba(80,160,80,0.35)", boxShadow: "0 18px 60px rgba(0,0,0,0.6)", overflow: "hidden" }}>
+        {/* Header: matchup, the wager, the honest latency, the voice, close. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexWrap: "wrap" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 800, fontSize: 16 }}>{title}
+              <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+                background: side === "NRFI" ? "rgba(80,160,80,0.15)" : "rgba(220,60,60,0.15)",
+                color: side === "NRFI" ? "var(--moss)" : "var(--rose)" }}>
+                {held ? "YOU ARE ON " + side : "DESK IS ON " + side}
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 2 }}>
+              {pos && pos.contracts > 0 ? pos.contracts + " contracts · $" + (pos.totalCost || 0).toFixed(2) + " at risk" + (pos.estimatedPayout > 0 ? " · +$" + pos.estimatedPayout.toFixed(2) + " if it hits" : "") : "First-inning watch"}
+            </div>
+          </div>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            <span title={"The feed's lag, not the desk's: statsapi does not publish a pitch when it lands — measured 14 to 26 seconds after the fact, median 25, and no polling rate recovers it. Everything here is as live as the data gets."}
+              style={{ cursor: "help", fontSize: 10, color: "var(--amber)", border: "1px solid rgba(255,170,60,0.4)", borderRadius: 4, padding: "2px 6px", whiteSpace: "nowrap" }}>≈25s behind the park</span>
+            {onVoice && (
+              <button onClick={onVoice} title={voiceOn ? "Voice is calling this game — tap to stop." : "Have the desk call this game out loud, pitch by pitch."}
+                style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 6, cursor: "pointer",
+                  background: voiceOn ? "rgba(80,160,80,0.15)" : "transparent",
+                  color: voiceOn ? "var(--moss)" : "var(--dim)", border: "1px solid " + (voiceOn ? "var(--moss)" : "rgba(120,130,150,0.4)") }}>
+                {voiceOn ? "🔊 voice on" : "🔈 voice"}
+              </button>
+            )}
+            <button onClick={onClose} style={{ fontSize: 16, fontWeight: 700, background: "transparent", border: "none", color: "var(--dim)", cursor: "pointer", padding: "2px 6px" }}>✕</button>
+          </div>
+        </div>
+        {/* State strip: verdict once settled, countdown before first pitch,
+            the live diamond in between. */}
+        <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+          {settled ? (
+            <div style={{ padding: "10px 12px", borderRadius: 10, fontWeight: 800, fontSize: 14,
+              background: won ? "rgba(80,160,80,0.12)" : "rgba(220,60,60,0.10)",
+              color: won ? "var(--moss)" : "var(--rose)",
+              border: "1px solid " + (won ? "rgba(80,160,80,0.4)" : "rgba(220,60,60,0.4)") }}>
+              {yrfi ? totalRuns + " run" + (totalRuns === 1 ? "" : "s") + " in the 1st — YRFI." : "First inning clean — NRFI."}
+              {" "}{held ? (won ? "Your ticket wins" + (pos && pos.estimatedPayout > 0 ? " +$" + pos.estimatedPayout.toFixed(2) : "") + "." : "Your ticket is dead.") : (won ? "The desk had it." : "The desk was wrong.")}
+              {!live.past1 && <span style={{ fontWeight: 400, fontSize: 11, color: "var(--dim)", marginLeft: 8 }}>inning still in progress</span>}
+            </div>
+          ) : pre ? (
+            <div style={{ fontSize: 13, color: "var(--dim)" }}>
+              Waiting on first pitch{startUtc ? " — " + new Date(startUtc).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + (fmtCountdown(startUtc, now) ? " · " + fmtCountdown(startUtc, now) : "") : ""}. The screen wakes up on its own.
+            </div>
+          ) : live && live.state ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <CalloutDiamond size={84} st={live.state} half={live.half === "Top" ? "Top" : live.half === "Bottom" ? "Bot" : ""} label={title} />
+              <div style={{ fontSize: 12, color: "var(--dim)" }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: "var(--fg)" }}>{(awayAbbr || away)} {awayRuns} — {homeRuns} {(homeAbbr || home)}</div>
+                <div style={{ marginTop: 2 }}>{live.half === "Top" ? "Top" : live.half === "Bottom" ? "Bottom" : "Middle"} of the 1st</div>
+                {side === "NRFI" && <div style={{ marginTop: 2, color: "var(--moss)" }}>{6 - (live.half === "Bottom" ? 3 : 0) - (live.state.outs || 0)} outs from a clean 1st</div>}
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: "var(--dim)" }}>Connecting to the feed…</div>
+          )}
+        </div>
+        {/* The transcript, newest first. Play lines carry the weight; pitch
+            lines are the texture between them; a run is the ticket resolving
+            and reads like it. */}
+        <div style={{ overflowY: "auto", padding: "8px 14px 12px", flex: 1, minHeight: 120 }}>
+          {lines.length === 0 && (
+            <div style={{ fontSize: 12, color: "var(--dim)", padding: "10px 0" }}>
+              {pre ? "Pitch-by-pitch starts here the moment the feed publishes the first pitch." : "No plays published yet."}
+            </div>
+          )}
+          {lines.map((l) => (
+            <div key={l.id} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "5px 0",
+              borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+              <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "'JetBrains Mono',monospace", flex: "0 0 52px", textAlign: "right" }}>{ago(l.ts)}</span>
+              <span style={{ fontSize: l.kind === "play" ? 13 : 12, lineHeight: 1.45, minWidth: 0,
+                fontWeight: l.kind === "play" ? 700 : 400,
+                color: l.runs > 0 ? "var(--rose)" : l.kind === "play" ? "var(--fg)" : "var(--dim)" }}>
+                {l.text}{l.runs > 0 ? " — " + (l.runs === 1 ? "a run scores." : l.runs + " runs score.") : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 // The verdict alone was the wrong gate: the desk PASSes whenever the market has a
 // game priced right, which says nothing about whether there is money on it.
 function calloutEligible(r, held) {
@@ -10659,6 +10831,17 @@ function FirstInning() {
    * ticket resolving and it is two seconds of audio. */
   const [focus, setFocus] = useState(null);
   const focusRef = useRef(null);
+  /* Which wagered game the watch screen is open on (null = closed). The modal
+   * renders from the component root so it works from either sub-tab. */
+  const [watchPk, setWatchPk] = useState(null);
+  /* The watch screen's voice button drives the SAME callout the board toggle
+   * does — one broadcast, focused on the watched game. Must run inside the
+   * click gesture: speech and the keepalive AudioContext both need it. */
+  function watchVoice(pk) {
+    if (callout && focus === pk) { sayKeepAlive(false); speakStop(); setCallout(false); setFocus(null); return; }
+    if (!callout) { sayKeepAlive(true); speak("Digital Demons N-R-F-I. This is live coverage, on the air."); setCallout(true); }
+    setFocus(pk);
+  }
   const spoken = useRef(new Map()); // gamePk -> { n: plays announced, opened, settled }
   /* gamePk -> live count/base state for the diamond. THE ONLY PIECE OF THE POLL
    * THAT IS ALLOWED TO BE REACT STATE, and it is gated hard.
@@ -12035,6 +12218,24 @@ function FirstInning() {
             ))}
           </span>
         )}
+        {/* Watch buttons for every game with money on it — the pitch-by-pitch
+            screen, one tap from the board, live or not-yet-started alike. */}
+        {(() => {
+          const w = enriched.filter((x) => x.gamePk && !x.final && calloutHeldSide(x, heldSides));
+          if (!w.length) return null;
+          return (
+            <span style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, color: "var(--dim)" }}>Watch:</span>
+              {w.map((x) => (
+                <button key={x.gamePk} className="btn btn-ghost btn-sm" onClick={() => setWatchPk(x.gamePk)}
+                  title="Open the live watch screen — pitch by pitch, runners on, every play called out as fast as the feed publishes it."
+                  style={{ fontSize: 11, padding: "2px 7px", color: "var(--moss)", borderColor: "rgba(80,160,80,0.4)" }}>
+                  ▶ {(x.awayAbbr || x.away) + "@" + (x.homeAbbr || x.home)}
+                </button>
+              ))}
+            </span>
+          );
+        })()}
         {importMsg && <span style={{ fontSize: 12, color: importMsg.ok ? "var(--moss)" : "var(--rose)" }}>{importMsg.text}</span>}
       </div>
       {/* ── Live diamonds ──
@@ -12056,9 +12257,12 @@ function FirstInning() {
         return (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
             {shown.map((r) => (
-              <CalloutDiamond key={r.gamePk} st={liveState[r.gamePk]}
-                half={liveState[r.gamePk].half}
-                label={(r.awayAbbr || r.away) + " @ " + (r.homeAbbr || r.home)} />
+              <div key={r.gamePk} onClick={() => setWatchPk(r.gamePk)} style={{ cursor: "pointer" }}
+                title="Tap to open the full watch screen — pitch by pitch with every play written out.">
+                <CalloutDiamond st={liveState[r.gamePk]}
+                  half={liveState[r.gamePk].half}
+                  label={(r.awayAbbr || r.away) + " @ " + (r.homeAbbr || r.home)} />
+              </div>
             ))}
           </div>
         );
@@ -12858,6 +13062,21 @@ function FirstInning() {
                           <div style={{ fontWeight: 700, fontSize: 13 }}>{p.game}</div>
                           <div style={{ fontSize: 10, color: "var(--dim)", fontFamily: "monospace", marginTop: 1 }}>{p.ticker}</div>
                         </div>
+                        {(() => {
+                          // Ticker suffix is away+home; only today's board rows
+                          // carry a gamePk, so tomorrow's tickets offer nothing.
+                          const m = String(p.ticker || "").match(/([A-Z]{4,6})$/);
+                          const rw = m ? enriched.find((x) => (x.awayAbbr || "") + (x.homeAbbr || "") === m[1]) : null;
+                          if (!rw || !rw.gamePk || rw.final) return null;
+                          return (
+                            <button onClick={() => setWatchPk(rw.gamePk)}
+                              title="Watch this game live — pitch by pitch, runners-on diamond, every pitch and play called out as fast as the feed publishes it (≈25s behind the park; that lag is MLB's feed, not the desk)."
+                              style={{ fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 6, cursor: "pointer",
+                                background: "rgba(80,160,80,0.12)", color: "var(--moss)", border: "1px solid rgba(80,160,80,0.4)" }}>
+                              ▶ WATCH
+                            </button>
+                          );
+                        })()}
                         <span title={p.call === "NRFI" ? "NO contracts — wins if 1st inning scoreless." : "YES contracts — wins if a run scores."} style={{ cursor: "help", padding: "2px 9px", borderRadius: 20, fontSize: 11, fontWeight: 800, background: p.call === "NRFI" ? "rgba(80,160,80,0.15)" : "rgba(220,60,60,0.15)", color: p.call === "NRFI" ? "var(--moss)" : "var(--rose)", border: "1px solid " + (p.call === "NRFI" ? "rgba(80,160,80,0.4)" : "rgba(220,60,60,0.4)") }}>{p.call}</span>
                         {p.contracts > 0 && (
                           <div title="Contracts held." style={{ cursor: "help", textAlign: "center" }}>
@@ -13083,6 +13302,24 @@ function FirstInning() {
         </div>
       )}
       </div>
+      {/* Watch screen — rendered from the root so it opens over either
+          sub-tab. The position is matched by the ticker's team-pair suffix;
+          a game not on today's board (tomorrow's ticket) has no gamePk to
+          watch and simply doesn't offer the button. */}
+      {watchPk && (() => {
+        const r = enriched.find((x) => x.gamePk === watchPk);
+        if (!r) return null;
+        const mySide = calloutHeldSide(r, heldSides);
+        const pair = (r.awayAbbr || "") + (r.homeAbbr || "");
+        const pos = (openPositions && !openPositions.error ? openPositions.positions : [])
+          .find((p) => String(p.ticker || "").endsWith(pair)) || null;
+        return (
+          <NrfiWatch gamePk={r.gamePk} away={r.away} home={r.home} awayAbbr={r.awayAbbr} homeAbbr={r.homeAbbr}
+            side={mySide || r.call} held={!!mySide} pos={pos} startUtc={r.startUtc}
+            voiceOn={callout && focus === r.gamePk} onVoice={() => watchVoice(r.gamePk)}
+            onClose={() => setWatchPk(null)} />
+        );
+      })()}
     </div>
   );
 }
