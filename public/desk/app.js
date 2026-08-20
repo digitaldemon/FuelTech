@@ -3821,9 +3821,11 @@ for(const{r,ret}of candidates){// A bet that loses money after fees is never wor
 // size — caught before it can consume budget or be mislabeled as
 // a cap skip.
 if(ret<=0){skippedRows.push({r,reason:"no edge left after Kalshi fees"});continue;}// betCapPct is the user's own explicit per-bet ceiling — the only
-// hard cap on top of the risk level's Kelly fraction. No hidden
-// second cap silently overriding the number the user typed in.
-const idealFrac=Math.min(r.kelly*riskMult,betCapFrac);if(idealFrac<=0){skippedRows.push({r,reason:"no sizeable edge at current risk level"});continue;}const p=sideProb(r);const priceCents=contractPriceCents(r);const priceDollars=priceCents/100;if(budgetDollars==null){// No bankroll entered — still rank and cut in fractions, so the
+// hard cap on top of the risk level's Kelly fraction. confMult is
+// the same thin-data shrink the bet cards apply (down to ×0.30 on
+// limited data); without it here the manager quoted a BIGGER stake
+// than the card for exactly the games the model knows least about.
+const confMult=r.confidence!=null?Math.max(0.30,r.confidence):1;const idealFrac=Math.min(r.kelly*riskMult*confMult,betCapFrac);if(idealFrac<=0){skippedRows.push({r,reason:"no sizeable edge at current risk level"});continue;}const p=sideProb(r);const priceCents=contractPriceCents(r);const priceDollars=priceCents/100;if(budgetDollars==null){// No bankroll entered — still rank and cut in fractions, so the
 // tab shows which games make the day, just without dollars.
 if(usedFrac+idealFrac>dayCapFrac+1e-9){skippedRows.push({r,reason:"day cap reached"});continue;}usedFrac+=idealFrac;betRows.push({r,frac:idealFrac,priceCents,priceDollars,contracts:null,actualCost:null,fee:null,evDollars:null,p});continue;}const idealDollars=idealFrac*currentBankroll;// usedDollars accrues ACTUAL cost (post whole-contract rounding,
 // fee included), so the budget check is exact, not an estimate.

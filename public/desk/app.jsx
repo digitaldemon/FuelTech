@@ -12078,9 +12078,12 @@ function FirstInning() {
           // a cap skip.
           if (ret <= 0) { skippedRows.push({ r, reason: "no edge left after Kalshi fees" }); continue; }
           // betCapPct is the user's own explicit per-bet ceiling — the only
-          // hard cap on top of the risk level's Kelly fraction. No hidden
-          // second cap silently overriding the number the user typed in.
-          const idealFrac = Math.min(r.kelly * riskMult, betCapFrac);
+          // hard cap on top of the risk level's Kelly fraction. confMult is
+          // the same thin-data shrink the bet cards apply (down to ×0.30 on
+          // limited data); without it here the manager quoted a BIGGER stake
+          // than the card for exactly the games the model knows least about.
+          const confMult = r.confidence != null ? Math.max(0.30, r.confidence) : 1;
+          const idealFrac = Math.min(r.kelly * riskMult * confMult, betCapFrac);
           if (idealFrac <= 0) { skippedRows.push({ r, reason: "no sizeable edge at current risk level" }); continue; }
           const p = sideProb(r);
           const priceCents = contractPriceCents(r);
