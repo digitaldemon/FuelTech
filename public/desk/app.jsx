@@ -2232,6 +2232,31 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
+  /* Keep the screen awake while the desk is on it. A phone that dozes off
+   * mid-inning takes the watch screen, the diamonds, and the polling loops
+   * down with it — walking away from a live board should not end the
+   * broadcast. The browser revokes the lock every time the tab leaves the
+   * foreground (that is the API's rule, not a failure), so it is re-acquired
+   * on every return to visibility. No user gesture is needed for a screen
+   * lock, failures stay silent — an unsupported browser simply sleeps as it
+   * always did — and unmount releases so the desk never pins a screen it is
+   * no longer on. */
+  useEffect(() => {
+    let lock = null, dead = false;
+    const grab = async () => {
+      if (dead || document.hidden || !(navigator.wakeLock && navigator.wakeLock.request)) return;
+      try { lock = await navigator.wakeLock.request("screen"); } catch { /* denied or low battery — the OS wins */ }
+    };
+    grab();
+    const onVis = () => { if (!document.hidden) grab(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      dead = true;
+      document.removeEventListener("visibilitychange", onVis);
+      if (lock) { try { lock.release(); } catch { /* already released */ } }
+    };
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
@@ -5724,7 +5749,15 @@ const CALLOUT_FIELDS = "gameData,status,abstractGameState,liveData,linescore,cur
    * not laziness: the count DURING an at-bat exists nowhere in allPlays until
    * the at-bat completes, so a diamond built from the play list would sit on
    * 0-0 through every pitch and then jump. The linescore is the live edge. */
-  "offense,first,second,third,outs";
+  "offense,first,second,third,outs," +
+  /* The instant-settle signals: linescore.innings[0].{away,home}.runs is where
+   * a 1st-inning run FIRST appears — before the scoring play's description
+   * completes — and inningState End with currentInning 1 is where the third
+   * out of the bottom first shows. "away"/"home"/"runs" as leaf names pull
+   * nothing else: gameData.teams and linescore.teams are already pruned
+   * because "teams" is not in this list. Measured delta on a completed game:
+   * 426 bytes for the whole innings array. */
+  "innings,num,away,home,runs";
 /* A poll with no deadline is not a poll, it is a way to stop polling.
  *
  * fetch() has no default timeout. A statsapi request that never answers — a
@@ -5794,6 +5827,17 @@ async function fetchFirstInning(gamePk) {
     // The inning is over once play has moved past it — not when outs hit 3,
     // which is briefly true mid-changeover in the feed.
     past1: (ls.currentInning || 0) > 1 || abst.toLowerCase() === "final",
+    /* Inning-1 runs straight off the linescore — the live edge, and the
+     * earliest place a run exists anywhere in the feed. Null until the feed
+     * has produced the innings array (a Preview shell has none), so a missing
+     * value can never read as a scoreless first. */
+    inning1Runs: (() => {
+      const i = ls.innings && ls.innings[0];
+      if (!i) return null;
+      const a = i.away && typeof i.away.runs === "number" ? i.away.runs : null;
+      const h = i.home && typeof i.home.runs === "number" ? i.home.runs : null;
+      return a == null && h == null ? null : (a || 0) + (h || 0);
+    })(),
     /* Count, outs and base state for the diamond. Null before first pitch for
      * the same reason `inning` is zeroed there: MLB serves a linescore shell on
      * a Preview game, and 0-0 with the bases empty is indistinguishable from a
@@ -6061,8 +6105,16 @@ function NrfiWatch({ gamePk, away, home, awayAbbr, homeAbbr, side, held, pos, st
   const lastPlay = live && live.plays.length ? live.plays[live.plays.length - 1] : null;
   const awayRuns = lastPlay ? (lastPlay.result && lastPlay.result.awayScore) || 0 : 0;
   const homeRuns = lastPlay ? (lastPlay.result && lastPlay.result.homeScore) || 0 : 0;
-  const totalRuns = awayRuns + homeRuns;
-  const settled = live && (live.past1 || (totalRuns > 0));
+  /* The linescore's inning-1 total outranks the play-derived one: a run posts
+   * there before the scoring play's description completes, so the verdict
+   * panel flips at the same instant the voice calls it. */
+  const totalRuns = live && live.inning1Runs != null ? live.inning1Runs : awayRuns + homeRuns;
+  // Third out of the bottom, straight off the linescore — decided the moment
+  // outs hit 3 in the Bottom (or the state flips to End of the 1st), not when
+  // the feed gets around to rolling currentInning to 2.
+  const cleanDone = live && live.inning === 1 && totalRuns === 0 && live.state &&
+    ((live.half === "Bottom" && live.state.outs >= 3) || live.half === "End");
+  const settled = live && (live.past1 || totalRuns > 0 || cleanDone);
   const yrfi = totalRuns > 0;
   const won = settled ? (side === "YRFI") === yrfi : null;
   const pre = live && live.inning === 0;
@@ -6119,7 +6171,7 @@ function NrfiWatch({ gamePk, away, home, awayAbbr, homeAbbr, side, held, pos, st
               border: "1px solid " + (won ? "rgba(80,160,80,0.4)" : "rgba(220,60,60,0.4)") }}>
               {yrfi ? totalRuns + " run" + (totalRuns === 1 ? "" : "s") + " in the 1st — YRFI." : "First inning clean — NRFI."}
               {" "}{held ? (won ? "Your ticket wins" + (pos && pos.estimatedPayout > 0 ? " +$" + pos.estimatedPayout.toFixed(2) : "") + "." : "Your ticket is dead.") : (won ? "The desk had it." : "The desk was wrong.")}
-              {!live.past1 && <span style={{ fontWeight: 400, fontSize: 11, color: "var(--dim)", marginLeft: 8 }}>inning still in progress</span>}
+              {!live.past1 && !cleanDone && <span style={{ fontWeight: 400, fontSize: 11, color: "var(--dim)", marginLeft: 8 }}>inning still in progress</span>}
             </div>
           ) : pre ? (
             <div style={{ fontSize: 13, color: "var(--dim)" }}>
@@ -11022,6 +11074,31 @@ function FirstInning() {
       // gets the matchup name in front of it so it cannot be mistaken for the
       // game actually being listened to.
       const tag = loud ? "" : named + ". ";
+      /* Instant settle, off the linescore rather than the play list. The
+       * linescore is the live edge: a run posts there BEFORE the scoring
+       * play's description completes, and the third out of the bottom posts
+       * there (outs 3 in the Bottom, then inningState End) before the feed
+       * rolls currentInning to 2 — which is what the past1 settle below waits
+       * for. These are the two earliest decidable moments the feed offers,
+       * and the verdict is two seconds of audio that outranks everything
+       * queued. The completed play still gets read afterwards as a normal
+       * line — detail after verdict, the way a booth calls a walk-off. The
+       * past1 settle stays as the catch-all for a changeover that flips
+       * faster than a poll. */
+      if (!st.settled && live.inning1Runs != null && live.inning1Runs > 0) {
+        speak(tag + (live.inning1Runs === 1 ? "A run is in" : live.inning1Runs + " runs are in") +
+          ". That is Y-R-F-I — " + (side === "YRFI"
+            ? (mine ? "you are a winner" : "the desk had it")
+            : (mine ? "that ticket is dead" : "the desk was wrong")) + ".", true);
+        st.settled = true;
+      } else if (!st.settled && live.inning === 1 && live.inning1Runs === 0 && live.state &&
+        ((live.half === "Bottom" && live.state.outs >= 3) || live.half === "End")) {
+        speak(tag + "Third out. First inning is clean in " + r.home + ". N-R-F-I — " +
+          (side === "NRFI"
+            ? (mine ? "you are a winner" : "that is a winner")
+            : (mine ? "that ticket is dead" : "the desk was wrong")) + ".", true);
+        st.settled = true;
+      }
       for (let i = st.n; i < live.plays.length; i++) {
         const line = playCallout(live.plays[i]);
         const runs = playRuns(live.plays[i], live.plays[i - 1]);
@@ -11031,7 +11108,10 @@ function FirstInning() {
             : (mine ? "that ticket is dead" : "the desk was wrong")) + ".";
         // A settle is never stale — it is the ticket resolving, and it stays
         // worth hearing however late it arrives. Running commentary is not.
-        if (runs > 0) { speak(tag + (loud && line ? line + verdict : verdict.slice(2)), true); st.settled = true; }
+        // Guarded on st.settled now that the linescore can settle first: the
+        // scoring play then reads as a normal line — the detail behind a
+        // verdict already delivered — instead of announcing the result twice.
+        if (runs > 0 && !st.settled) { speak(tag + (loud && line ? line + verdict : verdict.slice(2)), true); st.settled = true; }
         else if (loud && line) speak(line, false, Date.now() - playAgeMs(live.plays[i]));
       }
       // Math.max, for the same reason the attach above uses it: this pointer is
