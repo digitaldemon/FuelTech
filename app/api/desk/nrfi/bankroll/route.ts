@@ -4,6 +4,9 @@ type BankrollSettings = {
   startingBankroll: number | null;
   riskLevel: string;
   growthSpeed: string;
+  betCapPct: number | null;
+  dayCapPct: number | null;
+  anchorAt: number | null;
   createdAt: number;
   lastUpdated: number;
 };
@@ -25,6 +28,9 @@ export async function POST(req: Request) {
     startingBankroll: body.startingBankroll ?? existing?.startingBankroll ?? null,
     riskLevel: body.riskLevel ?? existing?.riskLevel ?? "moderate",
     growthSpeed: body.growthSpeed ?? existing?.growthSpeed ?? "steady",
+    betCapPct: body.betCapPct ?? existing?.betCapPct ?? null,
+    dayCapPct: body.dayCapPct ?? existing?.dayCapPct ?? null,
+    anchorAt: body.anchorAt ?? existing?.anchorAt ?? null,
     createdAt: existing?.createdAt ?? Date.now(),
     lastUpdated: Date.now(),
   };
