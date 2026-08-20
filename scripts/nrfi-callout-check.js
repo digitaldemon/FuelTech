@@ -54,14 +54,14 @@ const check = (ok, what, detail) => {
   const truthPitches = ((raw.liveData && raw.liveData.plays && raw.liveData.plays.allPlays) || [])
     .filter((p) => p.about && p.about.inning === 1)
     .flatMap((p) => (p.playEvents || []).filter((e) => e.isPitch));
-  const inPlay = truthPitches.filter((e) => /^[XDE]$/.test(
-    (e.details && e.details.call && e.details.call.code) || "")).length;
-  check(live0 && live0.pitches.length === truthPitches.length - inPlay,
-    "every 1st-inning pitch is picked up except the in-play ones (" +
-      (live0 ? live0.pitches.length : "?") + " called, " + truthPitches.length +
-      " thrown, " + inPlay + " put in play)",
+  // In-play pitches are now CALLED, not skipped — contact carries its outcome
+  // class (out / aboard / runs) the moment it is published, so every pitch of
+  // the inning must be in the stream.
+  check(live0 && live0.pitches.length === truthPitches.length,
+    "every 1st-inning pitch is picked up, in-play contact included (" +
+      (live0 ? live0.pitches.length : "?") + " called, " + truthPitches.length + " thrown)",
     "pitch count " + (live0 ? live0.pitches.length : "null") + " != " +
-      (truthPitches.length - inPlay) + " — the projection is dropping playEvents.");
+      truthPitches.length + " — the projection is dropping playEvents.");
   // Dedup is by playId; a repeated id means the same pitch would be spoken twice
   // on the next poll, or a real pitch would be swallowed.
   const ids = (live0 ? live0.pitches : []).map((p) => p.id);
@@ -72,12 +72,25 @@ const check = (ok, what, detail) => {
     "no pitch line contains an unfilled field",
     "a pitch line came out with undefined/NaN in it: " +
       JSON.stringify((live0 ? live0.pitches : []).find((p) => !p.text || /undefined|NaN/.test(p.text))));
-  // A ball in play is announced by the play's own description a beat later;
-  // calling it twice is worse than not calling it.
+  // Contact is called the moment it is published, with the outcome class the
+  // call code already carries — the play's exact description follows a beat
+  // later. The immediate line must state out/aboard/runs and never a count
+  // (the at-bat is over).
   check(c.pitchCallout({ isPitch: true, details: { call: { code: "X", description: "In play, out(s)" } },
-    count: { balls: 0, strikes: 2 } }) === null,
-    "a ball put in play is left to the play callout, not double-announced",
-    "pitchCallout spoke an in-play pitch.");
+    count: { balls: 0, strikes: 2 }, pitchData: { startSpeed: 94.6 } }) === "95, in play — out.",
+    "contact with an out is called immediately as an out",
+    "X came out as: " + c.pitchCallout({ isPitch: true, details: { call: { code: "X", description: "In play, out(s)" } },
+      count: { balls: 0, strikes: 2 }, pitchData: { startSpeed: 94.6 } }));
+  check(c.pitchCallout({ isPitch: true, details: { call: { code: "D", description: "In play, no out" } },
+    count: { balls: 1, strikes: 1 } }) === "in play — batter aboard, no out.",
+    "contact with the batter safe is called as aboard, no count",
+    "D came out as: " + c.pitchCallout({ isPitch: true, details: { call: { code: "D", description: "In play, no out" } },
+      count: { balls: 1, strikes: 1 } }));
+  check(c.pitchCallout({ isPitch: true, details: { call: { code: "E", description: "In play, run(s)" } },
+    count: { balls: 2, strikes: 2 } }) === "in play — runs scoring.",
+    "contact with runs scoring is called as runs scoring",
+    "E came out as: " + c.pitchCallout({ isPitch: true, details: { call: { code: "E", description: "In play, run(s)" } },
+      count: { balls: 2, strikes: 2 } }));
   check(c.pitchCallout({ isPitch: false, type: "action",
     details: { description: "Batter Timeout." } }) === null,
     "a non-pitch event (timeout, substitution) is not read as a pitch",

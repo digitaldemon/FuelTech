@@ -5566,10 +5566,24 @@ function playCallout(p) {
  * re-delivered on every poll with one more event on the end.
  */
 const COUNT_WORD = ["oh", "one", "two", "three", "four"];
-// "In play, out(s)" as a pitch call is worse than saying nothing — the play's
-// own description follows a beat later and says what actually happened. The
-// pitches worth calling are the ones that only move the count.
-const PITCH_SKIP = { X: 1, D: 1, E: 1 };
+/* Contact, called the moment it is published. A ball put in play used to be
+ * skipped outright, on the theory that the play's own description follows a
+ * beat later and says what actually happened. The beat is real — the completed
+ * play, with its scoring decision, can trail the in-play event by seconds —
+ * and for the wager those are exactly the seconds that matter. The call code
+ * already knows the outcome CLASS at contact: X is an out recorded, D is the
+ * batter aboard with no out, E is runs scoring. So contact is announced
+ * immediately in those words and the play description still lands a beat later
+ * with the exact result — which is how a broadcast does it: "ground ball, out
+ * at first", then the detail. No count on these: the at-bat is over.
+ *
+ * E is the ticket resolving, told seconds before the play line can — the
+ * pitch stream marks it hot so the speaking loop can cut the queue with it. */
+const PITCH_INPLAY = {
+  X: "in play — out",
+  D: "in play — batter aboard, no out",
+  E: "in play — runs scoring",
+};
 /* Fouls, and why they are the one pitch that needs its own wording.
  *
  * Every other call changes the count, so its line differs from the line before
@@ -5599,18 +5613,18 @@ const FOUL_WORD = ["foul", "fouled away", "fouls it off", "foul again",
 function pitchCallout(ev, foulSeq) {
   if (!ev || !ev.isPitch) return null;
   const call = (ev.details && ev.details.call) || {};
-  if (PITCH_SKIP[call.code]) return null;
+  // Velocity is the one number that makes a pitch call sound like a broadcast
+  // rather than a scoreboard. Gate it: the feed carries 0 for pitches it never
+  // tracked, and a pickoff throw is not a pitch speed.
+  const mph = ev.pitchData && ev.pitchData.startSpeed;
+  const velo = typeof mph === "number" && mph >= 60 && mph <= 110 ? Math.round(mph) + ", " : "";
+  if (PITCH_INPLAY[call.code]) return velo + PITCH_INPLAY[call.code] + ".";
   // "Swinging Strike (Blocked)" — the qualifier is a scorer's distinction, not
   // something a broadcaster says, and it is the kind of aside that makes a
   // synthesised line sound like a form being read out.
   const what = String(call.description || ev.details.description || "")
     .replace(/\s*\([^)]*\)/g, "").trim();
   if (!what) return null;
-  // Velocity is the one number that makes a pitch call sound like a broadcast
-  // rather than a scoreboard. Gate it: the feed carries 0 for pitches it never
-  // tracked, and a pickoff throw is not a pitch speed.
-  const mph = ev.pitchData && ev.pitchData.startSpeed;
-  const velo = typeof mph === "number" && mph >= 60 && mph <= 110 ? Math.round(mph) + ", " : "";
   const c = ev.count || {};
   // The count here is the count AFTER the pitch, so ball four and strike three
   // read as "four and oh" / "oh and three" — nonsense to say out loud, and the
@@ -5663,6 +5677,9 @@ function firstInningPitches(feed) {
         // from turning into an unattributable stream of numbers.
         text: first && batter ? batter + ". " + text : text,
         ts: isFinite(t) ? t : NaN,
+        // Runs scoring on contact — the one pitch line allowed to cut the
+        // speech queue, because it is the ticket resolving.
+        hot: ((ev.details || {}).call || {}).code === "E",
       });
       first = false;
     }
@@ -6000,7 +6017,7 @@ function NrfiWatch({ gamePk, away, home, awayAbbr, homeAbbr, side, held, pos, st
         if (f) {
           liveRef.current = f;
           const evs = [];
-          for (const p of f.pitches) evs.push({ id: "p" + p.id, ts: p.ts, kind: "pitch", text: p.text });
+          for (const p of f.pitches) evs.push({ id: "p" + p.id, ts: p.ts, kind: "pitch", text: p.text, hot: p.hot });
           for (let i = 0; i < f.plays.length; i++) {
             const text = playCallout(f.plays[i]);
             if (!text) continue;
@@ -6132,8 +6149,8 @@ function NrfiWatch({ gamePk, away, home, awayAbbr, homeAbbr, side, held, pos, st
               borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
               <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "'JetBrains Mono',monospace", flex: "0 0 52px", textAlign: "right" }}>{ago(l.ts)}</span>
               <span style={{ fontSize: l.kind === "play" ? 13 : 12, lineHeight: 1.45, minWidth: 0,
-                fontWeight: l.kind === "play" ? 700 : 400,
-                color: l.runs > 0 ? "var(--rose)" : l.kind === "play" ? "var(--fg)" : "var(--dim)" }}>
+                fontWeight: l.kind === "play" || l.hot ? 700 : 400,
+                color: l.runs > 0 || l.hot ? "var(--rose)" : l.kind === "play" ? "var(--fg)" : "var(--dim)" }}>
                 {l.text}{l.runs > 0 ? " — " + (l.runs === 1 ? "a run scores." : l.runs + " runs score.") : ""}
               </span>
             </div>
@@ -10989,8 +11006,10 @@ function FirstInning() {
         if (st.pitch.has(p.id)) continue;
         st.pitch.add(p.id);
         // p.ts is when the pitch was thrown; a wake-up after a throttled gap
-        // drops it at drain rather than calling it a minute late.
-        if (loud) speak(p.text, false, p.ts);
+        // drops it at drain rather than calling it a minute late. A hot line —
+        // runs scoring on contact — goes out urgent, cutting whatever count
+        // chatter is queued in front of it.
+        if (loud) speak(p.text, !!p.hot, p.ts);
       }
       // Runs are read against the play before, so a two-run double is called as
       // two — the feed only ever reports a cumulative score.
