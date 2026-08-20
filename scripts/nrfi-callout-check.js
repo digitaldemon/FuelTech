@@ -379,6 +379,21 @@ const check = (ok, what, detail) => {
   check(/Alex \(Enhanced\)/.test(c.pickVoice(vs(TIE)).name),
     "the Enhanced copy of a ranked name beats its compact copy via the tie-break",
     "picked " + c.pickVoice(vs(TIE)).name + " — the tie-break is discarding the downloaded build.");
+  // Depending on iOS version the download enumerates under its BARE name with
+  // the quality marker only in voiceURI. Both iOS realities are pinned: the
+  // bare-named download beats stock Aaron, and two same-named copies resolve
+  // to the enhanced one by URI. This exact set is the "downloaded Nathan and
+  // nothing happened" report.
+  const IOS_BARE = [{ name: "Samantha", lang: "en-US", default: true }, "Aaron",
+    { name: "Nathan", lang: "en-US", voiceURI: "com.apple.voice.enhanced.en-US.Nathan", localService: true }];
+  check(/Nathan/.test(c.pickVoice(vs(IOS_BARE)).name),
+    "a download iOS names bare (Nathan, enhanced only in voiceURI) beats stock Aaron",
+    "picked " + c.pickVoice(vs(IOS_BARE)).name + " — the bare-named download is invisible to the rank.");
+  const TIE_URI = [{ name: "Aaron", lang: "en-US", voiceURI: "com.apple.voice.compact.en-US.Aaron" },
+    { name: "Aaron", lang: "en-US", voiceURI: "com.apple.voice.enhanced.en-US.Aaron", localService: true }];
+  check(/enhanced/.test(String(c.pickVoice(vs(TIE_URI)).voiceURI)),
+    "same-named compact and enhanced copies resolve to the enhanced one by voiceURI",
+    "picked voiceURI " + c.pickVoice(vs(TIE_URI)).voiceURI + " — the URI marker is being ignored.");
   const MACOS = [{ name: "Samantha", lang: "en-US", default: true }, "Alex", "Fred", "Victoria",
     { name: "Daniel", lang: "en-GB" }];
   check(/Alex/.test(c.pickVoice(vs(MACOS)).name),

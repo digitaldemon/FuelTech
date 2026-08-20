@@ -6268,7 +6268,17 @@ const VOICE_RANK = [
   // name, so they are ranked by that full string and can match nothing else.
   // Until the download exists there is nothing here to pick and the rank falls
   // through to Aaron below — no code makes a phone sound human without it.
+  //
+  // BOTH SPELLINGS, because iOS itself uses both. Depending on version, a
+  // downloaded voice enumerates as "Nathan (Enhanced)" or as plain "Nathan"
+  // with the quality marker only in voiceURI ("com.apple.voice.enhanced...").
+  // "I downloaded Nathan and nothing happened" was the bare spelling missing
+  // from this list — the rank walked past the download and re-picked Aaron.
+  // Bare entries are safe: Evan and Nathan are download-only names, so a
+  // stock phone has nothing for them to accidentally match, and when both a
+  // compact and an enhanced copy exist the tie-break below reads voiceURI.
   "Evan (Enhanced)", "Nathan (Enhanced)", "Tom (Enhanced)", "Aaron (Enhanced)",
+  "Evan", "Nathan",
   "Aaron", "Alex", "Tom", "Fred",
   // Then the best remaining man, then the browser default this list exists to
   // avoid — David, the 1998 answering machine.
@@ -6314,6 +6324,11 @@ function pickVoice(s) {
    * and a preference that outranked the list would quietly overturn that
    * measured result on spec-sheet reasoning — exactly what the note above it
    * forbids. Rank still decides who; this only decides which copy of them. */
+  /* The quality marker lives in the NAME on some iOS versions and only in
+   * voiceURI ("com.apple.voice.enhanced.en-US.Nathan") on others — test both,
+   * everywhere quality is judged, or a download is invisible on half the
+   * phones it was made for. */
+  const isEnhanced = (v) => /enhanced|premium/i.test(String(v.name || "") + " " + String(v.voiceURI || ""));
   const better = (a, b) => {
     /* An Enhanced/Premium copy of a ranked name is the downloaded neural build
      * of the same man — "Tom" matches both "Tom" and "Tom (Enhanced)" by
@@ -6321,8 +6336,7 @@ function pickVoice(s) {
      * robotic-phone complaint. Checked before the network tie-break because
      * Apple's enhanced voices are LOCAL: the old rule preferred a network copy
      * or fell to enumeration order, either of which discards the download. */
-    const enh = (v) => /Enhanced|Premium/i.test(String(v.name || ""));
-    if (enh(a) !== enh(b)) return enh(a) ? a : b;
+    if (isEnhanced(a) !== isEnhanced(b)) return isEnhanced(a) ? a : b;
     return a.localService === b.localService ? a : a.localService === false ? a : b;
   };
   for (const want of VOICE_RANK) {
@@ -6362,7 +6376,7 @@ function pickVoice(s) {
   // header note); Edge never reaches this fallback anyway. Platforms whose
   // names carry no qualifier (Android) leave the filter empty and narrow()
   // keeps the list, so nothing is lost where the marker does not exist.
-  cand = narrow(cand, (v) => /Enhanced|Premium/i.test(String(v.name || "")));
+  cand = narrow(cand, isEnhanced);
   cand = narrow(cand, (v) => v.localService === false);
   return cand.find((v) => v.default) || cand[0] || pool[0] || null;
 }
@@ -6659,14 +6673,17 @@ function _sayDrain(s) {
 function speak(text, urgent, at) {
   const s = typeof window !== "undefined" && window.speechSynthesis;
   if (!s || !text) return;
-  if (!_voice) {
-    _voice = pickVoice(s);
-    // Ask once for a re-resolve when the engine finishes enumerating.
-    if (!_voice && !_voiceTried && s.addEventListener) {
-      _voiceTried = true;
-      s.addEventListener("voiceschanged", () => { _voice = pickVoice(s); }, { once: true });
-    }
+  /* Re-pick whenever the voice set changes, not once and not only on a failed
+   * first pick. iOS fires voiceschanged when the user installs a voice in
+   * Settings, and that download must upgrade the call WITHOUT a reload —
+   * "I downloaded Nathan and nothing happened" was this listener being
+   * once-only and gated behind the first pick failing: with stock Aaron
+   * already picked, the download landed and nothing ever asked again. */
+  if (!_voiceTried && s.addEventListener) {
+    _voiceTried = true;
+    s.addEventListener("voiceschanged", () => { _voice = pickVoice(s) || _voice; });
   }
+  if (!_voice) _voice = pickVoice(s);
   if (urgent) {
     _sayQ.length = 0;
     if (_sayGuard) { clearTimeout(_sayGuard); _sayGuard = null; }

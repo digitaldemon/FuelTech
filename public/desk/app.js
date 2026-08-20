@@ -1503,7 +1503,16 @@ const VOICE_RANK=[// Chosen by ear, on this machine, against the alternatives pl
 // name, so they are ranked by that full string and can match nothing else.
 // Until the download exists there is nothing here to pick and the rank falls
 // through to Aaron below — no code makes a phone sound human without it.
-"Evan (Enhanced)","Nathan (Enhanced)","Tom (Enhanced)","Aaron (Enhanced)","Aaron","Alex","Tom","Fred",// Then the best remaining man, then the browser default this list exists to
+//
+// BOTH SPELLINGS, because iOS itself uses both. Depending on version, a
+// downloaded voice enumerates as "Nathan (Enhanced)" or as plain "Nathan"
+// with the quality marker only in voiceURI ("com.apple.voice.enhanced...").
+// "I downloaded Nathan and nothing happened" was the bare spelling missing
+// from this list — the rank walked past the download and re-picked Aaron.
+// Bare entries are safe: Evan and Nathan are download-only names, so a
+// stock phone has nothing for them to accidentally match, and when both a
+// compact and an enhanced copy exist the tie-break below reads voiceURI.
+"Evan (Enhanced)","Nathan (Enhanced)","Tom (Enhanced)","Aaron (Enhanced)","Evan","Nathan","Aaron","Alex","Tom","Fred",// Then the best remaining man, then the browser default this list exists to
 // avoid — David, the 1998 answering machine.
 //
 // ANDROID IS NOT SOLVED BY THIS LIST AND CANNOT BE. Chrome on Android
@@ -1536,12 +1545,15 @@ const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.f
    * formant voice that won an A/B against the smoother network man on the desk,
    * and a preference that outranked the list would quietly overturn that
    * measured result on spec-sheet reasoning — exactly what the note above it
-   * forbids. Rank still decides who; this only decides which copy of them. */const better=(a,b)=>{/* An Enhanced/Premium copy of a ranked name is the downloaded neural build
+   * forbids. Rank still decides who; this only decides which copy of them. *//* The quality marker lives in the NAME on some iOS versions and only in
+   * voiceURI ("com.apple.voice.enhanced.en-US.Nathan") on others — test both,
+   * everywhere quality is judged, or a download is invisible on half the
+   * phones it was made for. */const isEnhanced=v=>/enhanced|premium/i.test(String(v.name||"")+" "+String(v.voiceURI||""));const better=(a,b)=>{/* An Enhanced/Premium copy of a ranked name is the downloaded neural build
      * of the same man — "Tom" matches both "Tom" and "Tom (Enhanced)" by
      * substring, and the quality gap between those two is the entire
      * robotic-phone complaint. Checked before the network tie-break because
      * Apple's enhanced voices are LOCAL: the old rule preferred a network copy
-     * or fell to enumeration order, either of which discards the download. */const enh=v=>/Enhanced|Premium/i.test(String(v.name||""));if(enh(a)!==enh(b))return enh(a)?a:b;return a.localService===b.localService?a:a.localService===false?a:b;};for(const want of VOICE_RANK){const hits=pool.filter(v=>String(v.name||"").includes(want));if(hits.length)return hits.reduce(better);}/* Fallback, for a platform no name in the rank reaches — in practice Android.
+     * or fell to enumeration order, either of which discards the download. */if(isEnhanced(a)!==isEnhanced(b))return isEnhanced(a)?a:b;return a.localService===b.localService?a:a.localService===false?a:b;};for(const want of VOICE_RANK){const hits=pool.filter(v=>String(v.name||"").includes(want));if(hits.length)return hits.reduce(better);}/* Fallback, for a platform no name in the rank reaches — in practice Android.
    *
    * The old line was `pool.find(v => v.default) || pool[0]`, and both halves of
    * it pick a woman on the platforms that get here: iOS defaults to Samantha,
@@ -1570,7 +1582,7 @@ const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.f
 // header note); Edge never reaches this fallback anyway. Platforms whose
 // names carry no qualifier (Android) leave the filter empty and narrow()
 // keeps the list, so nothing is lost where the marker does not exist.
-cand=narrow(cand,v=>/Enhanced|Premium/i.test(String(v.name||"")));cand=narrow(cand,v=>v.localService===false);return cand.find(v=>v.default)||cand[0]||pool[0]||null;}/* Delivery speed, and it has to depend on the voice.
+cand=narrow(cand,isEnhanced);cand=narrow(cand,v=>v.localService===false);return cand.find(v=>v.default)||cand[0]||pool[0]||null;}/* Delivery speed, and it has to depend on the voice.
  *
  * The original 1.02 was set because 1.1 clipped the ends of words — but that was
  * measured on the NEURAL voices, which read more slowly and more naturally than
@@ -1783,8 +1795,12 @@ u.onerror=e=>{const why=e&&e.error?String(e.error):"";/* "not-allowed" is the au
 // utterance then never starts. Nudging it is free when it is already running.
 if(s.paused)s.resume();}/* `at` is the event's own timestamp — when the pitch was thrown or the play
  * ended — not when this was called. Omit it for lines that are true whenever
- * they are said (the intro, a settle): those are never stale. */function speak(text,urgent,at){const s=typeof window!=="undefined"&&window.speechSynthesis;if(!s||!text)return;if(!_voice){_voice=pickVoice(s);// Ask once for a re-resolve when the engine finishes enumerating.
-if(!_voice&&!_voiceTried&&s.addEventListener){_voiceTried=true;s.addEventListener("voiceschanged",()=>{_voice=pickVoice(s);},{once:true});}}if(urgent){_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;// Revoke the outgoing utterance's events BEFORE cancelling, so the end event
+ * they are said (the intro, a settle): those are never stale. */function speak(text,urgent,at){const s=typeof window!=="undefined"&&window.speechSynthesis;if(!s||!text)return;/* Re-pick whenever the voice set changes, not once and not only on a failed
+   * first pick. iOS fires voiceschanged when the user installs a voice in
+   * Settings, and that download must upgrade the call WITHOUT a reload —
+   * "I downloaded Nathan and nothing happened" was this listener being
+   * once-only and gated behind the first pick failing: with stock Aaron
+   * already picked, the download landed and nothing ever asked again. */if(!_voiceTried&&s.addEventListener){_voiceTried=true;s.addEventListener("voiceschanged",()=>{_voice=pickVoice(s)||_voice;});}if(!_voice)_voice=pickVoice(s);if(urgent){_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;// Revoke the outgoing utterance's events BEFORE cancelling, so the end event
 // cancel is about to fire arrives as a ghost and cannot reach into the
 // settle line that is about to start.
 _sayGen++;s.cancel();// The cloud mouth has its own current line to cut. typeof-guarded for the
