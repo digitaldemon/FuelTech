@@ -9111,19 +9111,24 @@ function matchRFI(row, list) {
   return null;
 }
 
-function NrfiCalendar({ rec, bankroll, riskLevel }) {
+function NrfiCalendar({ rec, bankroll, riskLevel, betCapPct }) {
   const [viewMonth, setViewMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [calView, setCalView] = useState("calendar");
   const [expandedDay, setExpandedDay] = useState(null);
-  // Risk config for estimating bet size when contracts not logged
-  const _RC = { ghost:{mult:0.10,max:0.02}, conservative:{mult:0.25,max:0.06}, moderate:{mult:0.50,max:0.12}, standard:{mult:0.75,max:0.18}, aggressive:{mult:1.00,max:0.25}, turbo:{mult:1.50,max:0.35}, xtreme:{mult:2.00,max:0.50}, degen:{mult:3.00,max:0.65}, yolo:{mult:5.00,max:0.80} };
-  const _rc = _RC[riskLevel] || _RC.moderate;
+  // Same sizing sources as the Bankroll Manager: the shared mult table and
+  // the user's own %/bet cap — a third private copy of these numbers is how
+  // this tracker and the manager end up estimating different stakes for the
+  // same bet. Fees are netted for the same reason: the manager's compounding
+  // nets them, and two P&L figures for one bet is worse than none.
+  const _mult = NRFI_RISK_MULT[riskLevel] || NRFI_RISK_MULT.moderate;
+  const _cap = (betCapPct != null ? betCapPct : 12) / 100;
   // Estimate dollar P&L — exact when contracts logged, Kelly estimate when bankroll set, flat 5% fallback
   const estPL = (e) => {
     if (!e.result || e.mktAtPick == null) return null;
     const price = Math.min(0.99, Math.max(0.01, e.mktAtPick / 100));
     if (e.contracts > 0) {
-      return e.result === "won" ? e.contracts * (1 - price) : -e.contracts * price;
+      const cost = e.contracts * price + nrfiKalshiFee(e.contracts, price);
+      return e.result === "won" ? e.contracts - cost : -cost;
     }
     const br = (bankroll && bankroll > 0) ? bankroll : null;
     let betDollars;
@@ -9131,14 +9136,15 @@ function NrfiCalendar({ rec, bankroll, riskLevel }) {
       const p = e.prob / 100;
       const b = (1 - price) / price;
       const kelly = b > 0 ? Math.max(0, (p * b - (1 - p)) / b) : 0;
-      betDollars = br * Math.min(kelly * _rc.mult, _rc.max);
+      betDollars = br * Math.min(kelly * _mult, _cap);
     } else if (br) {
       betDollars = br * 0.05;
     } else {
       return null;
     }
-    const qty = Math.max(1, Math.round(betDollars / price));
-    return e.result === "won" ? qty * (1 - price) : -qty * price;
+    const qty = Math.max(1, Math.floor(betDollars / price));
+    const cost = qty * price + nrfiKalshiFee(qty, price);
+    return e.result === "won" ? qty - cost : -cost;
   };
   // Only show entries explicitly marked as bets
   const byDate = {};
@@ -12688,7 +12694,7 @@ function FirstInning() {
       {rec && rec.length > 0 && (
         <div className="panel" style={{ marginTop: 12 }}>
           <p className="sect" style={{ margin: "0 0 6px" }}>Daily Profit Tracker</p>
-          <NrfiCalendar rec={rec} bankroll={bankroll} riskLevel={riskLevel} />
+          <NrfiCalendar rec={rec} bankroll={currentBankroll != null ? currentBankroll : bankroll} riskLevel={riskLevel} betCapPct={betCapPct} />
         </div>
       )}
       </div>

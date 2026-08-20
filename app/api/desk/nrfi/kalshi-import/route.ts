@@ -161,17 +161,12 @@ export async function GET(req: Request) {
       if (d) { e.date = d; repaired++; }
     }
 
-    /* Repair contract counts written while *_count_fp was read raw (×100).
-     * Counts from the plain field were integers; fp-derived ones carry a
-     * fractional part, which is the tell. Only ever shrinks a fractional
-     * value, so an integer row — correct to begin with — is never touched. */
-    let rescaled = 0;
-    for (const e of existing) {
-      if (e.source !== "kalshi-import") continue;
-      const c = typeof e.contracts === "number" ? e.contracts : null;
-      if (c != null && c > 0 && c % 1 !== 0) { e.contracts = Math.round(c) / 100; rescaled++; }
-    }
-
+    /* NO in-place repair of contract counts. A "fractional means fp-scaled,
+     * divide by 100" pass ran here briefly and was NOT idempotent — fp/100 is
+     * usually still fractional, so every import run divided the same rows
+     * again (213.35 -> 2.13 -> 0.02, precision gone to rounding). The durable
+     * fix is at ingestion (fp/100 above); rows written before it are deleted
+     * and re-imported from Kalshi, the source of truth, not patched in place. */
     const existingIds = new Set(existing.map((e) => e.id));
     const toUpsert: NrfiRec[] = [];
     let skipped = 0;
@@ -241,27 +236,23 @@ export async function GET(req: Request) {
       toUpsert.push(rec);
     }
 
-    // `repaired`/`rescaled` count in-place edits to `existing`, so a run that
-    // imports nothing but fixes old rows still has to write. Testing only
-    // toUpsert.length would silently drop the backfill.
-    if (toUpsert.length || repaired || rescaled) {
+    // `repaired` counts in-place edits to `existing`, so a run that imports
+    // nothing but fixes dates still has to write. Testing only toUpsert.length
+    // would silently drop the backfill.
+    if (toUpsert.length || repaired) {
       // Upsert via the existing nrfi route logic: prepend new, keep ≤1000.
       const updated = [...toUpsert, ...existing].slice(0, 1000);
       await writeStore("nrfi_record", updated);
     }
 
-    const repairNote = (repaired
+    const repairNote = repaired
       ? " Backfilled the missing date on " + repaired + " previously imported bet" +
         (repaired === 1 ? "" : "s") + "."
-      : "") + (rescaled
-      ? " Rescaled the fixed-point contract count on " + rescaled + " previously imported bet" +
-        (rescaled === 1 ? "" : "s") + "."
-      : "");
+      : "";
     return Response.json({
       imported: toUpsert.length,
       skipped,
       repaired,
-      rescaled,
       total: nrfiRows.length,
       message: (toUpsert.length
         ? "Imported " + toUpsert.length + " NRFI bet" + (toUpsert.length === 1 ? "" : "s") + " from Kalshi."
