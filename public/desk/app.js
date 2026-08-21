@@ -1528,7 +1528,23 @@ const VOICE_RANK=[// Chosen by ear, on this machine, against the alternatives pl
  * than nothing. It never overrides VOICE_RANK — a named voice above always wins.
  * It exists for the one case the rank cannot reach: a platform whose voice names
  * carry no gender at all, where the alternative is `pool[0]` and pool[0] is
- * frequently the very voice this is meant to avoid. */const VOICE_AVOID=/\b(Samantha|Ava|Emma|Zira|Susan|Karen|Moira|Tessa|Fiona|Victoria|Allison|Nicky|Serena|Aria|Jenny|Michelle|Female)\b/i;let _voice=null,_voiceTried=false;function pickVoice(s){// getVoices() is empty until the engine enumerates, and fires voiceschanged
+ * frequently the very voice this is meant to avoid. */const VOICE_AVOID=/\b(Samantha|Ava|Emma|Zira|Susan|Karen|Moira|Tessa|Fiona|Victoria|Allison|Nicky|Serena|Aria|Jenny|Michelle|Female)\b/i;let _voice=null,_voiceTried=false;/* Rank position of a voice, lower is better — pickVoice's walk reduced to a
+ * number so a re-pick can be compared against the incumbent. The enhanced
+ * copy of a name edges its compact copy, mirroring the tie-break. */function voiceRankScore(v){const n=String(v&&v.name||"");let i=VOICE_RANK.findIndex(w=>n.includes(w));if(i===-1)i=VOICE_RANK.length;return i-(/enhanced|premium/i.test(n+" "+String(v&&v.voiceURI||""))?0.25:0);}/* May a voiceschanged re-pick REPLACE the current voice? iOS fires
+ * voiceschanged repeatedly and sometimes with a PARTIAL list — a re-pick made
+ * unconditionally on one of those swapped Nathan out for stock Aaron after
+ * the first line ("starts like Nathan then switches"). So a swap is allowed
+ * only sideways or up, NEVER down — not even when the incumbent is missing
+ * from the current enumeration, because a partial list omitting the
+ * downloaded voice is far more common than the user genuinely uninstalling
+ * one mid-broadcast. Equal rank is accepted on purpose: that is the same
+ * voice re-picked, and taking the FRESH object matters because WebKit
+ * invalidates voice objects across enumerations. */function voiceSwapOk(prev,next){if(!next)return false;if(!prev)return true;return voiceRankScore(next)<=voiceRankScore(prev);}/* The current choice, re-resolved to the engine's LIVE object at utterance
+ * time. WebKit invalidates SpeechSynthesisVoice objects across voiceschanged,
+ * and an utterance handed a stale one falls back to the system default
+ * mid-broadcast — the other half of "starts like Nathan then switches".
+ * Matching by URI+name returns the same choice as a fresh object; when the
+ * engine's list is momentarily empty, the cached object is the best there is. */function _freshVoice(s){if(!_voice)return null;const all=s&&s.getVoices?s.getVoices():[];return all.find(v=>v.voiceURI===_voice.voiceURI&&v.name===_voice.name)||_voice;}function pickVoice(s){// getVoices() is empty until the engine enumerates, and fires voiceschanged
 // when it is ready — so a null result must NOT be cached as "no voice".
 const all=s.getVoices?s.getVoices():[];if(!all.length)return null;const en=all.filter(v=>/^en/i.test(v.lang||""));const pool=en.length?en:all;/* localService is the one quality signal the API actually exposes, and on a
    * phone it is the difference between a broadcast and a sat-nav.
@@ -1761,7 +1777,10 @@ if(gen!==_sayGen||!_sayOn)return;_sayOn=false;if(_sayGuard){clearTimeout(_sayGua
    * desk-callout-queue-test.js slices THIS FUNCTION alone out of the file —
    * a bare reference to something defined below the slice would throw through
    * the whole suite, and the guard makes the harness exercise the browser
-   * path exactly as before. */if(typeof _cloudSpeak==="function"&&_cloudSpeak(text,done))return;const u=new window.SpeechSynthesisUtterance(text);if(_voice){u.voice=_voice;u.lang=_voice.lang||"en-US";}u.rate=voiceRate(_voice);u.pitch=1;u.volume=1;// A line that genuinely reached the speakers clears any standing complaint:
+   * path exactly as before. */if(typeof _cloudSpeak==="function"&&_cloudSpeak(text,done))return;const u=new window.SpeechSynthesisUtterance(text);// Resolve the choice to the engine's live object per utterance — a cached
+// object gone stale across a voiceschanged makes Safari quietly use the
+// system default instead. typeof-guarded for the queue-test slice boundary.
+const vv=typeof _freshVoice==="function"?_freshVoice(s):_voice;if(vv){u.voice=vv;u.lang=vv.lang||"en-US";}u.rate=voiceRate(vv);u.pitch=1;u.volume=1;// A line that genuinely reached the speakers clears any standing complaint:
 // whatever was blocking audio is demonstrably no longer blocking it.
 u.onend=()=>{_setBlocked(null);done();};// An utterance that errors (or that Chrome silently drops, which it does after
 // a cancel) never fires end, and without this the latch stays set and the
@@ -1800,7 +1819,9 @@ if(s.paused)s.resume();}/* `at` is the event's own timestamp — when the pitch 
    * Settings, and that download must upgrade the call WITHOUT a reload —
    * "I downloaded Nathan and nothing happened" was this listener being
    * once-only and gated behind the first pick failing: with stock Aaron
-   * already picked, the download landed and nothing ever asked again. */if(!_voiceTried&&s.addEventListener){_voiceTried=true;s.addEventListener("voiceschanged",()=>{_voice=pickVoice(s)||_voice;});}if(!_voice)_voice=pickVoice(s);if(urgent){_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;// Revoke the outgoing utterance's events BEFORE cancelling, so the end event
+   * already picked, the download landed and nothing ever asked again. */if(!_voiceTried&&s.addEventListener){_voiceTried=true;// voiceSwapOk gates the replacement: upgrades and same-voice object
+// refreshes land, a partial enumeration can never downgrade the choice.
+s.addEventListener("voiceschanged",()=>{const next=pickVoice(s);if(voiceSwapOk(_voice,next))_voice=next;});}if(!_voice)_voice=pickVoice(s);if(urgent){_sayQ.length=0;if(_sayGuard){clearTimeout(_sayGuard);_sayGuard=null;}_sayOn=false;// Revoke the outgoing utterance's events BEFORE cancelling, so the end event
 // cancel is about to fire arrives as a ghost and cannot reach into the
 // settle line that is about to start.
 _sayGen++;s.cancel();// The cloud mouth has its own current line to cut. typeof-guarded for the

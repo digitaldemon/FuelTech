@@ -6301,6 +6301,41 @@ const VOICE_RANK = [
  * frequently the very voice this is meant to avoid. */
 const VOICE_AVOID = /\b(Samantha|Ava|Emma|Zira|Susan|Karen|Moira|Tessa|Fiona|Victoria|Allison|Nicky|Serena|Aria|Jenny|Michelle|Female)\b/i;
 let _voice = null, _voiceTried = false;
+/* Rank position of a voice, lower is better — pickVoice's walk reduced to a
+ * number so a re-pick can be compared against the incumbent. The enhanced
+ * copy of a name edges its compact copy, mirroring the tie-break. */
+function voiceRankScore(v) {
+  const n = String((v && v.name) || "");
+  let i = VOICE_RANK.findIndex((w) => n.includes(w));
+  if (i === -1) i = VOICE_RANK.length;
+  return i - (/enhanced|premium/i.test(n + " " + String((v && v.voiceURI) || "")) ? 0.25 : 0);
+}
+/* May a voiceschanged re-pick REPLACE the current voice? iOS fires
+ * voiceschanged repeatedly and sometimes with a PARTIAL list — a re-pick made
+ * unconditionally on one of those swapped Nathan out for stock Aaron after
+ * the first line ("starts like Nathan then switches"). So a swap is allowed
+ * only sideways or up, NEVER down — not even when the incumbent is missing
+ * from the current enumeration, because a partial list omitting the
+ * downloaded voice is far more common than the user genuinely uninstalling
+ * one mid-broadcast. Equal rank is accepted on purpose: that is the same
+ * voice re-picked, and taking the FRESH object matters because WebKit
+ * invalidates voice objects across enumerations. */
+function voiceSwapOk(prev, next) {
+  if (!next) return false;
+  if (!prev) return true;
+  return voiceRankScore(next) <= voiceRankScore(prev);
+}
+/* The current choice, re-resolved to the engine's LIVE object at utterance
+ * time. WebKit invalidates SpeechSynthesisVoice objects across voiceschanged,
+ * and an utterance handed a stale one falls back to the system default
+ * mid-broadcast — the other half of "starts like Nathan then switches".
+ * Matching by URI+name returns the same choice as a fresh object; when the
+ * engine's list is momentarily empty, the cached object is the best there is. */
+function _freshVoice(s) {
+  if (!_voice) return null;
+  const all = s && s.getVoices ? s.getVoices() : [];
+  return all.find((v) => v.voiceURI === _voice.voiceURI && v.name === _voice.name) || _voice;
+}
 function pickVoice(s) {
   // getVoices() is empty until the engine enumerates, and fires voiceschanged
   // when it is ready — so a null result must NOT be cached as "no voice".
@@ -6608,8 +6643,12 @@ function _sayDrain(s) {
    * path exactly as before. */
   if (typeof _cloudSpeak === "function" && _cloudSpeak(text, done)) return;
   const u = new window.SpeechSynthesisUtterance(text);
-  if (_voice) { u.voice = _voice; u.lang = _voice.lang || "en-US"; }
-  u.rate = voiceRate(_voice); u.pitch = 1; u.volume = 1;
+  // Resolve the choice to the engine's live object per utterance — a cached
+  // object gone stale across a voiceschanged makes Safari quietly use the
+  // system default instead. typeof-guarded for the queue-test slice boundary.
+  const vv = typeof _freshVoice === "function" ? _freshVoice(s) : _voice;
+  if (vv) { u.voice = vv; u.lang = vv.lang || "en-US"; }
+  u.rate = voiceRate(vv); u.pitch = 1; u.volume = 1;
   // A line that genuinely reached the speakers clears any standing complaint:
   // whatever was blocking audio is demonstrably no longer blocking it.
   u.onend = () => { _setBlocked(null); done(); };
@@ -6681,7 +6720,9 @@ function speak(text, urgent, at) {
    * already picked, the download landed and nothing ever asked again. */
   if (!_voiceTried && s.addEventListener) {
     _voiceTried = true;
-    s.addEventListener("voiceschanged", () => { _voice = pickVoice(s) || _voice; });
+    // voiceSwapOk gates the replacement: upgrades and same-voice object
+    // refreshes land, a partial enumeration can never downgrade the choice.
+    s.addEventListener("voiceschanged", () => { const next = pickVoice(s); if (voiceSwapOk(_voice, next)) _voice = next; });
   }
   if (!_voice) _voice = pickVoice(s);
   if (urgent) {

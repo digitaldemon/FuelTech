@@ -394,6 +394,22 @@ const check = (ok, what, detail) => {
   check(/enhanced/.test(String(c.pickVoice(vs(TIE_URI)).voiceURI)),
     "same-named compact and enhanced copies resolve to the enhanced one by voiceURI",
     "picked voiceURI " + c.pickVoice(vs(TIE_URI)).voiceURI + " — the URI marker is being ignored.");
+  /* iOS fires voiceschanged repeatedly, sometimes with a PARTIAL list. A
+   * re-pick made on one of those swapped the downloaded man for stock Aaron
+   * after the first line — "starts like Nathan then switches". The swap gate:
+   * up or sideways only, never down, not even when the incumbent is missing
+   * from the momentary list. */
+  const NATHAN = { name: "Nathan", lang: "en-US", voiceURI: "com.apple.voice.enhanced.en-US.Nathan", localService: true };
+  const AARON = { name: "Aaron", lang: "en-US", voiceURI: "com.apple.voice.compact.en-US.Aaron", localService: true };
+  check(c.voiceSwapOk(NATHAN, AARON) === false,
+    "a partial-enumeration re-pick can never downgrade the downloaded Nathan to stock Aaron",
+    "the swap gate let Aaron replace Nathan — the mid-broadcast voice switch is back.");
+  check(c.voiceSwapOk(NATHAN, { ...NATHAN }) === true,
+    "the same voice re-picked is accepted — the fresh object replaces the stale one",
+    "an identity refresh was refused; stale objects will fall back to the system default.");
+  check(c.voiceSwapOk(null, AARON) === true && c.voiceSwapOk(AARON, NATHAN) === true,
+    "a first pick and a genuine upgrade are both accepted",
+    "the gate is refusing legitimate picks.");
   const MACOS = [{ name: "Samantha", lang: "en-US", default: true }, "Alex", "Fred", "Victoria",
     { name: "Daniel", lang: "en-GB" }];
   check(/Alex/.test(c.pickVoice(vs(MACOS)).name),
