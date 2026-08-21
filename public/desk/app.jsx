@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-15.nrfi-platt-cal";
+const BUILD = "2026-08-20.voice-debug";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -11120,6 +11120,8 @@ function FirstInning() {
   /* Which wagered game the watch screen is open on (null = closed). The modal
    * renders from the component root so it works from either sub-tab. */
   const [watchPk, setWatchPk] = useState(null);
+  // Voice diagnostic panel (the chip next to the broadcast toggle opens it).
+  const [showVoices, setShowVoices] = useState(false);
   /* The watch screen's voice button drives the SAME callout the board toggle
    * does — one broadcast, focused on the watched game. Must run inside the
    * click gesture: speech and the keepalive AudioContext both need it. */
@@ -12555,6 +12557,23 @@ function FirstInning() {
             ))}
           </span>
         )}
+        {/* Voice readout — which voice the picker is holding, live, and on tap
+            the full list the phone actually exposes to the browser. This
+            exists because "the voice switched" cannot be debugged by ear from
+            anywhere else: the chip distinguishes the picker losing the
+            download (a list problem) from the picker holding it while the
+            engine speaks something else (a WebKit apply problem). */}
+        {callout && (() => {
+          const s = typeof window !== "undefined" && window.speechSynthesis;
+          const enh = (v) => v && /enhanced|premium/i.test(String(v.name || "") + " " + String(v.voiceURI || ""));
+          return (
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowVoices((x) => !x)}
+              title="The voice the desk picked. Tap to list every voice this phone exposes to the browser — the downloaded (enhanced) ones are marked."
+              style={{ fontSize: 11, padding: "2px 7px", color: _voice ? (enh(_voice) ? "var(--moss)" : "var(--amber)") : "var(--dim)" }}>
+              {"voice: " + (_voice ? _voice.name + (enh(_voice) ? " ✓" : " (stock)") : "not picked yet")}
+            </button>
+          );
+        })()}
         {/* Watch buttons for every game with money on it — the pitch-by-pitch
             screen, one tap from the board, live or not-yet-started alike. */}
         {(() => {
@@ -12575,6 +12594,34 @@ function FirstInning() {
         })()}
         {importMsg && <span style={{ fontSize: 12, color: importMsg.ok ? "var(--moss)" : "var(--rose)" }}>{importMsg.text}</span>}
       </div>
+      {/* Voice diagnostic panel — everything the engine exposes, the pick
+          highlighted, downloads marked. Read it on the phone WHILE the voice
+          misbehaves; that reading is the diagnosis. */}
+      {showVoices && (() => {
+        const s = typeof window !== "undefined" && window.speechSynthesis;
+        const all = s && s.getVoices ? s.getVoices() : [];
+        const enh = (v) => /enhanced|premium/i.test(String(v.name || "") + " " + String(v.voiceURI || ""));
+        const en = all.filter((v) => /^en/i.test(v.lang || ""));
+        return (
+          <div style={{ margin: "4px 0 8px", padding: "8px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, fontSize: 11 }}>
+            <div style={{ color: "var(--dim)", marginBottom: 6 }}>
+              {all.length} voice{all.length === 1 ? "" : "s"} exposed ({en.length} English) · picked: <b style={{ color: "var(--fg)" }}>{_voice ? _voice.name : "none yet"}</b>
+              {_voice && <span> · <span style={{ fontFamily: "monospace" }}>{String(_voice.voiceURI || "")}</span></span>}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {en.map((v, i) => (
+                <span key={i} title={String(v.voiceURI || "") + " · " + v.lang + (v.default ? " · default" : "") + (v.localService === false ? " · network" : "")}
+                  style={{ cursor: "help", padding: "1px 7px", borderRadius: 4,
+                    border: "1px solid " + (_voice && v.name === _voice.name && v.voiceURI === _voice.voiceURI ? "var(--moss)" : "rgba(255,255,255,0.12)"),
+                    color: enh(v) ? "var(--moss)" : "var(--dim)" }}>
+                  {v.name}{enh(v) ? " ✓" : ""}{v.default ? " ·default" : ""}
+                </span>
+              ))}
+              {en.length === 0 && <span style={{ color: "var(--rose)" }}>The engine reports NO English voices right now — enumeration is empty or blocked.</span>}
+            </div>
+          </div>
+        );
+      })()}
       {/* ── Live diamonds ──
           Own row rather than trailing the controls: at five concurrent first
           innings these are 200px each and would push the refresh button off a
