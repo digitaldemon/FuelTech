@@ -176,14 +176,15 @@ export async function GET(req: Request) {
       if (res !== "yes" && res !== "no") { skipped++; continue; } // unresolved
 
       const ticker = String(s.ticker || "");
-      // *_count_fp is fixed-point (×100) — same scaling kalshi-positions
-      // already handles for position_fp. Preferring the fp field RAW stored
-      // 100× the real contract count on every import, which poisons any P&L
-      // computed from these rows (the Bankroll Manager compounds on them).
-      const ycFp = num(s.yes_count_fp);
-      const ncFp = num(s.no_count_fp);
-      const yc = num(s.yes_count) ?? (ycFp != null ? ycFp / 100 : 0);
-      const nc = num(s.no_count) ?? (ncFp != null ? ncFp / 100 : 0);
+      /* *_count_fp is the DECIMAL CONTRACT COUNT, verified against a live
+       * settlement on 2026-08-20: no_count_fp "667.91" for a position the
+       * positions API reported as 668 contracts, revenue 66791 cents = the
+       * same count paying $1. The old /100 here dated from an era when the
+       * field really was ×100 fixed-point; Kalshi changed the semantics and
+       * every import since stored contracts 100× too small, which poisoned
+       * the day's realized P&L and the stop-loss reading it. */
+      const yc = num(s.yes_count_fp ?? s.yes_count) ?? 0;
+      const nc = num(s.no_count_fp ?? s.no_count) ?? 0;
       if (yc <= 0 && nc <= 0) { skipped++; continue; } // no position held
 
       const side = yc >= nc ? "YES" : "NO";
@@ -193,8 +194,19 @@ export async function GET(req: Request) {
       // res=yes means a run scored, regardless of which side the user was on.
       const firstInningRuns = res === "yes" ? 1 : 0;
 
-      // Entry price in cents (for our call side).
-      const entryRaw = entryPrices[ticker];
+      /* The settlement row carries the exact money: per-side cost in dollars,
+       * the fee, and revenue in cents. These beat anything recomputed from a
+       * price estimate, so they are stored on the record and the client's
+       * realized-P&L (stop-loss, day cap) prefers them when present. */
+      const heldCount = Math.max(yc, nc);
+      const costDollars = num(side === "YES" ? s.yes_total_cost_dollars : s.no_total_cost_dollars) ?? null;
+      const feeDollars = num(s.fee_cost) ?? 0;
+      const revenueDollars = (num(s.revenue) ?? 0) / 100;
+      const pnl = costDollars != null ? Math.round((revenueDollars - costDollars - feeDollars) * 100) / 100 : null;
+
+      // Entry price in cents for our side: exact average from the settlement's
+      // own cost when available, the fills average as fallback.
+      const entryRaw = costDollars != null && heldCount > 0 ? (costDollars / heldCount) * 100 : entryPrices[ticker];
       // Convert to "our side %" — how likely we thought our side was.
       // If call=NRFI and we held NO at 55¢ NO price, marketNRFI at pick = 55%.
       // If call=YRFI and we held YES at 45¢, marketYRFI at pick = 45%.
@@ -228,11 +240,32 @@ export async function GET(req: Request) {
         firstInningRuns,
         source: "kalshi-import",
         ticker,
-        contracts: Math.max(yc, nc),
+        contracts: heldCount,
+        costDollars,
+        feeDollars,
+        revenueDollars,
+        pnl,
         side,
       };
 
-      if (existingIds.has(id)) { skipped++; continue; } // already imported
+      /* An existing row is REPAIRED, not skipped: every Kalshi-derived field
+       * is overwritten from the fresh settlement. Idempotent by construction
+       * — the values come from the feed, never from the stored row, so a
+       * re-run cannot compound a scaling error the way the old in-place /100
+       * pass did. This is what heals the rows written while the count field
+       * was misread. */
+      if (existingIds.has(id)) {
+        const old = existing.find((e) => e.id === id);
+        if (old) {
+          Object.assign(old, {
+            contracts: heldCount, costDollars, feeDollars, revenueDollars, pnl,
+            mktAtPick: mktAtPick ?? old.mktAtPick, result: won ? "won" : "lost", side, call,
+          });
+          repaired++;
+        }
+        skipped++;
+        continue;
+      }
       toUpsert.push(rec);
     }
 

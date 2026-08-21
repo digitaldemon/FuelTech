@@ -156,6 +156,25 @@ export async function GET(req: Request) {
     }
   }
 
+  // Full settlement history for account audits: every page, raw rows, no
+  // interpretation — the auditor decides what a row means, not this route.
+  if (new URL(req.url).searchParams.get("audit")) {
+    try {
+      let rows: Array<Record<string, unknown>> = [];
+      let cursor = "";
+      for (let page = 0; page < 20; page++) {
+        const sd = await kget(creds, "/trade-api/v2/portfolio/settlements?limit=100" + (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""));
+        const r = (sd.settlements || []) as Array<Record<string, unknown>>;
+        rows = rows.concat(r);
+        cursor = String(sd.cursor || "");
+        if (!cursor || r.length < 100) break;
+      }
+      return Response.json({ settlements: rows, count: rows.length });
+    } catch (e) {
+      return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
+    }
+  }
+
   try {
     const pd = await kget(creds, "/trade-api/v2/portfolio/positions?limit=200&count_filter=position");
     const raw = (pd.market_positions || []) as Array<Record<string, unknown>>;

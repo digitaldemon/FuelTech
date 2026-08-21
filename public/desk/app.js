@@ -2886,7 +2886,11 @@ const evDollars=c.p*contracts-actualCost;if(evDollars<=0){skips.push({key:c.key,
  * (model picks carry no dollars), stake = entry cost + taker fee at the
  * recorded fill, pnl = payout − that cost. stake feeds the day cap so a
  * settled morning bet still counts against the afternoon; pnl feeds the daily
- * stop-loss. */function nrfiTodayPnl(rec,todayET){let stake=0,pnl=0,bets=0;for(const e of rec||[]){if(e.source!=="kalshi-import"||e.date!==todayET||!(e.contracts>0)||!(e.mktAtPick>0))continue;if(e.result!=="won"&&e.result!=="lost")continue;const pr=Math.min(0.99,Math.max(0.01,e.mktAtPick/100));const cost=e.contracts*pr+nrfiKalshiFee(e.contracts,pr);stake+=cost;pnl+=e.result==="won"?e.contracts-cost:-cost;bets++;}return{stake,pnl,bets};}/* Hot/cold form, measured against the model's own claims rather than raw
+ * stop-loss. */function nrfiTodayPnl(rec,todayET){let stake=0,pnl=0,bets=0;for(const e of rec||[]){if(e.source!=="kalshi-import"||e.date!==todayET)continue;if(e.result!=="won"&&e.result!=="lost")continue;// The import stores the settlement's exact money when Kalshi provides it
+// — cost, fee, and net P&L per row. Exact beats estimated: the stop-loss
+// and day cap read this, and the estimate below mis-scaled badly when the
+// contract field changed meaning upstream.
+if(typeof e.pnl==="number"&&typeof e.costDollars==="number"){stake+=e.costDollars+(typeof e.feeDollars==="number"?e.feeDollars:0);pnl+=e.pnl;bets++;continue;}if(!(e.contracts>0)||!(e.mktAtPick>0))continue;const pr=Math.min(0.99,Math.max(0.01,e.mktAtPick/100));const cost=e.contracts*pr+nrfiKalshiFee(e.contracts,pr);stake+=cost;pnl+=e.result==="won"?e.contracts-cost:-cost;bets++;}return{stake,pnl,bets};}/* Hot/cold form, measured against the model's own claims rather than raw
  * streak length. Over the last `window` graded model picks, expected wins is
  * Σp and its variance Σp(1−p); z = (actual − expected)/√variance. A 4-loss run
  * on 72% picks and one on 53% picks are different animals, and z is the number
