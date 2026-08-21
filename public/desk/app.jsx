@@ -6301,6 +6301,22 @@ const VOICE_RANK = [
  * frequently the very voice this is meant to avoid. */
 const VOICE_AVOID = /\b(Samantha|Ava|Emma|Zira|Susan|Karen|Moira|Tessa|Fiona|Victoria|Allison|Nicky|Serena|Aria|Jenny|Michelle|Female)\b/i;
 let _voice = null, _voiceTried = false;
+/* A hand-picked voice, persisted. "I don't see a place to select Nathan" —
+ * the voice panel is now that place: a tap stores name+URI here and
+ * pickVoice honors it above every rank rule. Stored as plain strings, not
+ * the voice object, because WebKit invalidates voice objects — the override
+ * is re-resolved against the live list on every pick. */
+let _voiceOverride = null;
+try { _voiceOverride = JSON.parse(localStorage.getItem("cd:voicePick") || "null"); } catch { /* fresh or private mode */ }
+function setVoiceOverride(v) {
+  _voiceOverride = v ? { name: v.name, voiceURI: v.voiceURI } : null;
+  try {
+    if (v) localStorage.setItem("cd:voicePick", JSON.stringify(_voiceOverride));
+    else localStorage.removeItem("cd:voicePick");
+  } catch { /* private mode — the pick still holds for this session */ }
+  // Take effect immediately; clearing re-picks automatically on the next line.
+  _voice = v || null;
+}
 /* Rank position of a voice, lower is better — pickVoice's walk reduced to a
  * number so a re-pick can be compared against the incumbent. The enhanced
  * copy of a name edges its compact copy, mirroring the tie-break. */
@@ -6341,6 +6357,15 @@ function pickVoice(s) {
   // when it is ready — so a null result must NOT be cached as "no voice".
   const all = s.getVoices ? s.getVoices() : [];
   if (!all.length) return null;
+  /* The user's own pick outranks every rule below. Matched by URI+name
+   * against the LIVE list so it is always a fresh object; when the engine
+   * does not currently expose it (mid-enumeration, or before a reboot lands
+   * a new download), fall through to the automatic rank rather than going
+   * silent — and keep the override for the enumeration that has it. */
+  if (_voiceOverride) {
+    const hit = all.find((v) => v.voiceURI === _voiceOverride.voiceURI && v.name === _voiceOverride.name);
+    if (hit) return hit;
+  }
   const en = all.filter((v) => /^en/i.test(v.lang || ""));
   const pool = en.length ? en : all;
   /* localService is the one quality signal the API actually exposes, and on a
@@ -12605,18 +12630,29 @@ function FirstInning() {
         return (
           <div style={{ margin: "4px 0 8px", padding: "8px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, fontSize: 11 }}>
             <div style={{ color: "var(--dim)", marginBottom: 6 }}>
-              {all.length} voice{all.length === 1 ? "" : "s"} exposed ({en.length} English) · picked: <b style={{ color: "var(--fg)" }}>{_voice ? _voice.name : "none yet"}</b>
-              {_voice && <span> · <span style={{ fontFamily: "monospace" }}>{String(_voice.voiceURI || "")}</span></span>}
+              <b style={{ color: "var(--fg)" }}>Tap a voice to use it</b> — it plays a sample and sticks until you change it. {all.length} voice{all.length === 1 ? "" : "s"} exposed ({en.length} English) · using: <b style={{ color: "var(--fg)" }}>{_voice ? _voice.name : "none yet"}</b>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-              {en.map((v, i) => (
-                <span key={i} title={String(v.voiceURI || "") + " · " + v.lang + (v.default ? " · default" : "") + (v.localService === false ? " · network" : "")}
-                  style={{ cursor: "help", padding: "1px 7px", borderRadius: 4,
-                    border: "1px solid " + (_voice && v.name === _voice.name && v.voiceURI === _voice.voiceURI ? "var(--moss)" : "rgba(255,255,255,0.12)"),
-                    color: enh(v) ? "var(--moss)" : "var(--dim)" }}>
-                  {v.name}{enh(v) ? " ✓" : ""}{v.default ? " ·default" : ""}
-                </span>
-              ))}
+              <button onClick={() => { setVoiceOverride(null); speak("Automatic voice.", true); }}
+                title="Clear your pick and let the desk choose automatically."
+                style={{ cursor: "pointer", padding: "1px 7px", borderRadius: 4, fontSize: 11, background: "transparent",
+                  border: "1px solid " + (_voiceOverride ? "rgba(255,255,255,0.12)" : "var(--moss)"),
+                  color: _voiceOverride ? "var(--dim)" : "var(--moss)", fontWeight: 700 }}>
+                AUTO
+              </button>
+              {en.map((v, i) => {
+                const chosen = _voiceOverride && v.name === _voiceOverride.name && v.voiceURI === _voiceOverride.voiceURI;
+                const using = _voice && v.name === _voice.name && v.voiceURI === _voice.voiceURI;
+                return (
+                  <button key={i} onClick={() => { setVoiceOverride(v); speak("This is " + v.name.replace(/\s*\([^)]*\)/g, "") + ", calling the game.", true); }}
+                    title={String(v.voiceURI || "") + " · " + v.lang + (v.default ? " · default" : "") + (v.localService === false ? " · network" : "")}
+                    style={{ cursor: "pointer", padding: "1px 7px", borderRadius: 4, fontSize: 11, background: chosen ? "rgba(80,160,80,0.12)" : "transparent",
+                      border: "1px solid " + (chosen || using ? "var(--moss)" : "rgba(255,255,255,0.12)"),
+                      color: enh(v) ? "var(--moss)" : "var(--dim)", fontWeight: chosen ? 700 : 400 }}>
+                    {v.name}{enh(v) ? " ✓" : ""}{chosen ? " ·your pick" : v.default ? " ·default" : ""}
+                  </button>
+                );
+              })}
               {en.length === 0 && <span style={{ color: "var(--rose)" }}>The engine reports NO English voices right now — enumeration is empty or blocked.</span>}
             </div>
           </div>

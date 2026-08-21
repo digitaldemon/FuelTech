@@ -410,6 +410,17 @@ const check = (ok, what, detail) => {
   check(c.voiceSwapOk(null, AARON) === true && c.voiceSwapOk(AARON, NATHAN) === true,
     "a first pick and a genuine upgrade are both accepted",
     "the gate is refusing legitimate picks.");
+  // The panel's tap-to-pick outranks every automatic rule, is matched by
+  // URI+name against the live list, and an enumeration without it falls back
+  // to automatic instead of silence.
+  c.setVoiceOverride({ name: "Fred", voiceURI: "fred-uri" });
+  check(c.pickVoice(vs([{ name: "Fred", lang: "en-US", voiceURI: "fred-uri" }, "Aaron"])).name === "Fred",
+    "a hand-picked voice outranks the automatic rank",
+    "the override was ignored — picked " + c.pickVoice(vs([{ name: "Fred", lang: "en-US", voiceURI: "fred-uri" }, "Aaron"])).name);
+  check(/Aaron/.test(c.pickVoice(vs(["Aaron", "Nicky"])).name),
+    "an enumeration missing the hand-picked voice falls back to automatic",
+    "picked " + c.pickVoice(vs(["Aaron", "Nicky"])).name + " when the override was absent from the list.");
+  c.setVoiceOverride(null);
   const MACOS = [{ name: "Samantha", lang: "en-US", default: true }, "Alex", "Fred", "Victoria",
     { name: "Daniel", lang: "en-GB" }];
   check(/Alex/.test(c.pickVoice(vs(MACOS)).name),
