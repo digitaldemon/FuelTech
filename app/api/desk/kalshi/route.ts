@@ -278,12 +278,20 @@ export async function GET(req: Request) {
         const yc = num(s.yes_count_fp, s.yes_count) ?? 0;
         const nc = num(s.no_count_fp, s.no_count) ?? 0;
         if (yc <= 0 && nc <= 0) continue;
+        /* A row with BOTH sides traded is a position that was partly or fully
+         * exited before settlement. Its sale proceeds live in fills, not
+         * here, so charging its full costs against settlement revenue booked
+         * phantom losses — audited 2026-08-20: 46 such rows overstated the
+         * account's losses by roughly $9K on the "Your wagers" chip. Only
+         * held-to-settlement rows carry a truth this feed can state. */
+        if (yc > 0 && nc > 0) continue;
         const side = yc >= nc ? "YES" : "NO";
         const won = (res === "yes") === (side === "YES");
         const costD = num(side === "YES" ? s.yes_total_cost_dollars : s.no_total_cost_dollars) ?? 0;
+        const feeD = num(s.fee_cost) ?? 0;
         const revC = num(s.revenue_fp, s.revenue) ?? 0; // cents
         hRows.push({ ticker: String(s.ticker || ""), side, won,
-          pl: Math.round((revC / 100 - costD) * 100) / 100,
+          pl: Math.round((revC / 100 - costD - feeD) * 100) / 100,
           at: num(Date.parse(String(s.settled_time || ""))) ?? 0 });
       }
       if (hRows.length) {
