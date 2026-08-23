@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-20.voice-debug";
+const BUILD = "2026-08-23.pick-clv";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -13815,6 +13815,22 @@ function Picks({ ledger, onPick }) {
     });
     const byEvent = {};
     allPicks.forEach((p) => { if (p.eventId) byEvent[p.eventId] = p; });
+    // Closing-line snapshot: while a picked game is still pregame, keep
+    // overwriting closeProb with the picked SIDE's latest book consensus —
+    // the line may have moved off our side, so read that side's own market,
+    // not the current best side. The last write before first pitch is the
+    // closing line, and CLV = close minus the consensus when we called it.
+    const bySide = {};
+    allPicks.forEach((p) => {
+      if (p.eventId && (p.codes || []).length) bySide[p.eventId + ":" + p.codes[0]] = p;
+    });
+    rec.forEach((r) => {
+      if (r.result != null || !r.pickCode || !r.eventId) return;
+      const p = bySide[r.eventId + ":" + r.pickCode];
+      if (!p || p.state !== "pre" || p.src !== "book" || (p.books || 0) < 2) return;
+      const cp = Math.round(p.modelProb * 10) / 10;
+      if (r.closeProb !== cp) { r.closeProb = cp; r.closeAt = Date.now(); changed.push(r); }
+    });
     rec.forEach((r) => {
       if (r.result != null) return;
       const p = byEvent[r.eventId];
@@ -14026,6 +14042,11 @@ function Picks({ ledger, onPick }) {
           const wins = scored.filter((r) => r.result === "won").length;
           const strong = scored.filter((r) => (r.prob || 0) >= 80);
           const strongWins = strong.filter((r) => r.result === "won").length;
+          // CLV over graded picks only — a pending game's snapshot is still
+          // moving, so it isn't a closing line yet.
+          const clvd = scored.filter((r) => r.closeProb != null && r.prob != null);
+          const clvBeat = clvd.filter((r) => r.closeProb > r.prob).length;
+          const clvAvg = clvd.length ? clvd.reduce((s, r) => s + (r.closeProb - r.prob), 0) / clvd.length : 0;
           return (scanInfo || scored.length > 0 || pending > 0) && (
             <div className="chips" style={{ marginTop: 8 }}>
               {scored.length > 0 && (
@@ -14043,6 +14064,12 @@ function Picks({ ledger, onPick }) {
               {strong.length > 0 && (
                 <span className="chip static" title="Calls made at 80%+ certainty">
                   80%+ tier: {strongWins}-{strong.length - strongWins}
+                </span>
+              )}
+              {clvd.length > 0 && (
+                <span className="chip static" style={{ color: clvAvg >= 0 ? "var(--moss)" : "var(--rose)" }}
+                  title="Closing line value — how often the books' consensus moved TOWARD the call between when it was made and first pitch. Beating the close consistently is the strongest sign the calls are early to real information.">
+                  CLV: beat the close {clvBeat}/{clvd.length} ({Math.round((clvBeat / clvd.length) * 100)}%) · avg {clvAvg >= 0 ? "+" : ""}{clvAvg.toFixed(1)} pts
                 </span>
               )}
               {scanInfo && <span className="chip static">{scanInfo.gamesPriced} of {scanInfo.gamesFound} games priced</span>}
@@ -14121,7 +14148,12 @@ function Picks({ ledger, onPick }) {
                 <span className="who" style={{ fontSize: 13 }}>
                   {r.pick}
                   <span className="sub" style={{ display: "block" }}>
-                    {r.league} · {r.game} · called at {r.prob}%{r.final ? " · final " + r.final : ""}
+                    {r.league} · {r.game} · called at {r.prob}%
+                    {r.closeProb != null && r.prob != null && (() => {
+                      const d = Math.round((r.closeProb - r.prob) * 10) / 10;
+                      return <> · closed {r.closeProb}% (<b style={{ color: d >= 0 ? "var(--moss)" : "var(--rose)" }}>CLV {d >= 0 ? "+" : ""}{d.toFixed(1)}</b>)</>;
+                    })()}
+                    {r.final ? " · final " + r.final : ""}
                   </span>
                 </span>
                 <span className="pts" style={{ fontSize: 13.5, color: r.result === "won" ? "var(--moss)" : "var(--rose)" }}>
@@ -14132,6 +14164,9 @@ function Picks({ ledger, onPick }) {
             <p className="help" style={{ marginTop: 8 }}>
               Every pregame call the board makes gets logged and graded automatically. The tiers should win at
               roughly their stated rates — an 80% call that wins 60% of the time means the reads are off.
+              CLV compares the books' consensus when the call was made to the last pregame consensus: a positive
+              number means the market moved toward the call before first pitch. The beat-the-close rate is the
+              number that predicts forward results — win-loss over a short stretch is mostly noise.
             </p>
           </details>
         </div>
