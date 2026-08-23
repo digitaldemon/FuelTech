@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-23.pick-clv";
+const BUILD = "2026-08-23.nrfi-grade-backfill";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -2217,6 +2217,51 @@ async function gradeAllRecords() {
         headers: { "Content-Type": "application/json" }, body: JSON.stringify(changed) });
     } catch { /* resend next cycle */ }
   }
+  // NRFI picks live in their own store, and the NRFI tab's reconcile only ever
+  // sees TODAY's scan — so a game that finished while no tab was open stayed
+  // pending forever (nine were stuck, 8/21-8/22, when this was added). Back-fill
+  // here from the schedule's line scores by gamePk: one request per pending
+  // date, the same first-inning numbers the board itself grades from, and the
+  // same completeness rule (both halves posted, and past the 1st or final).
+  try {
+    const nrec = ((await (await fetch("/api/desk/nrfi")).json()).record) || [];
+    const npend = nrec.filter((x) => String(x.id).indexOf("nrfi-") === 0 && x.result == null &&
+      !x.skipped && x.gamePk && x.call && x.date && x.date <= todayEt);
+    const nch = [];
+    const byDate = {};
+    npend.forEach((x) => { (byDate[x.date] = byDate[x.date] || []).push(x); });
+    for (const d of Object.keys(byDate).sort().slice(0, 4)) {
+      const iso = d.slice(0, 4) + "-" + d.slice(4, 6) + "-" + d.slice(6, 8);
+      let sch;
+      try { sch = await getJson("https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=" + iso + "&hydrate=linescore"); }
+      catch { continue; }
+      const games = {};
+      (((sch.dates || [])[0] || {}).games || []).forEach((g) => { games[g.gamePk] = g; });
+      for (const x of byDate[d]) {
+        const g = games[x.gamePk];
+        const state = g && g.status && g.status.abstractGameState;
+        const inn1 = g && g.linescore && (g.linescore.innings || [])[0];
+        const runs = inn1 && inn1.away && inn1.home && inn1.away.runs != null && inn1.home.runs != null
+          ? inn1.away.runs + inn1.home.runs : null;
+        const curr = state === "Preview" ? 0 : ((g && g.linescore && g.linescore.currentInning) || 0);
+        if (runs != null && (curr > 1 || state === "Final")) {
+          x.result = (x.call === "NRFI") === (runs === 0) ? "won" : "lost";
+          x.firstInningRuns = runs;
+          if (x.mktAtClose == null && x.mktAtPick != null) x.mktAtClose = x.mktLatest != null ? x.mktLatest : x.mktAtPick;
+          nch.push(x);
+        } else if (Date.now() - (x.at || 0) > 5 * 86400000) {
+          // Postponed games carry no first-inning line on their original date,
+          // and suspended ones never advance — either way the pick was
+          // unactionable and holds the pending count open for nothing.
+          x.result = "void"; nch.push(x);
+        }
+      }
+    }
+    if (nch.length) {
+      await fetch("/api/desk/nrfi", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify(nch) });
+    }
+  } catch { /* next cycle */ }
 }
 
 function App() {
