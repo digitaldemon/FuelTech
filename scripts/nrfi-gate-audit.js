@@ -219,8 +219,29 @@ const leanCheck = (label, name, detail, extra) => {
   check(/"nrfi"/.test(g.code) && /"yrfi"/.test(g.code) && (!extra || extra(g.code)),
     name, detail + "\n  as written: " + g.code.trim().replace(/\s+/g, " "));
 };
-leanCheck("Travel & rest", "Travel & rest can vote either direction",
-  "the lean expression cannot reach one of the two sides.");
+/* Travel & rest is one-directional ON PURPOSE since the 2026-08-16 refit
+ * (scripts/nrfi-travel-fit.js): the two run-friendly arms measured wrong-signed
+ * or under their own MDE and were set to 1.00, and the then-unreachable yrfi
+ * branch was removed rather than left decorative — see the prose above the
+ * check in app.jsx. The factor space is {0.93, 1.00}, so "changed parks on no
+ * rest" leans nrfi and everything else is the baseline; there is no anti-travel
+ * state to vote yrfi from. This invariant therefore FLIPPED on that date: a
+ * yrfi branch REAPPEARING here would mean someone re-fabricated a signal the
+ * fit refused, and that is now the failure. (The empirical companion is
+ * nrfi-ctx-parity.js PART 2, which confirms the factor still takes more than
+ * one value on live slates — one-directional, not constant.) */
+{
+  const g = leanOf("Travel & rest");
+  if (!g.found) {
+    check(false, "Travel & rest: lean expression located",
+      g.why + " — this audit could not read the check, so no verdict on it.");
+  } else {
+    check(/"nrfi"/.test(g.code) && /"neutral"/.test(g.code) && !/"yrfi"/.test(g.code),
+      "Travel & rest votes nrfi-or-abstains, and no yrfi branch has crept back",
+      "the refit left no measured run-friendly arm, so a yrfi side here is a fabricated signal.\n" +
+      "  as written: " + g.code.trim().replace(/\s+/g, " "));
+  }
+}
 // Offense trend required BOTH offences to be 12pp off their own season rate in
 // the same direction — ~3.8% of games, and it voted on none of a live slate.
 // A conjunction across the two teams is the shape to watch for here.

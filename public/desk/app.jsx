@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-08-23.nrfi-grade-backfill";
+const BUILD = "2026-09-08.nrfi-audit";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -2264,6 +2264,117 @@ async function gradeAllRecords() {
   } catch { /* next cycle */ }
 }
 
+
+// Live status + remote controls for the automated Kalshi trading bot running
+// on the home PC. Status is pushed by the bot every ~30s; control changes are
+// stored here and pulled+applied by the bot within one cycle (~30-60s).
+function KalshiBot() {
+  const [d, setD] = useState(null);
+  const [note, setNote] = useState("");
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      fetch("/api/desk/kalshi/bot").then((r) => r.json())
+        .then((x) => { if (live) setD(x); }).catch(() => {});
+    load();
+    const t = setInterval(load, 15000);
+    return () => { live = false; clearInterval(t); };
+  }, []);
+  const send = (body, msg) =>
+    fetch("/api/desk/kalshi/bot/control", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => r.json())
+      .then((x) => setNote(x.ok ? msg + " — bot applies it within ~1 minute" : "error"))
+      .catch(() => setNote("control request failed"));
+  if (!d) return <p className="help">Loading bot status…</p>;
+  if (!d.pushed_at) return <p className="help">No bot status has been pushed yet.</p>;
+  const age = Math.round((Date.now() - new Date(d.pushed_at).getTime()) / 1000);
+  const stale = age > 120;
+  const money = (c) => (c < 0 ? "-$" : "$") + Math.abs(c / 100).toFixed(2);
+  const legs = d.legs || {};
+  const enabled = d.enabled || {};
+  const bank = d.bankroll_c || 20000;
+  const presets = [0.0375, 0.075, 0.15, 0.29].map((v) => {
+    const dollars = (v * bank) / 100;
+    return [v, "~" + Math.round(dollars / 0.94) + " contracts", "$" + dollars.toFixed(0) + "/trade"];
+  });
+  const toggle = (name, on) =>
+    send({ assets: { ...Object.fromEntries(Object.keys(legs).map((k) => [k.toUpperCase(), enabled[k] !== false])), [name.toUpperCase()]: on } },
+      name.toUpperCase() + (on ? " switched ON" : " switched OFF"));
+  return (
+    <section>
+      <p className="help">
+        {stale
+          ? "⚠️ Last update " + Math.round(age / 60) + " min ago — the bot PC may be offline."
+          : "🟢 Live — updated " + age + "s ago."}
+        {"  Session P&L "}<b>{money(d.pnl_c || 0)}</b>
+        {" · record " + (d.wins || 0) + "W–" + (d.losses || 0) + "L"}
+        {" · bankroll " + money(bank)}
+        {" · trade size " + (d.fixed_pct != null ? Math.round(d.fixed_pct * 100) + "%" : "—")}
+      </p>
+      {note && <p className="help"><b>{note}</b></p>}
+      {d.pnl_history && d.pnl_history.length > 1 && (
+        <>
+          <h3 style={{ marginTop: 12 }}>Progress</h3>
+          <PnlChart history={d.pnl_history} />
+        </>
+      )}
+      <table>
+        <thead><tr><th>market</th><th>status</th><th></th></tr></thead>
+        <tbody>
+          {Object.entries(legs).map(([k, v]) => {
+            const on = enabled[k] !== false;
+            return (
+              <tr key={k}>
+                <td>{k.toUpperCase()}</td>
+                <td>{on ? v : "switched off"}</td>
+                <td>
+                  <button onClick={() => toggle(k, !on)}
+                    style={{ fontWeight: 700, color: on ? "#4ade80" : "#8b949e" }}>
+                    {on ? "ON" : "OFF"}
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <h3 style={{ marginTop: 16 }}>Trade size</h3>
+      <p>
+        {presets.map(([v, lab, sub]) => (
+          <button key={v}
+            onClick={() => send({ fixed_pct: v }, "trade size set to " + lab)}
+            style={{
+              marginRight: 8, fontWeight: 700,
+              outline: d.fixed_pct != null && Math.abs(d.fixed_pct - v) < 0.001
+                ? "2px solid #eab308" : "none",
+            }}>
+            {lab} <span style={{ opacity: 0.6 }}>{sub}</span>
+          </button>
+        ))}
+      </p>
+      <h3 style={{ marginTop: 16 }}>Recent trades</h3>
+      <table>
+        <thead><tr><th>time</th><th>market</th><th>bet</th><th>paid</th><th>odds</th><th>result</th></tr></thead>
+        <tbody>
+          {(d.trades || []).map((t, i) => (
+            <tr key={i}>
+              <td>{new Date(t.t).toLocaleTimeString()}</td>
+              <td>{(t.leg || "").toUpperCase()}</td>
+              <td>{(t.side === "yes" ? "UP" : "DOWN") + " ×" + t.count}</td>
+              <td>{money(t.cost_c)}</td>
+              <td>{t.entry_prob ? (t.entry_prob * 100).toFixed(1) + "%" : "—"}</td>
+              <td>{t.open ? "OPEN" : (t.pnl_c >= 0 ? "WON +" : "LOST ") + money(Math.abs(t.pnl_c))}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 function App() {
   const [tab, setTab] = useState("nrfi");
   const [fw, setFw] = useState(buildFrameworks);
@@ -2379,7 +2490,7 @@ function App() {
         </header>
 
         <nav className="tabs">
-          {[["picks", "Predictions"], ["nrfi", "NRFI"], ["analyze", "Ask an event"], ["parlay", "Combos"], ["commodities", "15-Minute"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["ledger", "Accuracy"]].map(([k, l]) => (
+          {[["picks", "Predictions"], ["nrfi", "NRFI"], ["analyze", "Ask an event"], ["parlay", "Combos"], ["commodities", "15-Minute"], ["bot", "$$The Printer$$"], ["positions", "My trades" + (openTrades ? " (" + openTrades + ")" : "")], ["ledger", "Accuracy"]].map(([k, l]) => (
             <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
           ))}
         </nav>
@@ -2389,6 +2500,7 @@ function App() {
         {tab === "analyze" && <Analyze fw={fw} onSave={saveEntry} pending={pending} clearPending={() => setPending(null)} ledger={ledger} />}
         {tab === "parlay" && <Parlay onPick={(m) => { setPending(m); setTab("analyze"); }} />}
         {tab === "commodities" && <Commodities onPick={(m) => { setPending(m); setTab("analyze"); }} />}
+        {tab === "bot" && <KalshiBot />}
         {tab === "positions" && <Positions ledger={ledger} save={saveEntry} reopen={reopen} reload={reloadLedger} />}
         {tab === "browse" && <Browse onPick={(m) => { setPending(m); setTab("analyze"); }} />}
         {tab === "frameworks" && <Frameworks fw={fw} save={saveFw} ledger={ledger} reset={() => saveFw(buildFrameworks())} />}
@@ -2407,6 +2519,44 @@ function App() {
 }
 
 /* ---------------- Analyze ---------------- */
+// Cumulative net-P&L line for the bot tab. history = [[epoch_ms, net_cents], …]
+// (the running net_pnl_c the engine logs on every settlement). Filled to a
+// dashed zero baseline; green when currently in the black, rose when under.
+function PnlChart({ history, w = 340, h = 96 }) {
+  if (!history || history.length < 2) return null;
+  const ys = history.map((p) => p[1] / 100);
+  const xs = history.map((p) => p[0]);
+  const loY = Math.min(0, Math.min.apply(null, ys));
+  const hiY = Math.max(0, Math.max.apply(null, ys));
+  const spanY = Math.max(1e-6, hiY - loY);
+  const minX = xs[0], spanX = Math.max(1, xs[xs.length - 1] - minX);
+  const pad = 4;
+  const X = (x) => pad + ((x - minX) / spanX) * (w - 2 * pad);
+  const Y = (v) => h - pad - ((v - loY) / spanY) * (h - 2 * pad);
+  const line = history.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[1] / 100).toFixed(1)).join(" ");
+  const cur = ys[ys.length - 1];
+  const col = cur >= 0 ? "var(--moss)" : "var(--rose)";
+  const zY = Y(0).toFixed(1);
+  const area = "M" + X(xs[0]).toFixed(1) + " " + zY + " " +
+    history.map((p) => "L" + X(p[0]).toFixed(1) + " " + Y(p[1] / 100).toFixed(1)).join(" ") +
+    " L" + X(xs[xs.length - 1]).toFixed(1) + " " + zY + " Z";
+  const money = (v) => (v < 0 ? "-$" : "$") + Math.abs(v).toFixed(2);
+  return (
+    <div style={{ margin: "6px 0 10px" }}>
+      <svg width={w} height={h} style={{ display: "block", maxWidth: "100%" }} aria-label="net P&L over time">
+        <path d={area} fill={col} fillOpacity="0.12" stroke="none" />
+        <line x1={pad} y1={zY} x2={w - pad} y2={zY} stroke="#8b949e" strokeWidth="0.7" strokeDasharray="3 3" />
+        <path d={line} fill="none" stroke={col} strokeWidth="1.6" />
+      </svg>
+      <p className="help" style={{ margin: "2px 0 0" }}>
+        {"Cumulative net P&L over " + history.length + " settlements · now "}
+        <b style={{ color: col }}>{money(cur)}</b>
+        {" · peak " + money(Math.max.apply(null, ys)) + " · trough " + money(Math.min.apply(null, ys))}
+      </p>
+    </div>
+  );
+}
+
 function Spark({ points, w = 120, h = 26 }) {
   if (!points || points.length < 2) return null;
   const ps = points.map((pt) => pt.p);
@@ -9132,149 +9282,154 @@ const NRFI_CALIB_SEED = { c: -0.063, n: 558, active: true, source: "backtest-v8-
 
 // Pitcher backtest rankings — GENERATED, do not hand-edit.
 //   node scripts/nrfi-pitcherbt-rebuild.js && node scripts/nrfi-pitcherbt-emit.js
-// Source: 4274 games across 2025 + 2026, arms with >=10 starts.
-// Built 2026-08-15. League clean-1st rate 70.5%.
+// Source: 4595 games across 2025 + 2026, arms with >=10 starts.
+// Built 2026-09-08. League clean-1st rate 70.5%.
 //
 // clean = POSTERIOR clean-1st %, i.e. the arm's record regressed to league mean
-// by n/(n+k) with k=88 starts. It is NOT his raw rate. Raw rates here span
-// 33%-100%, but a beta-binomial fit puts the true spread in
-// first-inning skill at only 4.8pp, so nearly all of that raw range is the
+// by n/(n+k) with k=81 starts. It is NOT his raw rate. Raw rates here span
+// 33%-95%, but a beta-binomial fit puts the true spread in
+// first-inning skill at only 5.0pp, so nearly all of that raw range is the
 // binomial noise of a ~10-30 start sample. Ranking on it would be ranking on luck.
 //
 // tier is therefore RELATIVE, not absolute: elite = top decile of the posterior
-// (>=74.1%), sharp = top quartile (>=72.7%), leaky = bottom quartile (<=69.4%),
-// danger = bottom decile (<=67.7%). The middle half is omitted: an average arm
+// (>=74.2%), sharp = top quartile (>=72.8%), leaky = bottom quartile (<=69.1%),
+// danger = bottom decile (<=67.1%). The middle half is omitted: an average arm
 // says nothing about a first inning, and a row that said so would still vote.
-// n = starts evaluated. Tiers: elite 26, sharp 36, leaky 38, danger 25.
+// n = starts evaluated. Tiers: elite 26, sharp 39, leaky 39, danger 26.
 const PITCHER_BT = (() => {
   const t = {};
   // name|posterior clean %|starts|tier
   const ROWS = [
-    "Michael Wacha|76.6|55|elite",
-    "Casey Mize|76.5|46|elite",
-    "Paul Skenes|76.2|57|elite",
-    "Trevor Rogers|76.2|40|elite",
-    "Jesús Luzardo|76.0|56|elite",
-    "Cristopher Sánchez|75.5|57|elite",
-    "Keider Montero|75.4|32|elite",
-    "Chase Burns|75.2|31|elite",
-    "Ranger Suarez|75.2|47|elite",
-    "Jack Flaherty|75.0|50|elite",
-    "Jake Bennett|75.0|14|elite",
-    "Zack Wheeler|74.6|44|elite",
-    "Michael King|74.6|40|elite",
+    "Trevor Rogers|77.3|45|elite",
+    "Paul Skenes|77.0|61|elite",
+    "Casey Mize|76.6|50|elite",
+    "Jesús Luzardo|76.3|61|elite",
+    "Ranger Suarez|76.0|51|elite",
+    "Michael Wacha|76.0|59|elite",
+    "Cristopher Sánchez|75.6|61|elite",
+    "Walbert Ureña|75.6|24|elite",
+    "Michael King|75.5|44|elite",
+    "Grant Holmes|75.5|48|elite",
+    "Andrew Alvarez|75.4|19|elite",
+    "Keider Montero|75.3|35|elite",
+    "Kyle Bradish|75.1|34|elite",
+    "Jack Flaherty|75.1|50|elite",
+    "Drew Rasmussen|75.1|58|elite",
+    "Chris Sale|74.9|45|elite",
+    "Braxton Ashcraft|74.7|36|elite",
     "Shohei Ohtani|74.6|28|elite",
-    "Walbert Ureña|74.5|20|elite",
-    "Logan Henderson|74.5|16|elite",
-    "Hunter Brown|74.4|43|elite",
-    "Grant Holmes|74.4|43|elite",
-    "Carmen Mlodzinski|74.3|23|elite",
-    "Drew Rasmussen|74.3|54|elite",
+    "Shane McClanahan|74.6|24|elite",
+    "Logan Henderson|74.6|20|elite",
+    "Robbie Ray|74.5|59|elite",
+    "Hunter Brown|74.5|47|elite",
+    "Chase Burns|74.4|35|elite",
     "Jason Alexander|74.3|15|elite",
-    "Andrew Alvarez|74.3|15|elite",
-    "Chris Sale|74.2|42|elite",
+    "Jacob Lopez|74.2|38|elite",
     "Ryne Nelson|74.2|38|elite",
-    "Tarik Skubal|74.1|49|elite",
-    "Nick Martinez|74.1|49|elite",
+    "Nick Martinez|74.1|53|sharp",
+    "Javier Assad|74.1|18|sharp",
+    "Janson Junk|74.0|37|sharp",
     "JP Sears|74.0|33|sharp",
-    "Jacob Lopez|74.0|33|sharp",
-    "Kyle Bradish|73.9|29|sharp",
-    "Javier Assad|73.8|17|sharp",
-    "Robbie Ray|73.8|55|sharp",
-    "Simeon Woods Richardson|73.7|32|sharp",
-    "Braxton Ashcraft|73.7|32|sharp",
-    "Kyle Leahy|73.7|24|sharp",
-    "Shane McClanahan|73.6|20|sharp",
-    "Parker Messick|73.5|31|sharp",
-    "Landen Roupp|73.5|46|sharp",
+    "Zack Wheeler|73.9|48|sharp",
+    "Jake Bennett|73.8|17|sharp",
+    "José Soriano|73.8|59|sharp",
+    "Simeon Woods Richardson|73.8|32|sharp",
+    "Foster Griffin|73.7|28|sharp",
+    "Carmen Mlodzinski|73.7|24|sharp",
+    "Clay Holmes|73.5|46|sharp",
+    "Carlos Rodón|73.5|46|sharp",
     "Mick Abel|73.5|12|sharp",
-    "Carlos Rodón|73.5|42|sharp",
-    "Freddy Peralta|73.4|57|sharp",
+    "Tarik Skubal|73.4|53|sharp",
+    "Landen Roupp|73.3|49|sharp",
+    "Logan Webb|73.3|60|sharp",
+    "Tanner Bibee|73.3|60|sharp",
     "Patrick Corbin|73.3|45|sharp",
-    "Logan Webb|73.3|56|sharp",
-    "Will Warren|73.3|56|sharp",
     "Corbin Burnes|73.2|11|sharp",
-    "Michael Soroka|73.1|33|sharp",
-    "Janson Junk|73.1|33|sharp",
+    "Will Warren|73.1|59|sharp",
     "Nathan Eovaldi|73.1|44|sharp",
     "Slade Cecconi|73.1|44|sharp",
-    "José Soriano|73.1|55|sharp",
-    "Kris Bubic|73.1|29|sharp",
-    "Chad Patrick|73.1|29|sharp",
-    "Stephen Kolek|73.1|29|sharp",
-    "Jameson Taillon|73.0|40|sharp",
+    "Kris Bubic|73.0|29|sharp",
+    "Chad Patrick|73.0|29|sharp",
+    "Stephen Kolek|73.0|29|sharp",
     "Bowden Francis|73.0|14|sharp",
-    "Shane Drohan|73.0|14|sharp",
-    "Luis Castillo|73.0|51|sharp",
-    "Tyler Glasnow|73.0|25|sharp",
-    "Bryce Miller|72.9|32|sharp",
+    "Ronel Blanco|73.0|14|sharp",
+    "Noah Cameron|73.0|51|sharp",
+    "Randy Dobnak|72.9|10|sharp",
     "Shane Smith|72.9|32|sharp",
-    "Ronel Blanco|72.8|13|sharp",
-    "Foster Griffin|72.8|24|sharp",
-    "Noah Cameron|72.8|46|sharp",
-    "Zach Eflin|69.4|15|leaky",
-    "Colton Gordon|69.4|15|leaky",
-    "Jack Perkins|69.4|15|leaky",
-    "Luis Severino|69.4|41|leaky",
-    "Eury Pérez|69.4|41|leaky",
-    "Rhett Lowder|69.3|18|leaky",
-    "Eric Lauer|69.3|31|leaky",
-    "Kevin Gausman|69.3|57|leaky",
-    "Justin Wrobleski|69.2|21|leaky",
-    "Chase Dollander|69.2|24|leaky",
-    "Carson Whisenhunt|69.2|11|leaky",
-    "Luis Morales|69.2|11|leaky",
-    "Yusei Kikuchi|69.1|40|leaky",
-    "Pablo López|69.1|14|leaky",
-    "Noah Schultz|69.1|14|leaky",
-    "Aaron Civale|69.0|33|leaky",
-    "Shota Imanaga|69.0|49|leaky",
-    "Brayan Bello|68.9|36|leaky",
-    "Andrew Heaney|68.9|23|leaky",
-    "Framber Valdez|68.9|55|leaky",
-    "Steven Matz|68.8|13|leaky",
-    "Connor Prielipp|68.7|16|leaky",
-    "Jackson Jobe|68.5|12|leaky",
-    "Austin Gomber|68.5|12|leaky",
-    "Yu Darvish|68.4|15|leaky",
-    "Lance McCullers Jr.|68.3|21|leaky",
-    "Connelly Early|68.3|21|leaky",
-    "Mitchell Parker|68.2|30|leaky",
-    "MacKenzie Gore|68.2|55|leaky",
-    "Jack Kochanowicz|68.1|36|leaky",
-    "Jonathan Cannon|68.1|17|leaky",
-    "Kai-Wei Teng|68.1|17|leaky",
-    "Bailey Falter|68.0|26|leaky",
-    "Merrill Kelly|67.9|54|leaky",
-    "Dean Kremer|67.8|38|leaky",
-    "Jordan Hicks|67.8|10|leaky",
-    "Carson Palmquist|67.8|13|leaky",
-    "Eduardo Rodriguez|67.7|53|leaky",
-    "Clayton Kershaw|67.7|22|danger",
-    "Logan Gilbert|67.5|49|danger",
-    "Bradley Blalock|67.5|12|danger",
-    "Brady Singer|67.5|55|danger",
-    "Germán Márquez|67.3|36|danger",
-    "Sean Burke|67.3|42|danger",
-    "Miles Mikolas|67.3|42|danger",
-    "Tanner Gordon|67.1|20|danger",
-    "Jake Irvin|67.0|47|danger",
-    "Jacob deGrom|67.0|53|danger",
-    "Chris Paddack|66.8|37|danger",
-    "Adrian Houser|66.5|36|danger",
-    "Reynaldo López|66.5|12|danger",
-    "Tyler Anderson|66.2|26|danger",
-    "Antonio Senzatela|66.2|23|danger",
-    "Zac Gallen|66.0|52|danger",
-    "Jeffrey Springs|66.0|52|danger",
-    "Taijuan Walker|65.9|25|danger",
-    "Kyle Freeland|65.8|54|danger",
-    "Taj Bradley|65.8|51|danger",
-    "Max Scherzer|65.6|27|danger",
-    "Kumar Rocker|65.4|35|danger",
-    "Zebby Matthews|65.4|32|danger",
-    "Erick Fedde|64.9|36|danger",
-    "Tomoyuki Sugano|64.4|51|danger",
+    "Cam Schlittler|72.9|43|sharp",
+    "Shane Drohan|72.8|17|sharp",
+    "Jared Jones|72.8|17|sharp",
+    "Tyler Glasnow|72.8|28|sharp",
+    "Kyle Leahy|72.8|28|sharp",
+    "Reid Detmers|72.8|28|sharp",
+    "Matthew Boyd|72.8|50|sharp",
+    "Freddy Peralta|72.8|61|sharp",
+    "Sandy Alcantara|72.8|61|sharp",
+    "Zach Eflin|69.1|15|leaky",
+    "Colton Gordon|69.1|15|leaky",
+    "MacKenzie Gore|69.0|60|leaky",
+    "Dustin May|69.0|50|leaky",
+    "Brayan Bello|68.9|37|leaky",
+    "Shota Imanaga|68.9|53|leaky",
+    "Chase Dollander|68.9|24|leaky",
+    "Luis Morales|68.9|11|leaky",
+    "Sean Manaea|68.8|27|leaky",
+    "Payton Tolle|68.8|27|leaky",
+    "Framber Valdez|68.8|59|leaky",
+    "Pablo López|68.8|14|leaky",
+    "Noah Schultz|68.8|14|leaky",
+    "Eury Pérez|68.8|46|leaky",
+    "Aaron Civale|68.7|33|leaky",
+    "Eric Lauer|68.7|33|leaky",
+    "Emmet Sheehan|68.7|33|leaky",
+    "Jack Perkins|68.7|17|leaky",
+    "Andrew Heaney|68.6|23|leaky",
+    "Gabriel Hughes|68.5|10|leaky",
+    "Steven Matz|68.5|13|leaky",
+    "Carson Whisenhunt|68.5|13|leaky",
+    "Connor Prielipp|68.3|19|leaky",
+    "Austin Gomber|68.1|12|leaky",
+    "Yu Darvish|68.1|15|leaky",
+    "Sean Burke|68.0|46|leaky",
+    "Lance McCullers Jr.|68.0|21|leaky",
+    "Connelly Early|68.0|21|leaky",
+    "Tanner Gordon|67.9|24|leaky",
+    "Mitchell Parker|67.9|30|leaky",
+    "Merrill Kelly|67.9|58|leaky",
+    "Jack Kochanowicz|67.8|36|leaky",
+    "Dean Kremer|67.8|42|leaky",
+    "Jonathan Cannon|67.7|17|leaky",
+    "Kai-Wei Teng|67.7|17|leaky",
+    "Bailey Falter|67.6|26|leaky",
+    "Carson Palmquist|67.4|13|leaky",
+    "Clayton Kershaw|67.3|22|leaky",
+    "Seth Lugo|67.2|55|leaky",
+    "Bradley Blalock|67.0|12|danger",
+    "Zac Thornton|67.0|12|danger",
+    "Germán Márquez|67.0|36|danger",
+    "Miles Mikolas|66.9|42|danger",
+    "Brady Singer|66.9|60|danger",
+    "Jordan Hicks|66.7|11|danger",
+    "Logan Gilbert|66.7|53|danger",
+    "Eduardo Rodriguez|66.4|58|danger",
+    "Jake Irvin|66.4|52|danger",
+    "Chris Paddack|66.4|37|danger",
+    "Adrian Houser|66.4|37|danger",
+    "Jackson Jobe|66.3|16|danger",
+    "Jacob deGrom|66.2|57|danger",
+    "Reynaldo López|66.0|12|danger",
+    "Tyler Anderson|65.7|26|danger",
+    "Antonio Senzatela|65.7|23|danger",
+    "Kyle Freeland|65.7|55|danger",
+    "Taj Bradley|65.7|55|danger",
+    "Zac Gallen|65.7|52|danger",
+    "Taijuan Walker|65.4|25|danger",
+    "Zebby Matthews|65.2|36|danger",
+    "Jeffrey Springs|65.2|56|danger",
+    "Kumar Rocker|65.0|38|danger",
+    "Tomoyuki Sugano|64.2|55|danger",
+    "Erick Fedde|64.2|38|danger",
+    "Max Scherzer|63.7|31|danger",
   ];
   for (const row of ROWS) {
     const f = row.split("|");
@@ -9294,17 +9449,17 @@ const PITCHER_BT = (() => {
 // rather than letting his partner's tier speak for the pair alone.
 const PBT_LG = 70.5;
 // Concentration of the fitted prior, in starts: an arm's estimate is his record
-// weighted n/(n+k) against PBT_LG. k=88 is large because first-inning skill is
+// weighted n/(n+k) against PBT_LG. k=81 is large because first-inning skill is
 // a weak, slow-moving signal — a 20-start sample is under a fifth reliable.
-const PBT_K = 87.6;
+const PBT_K = 80.9;
 // Tier cutoffs on the regressed scale, for arms with no row in the table.
-const PBT_ELITE = 74.1, PBT_SHARP = 72.7, PBT_LEAKY = 69.4, PBT_DANGER = 67.7;
+const PBT_ELITE = 74.2, PBT_SHARP = 72.8, PBT_LEAKY = 69.1, PBT_DANGER = 67.1;
 // Upper and lower quartiles of the two-starter average, enumerated over every
-// pair of the 247 qualified arms. Not round numbers, and not the single-arm
+// pair of the 253 qualified arms. Not round numbers, and not the single-arm
 // quartiles: averaging two draws narrows the distribution, so single-arm cuts
 // would fire on far fewer than a quarter of matchups.
-const PBT_NRFI = 71.9, PBT_YRFI = 69.7;
-const PBT_GAMES = 4274, PBT_SEASONS = "2025 + 2026";
+const PBT_NRFI = 71.8, PBT_YRFI = 69.5;
+const PBT_GAMES = 4595, PBT_SEASONS = "2025 + 2026";
 // Regress any observed clean-1st rate onto the same scale the table uses, so a
 // live estimate and a table row can be compared or tiered by the same cutoffs.
 function pbtPosterior(pct, n) {

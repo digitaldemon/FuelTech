@@ -1,1760 +1,1802 @@
 {
-  "at": "2026-08-15T23:44:26.407Z",
+  "at": "2026-09-08T16:04:19.622Z",
   "seasons": [
     2025,
     2026
   ],
-  "games": 4274,
+  "games": 4595,
   "minStarts": 10,
-  "leagueClean": 70.53111839026673,
-  "mean": 70.39487213691669,
-  "sd": 10.636509192791673,
+  "leagueClean": 70.47878128400436,
+  "mean": 70.34097954742869,
+  "sd": 10.690071290534245,
   "bands": {
-    "elite": 74.08126751275739,
-    "sharp": 72.71637947225214,
-    "leaky": 69.39231559547962,
-    "danger": 67.70385158749909
+    "elite": 74.2246398655227,
+    "sharp": 72.78175253123693,
+    "leaky": 69.11064538286202,
+    "danger": 67.06224230785404
   },
-  "obsVar": 113.13532780834174,
-  "sampVar": 85.2542853160487,
-  "talentVar": 27.881042492293048,
-  "crudeRel": 0.24643975522416184,
-  "priorMu": 0.7100000000000002,
-  "priorK": 87.63208347114727,
-  "priorSd": 4.819840805048646,
-  "mlRel": 0.2545940679485946,
-  "splitHalfR": 0.15082183478781414,
-  "spearmanBrown": 0.26211152800315496,
-  "splitN": 247,
+  "obsVar": 114.2776241967045,
+  "sampVar": 82.48728156753779,
+  "talentVar": 31.7903426291667,
+  "crudeRel": 0.27818519025602445,
+  "priorMu": 0.7080000000000002,
+  "priorK": 80.8946087201343,
+  "priorSd": 5.024355939251696,
+  "mlRel": 0.27811253993110563,
+  "splitHalfR": 0.14609858341852155,
+  "spearmanBrown": 0.2549494180208242,
+  "splitN": 253,
   "arms": [
     {
       "name": "Reynaldo López",
       "starts": 12,
       "clean": 4,
       "rate": 33.333333333333336,
-      "post": 66.46330876307637
+      "post": 65.96010663918594
     },
     {
       "name": "Jordan Hicks",
-      "starts": 10,
+      "starts": 11,
       "clean": 4,
-      "rate": 40,
-      "post": 67.82481425184774
+      "rate": 36.36363636363637,
+      "post": 66.67788657816003
     },
     {
       "name": "Bradley Blalock",
       "starts": 12,
       "clean": 5,
       "rate": 41.666666666666664,
-      "post": 67.46700151460814
+      "post": 67.03659537602181
+    },
+    {
+      "name": "Zac Thornton",
+      "starts": 12,
+      "clean": 5,
+      "rate": 41.666666666666664,
+      "post": 67.03659537602181
+    },
+    {
+      "name": "Jackson Jobe",
+      "starts": 16,
+      "clean": 7,
+      "rate": 43.75,
+      "post": 66.33329121489021
+    },
+    {
+      "name": "Max Scherzer",
+      "starts": 31,
+      "clean": 14,
+      "rate": 45.16129032258065,
+      "post": 63.696887445328876
     },
     {
       "name": "Carson Palmquist",
       "starts": 13,
       "clean": 6,
       "rate": 46.15384615384615,
-      "post": 67.79028805865272
+      "post": 67.38766350520726
     },
     {
       "name": "Antonio Senzatela",
       "starts": 23,
       "clean": 11,
       "rate": 47.82608695652174,
-      "post": 66.18222939244379
+      "post": 65.71407680812992
     },
     {
       "name": "Taijuan Walker",
       "starts": 25,
       "clean": 12,
       "rate": 48,
-      "post": 65.89488268103206
-    },
-    {
-      "name": "Max Scherzer",
-      "starts": 27,
-      "clean": 13,
-      "rate": 48.148148148148145,
-      "post": 65.61756271615445
+      "post": 65.41728971012645
     },
     {
       "name": "Erick Fedde",
-      "starts": 36,
-      "clean": 18,
+      "starts": 38,
+      "clean": 19,
       "rate": 50,
-      "post": 64.88508242541727
+      "post": 64.15209553647198
     },
     {
       "name": "Tyler Anderson",
       "starts": 26,
       "clean": 13,
       "rate": 50,
-      "post": 66.19501901821033
-    },
-    {
-      "name": "Jackson Jobe",
-      "starts": 12,
-      "clean": 6,
-      "rate": 50,
-      "post": 68.47069426613993
-    },
-    {
-      "name": "Tanner Gordon",
-      "starts": 20,
-      "clean": 10,
-      "rate": 50,
-      "post": 67.0978178025088
-    },
-    {
-      "name": "Zebby Matthews",
-      "starts": 32,
-      "clean": 16,
-      "rate": 50,
-      "post": 65.38277775909445
+      "post": 65.74081126751777
     },
     {
       "name": "Austin Gomber",
       "starts": 12,
       "clean": 6,
       "rate": 50,
-      "post": 68.47069426613993
+      "post": 68.11308411285768
+    },
+    {
+      "name": "Gabriel Hughes",
+      "starts": 10,
+      "clean": 5,
+      "rate": 50,
+      "post": 68.51163545419472
     },
     {
       "name": "Kumar Rocker",
-      "starts": 35,
-      "clean": 18,
-      "rate": 51.42857142857143,
-      "post": 65.41418607096271
+      "starts": 38,
+      "clean": 20,
+      "rate": 52.63157894736842,
+      "post": 64.99317656677664
+    },
+    {
+      "name": "Zebby Matthews",
+      "starts": 36,
+      "clean": 19,
+      "rate": 52.77777777777778,
+      "post": 65.24970125565554
     },
     {
       "name": "Jonathan Cannon",
       "starts": 17,
       "clean": 9,
       "rate": 52.94117647058823,
-      "post": 68.06590952014585
-    },
-    {
-      "name": "Tomoyuki Sugano",
-      "starts": 51,
-      "clean": 27,
-      "rate": 52.94117647058823,
-      "post": 64.35651620505523
+      "post": 67.69870561852956
     },
     {
       "name": "Kai-Wei Teng",
       "starts": 17,
       "clean": 9,
       "rate": 52.94117647058823,
-      "post": 68.06590952014585
+      "post": 67.69870561852956
     },
     {
       "name": "Yu Darvish",
       "starts": 15,
       "clean": 8,
       "rate": 53.333333333333336,
-      "post": 68.41796141092179
+      "post": 68.06783389080154
     },
     {
       "name": "Steven Matz",
       "starts": 13,
       "clean": 7,
       "rate": 53.84615384615385,
-      "post": 68.7840069259429
+      "post": 68.45268737998651
+    },
+    {
+      "name": "Carson Whisenhunt",
+      "starts": 13,
+      "clean": 7,
+      "rate": 53.84615384615385,
+      "post": 68.45268737998651
+    },
+    {
+      "name": "Tomoyuki Sugano",
+      "starts": 55,
+      "clean": 30,
+      "rate": 54.54545454545455,
+      "post": 64.2213725737926
     },
     {
       "name": "Clayton Kershaw",
       "starts": 22,
       "clean": 12,
       "rate": 54.54545454545455,
-      "post": 67.69804688063537
-    },
-    {
-      "name": "Carson Whisenhunt",
-      "starts": 11,
-      "clean": 6,
-      "rate": 54.54545454545455,
-      "post": 69.16489732721762
+      "post": 67.32459925307997
     },
     {
       "name": "Luis Morales",
       "starts": 11,
       "clean": 6,
       "rate": 54.54545454545455,
-      "post": 69.16489732721762
-    },
-    {
-      "name": "Adrian Houser",
-      "starts": 36,
-      "clean": 20,
-      "rate": 55.55555555555556,
-      "post": 66.50278548747619
-    },
-    {
-      "name": "Connor Prielipp",
-      "starts": 16,
-      "clean": 9,
-      "rate": 56.25,
-      "post": 68.72271296595417
+      "post": 68.85429281989181
     },
     {
       "name": "Chris Paddack",
       "starts": 37,
       "clean": 21,
       "rate": 56.75675675675676,
-      "post": 66.77155427942436
+      "post": 66.39267378177183
     },
     {
-      "name": "Taj Bradley",
-      "starts": 51,
-      "clean": 29,
-      "rate": 56.86274509803921,
-      "post": 65.79918369581414
+      "name": "Adrian Houser",
+      "starts": 37,
+      "clean": 21,
+      "rate": 56.75675675675676,
+      "post": 66.39267378177183
     },
     {
       "name": "Pablo López",
       "starts": 14,
       "clean": 8,
       "rate": 57.142857142857146,
-      "post": 69.09115396069713
+      "post": 68.78513316426762
+    },
+    {
+      "name": "Jeffrey Springs",
+      "starts": 56,
+      "clean": 32,
+      "rate": 57.142857142857146,
+      "post": 65.21322045367361
     },
     {
       "name": "Lance McCullers Jr.",
       "starts": 21,
       "clean": 12,
       "rate": 57.142857142857146,
-      "post": 68.32123337137975
+      "post": 67.98532703935564
     },
     {
       "name": "Connelly Early",
       "starts": 21,
       "clean": 12,
       "rate": 57.142857142857146,
-      "post": 68.32123337137975
+      "post": 67.98532703935564
     },
     {
       "name": "Noah Schultz",
       "starts": 14,
       "clean": 8,
       "rate": 57.142857142857146,
-      "post": 69.09115396069713
-    },
-    {
-      "name": "Kyle Freeland",
-      "starts": 54,
-      "clean": 31,
-      "rate": 57.407407407407405,
-      "post": 65.81755840900607
+      "post": 68.78513316426762
     },
     {
       "name": "Zac Gallen",
       "starts": 52,
       "clean": 30,
       "rate": 57.69230769230769,
-      "post": 66.04411892455227
-    },
-    {
-      "name": "Jeffrey Springs",
-      "starts": 52,
-      "clean": 30,
-      "rate": 57.69230769230769,
-      "post": 66.04411892455227
+      "post": 65.67112376819291
     },
     {
       "name": "Bailey Falter",
       "starts": 26,
       "clean": 15,
       "rate": 57.69230769230769,
-      "post": 67.95508531190619
+      "post": 67.61181301769612
+    },
+    {
+      "name": "Connor Prielipp",
+      "starts": 19,
+      "clean": 11,
+      "rate": 57.89473684210526,
+      "post": 68.34541307942901
+    },
+    {
+      "name": "Kyle Freeland",
+      "starts": 55,
+      "clean": 32,
+      "rate": 58.18181818181818,
+      "post": 65.69310130448777
+    },
+    {
+      "name": "Taj Bradley",
+      "starts": 55,
+      "clean": 32,
+      "rate": 58.18181818181818,
+      "post": 65.69310130448777
     },
     {
       "name": "Germán Márquez",
       "starts": 36,
       "clean": 21,
       "rate": 58.333333333333336,
-      "post": 67.31163701850565
+      "post": 66.96064414848675
+    },
+    {
+      "name": "Tanner Gordon",
+      "starts": 24,
+      "clean": 14,
+      "rate": 58.333333333333336,
+      "post": 67.94761317430256
     },
     {
       "name": "Luinder Avila",
       "starts": 12,
       "clean": 7,
       "rate": 58.333333333333336,
-      "post": 69.47438701767172
+      "post": 69.18957284969355
     },
     {
-      "name": "Sean Burke",
-      "starts": 42,
-      "clean": 25,
-      "rate": 59.523809523809526,
-      "post": 67.28178467017173
+      "name": "Jack Perkins",
+      "starts": 17,
+      "clean": 10,
+      "rate": 58.8235294117647,
+      "post": 68.72021233179387
     },
     {
       "name": "Miles Mikolas",
       "starts": 42,
       "clean": 25,
       "rate": 59.523809523809526,
-      "post": 67.28178467017173
+      "post": 66.94629148558893
     },
     {
       "name": "Jake Irvin",
-      "starts": 47,
-      "clean": 28,
-      "rate": 59.57446808510638,
-      "post": 67.01135192923698
+      "starts": 52,
+      "clean": 31,
+      "rate": 59.61538461538461,
+      "post": 66.4235997411693
+    },
+    {
+      "name": "Jacob deGrom",
+      "starts": 57,
+      "clean": 34,
+      "rate": 59.64912280701754,
+      "post": 66.19068274025138
     },
     {
       "name": "Zach Eflin",
       "starts": 15,
       "clean": 9,
       "rate": 60,
-      "post": 69.39231559547962
+      "post": 69.11064538286202
     },
     {
       "name": "Osvaldo Bido",
       "starts": 10,
       "clean": 6,
       "rate": 60,
-      "post": 69.87332118613953
+      "post": 69.61181071660111
     },
     {
       "name": "Mitchell Parker",
       "starts": 30,
       "clean": 18,
       "rate": 60,
-      "post": 68.194642904706
-    },
-    {
-      "name": "AJ Smith-Shawver",
-      "starts": 10,
-      "clean": 6,
-      "rate": 60,
-      "post": 69.87332118613953
+      "post": 67.87830701835396
     },
     {
       "name": "Colton Gordon",
       "starts": 15,
       "clean": 9,
       "rate": 60,
-      "post": 69.39231559547962
+      "post": 69.11064538286202
     },
     {
-      "name": "Jack Perkins",
-      "starts": 15,
-      "clean": 9,
-      "rate": 60,
-      "post": 69.39231559547962
+      "name": "Eduardo Rodriguez",
+      "starts": 58,
+      "clean": 35,
+      "rate": 60.3448275862069,
+      "post": 66.43409979992913
     },
     {
-      "name": "Jacob deGrom",
+      "name": "Logan Gilbert",
       "starts": 53,
       "clean": 32,
       "rate": 60.37735849056604,
-      "post": 66.99664609878651
-    },
-    {
-      "name": "Dean Kremer",
-      "starts": 38,
-      "clean": 23,
-      "rate": 60.526315789473685,
-      "post": 67.83201942526566
+      "post": 66.67436712142292
     },
     {
       "name": "Andrew Heaney",
       "starts": 23,
       "clean": 14,
       "rate": 60.869565217391305,
-      "post": 68.8939201659276
+      "post": 68.60161836293882
     },
     {
       "name": "Jack Kochanowicz",
       "starts": 36,
       "clean": 22,
       "rate": 61.111111111111114,
-      "post": 68.12048854953512
-    },
-    {
-      "name": "Rhett Lowder",
-      "starts": 18,
-      "clean": 11,
-      "rate": 61.111111111111114,
-      "post": 69.31490590594458
-    },
-    {
-      "name": "Logan Gilbert",
-      "starts": 49,
-      "clean": 30,
-      "rate": 61.224489795918366,
-      "post": 67.49423482515256
+      "post": 67.81611559490236
     },
     {
       "name": "Brady Singer",
+      "starts": 60,
+      "clean": 37,
+      "rate": 61.666666666666664,
+      "post": 66.91056799846389
+    },
+    {
+      "name": "Seth Lugo",
       "starts": 55,
       "clean": 34,
       "rate": 61.81818181818182,
-      "post": 67.45942211801068
+      "post": 67.16483003518293
     },
     {
-      "name": "Justin Wrobleski",
-      "starts": 21,
-      "clean": 13,
+      "name": "Dean Kremer",
+      "starts": 42,
+      "clean": 26,
       "rate": 61.904761904761905,
-      "post": 69.24177173173037
-    },
-    {
-      "name": "Eduardo Rodriguez",
-      "starts": 53,
-      "clean": 33,
-      "rate": 62.264150943396224,
-      "post": 67.70772139207489
+      "post": 67.75999683069261
     },
     {
       "name": "Chase Dollander",
       "starts": 24,
       "clean": 15,
       "rate": 62.5,
-      "post": 69.17256837231095
+      "post": 68.90095101711587
     },
     {
-      "name": "Robert Gasser",
-      "starts": 16,
-      "clean": 10,
-      "rate": 62.5,
-      "post": 69.68766509902446
-    },
-    {
-      "name": "Merrill Kelly",
-      "starts": 54,
-      "clean": 34,
+      "name": "Sean Manaea",
+      "starts": 27,
+      "clean": 17,
       "rate": 62.96296296296296,
-      "post": 67.93572254701449
+      "post": 68.83882693945473
     },
     {
-      "name": "MacKenzie Gore",
-      "starts": 55,
-      "clean": 35,
-      "rate": 63.63636363636363,
-      "post": 68.16052664909768
+      "name": "Payton Tolle",
+      "starts": 27,
+      "clean": 17,
+      "rate": 62.96296296296296,
+      "post": 68.83882693945473
+    },
+    {
+      "name": "Sean Burke",
+      "starts": 46,
+      "clean": 29,
+      "rate": 63.04347826086956,
+      "post": 67.98821781635404
+    },
+    {
+      "name": "Andrew Painter",
+      "starts": 19,
+      "clean": 12,
+      "rate": 63.1578947368421,
+      "post": 69.3464681041317
     },
     {
       "name": "Aaron Civale",
       "starts": 33,
       "clean": 21,
       "rate": 63.63636363636363,
-      "post": 68.98561051912762
+      "post": 68.72439692575011
+    },
+    {
+      "name": "Eric Lauer",
+      "starts": 33,
+      "clean": 21,
+      "rate": 63.63636363636363,
+      "post": 68.72439692575011
+    },
+    {
+      "name": "Emmet Sheehan",
+      "starts": 33,
+      "clean": 21,
+      "rate": 63.63636363636363,
+      "post": 68.72439692575011
+    },
+    {
+      "name": "Troy Melton",
+      "starts": 22,
+      "clean": 14,
+      "rate": 63.63636363636363,
+      "post": 69.26833568871757
     },
     {
       "name": "Hurston Waldrep",
       "starts": 11,
       "clean": 7,
       "rate": 63.63636363636363,
-      "post": 70.17876620720789
+      "post": 69.94249594075768
     },
     {
-      "name": "Ryan Johnson",
-      "starts": 11,
-      "clean": 7,
+      "name": "Rhett Lowder",
+      "starts": 22,
+      "clean": 14,
       "rate": 63.63636363636363,
-      "post": 70.17876620720789
+      "post": 69.26833568871757
     },
     {
-      "name": "Brayan Bello",
-      "starts": 36,
-      "clean": 23,
-      "rate": 63.888888888888886,
-      "post": 68.92934008056459
+      "name": "Merrill Kelly",
+      "starts": 58,
+      "clean": 37,
+      "rate": 63.793103448275865,
+      "post": 67.87404049916094
     },
     {
-      "name": "Cristian Javier",
-      "starts": 14,
-      "clean": 9,
-      "rate": 64.28571428571429,
-      "post": 70.07509521806975
-    },
-    {
-      "name": "Eric Lauer",
-      "starts": 31,
-      "clean": 20,
-      "rate": 64.51612903225806,
-      "post": 69.30568599894073
-    },
-    {
-      "name": "Hunter Dobbins",
+      "name": "Grayson Rodriguez",
       "starts": 17,
       "clean": 11,
       "rate": 64.70588235294117,
-      "post": 69.97736911614206
+      "post": 69.74171904505818
     },
     {
-      "name": "Yusei Kikuchi",
-      "starts": 40,
-      "clean": 26,
-      "rate": 65,
-      "post": 69.11959506204995
+      "name": "Brayan Bello",
+      "starts": 37,
+      "clean": 24,
+      "rate": 64.86486486486487,
+      "post": 68.93731940430541
     },
     {
       "name": "Ben Brown",
       "starts": 23,
       "clean": 15,
       "rate": 65.21739130434783,
-      "post": 69.7978170904222
+      "post": 69.5641322145418
     },
     {
-      "name": "Payton Tolle",
+      "name": "Justin Wrobleski",
       "starts": 23,
       "clean": 15,
       "rate": 65.21739130434783,
-      "post": 69.7978170904222
+      "post": 69.5641322145418
     },
     {
-      "name": "Anthony Kay",
-      "starts": 23,
-      "clean": 15,
+      "name": "Eury Pérez",
+      "starts": 46,
+      "clean": 30,
       "rate": 65.21739130434783,
-      "post": 69.7978170904222
-    },
-    {
-      "name": "Shota Imanaga",
-      "starts": 49,
-      "clean": 32,
-      "rate": 65.3061224489796,
-      "post": 68.9580198668425
-    },
-    {
-      "name": "Framber Valdez",
-      "starts": 55,
-      "clean": 36,
-      "rate": 65.45454545454545,
-      "post": 68.86163118018467
-    },
-    {
-      "name": "Brandon Young",
-      "starts": 32,
-      "clean": 21,
-      "rate": 65.625,
-      "post": 69.56225859310156
-    },
-    {
-      "name": "Emmet Sheehan",
-      "starts": 32,
-      "clean": 21,
-      "rate": 65.625,
-      "post": 69.56225859310156
+      "post": 68.77627336109786
     },
     {
       "name": "Luis Severino",
       "starts": 41,
       "clean": 27,
       "rate": 65.85365853658537,
-      "post": 69.35966273494026
+      "post": 69.13626768132444
     },
     {
-      "name": "Eury Pérez",
+      "name": "Emerson Hancock",
       "starts": 41,
       "clean": 27,
       "rate": 65.85365853658537,
-      "post": 69.35966273494026
+      "post": 69.13626768132444
+    },
+    {
+      "name": "Dustin May",
+      "starts": 50,
+      "clean": 33,
+      "rate": 66,
+      "post": 68.96646382653434
+    },
+    {
+      "name": "Shota Imanaga",
+      "starts": 53,
+      "clean": 35,
+      "rate": 66.0377358490566,
+      "post": 68.91493530312663
+    },
+    {
+      "name": "Framber Valdez",
+      "starts": 59,
+      "clean": 39,
+      "rate": 66.10169491525424,
+      "post": 68.81850834327325
     },
     {
       "name": "Cole Ragans",
       "starts": 21,
       "clean": 14,
       "rate": 66.66666666666667,
-      "post": 70.16231009208097
+      "post": 69.94813942474222
+    },
+    {
+      "name": "MacKenzie Gore",
+      "starts": 60,
+      "clean": 40,
+      "rate": 66.66666666666667,
+      "post": 69.03981909419534
     },
     {
       "name": "Charlie Morton",
       "starts": 27,
       "clean": 18,
       "rate": 66.66666666666667,
-      "post": 69.9793433351541
-    },
-    {
-      "name": "Kevin Gausman",
-      "starts": 57,
-      "clean": 38,
-      "rate": 66.66666666666667,
-      "post": 69.29221847551361
-    },
-    {
-      "name": "Seth Lugo",
-      "starts": 51,
-      "clean": 34,
-      "rate": 66.66666666666667,
-      "post": 69.40585242271142
+      "post": 69.76565730833246
     },
     {
       "name": "Griffin Canning",
       "starts": 27,
       "clean": 18,
       "rate": 66.66666666666667,
-      "post": 69.9793433351541
-    },
-    {
-      "name": "Aaron Nola",
-      "starts": 42,
-      "clean": 28,
-      "rate": 66.66666666666667,
-      "post": 69.59602657670386
+      "post": 69.76565730833246
     },
     {
       "name": "Ryan Feltner",
-      "starts": 24,
-      "clean": 16,
-      "rate": 66.66666666666667,
-      "post": 70.0683681898056
-    },
-    {
-      "name": "Ryan Gusto",
       "starts": 27,
       "clean": 18,
       "rate": 66.66666666666667,
-      "post": 69.9793433351541
+      "post": 69.76565730833246
+    },
+    {
+      "name": "Martín Pérez",
+      "starts": 33,
+      "clean": 22,
+      "rate": 66.66666666666667,
+      "post": 69.60240161028898
     },
     {
       "name": "Joe Boyle",
       "starts": 12,
       "clean": 8,
       "rate": 66.66666666666667,
-      "post": 70.47807976920349
+      "post": 70.26606158652942
+    },
+    {
+      "name": "Brandon Young",
+      "starts": 36,
+      "clean": 24,
+      "rate": 66.66666666666667,
+      "post": 69.52705848773358
     },
     {
       "name": "Mike Burrows",
       "starts": 36,
       "clean": 24,
       "rate": 66.66666666666667,
-      "post": 69.73819161159405
-    },
-    {
-      "name": "Sean Manaea",
-      "starts": 24,
-      "clean": 16,
-      "rate": 66.66666666666667,
-      "post": 70.0683681898056
-    },
-    {
-      "name": "Troy Melton",
-      "starts": 18,
-      "clean": 12,
-      "rate": 66.66666666666667,
-      "post": 70.26158798125664
-    },
-    {
-      "name": "Tyler Phillips",
-      "starts": 15,
-      "clean": 10,
-      "rate": 66.66666666666667,
-      "post": 70.36666978003744
+      "post": 69.52705848773358
     },
     {
       "name": "Trey Yesavage",
       "starts": 21,
       "clean": 14,
       "rate": 66.66666666666667,
-      "post": 70.16231009208097
+      "post": 69.94813942474222
     },
     {
       "name": "Tatsuya Imai",
       "starts": 15,
       "clean": 10,
       "rate": 66.66666666666667,
-      "post": 70.36666978003744
+      "post": 70.1534568749225
     },
     {
-      "name": "Andrew Painter",
-      "starts": 15,
-      "clean": 10,
-      "rate": 66.66666666666667,
-      "post": 70.36666978003744
+      "name": "David Peterson",
+      "starts": 49,
+      "clean": 33,
+      "rate": 67.34693877551021,
+      "post": 69.49740552231424
     },
     {
-      "name": "Dustin May",
-      "starts": 46,
-      "clean": 31,
-      "rate": 67.3913043478261,
-      "post": 69.7577833429811
+      "name": "Yusei Kikuchi",
+      "starts": 43,
+      "clean": 29,
+      "rate": 67.44186046511628,
+      "post": 69.63449327221183
     },
     {
-      "name": "Matthew Liberatore",
-      "starts": 53,
-      "clean": 36,
-      "rate": 67.9245283018868,
-      "post": 69.84094727193998
-    },
-    {
-      "name": "Cade Povich",
-      "starts": 25,
-      "clean": 17,
-      "rate": 68,
-      "post": 70.33411513230854
+      "name": "Logan Allen",
+      "starts": 31,
+      "clean": 21,
+      "rate": 67.74193548387096,
+      "post": 69.95277419453596
     },
     {
       "name": "Jack Leiter",
       "starts": 44,
       "clean": 30,
       "rate": 68.18181818181819,
-      "post": 70.05798041989377
+      "post": 69.87762231548248
+    },
+    {
+      "name": "Michael McGreevy",
+      "starts": 44,
+      "clean": 30,
+      "rate": 68.18181818181819,
+      "post": 69.87762231548248
+    },
+    {
+      "name": "Edward Cabrera",
+      "starts": 41,
+      "clean": 28,
+      "rate": 68.29268292682927,
+      "post": 69.95664850907374
+    },
+    {
+      "name": "Hunter Dobbins",
+      "starts": 19,
+      "clean": 13,
+      "rate": 68.42105263157895,
+      "post": 70.34752312883438
+    },
+    {
+      "name": "Robert Gasser",
+      "starts": 19,
+      "clean": 13,
+      "rate": 68.42105263157895,
+      "post": 70.34752312883438
+    },
+    {
+      "name": "Joe Ryan",
+      "starts": 54,
+      "clean": 37,
+      "rate": 68.51851851851852,
+      "post": 69.88669441151943
     },
     {
       "name": "Max Meyer",
       "starts": 32,
       "clean": 22,
       "rate": 68.75,
-      "post": 70.39815475990298
+      "post": 70.21892707947976
     },
     {
       "name": "Trevor McDonald",
       "starts": 16,
       "clean": 11,
       "rate": 68.75,
-      "post": 70.65261723209471
+      "post": 70.46148787395656
     },
     {
-      "name": "Martín Pérez",
-      "starts": 29,
-      "clean": 20,
-      "rate": 68.96551724137932,
-      "post": 70.49413576226996
+      "name": "Kevin Gausman",
+      "starts": 61,
+      "clean": 42,
+      "rate": 68.85245901639344,
+      "post": 69.96275888794116
     },
     {
-      "name": "Blake Snell",
-      "starts": 13,
-      "clean": 9,
-      "rate": 69.23076923076923,
-      "post": 70.77144466052327
+      "name": "Nick Lodolo",
+      "starts": 45,
+      "clean": 31,
+      "rate": 68.88888888888889,
+      "post": 70.11688893691088
     },
     {
       "name": "Reese Olson",
       "starts": 13,
       "clean": 9,
       "rate": 69.23076923076923,
-      "post": 70.77144466052327
+      "post": 70.58273512954504
     },
     {
-      "name": "Grayson Rodriguez",
+      "name": "Spencer Arrighetti",
+      "starts": 26,
+      "clean": 18,
+      "rate": 69.23076923076923,
+      "post": 70.41831564296362
+    },
+    {
+      "name": "AJ Smith-Shawver",
       "starts": 13,
       "clean": 9,
       "rate": 69.23076923076923,
-      "post": 70.77144466052327
+      "post": 70.58273512954504
     },
     {
-      "name": "Davis Martin",
-      "starts": 49,
-      "clean": 34,
-      "rate": 69.38775510204081,
-      "post": 70.42180490853248
+      "name": "Cade Povich",
+      "starts": 26,
+      "clean": 18,
+      "rate": 69.23076923076923,
+      "post": 70.41831564296362
     },
     {
-      "name": "David Peterson",
+      "name": "Dylan Cease",
+      "starts": 59,
+      "clean": 41,
+      "rate": 69.49152542372882,
+      "post": 70.24815600324926
+    },
+    {
+      "name": "Aaron Nola",
       "starts": 46,
       "clean": 32,
       "rate": 69.56521739130434,
-      "post": 70.50610663034189
+      "post": 70.35238445058552
     },
     {
-      "name": "Joe Ryan",
-      "starts": 53,
-      "clean": 37,
-      "rate": 69.81132075471699,
-      "post": 70.55202256522834
+      "name": "Ryan Weathers",
+      "starts": 33,
+      "clean": 23,
+      "rate": 69.6969696969697,
+      "post": 70.48040629482786
+    },
+    {
+      "name": "Joey Cantillo",
+      "starts": 43,
+      "clean": 30,
+      "rate": 69.76744186046511,
+      "post": 70.44163089533384
     },
     {
       "name": "José Berríos",
       "starts": 30,
       "clean": 21,
       "rate": 70,
-      "post": 70.74496753679146
+      "post": 70.58357829765586
+    },
+    {
+      "name": "Tyler Mahle",
+      "starts": 40,
+      "clean": 28,
+      "rate": 70,
+      "post": 70.53530664155522
+    },
+    {
+      "name": "Davis Martin",
+      "starts": 50,
+      "clean": 35,
+      "rate": 70,
+      "post": 70.49441063775573
     },
     {
       "name": "Kyle Hart",
       "starts": 10,
       "clean": 7,
       "rate": 70,
-      "post": 70.89757465328543
-    },
-    {
-      "name": "Logan Allen",
-      "starts": 30,
-      "clean": 21,
-      "rate": 70,
-      "post": 70.74496753679146
-    },
-    {
-      "name": "Edward Cabrera",
-      "starts": 40,
-      "clean": 28,
-      "rate": 70,
-      "post": 70.68659917700833
+      "post": 70.7119859790075
     },
     {
       "name": "David Festa",
       "starts": 10,
       "clean": 7,
       "rate": 70,
-      "post": 70.89757465328543
-    },
-    {
-      "name": "Michael McGreevy",
-      "starts": 40,
-      "clean": 28,
-      "rate": 70,
-      "post": 70.68659917700833
+      "post": 70.7119859790075
     },
     {
       "name": "J.T. Ginn",
-      "starts": 37,
-      "clean": 26,
-      "rate": 70.27027027027027,
-      "post": 70.78336236346199
+      "starts": 40,
+      "clean": 28,
+      "rate": 70,
+      "post": 70.53530664155522
     },
     {
-      "name": "Dylan Cease",
+      "name": "Mitch Bratt",
+      "starts": 10,
+      "clean": 7,
+      "rate": 70,
+      "post": 70.7119859790075
+    },
+    {
+      "name": "Bryan Woo",
+      "starts": 57,
+      "clean": 40,
+      "rate": 70.17543859649123,
+      "post": 70.54183182119722
+    },
+    {
+      "name": "Matthew Liberatore",
+      "starts": 57,
+      "clean": 40,
+      "rate": 70.17543859649123,
+      "post": 70.54183182119722
+    },
+    {
+      "name": "Bryce Elder",
       "starts": 54,
       "clean": 38,
       "rate": 70.37037037037037,
-      "post": 70.75994139769239
+      "post": 70.62801388268872
+    },
+    {
+      "name": "Anthony Kay",
+      "starts": 27,
+      "clean": 19,
+      "rate": 70.37037037037037,
+      "post": 70.6924876772102
     },
     {
       "name": "Spencer Schwellenbach",
       "starts": 17,
       "clean": 12,
       "rate": 70.58823529411765,
-      "post": 70.93309891414015
+      "post": 70.76322575832249
     },
     {
-      "name": "Trevor Williams",
+      "name": "Cristian Javier",
       "starts": 17,
       "clean": 12,
       "rate": 70.58823529411765,
-      "post": 70.93309891414015
+      "post": 70.76322575832249
     },
     {
-      "name": "Bryce Elder",
-      "starts": 51,
-      "clean": 36,
-      "rate": 70.58823529411765,
-      "post": 70.84851991347033
-    },
-    {
-      "name": "Shane Bieber",
-      "starts": 17,
-      "clean": 12,
-      "rate": 70.58823529411765,
-      "post": 70.93309891414015
-    },
-    {
-      "name": "Christian Scott",
-      "starts": 17,
-      "clean": 12,
-      "rate": 70.58823529411765,
-      "post": 70.93309891414015
-    },
-    {
-      "name": "Nick Lodolo",
-      "starts": 41,
-      "clean": 29,
-      "rate": 70.73170731707317,
-      "post": 70.91448478712961
+      "name": "Andrew Abbott",
+      "starts": 58,
+      "clean": 41,
+      "rate": 70.6896551724138,
+      "post": 70.75392189762458
     },
     {
       "name": "Hunter Greene",
       "starts": 24,
       "clean": 17,
       "rate": 70.83333333333333,
-      "post": 70.96416800730023
+      "post": 70.80762670274251
     },
     {
       "name": "Quinn Priester",
       "starts": 24,
       "clean": 17,
       "rate": 70.83333333333333,
-      "post": 70.96416800730023
+      "post": 70.80762670274251
     },
     {
       "name": "Cade Horton",
       "starts": 24,
       "clean": 17,
       "rate": 70.83333333333333,
-      "post": 70.96416800730023
+      "post": 70.80762670274251
+    },
+    {
+      "name": "Yoshinobu Yamamoto",
+      "starts": 55,
+      "clean": 39,
+      "rate": 70.9090909090909,
+      "post": 70.84415186192086
+    },
+    {
+      "name": "Luis Castillo",
+      "starts": 55,
+      "clean": 39,
+      "rate": 70.9090909090909,
+      "post": 70.84415186192086
     },
     {
       "name": "Ryan Pepiot",
       "starts": 31,
       "clean": 22,
       "rate": 70.96774193548387,
-      "post": 70.99157057710917
+      "post": 70.84647230156554
     },
     {
       "name": "Spencer Strider",
       "starts": 31,
       "clean": 22,
       "rate": 70.96774193548387,
-      "post": 70.99157057710917
+      "post": 70.84647230156554
     },
     {
-      "name": "Ryan Weathers",
-      "starts": 31,
-      "clean": 22,
-      "rate": 70.96774193548387,
-      "post": 70.99157057710917
-    },
-    {
-      "name": "Emerson Hancock",
-      "starts": 38,
-      "clean": 27,
-      "rate": 71.05263157894737,
-      "post": 71.01591950037557
+      "name": "Walker Buehler",
+      "starts": 52,
+      "clean": 37,
+      "rate": 71.15384615384616,
+      "post": 70.93845557902766
     },
     {
       "name": "Brandon Pfaadt",
-      "starts": 45,
-      "clean": 32,
-      "rate": 71.11111111111111,
-      "post": 71.03769826929613
+      "starts": 49,
+      "clean": 35,
+      "rate": 71.42857142857143,
+      "post": 71.03711530681278
     },
     {
-      "name": "Chris Bassitt",
-      "starts": 42,
-      "clean": 30,
+      "name": "Andre Pallante",
+      "starts": 56,
+      "clean": 40,
       "rate": 71.42857142857143,
-      "post": 71.13885451439195
+      "post": 71.05713211301085
     },
     {
       "name": "Clarke Schmidt",
       "starts": 14,
       "clean": 10,
       "rate": 71.42857142857143,
-      "post": 71.05903647544237
+      "post": 70.89273445687472
     },
     {
       "name": "Brandon Woodruff",
       "starts": 21,
       "clean": 15,
       "rate": 71.42857142857143,
-      "post": 71.08284845243156
+      "post": 70.92954561743552
     },
     {
-      "name": "Ian Seymour",
-      "starts": 14,
-      "clean": 10,
+      "name": "Griffin Jax",
+      "starts": 21,
+      "clean": 15,
       "rate": 71.42857142857143,
-      "post": 71.05903647544237
-    },
-    {
-      "name": "Bryan Woo",
-      "starts": 53,
-      "clean": 38,
-      "rate": 71.69811320754717,
-      "post": 71.26309785851672
+      "post": 70.92954561743552
     },
     {
       "name": "Zack Littell",
       "starts": 46,
       "clean": 33,
       "rate": 71.73913043478261,
-      "post": 71.25442991770268
+      "post": 71.14043999532934
     },
     {
-      "name": "Nolan McLean",
+      "name": "Chris Bassitt",
+      "starts": 46,
+      "clean": 33,
+      "rate": 71.73913043478261,
+      "post": 71.14043999532934
+    },
+    {
+      "name": "Ryan Gusto",
       "starts": 32,
       "clean": 23,
       "rate": 71.875,
-      "post": 71.23405092670441
+      "post": 71.10470897051673
     },
     {
-      "name": "Sonny Gray",
-      "starts": 54,
-      "clean": 39,
+      "name": "George Kirby",
+      "starts": 50,
+      "clean": 36,
+      "rate": 72,
+      "post": 71.25838404336642
+    },
+    {
+      "name": "Peter Lambert",
+      "starts": 25,
+      "clean": 18,
+      "rate": 72,
+      "post": 71.0833005415723
+    },
+    {
+      "name": "Trevor Williams",
+      "starts": 18,
+      "clean": 13,
       "rate": 72.22222222222223,
-      "post": 71.46599611036186
+      "post": 71.05886143169288
     },
     {
-      "name": "Tyler Mahle",
+      "name": "Nolan McLean",
       "starts": 36,
       "clean": 26,
       "rate": 72.22222222222223,
-      "post": 71.35589467365297
+      "post": 71.2380013805648
     },
     {
-      "name": "Andrew Abbott",
-      "starts": 54,
-      "clean": 39,
+      "name": "Shane Bieber",
+      "starts": 18,
+      "clean": 13,
       "rate": 72.22222222222223,
-      "post": 71.46599611036186
+      "post": 71.05886143169288
+    },
+    {
+      "name": "Tyler Phillips",
+      "starts": 18,
+      "clean": 13,
+      "rate": 72.22222222222223,
+      "post": 71.05886143169288
+    },
+    {
+      "name": "Sonny Gray",
+      "starts": 58,
+      "clean": 42,
+      "rate": 72.41379310344827,
+      "post": 71.4738922472405
+    },
+    {
+      "name": "Kyle Harrison",
+      "starts": 29,
+      "clean": 21,
+      "rate": 72.41379310344827,
+      "post": 71.22586256546202
     },
     {
       "name": "Michael Lorenzen",
       "starts": 51,
       "clean": 37,
       "rate": 72.54901960784314,
-      "post": 71.56985365884978
+      "post": 71.47629754442255
     },
     {
       "name": "Jose Quintana",
       "starts": 33,
       "clean": 24,
       "rate": 72.72727272727273,
-      "post": 71.47251111279725
+      "post": 71.35841097936672
     },
     {
-      "name": "Walker Buehler",
-      "starts": 48,
-      "clean": 35,
-      "rate": 72.91666666666667,
-      "post": 71.6783055870374
-    },
-    {
-      "name": "Yoshinobu Yamamoto",
-      "starts": 52,
-      "clean": 38,
-      "rate": 73.07692307692308,
-      "post": 71.77346120830688
-    },
-    {
-      "name": "Bailey Ober",
-      "starts": 45,
-      "clean": 33,
+      "name": "Gavin Williams",
+      "starts": 60,
+      "clean": 44,
       "rate": 73.33333333333333,
-      "post": 71.7916636552184
+      "post": 71.8788205551706
     },
     {
       "name": "Kodai Senga",
       "starts": 30,
       "clean": 22,
       "rate": 73.33333333333333,
-      "post": 71.59507574748662
+      "post": 71.48533539075649
     },
     {
       "name": "Logan Evans",
       "starts": 15,
       "clean": 11,
       "rate": 73.33333333333333,
-      "post": 71.34102396459525
+      "post": 71.19626836698299
     },
     {
-      "name": "Gage Jump",
+      "name": "Bubba Chandler",
+      "starts": 30,
+      "clean": 22,
+      "rate": 73.33333333333333,
+      "post": 71.48533539075649
+    },
+    {
+      "name": "Ryan Johnson",
       "starts": 15,
       "clean": 11,
       "rate": 73.33333333333333,
-      "post": 71.34102396459525
+      "post": 71.19626836698299
     },
     {
-      "name": "Sandy Alcantara",
-      "starts": 57,
-      "clean": 42,
+      "name": "Bailey Ober",
+      "starts": 49,
+      "clean": 36,
+      "rate": 73.46938775510205,
+      "post": 71.80697019906205
+    },
+    {
+      "name": "Gage Jump",
+      "starts": 19,
+      "clean": 14,
       "rate": 73.6842105263158,
-      "post": 72.05785657184786
-    },
-    {
-      "name": "Matthew Boyd",
-      "starts": 46,
-      "clean": 34,
-      "rate": 73.91304347826087,
-      "post": 72.00275320506347
+      "post": 71.34857815353708
     },
     {
       "name": "Colin Rea",
       "starts": 46,
       "clean": 34,
       "rate": 73.91304347826087,
-      "post": 72.00275320506347
-    },
-    {
-      "name": "George Kirby",
-      "starts": 46,
-      "clean": 34,
-      "rate": 73.91304347826087,
-      "post": 72.00275320506347
+      "post": 71.92849554007317
     },
     {
       "name": "Brandon Sproat",
       "starts": 23,
       "clean": 17,
       "rate": 73.91304347826087,
-      "post": 71.6056109394114
+      "post": 71.48915991774774
     },
     {
       "name": "Mitch Keller",
       "starts": 54,
       "clean": 40,
       "rate": 74.07407407407408,
-      "post": 72.17205082303134
+      "post": 72.11065282502733
     },
     {
-      "name": "Andre Pallante",
-      "starts": 54,
-      "clean": 40,
-      "rate": 74.07407407407408,
-      "post": 72.17205082303134
+      "name": "Roki Sasaki",
+      "starts": 31,
+      "clean": 23,
+      "rate": 74.19354838709677,
+      "post": 71.74017040859513
     },
     {
       "name": "Kyle Hendricks",
       "starts": 31,
       "clean": 23,
       "rate": 74.19354838709677,
-      "post": 71.8345128661934
+      "post": 71.74017040859513
     },
     {
       "name": "Lucas Giolito",
       "starts": 31,
       "clean": 23,
       "rate": 74.19354838709677,
-      "post": 71.8345128661934
-    },
-    {
-      "name": "Nick Pivetta",
-      "starts": 35,
-      "clean": 26,
-      "rate": 74.28571428571429,
-      "post": 71.93776438224717
-    },
-    {
-      "name": "Max Fried",
-      "starts": 47,
-      "clean": 35,
-      "rate": 74.46808510638297,
-      "post": 72.21070695630239
+      "post": 71.74017040859513
     },
     {
       "name": "Shane Baz",
-      "starts": 55,
-      "clean": 41,
-      "rate": 74.54545454545455,
-      "post": 72.36715383561966
+      "starts": 59,
+      "clean": 44,
+      "rate": 74.57627118644068,
+      "post": 72.39262749321328
     },
     {
-      "name": "Gavin Williams",
-      "starts": 56,
-      "clean": 42,
+      "name": "Randy Vásquez",
+      "starts": 48,
+      "clean": 36,
       "rate": 75,
-      "post": 72.559540143028
+      "post": 72.36406852080005
     },
     {
-      "name": "Spencer Arrighetti",
-      "starts": 24,
-      "clean": 18,
+      "name": "Nick Pivetta",
+      "starts": 36,
+      "clean": 27,
       "rate": 75,
-      "post": 71.85996782479486
-    },
-    {
-      "name": "Tanner Bibee",
-      "starts": 56,
-      "clean": 42,
-      "rate": 75,
-      "post": 72.559540143028
+      "post": 72.0934728269804
     },
     {
       "name": "Luis Ortiz",
       "starts": 16,
       "clean": 12,
       "rate": 75,
-      "post": 71.617569365165
+      "post": 71.49353703872315
     },
     {
       "name": "Jacob Misiorowski",
-      "starts": 36,
-      "clean": 27,
-      "rate": 75,
-      "post": 72.16474620468244
-    },
-    {
-      "name": "Cam Schlittler",
       "starts": 40,
       "clean": 30,
       "rate": 75,
-      "post": 72.25360329196673
+      "post": 72.1896401318351
     },
     {
       "name": "Cade Cavalli",
-      "starts": 36,
-      "clean": 27,
+      "starts": 40,
+      "clean": 30,
       "rate": 75,
-      "post": 72.16474620468244
+      "post": 72.1896401318351
     },
     {
-      "name": "Griffin Jax",
-      "starts": 20,
-      "clean": 15,
-      "rate": 75,
-      "post": 71.74327279952215
+      "name": "Freddy Peralta",
+      "starts": 61,
+      "clean": 46,
+      "rate": 75.40983606557377,
+      "post": 72.78175253123693
     },
     {
-      "name": "Reid Detmers",
-      "starts": 24,
-      "clean": 18,
-      "rate": 75,
-      "post": 71.85996782479486
+      "name": "Sandy Alcantara",
+      "starts": 61,
+      "clean": 46,
+      "rate": 75.40983606557377,
+      "post": 72.78175253123693
     },
     {
-      "name": "Randy Vásquez",
-      "starts": 45,
-      "clean": 34,
-      "rate": 75.55555555555556,
-      "post": 72.54562904114069
+      "name": "Max Fried",
+      "starts": 49,
+      "clean": 37,
+      "rate": 75.51020408163265,
+      "post": 72.57682509131132
     },
     {
-      "name": "Roki Sasaki",
-      "starts": 29,
-      "clean": 22,
-      "rate": 75.86206896551724,
-      "post": 72.20892978847354
+      "name": "Jameson Taillon",
+      "starts": 41,
+      "clean": 31,
+      "rate": 75.60975609756098,
+      "post": 72.41779099232161
     },
     {
-      "name": "Kyle Harrison",
-      "starts": 25,
-      "clean": 19,
+      "name": "Matthew Boyd",
+      "starts": 50,
+      "clean": 38,
       "rate": 76,
-      "post": 72.10980811281914
+      "post": 72.78633085458782
     },
     {
-      "name": "Noah Cameron",
-      "starts": 46,
-      "clean": 35,
-      "rate": 76.08695652173913,
-      "post": 72.75107649242426
-    },
-    {
-      "name": "Clay Holmes",
-      "starts": 42,
-      "clean": 32,
-      "rate": 76.19047619047619,
-      "post": 72.68168245208003
-    },
-    {
-      "name": "Peter Lambert",
+      "name": "Christian Scott",
       "starts": 21,
       "clean": 16,
       "rate": 76.19047619047619,
-      "post": 72.00338681278218
+      "post": 71.91095181012882
+    },
+    {
+      "name": "Will Warren",
+      "starts": 59,
+      "clean": 45,
+      "rate": 76.27118644067797,
+      "post": 73.10745132320129
     },
     {
       "name": "Garrett Crochet",
       "starts": 38,
       "clean": 29,
       "rate": 76.3157894736842,
-      "post": 72.60786953793051
-    },
-    {
-      "name": "Joey Cantillo",
-      "starts": 38,
-      "clean": 29,
-      "rate": 76.3157894736842,
-      "post": 72.60786953793051
-    },
-    {
-      "name": "José Soriano",
-      "starts": 55,
-      "clean": 42,
-      "rate": 76.36363636363636,
-      "post": 73.06825836670666
-    },
-    {
-      "name": "Luis Castillo",
-      "starts": 51,
-      "clean": 39,
-      "rate": 76.47058823529412,
-      "post": 73.0125211496087
+      "post": 72.56290583951858
     },
     {
       "name": "Cal Quantrill",
-      "starts": 34,
-      "clean": 26,
+      "starts": 38,
+      "clean": 29,
+      "rate": 76.3157894736842,
+      "post": 72.56290583951858
+    },
+    {
+      "name": "Blake Snell",
+      "starts": 17,
+      "clean": 13,
       "rate": 76.47058823529412,
-      "post": 72.5292017919279
+      "post": 71.78473247158679
+    },
+    {
+      "name": "Noah Cameron",
+      "starts": 51,
+      "clean": 39,
+      "rate": 76.47058823529412,
+      "post": 72.992659751648
+    },
+    {
+      "name": "Logan Webb",
+      "starts": 60,
+      "clean": 46,
+      "rate": 76.66666666666667,
+      "post": 73.29832128565825
     },
     {
       "name": "Justin Verlander",
       "starts": 30,
       "clean": 23,
       "rate": 76.66666666666667,
-      "post": 72.44518395818179
+      "post": 72.38709248385712
     },
     {
-      "name": "Logan Webb",
-      "starts": 56,
-      "clean": 43,
-      "rate": 76.78571428571429,
-      "post": 73.25576342116548
+      "name": "Tanner Bibee",
+      "starts": 60,
+      "clean": 46,
+      "rate": 76.66666666666667,
+      "post": 73.29832128565825
     },
     {
-      "name": "Will Warren",
-      "starts": 56,
-      "clean": 43,
-      "rate": 76.78571428571429,
-      "post": 73.25576342116548
+      "name": "Cam Schlittler",
+      "starts": 43,
+      "clean": 33,
+      "rate": 76.74418604651163,
+      "post": 72.86304376469985
+    },
+    {
+      "name": "Hayden Wesneski",
+      "starts": 13,
+      "clean": 10,
+      "rate": 76.92307692307692,
+      "post": 71.6477590043243
     },
     {
       "name": "Joey Wentz",
       "starts": 13,
       "clean": 10,
       "rate": 76.92307692307692,
-      "post": 71.76516352781347
+      "post": 71.6477590043243
     },
     {
-      "name": "Jared Jones",
-      "starts": 13,
-      "clean": 10,
-      "rate": 76.92307692307692,
-      "post": 71.76516352781347
+      "name": "Bryce Miller",
+      "starts": 35,
+      "clean": 27,
+      "rate": 77.14285714285714,
+      "post": 72.71553345277772
     },
     {
-      "name": "Freddy Peralta",
-      "starts": 57,
-      "clean": 44,
-      "rate": 77.19298245614036,
-      "post": 73.44067562001499
+      "name": "Michael Soroka",
+      "starts": 35,
+      "clean": 27,
+      "rate": 77.14285714285714,
+      "post": 72.71553345277772
+    },
+    {
+      "name": "Parker Messick",
+      "starts": 35,
+      "clean": 27,
+      "rate": 77.14285714285714,
+      "post": 72.71553345277772
     },
     {
       "name": "Nathan Eovaldi",
       "starts": 44,
       "clean": 34,
       "rate": 77.27272727272727,
-      "post": 73.09675325894617
-    },
-    {
-      "name": "Brad Lord",
-      "starts": 22,
-      "clean": 17,
-      "rate": 77.27272727272727,
-      "post": 72.25875560903958
+      "post": 73.08032260894612
     },
     {
       "name": "Slade Cecconi",
       "starts": 44,
       "clean": 34,
       "rate": 77.27272727272727,
-      "post": 73.09675325894617
+      "post": 73.08032260894612
     },
     {
-      "name": "Jameson Taillon",
-      "starts": 40,
-      "clean": 31,
-      "rate": 77.5,
-      "post": 73.03710534944592
+      "name": "Tarik Skubal",
+      "starts": 53,
+      "clean": 41,
+      "rate": 77.35849056603773,
+      "post": 73.39607166653403
+    },
+    {
+      "name": "Landen Roupp",
+      "starts": 49,
+      "clean": 38,
+      "rate": 77.55102040816327,
+      "post": 73.34667998356059
     },
     {
       "name": "Patrick Corbin",
       "starts": 45,
       "clean": 35,
       "rate": 77.77777777777777,
-      "post": 73.29959442706297
+      "post": 73.29414969546494
     },
     {
-      "name": "Bubba Chandler",
-      "starts": 27,
-      "clean": 21,
+      "name": "Ian Seymour",
+      "starts": 18,
+      "clean": 14,
       "rate": 77.77777777777777,
-      "post": 72.59641170655388
+      "post": 72.07003889924314
     },
     {
-      "name": "Bryce Miller",
-      "starts": 32,
-      "clean": 25,
-      "rate": 78.125,
-      "post": 72.90584326030726
+      "name": "José Soriano",
+      "starts": 59,
+      "clean": 46,
+      "rate": 77.96610169491525,
+      "post": 73.8222751531893
     },
     {
       "name": "Shane Smith",
       "starts": 32,
       "clean": 25,
       "rate": 78.125,
-      "post": 72.90584326030726
+      "post": 72.87627275259068
     },
     {
-      "name": "Robbie Ray",
-      "starts": 55,
-      "clean": 43,
-      "rate": 78.18181818181819,
-      "post": 73.76936289779364
-    },
-    {
-      "name": "Landen Roupp",
+      "name": "Clay Holmes",
       "starts": 46,
       "clean": 36,
       "rate": 78.26086956521739,
-      "post": 73.49939977978505
+      "post": 73.50460662956081
     },
     {
       "name": "Carlos Rodón",
-      "starts": 42,
-      "clean": 33,
-      "rate": 78.57142857142857,
-      "post": 73.45309642092407
+      "starts": 46,
+      "clean": 36,
+      "rate": 78.26086956521739,
+      "post": 73.50460662956081
     },
     {
       "name": "Tylor Megill",
       "starts": 14,
       "clean": 11,
       "rate": 78.57142857142857,
-      "post": 72.04297773281499
+      "post": 71.94653510317826
     },
     {
-      "name": "Michael Soroka",
-      "starts": 33,
-      "clean": 26,
-      "rate": 78.78787878787878,
-      "post": 73.13044484191032
+      "name": "Tyler Glasnow",
+      "starts": 28,
+      "clean": 22,
+      "rate": 78.57142857142857,
+      "post": 72.79826238008941
     },
     {
-      "name": "Janson Junk",
-      "starts": 33,
-      "clean": 26,
-      "rate": 78.78787878787878,
-      "post": 73.13044484191032
+      "name": "Kyle Leahy",
+      "starts": 28,
+      "clean": 22,
+      "rate": 78.57142857142857,
+      "post": 72.79826238008941
     },
     {
-      "name": "Foster Griffin",
+      "name": "Reid Detmers",
+      "starts": 28,
+      "clean": 22,
+      "rate": 78.57142857142857,
+      "post": 72.79826238008941
+    },
+    {
+      "name": "Gerrit Cole",
+      "starts": 19,
+      "clean": 15,
+      "rate": 78.94736842105263,
+      "post": 72.34963317823978
+    },
+    {
+      "name": "Zack Wheeler",
+      "starts": 48,
+      "clean": 38,
+      "rate": 79.16666666666667,
+      "post": 73.91572379937152
+    },
+    {
+      "name": "Brad Lord",
       "starts": 24,
       "clean": 19,
       "rate": 79.16666666666667,
-      "post": 72.75576764228951
+      "post": 72.71430238836916
+    },
+    {
+      "name": "Nick Martinez",
+      "starts": 53,
+      "clean": 42,
+      "rate": 79.24528301886792,
+      "post": 74.14292772710192
     },
     {
       "name": "Kris Bubic",
       "starts": 29,
       "clean": 23,
       "rate": 79.3103448275862,
-      "post": 73.06632680157531
+      "post": 73.0457880588894
     },
     {
       "name": "Chad Patrick",
       "starts": 29,
       "clean": 23,
       "rate": 79.3103448275862,
-      "post": 73.06632680157531
+      "post": 73.0457880588894
     },
     {
       "name": "Stephen Kolek",
       "starts": 29,
       "clean": 23,
       "rate": 79.3103448275862,
-      "post": 73.06632680157531
+      "post": 73.0457880588894
     },
     {
-      "name": "Tarik Skubal",
-      "starts": 49,
-      "clean": 39,
-      "rate": 79.59183673469387,
-      "post": 74.08126751275739
-    },
-    {
-      "name": "Nick Martinez",
-      "starts": 49,
-      "clean": 39,
-      "rate": 79.59183673469387,
-      "post": 74.08126751275739
-    },
-    {
-      "name": "Drew Rasmussen",
-      "starts": 54,
-      "clean": 43,
-      "rate": 79.62962962962963,
-      "post": 74.29021496103977
+      "name": "Robbie Ray",
+      "starts": 59,
+      "clean": 47,
+      "rate": 79.66101694915254,
+      "post": 74.5370989831773
     },
     {
       "name": "Richard Fitts",
       "starts": 10,
       "clean": 8,
       "rate": 80,
-      "post": 71.92182812043133
-    },
-    {
-      "name": "Tyler Glasnow",
-      "starts": 25,
-      "clean": 20,
-      "rate": 80,
-      "post": 72.99765460307444
+      "post": 71.81216124141389
     },
     {
       "name": "Hayden Birdsong",
       "starts": 10,
       "clean": 8,
       "rate": 80,
-      "post": 71.92182812043133
+      "post": 71.81216124141389
     },
     {
       "name": "Ryan Bergert",
       "starts": 15,
       "clean": 12,
       "rate": 80,
-      "post": 72.31537814915308
+      "post": 72.23907985904349
     },
     {
       "name": "Luis Gil",
       "starts": 15,
       "clean": 12,
       "rate": 80,
-      "post": 72.31537814915308
+      "post": 72.23907985904349
     },
     {
-      "name": "Gerrit Cole",
-      "starts": 15,
-      "clean": 12,
+      "name": "Patrick Sandoval",
+      "starts": 10,
+      "clean": 8,
       "rate": 80,
-      "post": 72.31537814915308
+      "post": 71.81216124141389
     },
     {
-      "name": "Parker Messick",
-      "starts": 31,
-      "clean": 25,
-      "rate": 80.64516129032258,
-      "post": 73.52039744436185
+      "name": "Hunter Brown",
+      "starts": 47,
+      "clean": 38,
+      "rate": 80.85106382978724,
+      "post": 74.49366625166923
     },
     {
-      "name": "Chris Sale",
-      "starts": 42,
-      "clean": 34,
-      "rate": 80.95238095238095,
-      "post": 74.22451038976811
+      "name": "Drew Rasmussen",
+      "starts": 58,
+      "clean": 47,
+      "rate": 81.03448275862068,
+      "post": 75.07374399532004
+    },
+    {
+      "name": "Janson Junk",
+      "starts": 37,
+      "clean": 30,
+      "rate": 81.08108108108108,
+      "post": 74.0266106493726
     },
     {
       "name": "Simeon Woods Richardson",
       "starts": 32,
       "clean": 26,
       "rate": 81.25,
-      "post": 73.74173942710868
+      "post": 73.76205464362765
     },
     {
-      "name": "Braxton Ashcraft",
-      "starts": 32,
-      "clean": 26,
-      "rate": 81.25,
-      "post": 73.74173942710868
-    },
-    {
-      "name": "Hunter Brown",
-      "starts": 43,
-      "clean": 35,
-      "rate": 81.3953488372093,
-      "post": 74.42182401231265
-    },
-    {
-      "name": "Grant Holmes",
-      "starts": 43,
-      "clean": 35,
-      "rate": 81.3953488372093,
-      "post": 74.42182401231265
+      "name": "Jacob Lopez",
+      "starts": 38,
+      "clean": 31,
+      "rate": 81.57894736842105,
+      "post": 74.24506790012789
     },
     {
       "name": "Ryne Nelson",
       "starts": 38,
       "clean": 31,
       "rate": 81.57894736842105,
-      "post": 74.19981957548546
-    },
-    {
-      "name": "Zack Wheeler",
-      "starts": 44,
-      "clean": 36,
-      "rate": 81.81818181818181,
-      "post": 74.61613967847236
+      "post": 74.24506790012789
     },
     {
       "name": "JP Sears",
       "starts": 33,
       "clean": 27,
       "rate": 81.81818181818181,
-      "post": 73.95941170646687
-    },
-    {
-      "name": "Jacob Lopez",
-      "starts": 33,
-      "clean": 27,
-      "rate": 81.81818181818181,
-      "post": 73.95941170646687
+      "post": 73.99242503298336
     },
     {
       "name": "PJ Poulin",
       "starts": 11,
       "clean": 9,
       "rate": 81.81818181818181,
-      "post": 72.20650396718845
+      "post": 72.11890218248946
+    },
+    {
+      "name": "Cristopher Sánchez",
+      "starts": 61,
+      "clean": 50,
+      "rate": 81.9672131147541,
+      "post": 75.6007461745327
     },
     {
       "name": "Jack Flaherty",
       "starts": 50,
       "clean": 41,
       "rate": 82,
-      "post": 74.99616125926991
+      "post": 75.07825107141987
     },
     {
-      "name": "Cristopher Sánchez",
-      "starts": 57,
-      "clean": 47,
-      "rate": 82.45614035087719,
-      "post": 75.51490419226567
+      "name": "Foster Griffin",
+      "starts": 28,
+      "clean": 23,
+      "rate": 82.14285714285714,
+      "post": 73.71658148858639
     },
     {
-      "name": "Michael King",
-      "starts": 40,
-      "clean": 33,
-      "rate": 82.5,
-      "post": 74.6041094644043
+      "name": "Chris Sale",
+      "starts": 45,
+      "clean": 37,
+      "rate": 82.22222222222223,
+      "post": 74.88278007474197
     },
     {
-      "name": "Kyle Bradish",
-      "starts": 29,
-      "clean": 24,
-      "rate": 82.75862068965517,
-      "post": 73.92372381467712
+      "name": "Shane Drohan",
+      "starts": 17,
+      "clean": 14,
+      "rate": 82.3529411764706,
+      "post": 72.80623918485111
     },
     {
-      "name": "Ranger Suarez",
-      "starts": 47,
-      "clean": 39,
-      "rate": 82.97872340425532,
-      "post": 75.18176697176834
+      "name": "Jared Jones",
+      "starts": 17,
+      "clean": 14,
+      "rate": 82.3529411764706,
+      "post": 72.80623918485111
     },
     {
-      "name": "Kyle Leahy",
-      "starts": 24,
-      "clean": 20,
-      "rate": 83.33333333333333,
-      "post": 73.65156745978415
-    },
-    {
-      "name": "Jesús Luzardo",
-      "starts": 56,
-      "clean": 47,
-      "rate": 83.92857142857143,
-      "post": 76.04065653371546
-    },
-    {
-      "name": "Paul Skenes",
-      "starts": 57,
-      "clean": 48,
-      "rate": 84.21052631578948,
-      "post": 76.20631371634924
-    },
-    {
-      "name": "Ronel Blanco",
-      "starts": 13,
-      "clean": 11,
-      "rate": 84.61538461538461,
-      "post": 72.75888239510365
-    },
-    {
-      "name": "Shane McClanahan",
-      "starts": 20,
-      "clean": 17,
-      "rate": 85,
-      "post": 73.60145479832751
+      "name": "Chase Burns",
+      "starts": 35,
+      "clean": 29,
+      "rate": 82.85714285714286,
+      "post": 74.44123926609096
     },
     {
       "name": "Michael Wacha",
-      "starts": 55,
-      "clean": 47,
-      "rate": 85.45454545454545,
-      "post": 76.57378102214163
+      "starts": 59,
+      "clean": 49,
+      "rate": 83.05084745762711,
+      "post": 75.96674664315331
+    },
+    {
+      "name": "Carmen Mlodzinski",
+      "starts": 24,
+      "clean": 20,
+      "rate": 83.33333333333333,
+      "post": 73.66764023118247
+    },
+    {
+      "name": "Grant Holmes",
+      "starts": 48,
+      "clean": 40,
+      "rate": 83.33333333333333,
+      "post": 75.46737907794298
+    },
+    {
+      "name": "Braxton Ashcraft",
+      "starts": 36,
+      "clean": 30,
+      "rate": 83.33333333333333,
+      "post": 74.65988716622724
+    },
+    {
+      "name": "Jesús Luzardo",
+      "starts": 61,
+      "clean": 51,
+      "rate": 83.60655737704919,
+      "post": 76.30549458535666
+    },
+    {
+      "name": "Michael King",
+      "starts": 44,
+      "clean": 37,
+      "rate": 84.0909090909091,
+      "post": 75.48234782904385
+    },
+    {
+      "name": "Ranger Suarez",
+      "starts": 51,
+      "clean": 43,
+      "rate": 84.31372549019608,
+      "post": 76.0253841660989
+    },
+    {
+      "name": "Paul Skenes",
+      "starts": 61,
+      "clean": 52,
+      "rate": 85.24590163934427,
+      "post": 77.0102429961806
+    },
+    {
+      "name": "Kyle Bradish",
+      "starts": 34,
+      "clean": 29,
+      "rate": 85.29411764705883,
+      "post": 75.0891481636043
     },
     {
       "name": "Bowden Francis",
       "starts": 14,
       "clean": 12,
       "rate": 85.71428571428571,
-      "post": 73.02691899018762
+      "post": 73.00033574948182
+    },
+    {
+      "name": "Ronel Blanco",
+      "starts": 14,
+      "clean": 12,
+      "rate": 85.71428571428571,
+      "post": 73.00033574948182
+    },
+    {
+      "name": "Keider Montero",
+      "starts": 35,
+      "clean": 30,
+      "rate": 85.71428571428571,
+      "post": 75.30409217274759
     },
     {
       "name": "Shohei Ohtani",
       "starts": 28,
       "clean": 24,
       "rate": 85.71428571428571,
-      "post": 74.5630249635933
-    },
-    {
-      "name": "Shane Drohan",
-      "starts": 14,
-      "clean": 12,
-      "rate": 85.71428571428571,
-      "post": 73.02691899018762
-    },
-    {
-      "name": "Carmen Mlodzinski",
-      "starts": 23,
-      "clean": 20,
-      "rate": 86.95652173913044,
-      "post": 74.3173017128952
+      "post": 74.63490059708336
     },
     {
       "name": "Casey Mize",
-      "starts": 46,
-      "clean": 40,
-      "rate": 86.95652173913044,
-      "post": 76.49269292922818
+      "starts": 50,
+      "clean": 43,
+      "rate": 86,
+      "post": 76.60619788264127
     },
     {
-      "name": "Chase Burns",
-      "starts": 31,
-      "clean": 27,
-      "rate": 87.09677419354838,
-      "post": 75.20628202253032
-    },
-    {
-      "name": "Keider Montero",
-      "starts": 32,
-      "clean": 28,
+      "name": "Shane McClanahan",
+      "starts": 24,
+      "clean": 21,
       "rate": 87.5,
-      "post": 75.41353176071154
+      "post": 74.62097807399579
     },
     {
-      "name": "Trevor Rogers",
-      "starts": 40,
-      "clean": 35,
-      "rate": 87.5,
-      "post": 76.1711135793627
-    },
-    {
-      "name": "Javier Assad",
+      "name": "Jake Bennett",
       "starts": 17,
       "clean": 15,
       "rate": 88.23529411764706,
-      "post": 73.80028830813445
+      "post": 73.82774589811542
     },
     {
-      "name": "Walbert Ureña",
+      "name": "Trevor Rogers",
+      "starts": 45,
+      "clean": 40,
+      "rate": 88.88888888888889,
+      "post": 77.26572564365752
+    },
+    {
+      "name": "Javier Assad",
+      "starts": 18,
+      "clean": 16,
+      "rate": 88.88888888888889,
+      "post": 74.09239383434368
+    },
+    {
+      "name": "Logan Henderson",
       "starts": 20,
       "clean": 18,
       "rate": 90,
-      "post": 74.53054579773017
+      "post": 74.60595162487974
+    },
+    {
+      "name": "Randy Dobnak",
+      "starts": 10,
+      "clean": 9,
+      "rate": 90,
+      "post": 72.91233650382027
     },
     {
       "name": "Corbin Burnes",
       "starts": 11,
       "clean": 10,
       "rate": 90.9090909090909,
-      "post": 73.22037284717874
+      "post": 73.20710530335536
     },
     {
       "name": "Mick Abel",
       "starts": 12,
       "clean": 11,
       "rate": 91.66666666666667,
-      "post": 73.48915802379884
+      "post": 73.49552779703703
+    },
+    {
+      "name": "Walbert Ureña",
+      "starts": 24,
+      "clean": 22,
+      "rate": 91.66666666666667,
+      "post": 75.57431591680911
     },
     {
       "name": "Jason Alexander",
       "starts": 15,
       "clean": 14,
       "rate": 93.33333333333333,
-      "post": 74.26408651826873
+      "post": 74.32470284316446
     },
     {
       "name": "Andrew Alvarez",
-      "starts": 15,
-      "clean": 14,
-      "rate": 93.33333333333333,
-      "post": 74.26408651826873
-    },
-    {
-      "name": "Logan Henderson",
-      "starts": 16,
-      "clean": 15,
-      "rate": 93.75,
-      "post": 74.5124257643758
-    },
-    {
-      "name": "Jake Bennett",
-      "starts": 14,
-      "clean": 14,
-      "rate": 100,
-      "post": 74.99480150493287
+      "starts": 19,
+      "clean": 18,
+      "rate": 94.73684210526316,
+      "post": 75.35279825234787
     }
   ]
 }
