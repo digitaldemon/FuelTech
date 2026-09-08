@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-09-08.nrfi-audit";
+const BUILD = "2026-09-08.pitcher-cards";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -9798,6 +9798,60 @@ function matchKingPick(row, kingOpen) {
   return null;
 }
 
+/* Attribution by ablation, for the card's "why this call" line — the same
+ * discipline as scripts/nrfi-why.js, at group grain: neutralise one input
+ * GROUP on the real context, re-run the shipped evaluator, and report what
+ * the information added. The factor stack is multiplicative, capped, blended
+ * and calibrated, so no single source line "is" the reason — reading factors
+ * off the ctx and calling them the explanation already produced one wrong
+ * answer (see the memory behind nrfi-why.js). Read each row as: "with this
+ * input at its league-average / neutral value, the raw number would have
+ * been p". Neutral is NOT zero — nrfiRegress returns the league rate on a
+ * null input, 1.0 for a multiplier — because the question is what the
+ * information added, not what deleting the term does to the arithmetic.
+ *
+ * Lives BELOW the PITCHER_BT slice marker on purpose: nrfi-model-lib.js
+ * slices app.jsx up to that line, so nothing here can move modelSig or make
+ * the offline harness disagree with the board. Calibration and the market
+ * blend are applied to these raw numbers at render, by the same expressions
+ * that produce the headline. */
+const NRFI_WHY_GROUPS = [
+  ["pitching", "Pitching", (c) => {
+    for (const s of ["away", "home"]) {
+      if (c[s + "Pit"]) { c[s + "Pit"].rate = null; c[s + "Pit"].sample = 0; }
+      if (c[s + "Meta"]) { c[s + "Meta"].gs = null; c[s + "Meta"].ip = null; c[s + "Meta"].seasonEra = null; }
+    }
+    c.awayPeri = null; c.homePeri = null;
+    c.awayRolling = null; c.homeRolling = null;
+  }],
+  ["offense", "Offense", (c) => {
+    for (const s of ["away", "home"]) {
+      if (c[s + "Off"]) { c[s + "Off"].rate = null; c[s + "Off"].sample = 0; }
+      if (c[s + "Lineup"]) { c[s + "Lineup"].factor = 1; c[s + "Lineup"].obp = null; }
+    }
+    c.awayOffRolling = null; c.homeOffRolling = null;
+  }],
+  ["parkwx", "Park/weather", (c) => { if (c.wx) c.wx.factor = 1; }],
+  ["travel", "Travel/rest", (c) => {
+    for (const s of ["away", "home"]) if (c[s + "Travel"]) c[s + "Travel"].factor = 1;
+  }],
+];
+function nrfiAblate(ctx, ev) {
+  if (!ev || ev.modelError || !Number.isFinite(ev.pNRFI)) return null;
+  const out = [];
+  for (const [key, label, mut] of NRFI_WHY_GROUPS) {
+    try {
+      // ctx is plain JSON-safe data (built a few lines below in scanNrfi), so
+      // a JSON clone is a real isolation boundary between ablations.
+      const c = JSON.parse(JSON.stringify(ctx));
+      mut(c);
+      const e2 = nrfiEvaluate(c);
+      if (!e2.modelError && Number.isFinite(e2.pNRFI)) out.push({ key, label, p: e2.pNRFI });
+    } catch { /* a failed ablation just goes unreported */ }
+  }
+  return out.length ? out : null;
+}
+
 // Scan today's MLB slate and run the research pass on every game.
 // `dateOverride` is for offline calibration only — the app never passes it. It
 // exists because the live evaluator could not be pointed at a finished slate,
@@ -9868,6 +9922,10 @@ async function scanNrfi(onProgress, dateOverride) {
       dayNight: g.dayNight || null,
     };
     const ev = nrfiEvaluate(ctx);
+    // Raw ablation probabilities for the card's "why" line. Computed here
+    // because ctx dies with this closure; the card applies the same
+    // calibration + market blend it applies to the headline.
+    const why = nrfiAblate(ctx, ev);
     const ls = g.linescore || {};
     const inn1 = (ls.innings || [])[0];
     const state = g.status && g.status.abstractGameState;
@@ -9879,6 +9937,13 @@ async function scanNrfi(onProgress, dateOverride) {
       awayId: away && away.team && away.team.id, homeId: home && home.team && home.team.id,
       awayPP: ctx.awayPP, homePP: ctx.homePP,
       pNRFI: ev.pNRFI, pYRFI: 1 - ev.pNRFI, checks: ev.checks, aligned: ev.aligned, confidence: ev.confidence, method: ev.method, pitProfiles: ev.pitProfiles, parkEnv: ctx.wx,
+      why,
+      // The matchup each STARTER faces: the OPPOSING top three's OBP against
+      // his hand (platoon splits, weighted 50/30/20 in topOrderStrength).
+      // This is the model's live pitcher-vs-batters input — the away starter
+      // faces the HOME lineup, hence the cross.
+      awayFaces: { obp: homeLineup.obp, note: homeLineup.note, factor: homeLineup.factor },
+      homeFaces: { obp: awayLineup.obp, note: awayLineup.note, factor: awayLineup.factor },
       awayYrfiPct: yrfiPctFromLambda(awayOff && awayOff.rate),
       homeYrfiPct: yrfiPctFromLambda(homeOff && homeOff.rate),
       awayOffSample: awayOff ? awayOff.sample : null,
@@ -11282,6 +11347,21 @@ function FirstInning() {
     const kelly = market && !started ? kellyNRFI(pFinal, market.yesPrice, call) : null;
     const tails = sellers.filter((s) => s.active).map((s) => ({ name: s.name, pick: matchKingPick(r, s.open || []), record: s.record || null })).filter((t) => t.pick);
     const base = Object.assign({}, r, { call, pMax, pModel: pcal, pFinal, pCal: pcal, tails, tier: nrfiTier(pMax), market, kelly });
+    /* The "why" line, on the same scale as the headline: each raw ablated
+     * probability goes through the SAME calibration and market blend as
+     * pFinal, so swing = "how many points of the displayed number this input
+     * group is carrying". Signed toward NRFI: +2.1 means the real information
+     * in that group pushed P(NRFI) up 2.1 points vs knowing nothing. `flips`
+     * marks the group the call actually rests on — neutralise it and the
+     * side changes. */
+    if (r.why && r.why.length) {
+      const mktN = mk ? mk.marketNRFI : null;
+      base.whyRows = r.why.map((w) => {
+        const p2 = nrfiBlend(applyCalibration(w.p, calib), mktN);
+        return { key: w.key, label: w.label, swing: (pFinal - p2) * 100,
+          flips: (p2 >= 0.5) !== (pFinal >= 0.5) };
+      }).sort((a, b) => Math.abs(b.swing) - Math.abs(a.swing));
+    }
     base.v = nrfiVerdict(base);
     return base;
   });
@@ -12099,9 +12179,9 @@ function FirstInning() {
         {r.pitProfiles && (
           <div className="pit-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
             {[
-              { side: "AWAY", name: r.awayPP, p: r.pitProfiles.away },
-              { side: "HOME", name: r.homePP, p: r.pitProfiles.home },
-            ].map(({ side, name, p }, i) => {
+              { side: "AWAY", name: r.awayPP, p: r.pitProfiles.away, faces: r.awayFaces, oppAbbr: r.homeAbbr, oppName: r.home },
+              { side: "HOME", name: r.homePP, p: r.pitProfiles.home, faces: r.homeFaces, oppAbbr: r.awayAbbr, oppName: r.away },
+            ].map(({ side, name, p, faces, oppAbbr, oppName }, i) => {
               const rl = p.rolling;
               // A 1-start L30 window is not a rate. Fall back to the regressed
               // cleanPct until the rolling window has real games behind it.
@@ -12223,6 +12303,30 @@ function FirstInning() {
                       ))}
                     </div>
                   )}
+                  {/* The matchup: the top three bats HE faces, season OBP vs
+                      his hand (platoon splits). This is the model's live
+                      pitcher-vs-batters input — it multiplies the opposing
+                      offense at the largest coefficient in that expression.
+                      Individual batter-vs-pitcher history is deliberately NOT
+                      here: MLB's vsPlayer stat cannot be rewound (it leaks the
+                      scored game into its own inputs) and 5-20 PA samples are
+                      noise; it was measured, and it went with the sim. */}
+                  {faces && (faces.obp != null ? (
+                    <div title={"THE MATCHUP — " + (oppName || oppAbbr || "the opposing") + "'s 1-2-3 hitters against " + name + (p.hand ? " (" + p.hand + "HP)" : "") + ": weighted OBP " + faces.obp.toFixed(3) + " against his hand this season (order weighted 50/30/20). League top-3 average is " + NRFI_LG_TOP3_OBP.toFixed(3) + ". This exact number feeds the model's offense multiplier — it is the pitcher-vs-batters input, not decoration. Career batter-vs-pitcher history is excluded on purpose: tiny samples, and the stat can't be measured without leaking the result."}
+                      style={{ cursor: "help", display: "flex", alignItems: "center", gap: 5, marginBottom: 7, fontSize: 9 }}>
+                      <span style={{ fontSize: 9, color: "var(--dim)", fontWeight: 700, letterSpacing: "0.04em" }}>FACES {oppAbbr || "OPP"} 1-3</span>
+                      <span style={{ fontWeight: 800, color: faces.factor >= 1.05 ? "var(--rose)" : faces.factor <= 0.95 ? "var(--moss)" : "var(--fg)" }}>
+                        OBP {faces.obp.toFixed(3)}{p.hand ? " vs " + p.hand + "HP" : ""}
+                      </span>
+                      {faces.factor >= 1.05 && <span style={{ color: "var(--rose)", fontWeight: 800 }}>dangerous top</span>}
+                      {faces.factor <= 0.95 && <span style={{ color: "var(--moss)", fontWeight: 800 }}>soft top</span>}
+                    </div>
+                  ) : (
+                    <div title={"The opposing lineup hasn't posted yet, so the model is using a neutral matchup for " + name + ". The card updates itself once " + (oppName || "the opponent") + " posts — usually 1-3 hours before first pitch."}
+                      style={{ cursor: "help", marginBottom: 7, fontSize: 9, color: "var(--dim)", opacity: 0.8 }}>
+                      FACES {oppAbbr || "OPP"} 1-3 · lineup not posted yet
+                    </div>
+                  ))}
                   {rl && rl.l10 && rl.szn && rl.l10.runsPerStart != null && rl.szn.runsPerStart != null && (rl.l10.n || 0) >= 5 && (() => {
                     const delta = rl.szn.runsPerStart - rl.l10.runsPerStart; // positive = fewer runs L10 (improving)
                     const deltaAbs = Math.abs(delta);
@@ -12280,6 +12384,32 @@ function FirstInning() {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* ── Why this call — attribution by ablation, not by reading factors.
+             Each chip is "re-run the whole model with that input group at
+             league average"; the swing is what the real information added to
+             the displayed number, after the same calibration and market
+             blend as the headline. Stays visible on the collapsed card: it
+             is the one-line answer to "what is this call resting on". ── */}
+        {r.whyRows && r.whyRows.length > 0 && (
+          <div title={"WHY THIS CALL — each input group is neutralised (set to league average) and the whole model re-run; the number is how many points of " + r.call + " probability that information is carrying. + pushes toward NRFI, − toward YRFI. A ⚑ group decides the call: without it the model would take the other side. Groups near 0.0 are decoration on this game, however important they sound."}
+            style={{ cursor: "help", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 10, padding: "6px 10px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8, fontSize: 10 }}>
+            <span style={{ fontWeight: 800, color: "var(--dim)", letterSpacing: "0.05em", fontSize: 9 }}>WHY THIS CALL</span>
+            {r.whyRows.map((w) => {
+              const toward = w.swing > 0 ? "NRFI" : "YRFI";
+              const supports = Math.abs(w.swing) >= 0.5 && toward === r.call;
+              const opposes = Math.abs(w.swing) >= 0.5 && toward !== r.call;
+              const clr = supports ? "var(--moss)" : opposes ? "var(--rose)" : "var(--dim)";
+              return (
+                <span key={w.key} title={w.label + ": with this set to league average the board would read " + (r.pMax - (r.call === "NRFI" ? w.swing : -w.swing)).toFixed(1) + "% instead" + (w.flips ? " — and the call would FLIP to the other side." : ".")}
+                  style={{ fontWeight: 700, color: clr, background: "rgba(255,255,255,0.04)", borderRadius: 5, padding: "1px 7px", border: w.flips ? "1px solid " + clr : "1px solid transparent" }}>
+                  {w.flips ? "⚑ " : ""}{w.label} {w.swing > 0 ? "+" : ""}{w.swing.toFixed(1)}
+                </span>
+              );
+            })}
+            <span style={{ color: "var(--dim)", opacity: 0.7, fontSize: 9, marginLeft: "auto" }}>pts toward NRFI(+) / YRFI(−)</span>
           </div>
         )}
 
