@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-09-08.pitcher-cards";
+const BUILD = "2026-09-08.lineups-never-block";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -9773,9 +9773,15 @@ function nrfiWhy(r) {
   // exactly the cards that are bets. Everything else here argues the side; this
   // is the only line that argues the wager.
   pros.unshift(...value);
-  // Not "projected" — there is no projected order since the sim was removed.
-  // The top-of-order OBP factor simply sits out until the real lineup lands.
-  if (!r.lineupPosted) blockers.push("Lineups not posted — top-of-order OBP is sitting out");
+  /* Unposted lineups are deliberately NOT in this list. They never block a
+   * bet: the lineup factor sits at neutral (no projected order — the sim and
+   * its filler lineup are gone) and the only mechanical effect is a -0.12
+   * confidence dock per side, which cannot demote a data-complete game on
+   * its own. Listing it here with a "!" made it read as the reason a card
+   * wasn't a pick — Shana read exactly that off a live board on 2026-09-08,
+   * on a morning when every real blocker was the value gate. The LINEUPS
+   * PENDING badge on the card carries the state instead, where it can say
+   * what it is without posing as a verdict. */
 
   return { pros, cons, blockers };
 }
@@ -12531,7 +12537,7 @@ function FirstInning() {
               team season rates, so the honest thing to say is that a real input is
               MISSING, not that a substitute is standing in for it. */}
           {!r.lineupPosted && (
-            <span title="Official starting lineups haven't been posted yet, so the model is running without the top-of-order OBP adjustment — the offense side is on team season rates alone. The number will firm up once lineups post. Check back closer to game time." style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", background: "rgba(230,160,0,0.1)", border: "1px solid rgba(230,160,0,0.4)", borderRadius: 20, fontSize: 11, fontWeight: 700, color: "var(--amber)" }}>⚠ LINEUPS PENDING</span>
+            <span title="Official starting lineups haven't been posted yet, so the model is running without the top-of-order OBP adjustment — the offense side is on team season rates alone. This does NOT block a bet: pitching and every other weight carry the number, and a 559-game test measured the lineup term at roughly zero anyway. It costs a small confidence dock, nothing more. The matchup line firms up once lineups post, usually 1-3 hours before first pitch." style={{ cursor: "help", display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", background: "rgba(230,160,0,0.1)", border: "1px solid rgba(230,160,0,0.4)", borderRadius: 20, fontSize: 11, fontWeight: 700, color: "var(--amber)" }}>⚠ LINEUPS PENDING</span>
           )}
           {/* The SIM PROJ badge sat here, previewing the base-out sim's number
               before lineups posted. It went with the sim — see the note in
