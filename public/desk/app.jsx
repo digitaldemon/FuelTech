@@ -22,7 +22,7 @@ function fmtCountdown(startUtc, now) {
 }
 
 // Bump on every meaningful ship so a stale cache is obvious at a glance.
-const BUILD = "2026-09-08.lineups-never-block";
+const BUILD = "2026-09-08.strongest-calls";
 
 // Everything outbound goes through the local server: it holds the API key
 // and sidesteps the venues' browser CORS rules.
@@ -13966,6 +13966,62 @@ function FirstInning() {
           <div style={{ marginTop: 8, display: "grid", gap: 8 }}>{held.map(card)}</div>
         </div>
       )}
+      {/* ── Today's strongest calls — outcome first, by request. Shana bets the
+           side, not the mispricing, so this strip ranks every live-callable
+           game purely by the model's probability on its called side; the value
+           gate never touches the ORDER here. The price still rides along on
+           each row — shown, not deciding — because the graded record is
+           unambiguous about what ignoring it costs (BET+LEAN +13.8u vs ~flat
+           for every call at any price), and a list that hid the cost would be
+           quietly recommending the losing version of the same predictions. ── */}
+      {(() => {
+        const calls = enriched.filter((r) => r.hasPitchers && r.dataOk && !r.v.thinPass && !decided(r))
+          .sort((a, b) => b.pMax - a.pMax);
+        if (phase !== "done" || !calls.length) return null;
+        return (
+          <div className="panel" style={{ marginTop: 12, border: "1px solid rgba(120,130,150,0.3)" }}>
+            <p className="sect" style={{ margin: 0 }}>Today's strongest calls</p>
+            <p style={{ fontSize: 11, color: "var(--dim)", margin: "4px 0 8px" }}>
+              Every game ranked by our probability on the called side — the price never touches this order.
+              The cost rides along so you can see which strong calls are also fairly priced:{" "}
+              <span style={{ color: "var(--moss)", fontWeight: 700 }}>green +N</span> = our number beats the price,
+              dim −N = the market already charges more than the call is worth.
+            </p>
+            {calls.map((r, i) => {
+              const be = r.market && !r.market.started ? r.market.marketSide : null;
+              const edge = r.market ? (r.market.edgeRaw != null ? r.market.edgeRaw : r.market.edge) : null;
+              const started = r.market && r.market.started;
+              return (
+                <div key={r.gamePk} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 0", borderTop: i > 0 ? "1px solid rgba(120,130,150,.10)" : "none", fontSize: 12.5, flexWrap: "wrap" }}>
+                  <span style={{ color: "var(--dim)", fontWeight: 700, width: 18, textAlign: "right", flexShrink: 0 }}>{i + 1}.</span>
+                  <span style={{ fontWeight: 700, minWidth: 92 }}>{r.awayAbbr}@{r.homeAbbr}</span>
+                  <span style={{ fontWeight: 800, padding: "1px 8px", borderRadius: 5, fontSize: 11,
+                    background: r.call === "NRFI" ? "rgba(80,160,80,0.15)" : "rgba(220,60,60,0.15)",
+                    color: r.call === "NRFI" ? "var(--moss)" : "var(--rose)" }}>{r.call}</span>
+                  <b style={{ color: r.v.color, minWidth: 34 }}>{r.pMax.toFixed(0)}%</b>
+                  <span style={{ color: "var(--dim)" }}>
+                    {started ? "1st inning under way" :
+                      be == null ? "no market price yet" :
+                      <>costs {dsAmerican(be)} · needs {be.toFixed(0)}% to break even</>}
+                  </span>
+                  {!started && edge != null && (
+                    <span title={edge >= 1.5
+                      ? "Our number beats the break-even price by " + edge.toFixed(1) + " points — this call is also a value bet."
+                      : edge <= -1.5
+                        ? "The market charges " + Math.abs(edge).toFixed(1) + " points more than our number says the call is worth — betting it pays a premium."
+                        : "Priced within about a point of our number — a fair ticket, no edge either way."}
+                      style={{ cursor: "help", fontWeight: 800, fontSize: 11,
+                        color: edge >= 1.5 ? "var(--moss)" : "var(--dim)", opacity: edge >= 1.5 ? 1 : 0.75 }}>
+                      {edge >= 0 ? "+" : ""}{edge.toFixed(1)}{edge >= 1.5 ? " value" : ""}
+                    </span>
+                  )}
+                  {r.v.isBet && <span style={{ fontSize: 10, fontWeight: 800, color: "var(--moss)", letterSpacing: "0.05em" }}>BET ✓</span>}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
       {sect("Bets — ranked by confidence", [...betNRFI, ...betYRFI].sort(byConf), "var(--moss)")}
       {sect("Leans", leans, "var(--amber)")}
       {sect("Pass", passes, "var(--dim)")}
