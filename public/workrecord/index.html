@@ -106,6 +106,9 @@ button:active{transform:translateY(1px)}
 .bigmic{width:100%;margin-top:10px}
 .hint{font-size:13px;color:var(--dim);line-height:1.55;margin:9px 0 0}
 .hint em{color:#B6C0C7;font-style:italic}
+.dictlive{background:#1A2228;border:1px solid var(--edge);border-radius:3px;
+  padding:8px 10px;font-size:13.5px;color:#7EA8B8;line-height:1.5;margin:8px 0}
+.dictlive em{color:#9ABAC6;font-style:normal}
 
 /* ---------- SIGNATURE: the day strip ---------- */
 .strip-wrap{display:flex;gap:14px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
@@ -884,6 +887,8 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const speechOK = !!SR;
 let activeRec = null;
 
+function escHtml(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
 function wireMic(btnId, onFinal, opts){
   const btn = $(btnId);
   if (!speechOK){
@@ -893,48 +898,80 @@ function wireMic(btnId, onFinal, opts){
     return;
   }
   btn.addEventListener("click", () => {
-    if (activeRec){ activeRec.stop(); return; }
-    const rec = new SR();
-    rec.lang = "en-US";
-    rec.continuous = true;
-    rec.interimResults = true;
-    let finalText = "";
-    rec.onresult = e => {
-      let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++){
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalText += t + " "; else interim += t;
-      }
-      if (opts && opts.live) opts.live(finalText + interim);
-    };
-    rec.onerror = ev => {
-      btn.dataset.on = "false";
-      btn.querySelector(".lbl").textContent = opts && opts.label || "Dictate";
-      activeRec = null;
-      const note = opts && opts.note ? $(opts.note) : null;
-      if (note){
-        note.className = "note bad";
-        note.textContent = ev.error === "not-allowed"
-          ? "Microphone access is off. Turn it on for this page in your browser settings."
-          : "Dictation stopped. Try again, or type it in.";
-      }
-    };
-    rec.onend = () => {
+    if (activeRec){ activeRec._stop = true; activeRec.stop(); return; }
+
+    let cumText = "";     // accumulates across auto-restarts
+    let restarts = 0;
+    const MAX_RESTARTS = 10;
+
+    // Preview div — appears just before the note element, or after the button's plate
+    const noteEl = opts && opts.note ? $(opts.note) : null;
+    const preview = document.createElement("div");
+    preview.className = "dictlive";
+    preview.setAttribute("aria-live", "polite");
+    if (noteEl) noteEl.insertAdjacentElement("beforebegin", preview);
+    else (btn.closest(".plate") || btn).insertAdjacentElement("afterend", preview);
+
+    const done = () => {
       btn.dataset.on = "false";
       btn.querySelector(".lbl").textContent = (opts && opts.label) || "Dictate";
       activeRec = null;
-      if (finalText.trim()) onFinal(finalText.trim());
+      preview.remove();
+      if (cumText.trim()) onFinal(cumText.trim());
     };
-    activeRec = rec;
+
+    const launch = () => {
+      const rec = new SR();
+      rec.lang = "en-US";
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec._stop = false;
+      activeRec = rec;
+
+      rec.onresult = e => {
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++){
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) cumText += t + " "; else interim += t;
+        }
+        const full = cumText.trim();
+        preview.innerHTML = full
+          ? escHtml(full) + (interim ? " <em>" + escHtml(interim) + "</em>" : "")
+          : "<em>" + escHtml(interim || "Listening…") + "</em>";
+        if (opts && opts.live) opts.live(cumText + interim);
+      };
+
+      rec.onerror = ev => {
+        if (ev.error === "not-allowed"){
+          rec._stop = true;
+          if (noteEl){ noteEl.className = "note bad"; noteEl.textContent = "Mic blocked — allow microphone access in your browser settings."; }
+        }
+        // no-speech / aborted: let onend handle the restart
+      };
+
+      rec.onend = () => {
+        if (!rec._stop && restarts < MAX_RESTARTS){
+          restarts++;
+          setTimeout(() => { try { launch(); } catch(e){ done(); } }, 250);
+          return;
+        }
+        done();
+      };
+
+      try { rec.start(); } catch(e){ done(); }
+    };
+
     btn.dataset.on = "true";
-    btn.querySelector(".lbl").textContent = "Stop";
-    rec.start();
+    btn.querySelector(".lbl").textContent = "Tap to stop";
+    preview.innerHTML = "<em>Listening…</em>";
+    launch();
   });
 }
 function appendLines(ta, text){
   const clean = text.replace(/\s+/g," ").trim();
   if (!clean) return;
-  const lines = clean.split(/(?<=[.!?])\s+(?=[A-Za-z])/).map(s => s.trim()).filter(Boolean);
+  // split on any sentence-ending punctuation + space (handles all-lowercase speech too)
+  const lines = clean.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
   ta.value = (ta.value.trim() ? ta.value.replace(/\s*$/,"") + "\n" : "") + lines.join("\n");
 }
 wireMic("micWP", t => appendLines($("wp"), t), { note:"wpNote" });
@@ -948,6 +985,13 @@ const NUMWORD = { zero:0,oh:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,ei
   eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,
   twenty:20,thirty:30,forty:40,fourty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90 };
 
+function normalizeTimePhrases(s){
+  // spoken time shorthands → forms wordsToDigits can handle
+  return s
+    .replace(/\bhalf\s+past\s+(\w+)/gi, "$1 thirty")
+    .replace(/\bquarter\s+past\s+(\w+)/gi, "$1 fifteen")
+    .replace(/\bquarter\s+after\s+(\w+)/gi, "$1 fifteen");
+}
 function wordsToDigits(text){
   const toks = text.toLowerCase().replace(/[,]/g," , ").split(/\s+/);
   const tail = s => { const m = /[.;!?]+$/.exec(s); return m ? m[0] : ""; };
@@ -1019,13 +1063,13 @@ function resolveMeridiem(times){
 }
 function parseDay(raw){
   const filled = [];
-  const norm = wordsToDigits(raw);
+  const norm = wordsToDigits(normalizeTimePhrases(raw));
 
   // ---- work performed / equipment / remarks cues -------------------------
   const cue = (re) => { const m = re.exec(raw); return m ? m.index : -1; };
-  const iWP = cue(/\b(work performed|did the following|here'?s what i did|notes?)\s*[:,-]?/i);
-  const iEP = cue(/\b(equipment problems?|problems? with|issues? with|equipment issues?)\s*[:,-]?/i);
-  const iRM = cue(/\b(remarks?)\s*[:,-]?/i);
+  const iWP = cue(/\b(work performed|performed the following|did the following|here'?s what i did|job involved|tasks? performed|today (i|we)|notes?)\s*[:,-]?/i);
+  const iEP = cue(/\b(equipment problems?|problems? with|issues? with|equipment issues?|had (an?\s+)?issue)\s*[:,-]?/i);
+  const iRM = cue(/\b(remarks?|additional(ly)?|also note)\s*[:,-]?/i);
   const marks = [[iWP,"wp"],[iEP,"ep"],[iRM,"rm"]].filter(x => x[0] >= 0).sort((a,b) => a[0]-b[0]);
   let timesText = raw;
   if (marks.length){
@@ -1048,10 +1092,10 @@ function parseDay(raw){
   // ---- weather -----------------------------------------------------------
   const wxText = timesText.toLowerCase();
   let wx = null;
-  if (/\brain|rainy|raining|showers|wet|storm|drizzl/.test(wxText)) wx = 3;
-  else if (/\bcloud|cloudy|overcast/.test(wxText)) wx = 2;
-  else if (/\bhaz|haze|hazy|smok|fog|foggy|smog/.test(wxText)) wx = 1;
-  else if (/\bclear|sunny|sun\b|blue sky|nice out/.test(wxText)) wx = 0;
+  if (/\brain|rainy|raining|showers|wet|storm|drizzl|thunder|lightnin|downpour|sprinkl|precipit/.test(wxText)) wx = 3;
+  else if (/\bcloud|cloudy|overcast|partly cloudy|partial cloud/.test(wxText)) wx = 2;
+  else if (/\bhaz|haze|hazy|smok|fog|foggy|smog|mist|misty|dusty/.test(wxText)) wx = 1;
+  else if (/\bclear|sunny|sun\b|blue sky|nice out|sunshine|bright out|fair sky/.test(wxText)) wx = 0;
   if (wx != null){ setWeather(wx); filled.push("weather"); }
 
   // ---- expenses ----------------------------------------------------------
@@ -1068,7 +1112,7 @@ function parseDay(raw){
   if (expHit) filled.push("expenses");
 
   // ---- time blocks -------------------------------------------------------
-  const clauses = wordsToDigits(timesText)
+  const clauses = wordsToDigits(normalizeTimePhrases(timesText))
     .split(/(?:[.;]|\bthen\b|\band then\b|,)/i).map(s => s.trim()).filter(Boolean);
   const segs = [];
   for (const c of clauses){

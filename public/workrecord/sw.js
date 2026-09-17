@@ -1,5 +1,5 @@
 /* Keeps the app working with no signal. Bump CACHE when you re-deploy. */
-const CACHE = "workrecord-v4";
+const CACHE = "workrecord-v5";
 const SHELL = ["./", "./index.html", "./manifest.json",
                "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 
