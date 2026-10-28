@@ -185,7 +185,9 @@ async function extractPageTexts(
   if (loadPdfjs()) {
     try {
       const data = new Uint8Array(pdfBuf);
-      const pdfDoc = await pdfjsLib.getDocument({ data, useSystemFonts: true }).promise;
+      // isEvalSupported:false disables the font-program eval() path — mitigates
+      // GHSA-wgrm-67xf-hhpq (arbitrary JS execution via a malicious PDF).
+      const pdfDoc = await pdfjsLib.getDocument({ data, useSystemFonts: true, isEvalSupported: false }).promise;
       const pageCharCounts: number[] = [];
 
       for (let p = 1; p <= pdfDoc.numPages; p++) {
@@ -304,7 +306,9 @@ async function extractAndStoreFigures(pdfBuf: Buffer, docUrl: string): Promise<v
 
   try {
     const data = new Uint8Array(pdfBuf);
-    const pdfDoc = await pdfjsLib.getDocument({ data, useSystemFonts: true }).promise;
+    // isEvalSupported:false disables the font-program eval() path — mitigates
+    // GHSA-wgrm-67xf-hhpq (arbitrary JS execution via a malicious PDF).
+    const pdfDoc = await pdfjsLib.getDocument({ data, useSystemFonts: true, isEvalSupported: false }).promise;
     const canvasFactory = new NodeCanvasFactory();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const OPS = (pdfjsLib as any).OPS as Record<string, number> | undefined;
